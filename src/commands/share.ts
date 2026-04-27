@@ -1,0 +1,204 @@
+import { Command } from "commander";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { projectRoot, resolveDataRepo } from "../paths";
+import { loadManifest, saveManifest } from "../manifest";
+import {
+  dataKey,
+  loadLocalLock,
+  loadLock,
+  saveLocalLock,
+  saveLock,
+} from "../lock";
+import type { DataLockEntry, Lock } from "../lock";
+import { isSystemItemName } from "../bundled";
+import { assertIsGitRepo } from "../git";
+import { globalOpts } from "../cli";
+import { lockKeyForRef, parseItemRef } from "../item-ref";
+import {
+  assertLocalInstallPathsUntracked,
+  assertLocalScopeSupported,
+  ensureLocalExcludes,
+  loadLocalConfig,
+  removeLocalExcludes,
+  saveLocalConfig,
+} from "../local-config";
+import {
+  addToManifest,
+  adoptIntoDataRepo,
+  printPrivateDotenvWarnings,
+} from "./promote";
+import { printRuntimeWarnings } from "../runtime-warnings";
+
+type ShareScope = "project" | "local";
+
+interface ShareOptions {
+  to?: string;
+  message?: string;
+  json?: boolean;
+}
+
+export function registerShare(program: Command): void {
+  program
+    .command("share <item>")
+    .description("adopt an on-disk item into the data repo and track it here")
+    .option("--to <scope>", "resulting scope: local or project (default: local)")
+    .option("-m, --message <msg>", "git commit message")
+    .option("--json", "output JSON")
+    .addHelpText(
+      "after",
+      "\nRecovery: if the data-repo commit succeeds but local metadata is interrupted, rerun add <item> or add --local <item>.",
+    )
+    .action(async (itemRef: string, opts: ShareOptions, cmd: Command) => {
+      const ref = parseItemRef(itemRef);
+      if (isSystemItemName(ref.name)) {
+        console.error(
+          `✗ "${ref.name}" is a system item — submit a PR to the capshelf repo instead`,
+        );
+        process.exit(3);
+      }
+
+      const kind = ref.kind ?? "skills";
+      const name = ref.name;
+      const scope = parseShareScope(opts.to);
+      if (kind === "settings") {
+        assertLocalScopeSupported(kind, name, "share");
+      }
+      if (kind === "mcp" && scope === "local") {
+        assertLocalScopeSupported(
+          kind,
+          name,
+          "share",
+          "local scope is not supported for mcp yet; use --to project",
+        );
+      }
+
+      const project = projectRoot();
+      const manifest = await loadManifest(project);
+      const projectLock = await loadLock(project);
+      const localLock = await loadLocalLock(project);
+      const localConfig = await loadLocalConfig(project);
+      const dataRepo = await resolveDataRepo({
+        override: globalOpts(cmd).data,
+        manifest,
+        project,
+      });
+      await assertIsGitRepo(dataRepo);
+
+      const repoRelPath = `${kind}/${name}`;
+      if (existsSync(join(dataRepo, repoRelPath))) {
+        console.error(
+          `✗ data repo already has ${repoRelPath}; use promote to push edits, or move to change scope`,
+        );
+        process.exit(3);
+      }
+
+      const key = dataKey(kind, name);
+      const projectKey = lockKeyForRef(projectLock, { kind, name }, "data");
+      const localKey = lockKeyForRef(localLock, { kind, name }, "data");
+      if (projectKey) {
+        console.error(`✗ already tracked in project scope: ${kind}/${name}`);
+        process.exit(3);
+      }
+      if (localKey && kind === "mcp") {
+        assertLocalScopeSupported(kind, name, "share");
+      }
+      if (scope === "local") {
+        if (!localConfig) {
+          throw new Error(
+            "no local manifest exists; run capshelf init or capshelf set-data first",
+          );
+        }
+        await assertLocalInstallPathsUntracked(project, name);
+      }
+
+      const adopted = await adoptIntoDataRepo(project, dataRepo, kind, name, {
+        installMode: manifest.installMode,
+        message: opts.message,
+        ...((scope === "local" || localKey) && { sourceScope: "local" as const }),
+      });
+
+      const entry = {
+        source: "data" as const,
+        sha: adopted.sha,
+        sourceCommit: adopted.sourceCommit,
+        appliedAt: new Date().toISOString(),
+      };
+      let localChanged = false;
+      if (scope === "project") {
+        addToManifest(manifest, kind, name);
+        projectLock.items[key] = preserveLabel(entry, localLock, key);
+        if (localKey) {
+          delete localLock.items[key];
+          if (localConfig) {
+            localConfig.skills = localConfig.skills.filter((x) => x !== name);
+          }
+          await removeLocalExcludes(project, name);
+          localChanged = true;
+        }
+        await saveManifest(project, manifest);
+        await saveLock(project, projectLock);
+        if (localChanged) {
+          await saveLocalLock(project, localLock);
+          if (localConfig) await saveLocalConfig(project, localConfig);
+        }
+      } else {
+        if (!localConfig) throw new Error("expected local manifest");
+        if (!localConfig.skills.includes(name)) localConfig.skills.push(name);
+        localLock.items[key] = preserveLabel(entry, localLock, key);
+        await ensureLocalExcludes(project, name);
+        await saveLocalConfig(project, localConfig);
+        await saveLocalLock(project, localLock);
+      }
+
+      if (opts.json) {
+        console.log(
+          JSON.stringify(
+            {
+              verb: "share",
+              kind,
+              name,
+              scope,
+              action: adopted.action,
+              sha: adopted.sha,
+              sourceCommit: adopted.sourceCommit,
+              committed: adopted.committed,
+              ...(adopted.runtimeWarnings && {
+                runtimeWarnings: adopted.runtimeWarnings,
+              }),
+              ...(adopted.privateDotenvWarnings && {
+                privateDotenvWarnings: adopted.privateDotenvWarnings,
+              }),
+            },
+            null,
+            2,
+          ),
+        );
+        return;
+      }
+
+      console.log(`✓ shared ${scope}/data/${kind}/${name} @ ${adopted.sha}`);
+      console.log(`  source commit: ${adopted.sourceCommit}`);
+      printRuntimeWarnings(adopted.runtimeWarnings);
+      printPrivateDotenvWarnings(adopted.privateDotenvWarnings);
+    });
+}
+
+function parseShareScope(value: string | undefined): ShareScope {
+  if (value === undefined) return "local";
+  if (value === "local" || value === "project") return value;
+  console.error(`✗ invalid scope "${value}" (expected local or project)`);
+  process.exit(3);
+}
+
+function preserveLabel(
+  entry: DataLockEntry,
+  localLock: Lock,
+  key: string,
+): DataLockEntry {
+  const existing = localLock.items[key];
+  if (!existing || existing.source !== "data" || existing.label === undefined) {
+    return entry;
+  }
+  return { ...entry, label: existing.label };
+}

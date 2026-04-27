@@ -1,0 +1,113 @@
+import { Command } from "commander";
+import { projectRoot, resolveDataRepo } from "../paths";
+import { loadManifest } from "../manifest";
+import { loadLocalLock, loadLock, saveLocalLock, saveLock } from "../lock";
+import { parseLockKey } from "../installed";
+import { assertIsGitRepo } from "../git";
+import { globalOpts } from "../cli";
+import { lockKeyForRef, parseItemRef } from "../item-ref";
+import { materializeLockEntry } from "../materialize";
+import { findSkillsShSkill, skillsShConflictMessage } from "../external";
+import { applySettingsFragments } from "../settings";
+import { printRuntimeWarnings } from "../runtime-warnings";
+
+interface RevertOptions {
+  json?: boolean;
+  local?: boolean;
+}
+
+export function registerRevert(program: Command): void {
+  program
+    .command("revert <item>")
+    .description("discard local edits by reapplying locked content")
+    .option("--local", "revert a local-scope item")
+    .option("--json", "output JSON")
+    .action(async (itemRef: string, opts: RevertOptions, cmd: Command) => {
+      const project = projectRoot();
+      const manifest = await loadManifest(project);
+      const lock = opts.local ? await loadLocalLock(project) : await loadLock(project);
+      const ref = parseItemRef(itemRef);
+      const key = lockKeyForRef(lock, ref);
+      if (!key) {
+        if (ref.kind === undefined || ref.kind === "skills") {
+          const external = await findSkillsShSkill(project, ref.name);
+          if (external) {
+            console.error(
+              `✗ not reverting skills/${ref.name} — ${skillsShConflictMessage(external)}`,
+            );
+            process.exit(3);
+          }
+        }
+        console.error(`✗ not tracked in this project: ${itemRef}`);
+        process.exit(2);
+      }
+
+      const parsed = parseLockKey(key);
+      if (parsed.kind === "skills") {
+        const external = await findSkillsShSkill(project, parsed.name);
+        if (external) {
+          console.error(
+            `✗ not reverting skills/${parsed.name} — ${skillsShConflictMessage(external)}`,
+          );
+          process.exit(3);
+        }
+      }
+      const dataRepo =
+        parsed.source === "data"
+          ? await resolveDataRepo({
+              override: globalOpts(cmd).data,
+              manifest,
+              project,
+            })
+          : undefined;
+      if (dataRepo) await assertIsGitRepo(dataRepo);
+
+      const entry = lock.items[key]!;
+      if (entry.source === "data") {
+        delete entry.local;
+        delete entry.localReason;
+      }
+
+      if (parsed.kind === "settings") {
+        if (!dataRepo) throw new Error("data repo is required");
+        const result = await applySettingsFragments({
+          project,
+          dataRepo,
+          manifest,
+          oldLock: lock,
+          nextLock: lock,
+        });
+
+        if (opts.local) await saveLocalLock(project, lock);
+        else await saveLock(project, lock);
+
+        if (opts.json) {
+          console.log(JSON.stringify(result, null, 2));
+          return;
+        }
+        console.log(`✓ reverted ${opts.local ? "local/" : ""}${parsed.source}/${parsed.kind}/${parsed.name}`);
+        console.log(`  ${result.path}`);
+        return;
+      }
+
+      const result = await materializeLockEntry({
+        project,
+        dataRepo,
+        manifest,
+        key,
+        entry,
+        ignoreLocal: true,
+      });
+
+      if (opts.local) await saveLocalLock(project, lock);
+      else await saveLock(project, lock);
+
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+      console.log(`✓ reverted ${opts.local ? "local/" : ""}${parsed.source}/${parsed.kind}/${parsed.name}`);
+      console.log(`  ${result.path}`);
+      printRuntimeWarnings(result.runtimeWarnings);
+    });
+}

@@ -1,0 +1,36 @@
+{
+  "domains": [
+    "api.anthropic.com",
+    "platform.claude.com",
+    "api.openai.com",
+    "auth.openai.com",
+    "chatgpt.com",
+    "sentry.io",
+    "statsig.anthropic.com",
+    "api.github.com",
+    "github.com",
+    "codeload.github.com",
+    "objects.githubusercontent.com",
+    "raw.githubusercontent.com",
+    "registry.npmjs.org",
+    "api.npmjs.org"
+  ],
+  "tokens": {
+    "github": {
+      "description": "Read-only GitHub API token for rate limit and public metadata",
+      "allowAnonymous": true,
+      "credentials": [
+        {
+          "host": "api.github.com",
+          "header": "Authorization",
+          "scheme": "bearer"
+        },
+        {
+          "host": "raw.githubusercontent.com",
+          "header": "Authorization",
+          "scheme": "bearer"
+        }
+      ]
+    }
+  }
+}

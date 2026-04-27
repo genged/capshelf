@@ -1,0 +1,11 @@
+{
+  "version": 2,
+  "items": {
+    "system/skills/capshelf": {
+      "source": "system",
+      "sha": "d0ae511b4cc4",
+      "cliVersion": "0.5.2",
+      "appliedAt": "2026-05-25T12:06:33.203Z"
+    }
+  }
+}

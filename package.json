@@ -1,0 +1,24 @@
+{
+  "name": "capshelf",
+  "version": "0.5.2",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "capshelf": "./dist/capshelf"
+  },
+  "scripts": {
+    "dev": "bun run src/cli.ts",
+    "test": "bun test",
+    "coverage": "bun test --coverage",
+    "build": "bun build --compile --minify --target=bun ./src/cli.ts --outfile=./dist/capshelf",
+    "smoke": "make smoke"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.6.0"
+  }
+}

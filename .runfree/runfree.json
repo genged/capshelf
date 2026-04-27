@@ -1,0 +1,20 @@
+{
+  "version": 3,
+  "agents": {
+    "default": "claude",
+    "claude": {
+      "command": "claude --dangerously-skip-permissions"
+    },
+    "codex": {
+      "command": "codex --dangerously-bypass-approvals-and-sandbox -c check_for_update_on_startup=false"
+    }
+  },
+  "runtime": {
+    "agent": {
+      "build": {
+        "context": ".runfree/image",
+        "dockerfile": ".runfree/image/Dockerfile"
+      }
+    }
+  }
+}
