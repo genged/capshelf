@@ -10,7 +10,7 @@
     "dev": "bun run src/cli.ts",
     "test": "bun test",
     "coverage": "bun test --coverage",
-    "build": "bun build --compile --minify --target=bun ./src/cli.ts --outfile=./dist/capshelf",
+    "build": "mkdir -p dist && bun build --compile --minify --target=bun ./src/cli.ts --outfile=./dist/capshelf",
     "smoke": "make smoke"
   },
   "dependencies": {

@@ -1,0 +1,120 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve release tag
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+
+    steps:
+      - name: Resolve tag
+        id: release
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            tag="${INPUT_TAG}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ ! "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            printf 'tag must look like v0.1.0, got %s\n' "${tag}" >&2
+            exit 1
+          fi
+
+          printf 'tag=%s\n' "${tag}" >> "${GITHUB_OUTPUT}"
+          printf 'version=%s\n' "${tag#v}" >> "${GITHUB_OUTPUT}"
+
+  test:
+    name: Verify tests
+    needs: resolve
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Run unit tests
+        run: bun test
+
+      - name: Run smoke tests
+        run: make smoke
+
+  release:
+    name: Build release artifacts
+    needs: [resolve, test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Check package version matches tag
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          package_version="$(bun -e 'const pkg = await Bun.file("package.json").json(); process.stdout.write(pkg.version);')"
+          test "${package_version}" = "${VERSION}"
+
+      - name: Build Homebrew artifacts
+        run: scripts/package-homebrew-artifacts.sh
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+
+      - name: Publish GitHub release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" \
+              "dist/homebrew/capshelf-${VERSION}-"*.tar.gz \
+              "dist/homebrew/capshelf-${VERSION}.sha256" \
+              --clobber
+          else
+            gh release create "${TAG}" \
+              "dist/homebrew/capshelf-${VERSION}-"*.tar.gz \
+              "dist/homebrew/capshelf-${VERSION}.sha256" \
+              --verify-tag \
+              --generate-notes
+          fi
