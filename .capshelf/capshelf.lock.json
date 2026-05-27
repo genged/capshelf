@@ -4,7 +4,7 @@
     "system/skills/capshelf": {
       "source": "system",
       "sha": "d0ae511b4cc4",
-      "cliVersion": "0.5.2",
+      "cliVersion": "0.1.0",
       "appliedAt": "2026-05-25T12:06:33.203Z"
     }
   }

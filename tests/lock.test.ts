@@ -18,7 +18,7 @@ describe("lock schema", () => {
         [systemKey("skills", "capshelf")]: {
           source: "system" as const,
           sha: "abc123",
-          cliVersion: "0.5.2",
+          cliVersion: "0.1.0",
           appliedAt: "2026-05-08T00:00:00.000Z",
         },
       },
