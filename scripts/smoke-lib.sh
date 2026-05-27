@@ -18,13 +18,13 @@ configure_git_user() {
 assert_contains() {
   local pattern="$1"
   local path="$2"
-  rg -q "$pattern" "$path"
+  grep -E -q -- "$pattern" "$path"
 }
 
 assert_not_contains() {
   local pattern="$1"
   local path="$2"
-  if rg -q "$pattern" "$path"; then
+  if grep -E -q -- "$pattern" "$path"; then
     echo "unexpected match in $path: $pattern"
     exit 1
   fi
@@ -33,13 +33,13 @@ assert_not_contains() {
 assert_fixed_contains() {
   local pattern="$1"
   local path="$2"
-  rg -F -q "$pattern" "$path"
+  grep -F -q -- "$pattern" "$path"
 }
 
 assert_fixed_not_contains() {
   local pattern="$1"
   local path="$2"
-  if rg -F -q "$pattern" "$path"; then
+  if grep -F -q -- "$pattern" "$path"; then
     echo "unexpected fixed-string match in $path: $pattern"
     exit 1
   fi
