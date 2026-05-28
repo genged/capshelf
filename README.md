@@ -13,8 +13,8 @@ settings overlays, the same MCP servers. Keeping them in sync by hand, or by
 whole-directory symlinks, is fragile.
 
 ```bash
-capshelf init   --data ~/code/my-agent-data
-capshelf add    security-review
+capshelf init --data ~/code/my-agent-data
+capshelf add security-review
 capshelf status
 capshelf promote security-review -m "tighten SQLi check"
 ```
