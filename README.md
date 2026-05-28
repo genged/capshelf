@@ -1,8 +1,17 @@
-# Capshelf: Shared Agent Configuration for Every Repo
-
-[![Release](https://github.com/genged/capshelf/actions/workflows/release.yml/badge.svg)](https://github.com/genged/capshelf/actions/workflows/release.yml)
-[![Latest release](https://img.shields.io/github/v/release/genged/capshelf?sort=semver)](https://github.com/genged/capshelf/releases/latest)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+<p align="center">
+  <img src="docs/logo.png" alt="Capshelf logo" width="200" />
+</p>
+<h1 align="center">Capshelf</h1>
+<h3 align="center">Shared Agent Configuration for Every Repo</h3>
+<p align="center">
+<a href="https://github.com/genged/capshelf/actions/workflows/release.yml">
+  <img src="https://github.com/genged/capshelf/actions/workflows/release.yml/badge.svg" alt="Release status"/>
+</a>
+<a href="https://github.com/genged/capshelf/releases/latest">
+<img src="https://img.shields.io/github/v/release/genged/capshelf?sort=semver" alt="Latest release" />
+</a>
+<img src="https://img.shields.io/badge/License-MIT-yellow.svg" />
+</p>
 
 A Git-backed CLI for sharing coding-agent configuration - skills, settings,
 and MCP fragments - across projects, with per-project lockfiles so a change in
