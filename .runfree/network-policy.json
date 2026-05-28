@@ -1,19 +1,21 @@
 {
   "domains": [
     "api.anthropic.com",
-    "platform.claude.com",
+    "api.github.com",
+    "api.npmjs.org",
     "api.openai.com",
     "auth.openai.com",
     "chatgpt.com",
-    "sentry.io",
-    "statsig.anthropic.com",
-    "api.github.com",
-    "github.com",
     "codeload.github.com",
+    "generativelanguage.googleapis.com",
+    "github.com",
     "objects.githubusercontent.com",
+    "platform.claude.com",
     "raw.githubusercontent.com",
     "registry.npmjs.org",
-    "api.npmjs.org"
+    "sentry.io",
+    "statsig.anthropic.com",
+    "files.pythonhosted.org"
   ],
   "tokens": {
     "github": {
@@ -29,6 +31,22 @@
           "host": "raw.githubusercontent.com",
           "header": "Authorization",
           "scheme": "bearer"
+        }
+      ]
+    },
+    "gemini": {
+      "description": "Gemini API key for native and OpenAI-compatible endpoints",
+      "credentials": [
+        {
+          "host": "generativelanguage.googleapis.com",
+          "header": "Authorization",
+          "scheme": "bearer",
+          "pathPrefix": "/v1beta/openai/"
+        },
+        {
+          "host": "generativelanguage.googleapis.com",
+          "header": "x-goog-api-key",
+          "scheme": "raw"
         }
       ]
     }
