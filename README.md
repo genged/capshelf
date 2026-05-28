@@ -1,8 +1,16 @@
-# capshelf
+# Capshelf: Shared Agent Configuration for Every Repo
 
-A Git-backed CLI for sharing coding-agent configuration — skills, settings,
-and MCP fragments — across projects, with per-project lockfiles so a change in
+[![Release](https://github.com/genged/capshelf/actions/workflows/release.yml/badge.svg)](https://github.com/genged/capshelf/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/genged/capshelf?sort=semver)](https://github.com/genged/capshelf/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+A Git-backed CLI for sharing coding-agent configuration - skills, settings,
+and MCP fragments - across projects, with per-project lockfiles so a change in
 one repo never disturbs work in another.
+
+As you accumulate projects, you accumulate copies of the same skills, the same
+settings overlays, the same MCP servers. Keeping them in sync by hand, or by
+whole-directory symlinks, is fragile.
 
 ```bash
 capshelf init   --data ~/code/my-agent-data
@@ -11,171 +19,194 @@ capshelf status
 capshelf promote security-review -m "tighten SQLi check"
 ```
 
----
+## Quickstart
 
-## What
-
-`capshelf` materializes reusable assets from a user-owned **data repo** (a
-plain Git repo) into individual code repositories.
-
-It manages three kinds of items today:
-
-| Kind       | Lives in data repo as            | Materializes to                            |
-|------------|----------------------------------|--------------------------------------------|
-| `skills`   | `skills/<name>/SKILL.md` + assets | `.agents/skills/<name>/` (+ `.claude/skills/<name>` symlink) |
-| `settings` | `settings/<name>/settings.json`  | merged into `.claude/settings.json`        |
-| `mcp`      | `mcp/<name>/fragment.json`       | merged into `.mcp.json` *(planned)*        |
-
-Each project gets a `.capshelf/` metadata directory:
-
-```
-.capshelf/
-├── capshelf.json        committed:  install mode, upstream, declared items
-├── capshelf.lock.json   committed:  exact content hash + source commit per item
-├── local.json           gitignored: this machine's data-repo path + local items
-└── local.lock.json      gitignored: pins for clone-local items
-```
-
-The lockfile is the safety boundary: data items are pinned by content hash
-plus the data-repo commit that last touched the path; system items (bundled
-inside the CLI binary) are pinned by content hash plus CLI version.
-
-## Why
-
-Coding agents — Claude Code, Codex, and friends — load their behavior from
-`.claude/` and `.agents/` directories living next to your source. As you
-accumulate projects, you accumulate copies of the same skills, the same
-settings overlays, the same MCP servers. Keeping them in sync by hand, or by
-whole-directory symlinks, is fragile.
-
-Existing options fall short:
-
-- **Whole-directory symlinks** break the moment a project needs one local
-  override.
-- **Package managers** are imperative installers — they overwrite drift
-  instead of surfacing it, and they assume one global version per host.
-- **Dotfile managers** have no concept of "this skill belongs to project A
-  but not project B," and no story for promoting a project-local edit back
-  upstream.
-
-`capshelf` is a **declarative reconciler** in the
-`terraform apply` / `kubectl apply` tradition rather than an installer:
-
-- The lockfile is the spec. `apply` is the reconciler. `status` is the plan.
-- Drift is a first-class state, not a bug — `status --diff` shows it,
-  `keep-local` blesses it, `revert` undoes it, `promote` pushes it upstream.
-- An update in one project is **opt-in everywhere else**. `promote` writes
-  only the bound data repo and the calling project's lock; other projects
-  pick the change up the next time they run `capshelf update`. In-flight PRs
-  elsewhere stay untouched.
-- The CLI is generic. Install the binary once; point it at any data repo.
-
-It also stays out of the way of tools it shouldn't co-manage: skills owned by
-`skills.sh`, Claude marketplace plugins, and personal `~/.claude/skills/`
-entries are reported as external state rather than overwritten.
-
-## How
-
-### Install
+### 1. Install Capshelf
 
 ```bash
-make install     # builds the Bun-compiled binary, copies to ~/.local/bin/capshelf
+brew install genged/tap/capshelf
 ```
 
-Make sure `~/.local/bin` is on your `PATH`. Requires [Bun](https://bun.sh)
-and `git`.
+Capshelf also needs `git` on your `PATH`.
 
-### Bind a project to a data repo
-
-```bash
-# fresh project, fresh data repo:
-capshelf init --data ~/code/agent-data
-
-# project already declares an upstream, you just cloned it:
-git clone https://github.com/acme/agent-data ~/code/agent-data
-capshelf set-data ~/code/agent-data
-capshelf apply
-```
-
-`init` writes a manifest and lock, installs bundled system items (including
-the bootstrap skill that teaches agents how to use the CLI), and — by
-default — sets up the `codex-compatible` install layout: real skills under
-`.agents/skills/<name>/` with per-skill compatibility symlinks at
-`.claude/skills/<name>`. Use `--claude-only` to install directly under
-`.claude/`.
-
-### The edit loop
-
-```bash
-capshelf add security-review              # pull a shared skill into this project
-$EDITOR .agents/skills/security-review/SKILL.md
-
-capshelf status security-review           # → drifted_local
-capshelf status security-review --diff    # explain the drift
-
-# pick one:
-capshelf promote   security-review -m "..."   # push edits back to the data repo
-capshelf keep-local security-review --reason  # bless this divergence
-capshelf revert    security-review            # restore the locked version
-```
-
-### Adopting an existing local skill
-
-```bash
-$EDITOR .agents/skills/write-migration/SKILL.md
-capshelf share skills/write-migration --to project -m "initial write-migration skill"
-# → commits the skill into the data repo, tracks it in this project's manifest+lock
-```
-
-### Command surface
-
-| Verb            | Purpose                                                                 |
-|-----------------|-------------------------------------------------------------------------|
-| `init`          | scaffold a project, install bundled system items, bind a data repo     |
-| `set-data`      | bind this machine's clone of the data repo                              |
-| `set-upstream`  | declare/change the committed upstream URL                               |
-| `ls` / `show`   | inspect items in master or in this project                              |
-| `add` / `rm`    | install or remove an item; `--local` for clone-local skills            |
-| `status`        | drift / update report; `--diff` explains local edits; `--strict` exits 4 on drift |
-| `apply`         | reconcile project files to the lock; idempotent; supports `--dry-run`  |
-| `update`        | bump pins to upstream content, then apply; `--dry-run` previews         |
-| `share`         | adopt a not-yet-shared on-disk item into the data repo                  |
-| `move`          | change an item's scope between local and project                        |
-| `promote`       | push edits for a tracked item back into the data repo                   |
-| `keep-local`    | mark drift as intentional                                               |
-| `revert`        | restore one item to its locked version                                  |
-| `get-path`      | print the absolute path to an installed item (settings → merged JSON)   |
-
-Every command supports `--json` for agent consumption. Exit codes are
-stable: `0` success, `2` not found, `3` conflict, `4` drift / upstream
-mismatch, `5` unmet requires, `7` missing `git`. Full reference:
-[`docs/cli.md`](docs/cli.md).
-
-### Development
+To build from this repo instead:
 
 ```bash
 bun install
-bun run src/cli.ts <verb> [args]   # run from source, no build
+make install     # builds dist/capshelf and copies it to ~/.local/bin/capshelf
+```
+
+Make sure `~/.local/bin` is on your `PATH` when using the source install.
+
+### 2. Create a data repo
+
+A data repo is a normal Git repo that stores shared agent config.
+
+```bash
+mkdir -p ~/code/agent-config/skills/security-review
+cd ~/code/agent-config
+git init
+
+printf '%s\n' \
+  '---' \
+  'name: security-review' \
+  '---' \
+  '' \
+  'Review this change for security issues, risky shell commands, and unsafe data handling.' \
+  > skills/security-review/SKILL.md
+
+git add skills/security-review/SKILL.md
+git commit -m "add security-review skill"
+```
+
+### 3. Use it in a project
+
+```bash
+cd ~/code/my-app
+capshelf init --data ~/code/agent-config
+capshelf add security-review
+capshelf status
+```
+
+By default, skills are installed under `.agents/skills/<name>/` and exposed to
+Claude through `.claude/skills/<name>` symlinks. Use `capshelf init
+--claude-only --data <repo>` if a project should write real skill directories
+directly under `.claude/skills/`.
+
+## Examples
+
+Add a shared skill:
+
+```bash
+capshelf ls
+capshelf show security-review --no-content
+capshelf add security-review
+```
+
+Update a project when the data repo changes:
+
+```bash
+capshelf status
+capshelf update --dry-run
+capshelf update
+```
+
+Edit a skill locally, then choose what to do with the drift:
+
+```bash
+$EDITOR "$(capshelf get-path security-review)"
+capshelf status security-review --diff
+
+capshelf promote security-review -m "tighten security review checklist"
+# or:
+capshelf keep-local security-review --reason "project-specific review rules"
+# or:
+capshelf revert security-review
+```
+
+Adopt a project-local skill into the shared data repo:
+
+```bash
+mkdir -p .agents/skills/write-migration
+$EDITOR .agents/skills/write-migration/SKILL.md
+capshelf share skills/write-migration --to project -m "add write-migration skill"
+```
+
+Connect a freshly cloned project to its data repo:
+
+```bash
+git clone https://github.com/acme/agent-config ~/code/agent-config
+cd ~/code/my-app
+capshelf set-data ~/code/agent-config
+capshelf apply
+```
+
+## What Capshelf Manages
+
+| Kind | Data repo path                       | Project output |
+|---|--------------------------------------|---|
+| `skills` | `skills/<name>/SKILL.md` plus assets | `.agents/skills/<name>/` and `.claude/skills/<name>` symlink |
+| `settings` | `settings/<name>/settings.json`      | merged into `.claude/settings.json` |
+| `mcp` | planned                              | planned  |
+
+Each project gets a `.capshelf/` directory:
+
+```text
+.capshelf/
+  capshelf.json        committed manifest: install mode, upstream, declared items
+  capshelf.lock.json   committed lock: exact content hash and source commit
+  local.json           gitignored: this machine's data repo path
+  local.lock.json      gitignored: clone-local item pins
+```
+
+The lockfile is the safety boundary. Data items are pinned by content hash plus
+the data-repo commit that last touched the item path. System items bundled
+inside the CLI are pinned by content hash plus CLI version.
+
+## Mental Model
+
+Capshelf is a declarative reconciler, not a package installer:
+
+- `capshelf.lock.json` is the spec.
+- `capshelf apply` reconciles project files to that spec.
+- `capshelf status` shows the plan before anything changes.
+- `capshelf update` advances selected pins to current data-repo content.
+- `capshelf promote` pushes local edits back into the data repo and updates only
+  the current project's lock.
+
+That last point is the core safety property: if project A promotes a shared
+skill, project B does not change until someone runs `capshelf update` there.
+
+Capshelf also stays out of state it does not own. Skills managed by `skills.sh`,
+Claude marketplace plugins, and personal `~/.claude/skills/` entries are
+reported as external state instead of overwritten.
+
+## Command Reference
+
+| Verb | Purpose |
+|---|---|
+| `init` | scaffold `.capshelf/`, install bundled system items, bind a data repo |
+| `set-data` | bind this machine's clone of the data repo |
+| `set-upstream` | write the committed upstream URL |
+| `ls` / `show` | inspect data repo items or installed items |
+| `add` / `rm` | add or remove an item in this project |
+| `status` | report drift, missing files, and update availability |
+| `apply` | reconcile project files to the current locks |
+| `update` | bump pins to data repo HEAD, then apply |
+| `share` | adopt an on-disk item into the data repo |
+| `move` | move an item between local and project scope |
+| `promote` | commit local edits for a tracked item back to the data repo |
+| `keep-local` | mark drift as intentional |
+| `revert` | restore one item to its locked version |
+| `get-path` | print the installed path for editing |
+
+Every command supports `--json` where useful for agent consumption. Exit codes
+are stable: `0` success, `2` not found, `3` conflict, `4` drift or upstream
+mismatch, `5` unmet requires, `7` missing `git`. Full reference:
+[`docs/cli.md`](docs/cli.md).
+
+## Development
+
+```bash
+bun install
+bun run src/cli.ts <verb> [args]   # run from source
 bun test                            # unit tests
-make smoke                          # full smoke suite (modes, skills, settings)
-make check                          # tests + smoke
+make smoke                          # smoke suites
+make check                          # tests plus smoke suites
 make build                          # compile dist/capshelf
 ```
 
-## Project status
+## Project Status
 
-Skills and settings fragments are implemented; 
+Skills and settings fragments are implemented. MCP fragments, `validate`,
+`diff`, `doctor`, `journal`, `search`, and `bundle` are on the roadmap.
 
-MCP fragments, `validate`, `diff`, `doctor`, `journal`, `search`, and `bundle` are on the
-roadmap (see `docs/cli.md`). 
+Settings fragments support `add`, `update`, and `status --diff` today. `share`,
+`move`, and `promote` for settings will arrive in a later milestone.
 
-Settings fragments support `add` / `update` / `status --diff` today; 
+## Further Reading
 
-`share`, `move`, and `promote` for settings will arrive in a later milestone.
-
-## Further reading
-
-- [`docs/project-brief.md`](docs/project-brief.md) — the one-page overview
-- [`docs/architecture.md`](docs/architecture.md) — data model, lockfile schema, design rationale
-- [`docs/cli.md`](docs/cli.md) — full command reference, flags, exit codes
-- [`AGENTS.md`](AGENTS.md) — guidance for coding agents working in this repo
+- [`docs/project-brief.md`](docs/project-brief.md) - one-page overview
+- [`docs/architecture.md`](docs/architecture.md) - data model and rationale
+- [`docs/cli.md`](docs/cli.md) - full command reference, flags, exit codes
+- [`AGENTS.md`](AGENTS.md) - guidance for coding agents working in this repo

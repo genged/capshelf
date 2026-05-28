@@ -215,7 +215,13 @@ mutate `~/.claude/plugins/cache`.
 
 ## Install
 
-Local install (current):
+Homebrew:
+
+```
+brew install genged/tap/capshelf
+```
+
+Source install:
 
 ```
 make install        # builds binary, copies to ~/.local/bin/capshelf
@@ -226,8 +232,6 @@ Dev loop:
 ```
 bun run src/cli.ts <verb> [args]    # run source directly, no build
 ```
-
-Later (M8): Homebrew tap + prebuilt binaries via goreleaser-equivalent.
 
 ## Why no MCP server in v1
 
