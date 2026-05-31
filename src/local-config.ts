@@ -132,16 +132,22 @@ export function assertLocalScopeSupported(
   kind: ItemKind,
   name: string,
   verb: string,
-  mcpMessage = "local scope is not supported for mcp yet; keep mcp items in project scope",
+  mcpMessage = "local scope is not supported for mcp fragments; keep project-local values in .mcp.json or .codex/config.toml",
 ): void {
   if (kind === "skills") return;
   if (kind === "settings") {
     console.error(
-      `✗ ${verb} is not supported for settings yet; edit settings/${name}/settings.json in the data repo directly and run capshelf update settings/${name} in each project`,
+      `✗ ${verb} is not supported for settings fragments; keep project-local values in .claude/settings.json`,
     );
     process.exit(3);
   }
-  console.error(`✗ ${mcpMessage}`);
+  if (kind === "mcp") {
+    console.error(`✗ ${mcpMessage}`);
+    process.exit(3);
+  }
+  console.error(
+    `✗ ${verb} is not supported for codex-config fragments; keep project-local values in .codex/config.toml`,
+  );
   process.exit(3);
 }
 

@@ -15,6 +15,15 @@ configure_git_user() {
   git -C "$repo" config user.name capshelf
 }
 
+canonical_path() {
+  local path="$1"
+  local dir
+  local base
+  dir="$(dirname "$path")"
+  base="$(basename "$path")"
+  (cd "$dir" && printf '%s/%s\n' "$(pwd -P)" "$base")
+}
+
 assert_contains() {
   local pattern="$1"
   local path="$2"

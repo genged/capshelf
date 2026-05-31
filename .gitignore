@@ -6,3 +6,4 @@ coverage/
 *.bun-build
 logs/
 .idea/
+.claude/settings.local.json

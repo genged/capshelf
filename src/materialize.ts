@@ -12,6 +12,7 @@ import {
 } from "./installed";
 import type { ItemSource } from "./installed";
 import type { ItemKind } from "./master";
+import { isFragmentItemKind } from "./master";
 import { findSystemItem, installSystemItem, shaOfSystemItem } from "./bundled";
 import { lsTreeEntriesAtCommit, showAtCommit } from "./git";
 import type { GitTreeEntry } from "./git";
@@ -35,7 +36,7 @@ export interface MaterializeResult {
   path: string;
   sha: string | null;
   currentSha?: string | null;
-  plannedSha?: string;
+  plannedSha?: string | null;
   dryRun?: true;
   message?: string;
   runtimeWarnings?: RuntimeWarning[];
@@ -55,6 +56,9 @@ export async function materializeLockEntry(
   opts: MaterializeOptions,
 ): Promise<MaterializeResult> {
   const { source, kind, name } = parseLockKey(opts.key);
+  if (isFragmentItemKind(kind)) {
+    throw new Error(`${kind}/${name} is a fragment item and must be reconciled through fragment outputs`);
+  }
   const dst = installedPath(opts.project, kind, name);
   const runtimeWarnings = runtimeWarningsForItem(opts.project, kind, name);
 

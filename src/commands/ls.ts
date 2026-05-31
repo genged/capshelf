@@ -6,7 +6,12 @@ import {
   homeRelative,
 } from "../paths";
 import { CLI_VERSION } from "../bundled";
-import { listMasterItems, ITEM_KINDS, shaOfGitVisibleItem } from "../master";
+import {
+  isFragmentItemKind,
+  listMasterItems,
+  ITEM_KINDS,
+  shaOfGitVisibleItem,
+} from "../master";
 import type { ItemKind } from "../master";
 import { loadLock } from "../lock";
 import { loadManifest } from "../manifest";
@@ -14,6 +19,7 @@ import { parseLockKey } from "../installed";
 import { SYSTEM_ITEMS, shaOfSystemItem } from "../bundled";
 import { assertIsGitRepo } from "../git";
 import { globalOpts } from "../cli";
+import { shaOfFragmentItem } from "../fragments";
 
 interface LsOptions {
   here?: boolean;
@@ -27,7 +33,7 @@ export function registerLs(program: Command): void {
     .description("list available items (data repo + system) or installed items with --here")
     .option("--here", "list items installed in the current project")
     .option("--json", "output JSON")
-    .option("-k, --kind <kind>", "filter by kind (skills|settings|mcp)")
+    .option("-k, --kind <kind>", "filter by kind (skills|settings|mcp|codex-config)")
     .action(async (opts: LsOptions, cmd: Command) => {
       if (opts.kind && !ITEM_KINDS.includes(opts.kind as ItemKind)) {
         throw new Error(
@@ -76,7 +82,7 @@ async function lsAvailable(
         source: "data" as const,
         kind: i.kind,
         name: i.name,
-        sha: await shaOfGitVisibleItem(dataRepo, i.repoRelPath),
+        sha: await shaOfDataItem(dataRepo, i),
         path: i.path,
       })),
     );
@@ -110,10 +116,19 @@ async function lsAvailable(
     const list = byKind.get(k);
     if (!list || list.length === 0) continue;
     for (const i of list) {
-      const sha = await shaOfGitVisibleItem(dataRepo, i.repoRelPath);
+      const sha = await shaOfDataItem(dataRepo, i);
       console.log(`  ${i.kind}/${i.name.padEnd(26)} ${sha}`);
     }
   }
+}
+
+async function shaOfDataItem(
+  dataRepo: string,
+  item: { kind: ItemKind; name: string; repoRelPath: string },
+): Promise<string> {
+  return isFragmentItemKind(item.kind)
+    ? await shaOfFragmentItem(dataRepo, item.kind, item.name)
+    : await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
 }
 
 async function lsHere(kind: ItemKind | undefined, json: boolean): Promise<void> {

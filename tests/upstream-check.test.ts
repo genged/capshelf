@@ -24,6 +24,7 @@ function manifest(upstream?: string): Manifest {
     skills: [],
     settings: [],
     mcp: [],
+    codexConfig: [],
   };
 }
 

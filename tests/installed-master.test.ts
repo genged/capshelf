@@ -58,7 +58,10 @@ describe("installed item paths and hashes", () => {
       "/tmp/project/.claude/settings.json",
     );
     expect(installedPath(project, "mcp", "server")).toBe(
-      "/tmp/project/.agents/mcp/server",
+      "/tmp/project/.mcp.json",
+    );
+    expect(installedPath(project, "codex-config", "defaults")).toBe(
+      "/tmp/project/.codex/config.toml",
     );
     expect(installedPath(project, "skills", "hello", "claude-only")).toBe(
       "/tmp/project/.claude/skills/hello",
@@ -311,10 +314,22 @@ describe("master item discovery and hashing", () => {
     await mkdir(join(dataRepo, "skills", ".hidden"), { recursive: true });
     await mkdir(join(dataRepo, "skills", ".gitignore"), { recursive: true });
     await mkdir(join(dataRepo, "settings", "base"), { recursive: true });
+    await writeFile(join(dataRepo, "settings", "base", "settings.json"), "{}\n");
+    await mkdir(join(dataRepo, "mcp", "github"), { recursive: true });
+    await writeFile(join(dataRepo, "mcp", "github", "claude.json"), "{}\n");
+    await mkdir(join(dataRepo, "mcp", "ignored"), { recursive: true });
+    await writeFile(join(dataRepo, "mcp", "ignored", "fragment.json"), "{}\n");
+    await mkdir(join(dataRepo, "codex", "config", "defaults"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "codex", "config", "defaults", "config.toml"),
+      "model = \"gpt-5\"\n",
+    );
 
     const items = await listMasterItems(dataRepo);
 
     expect(items.map((i) => `${i.kind}/${i.name}`).sort()).toEqual([
+      "codex-config/defaults",
+      "mcp/github",
       "settings/base",
       "skills/hello",
     ]);
@@ -325,6 +340,7 @@ describe("master item discovery and hashing", () => {
     await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
     await mkdir(join(dataRepo, "skills", "auth"), { recursive: true });
     await mkdir(join(dataRepo, "settings", "auth"), { recursive: true });
+    await writeFile(join(dataRepo, "settings", "auth", "settings.json"), "{}\n");
 
     expect((await findMasterItem(dataRepo, "hello"))?.kind).toBe("skills");
     expect(await findMasterItem(dataRepo, "missing")).toBeNull();

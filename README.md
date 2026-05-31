@@ -121,6 +121,16 @@ $EDITOR .agents/skills/write-migration/SKILL.md
 capshelf share skills/write-migration --to project -m "add write-migration skill"
 ```
 
+Add shared config fragments:
+
+```bash
+capshelf add settings/security-base
+capshelf add mcp/github
+capshelf add codex-config/defaults
+capshelf get-path mcp/github --target codex
+capshelf get-path mcp/github --target codex --output
+```
+
 Connect a freshly cloned project to its data repo:
 
 ```bash
@@ -136,7 +146,12 @@ capshelf apply
 |---|--------------------------------------|---|
 | `skills` | `skills/<name>/SKILL.md` plus assets | `.agents/skills/<name>/` and `.claude/skills/<name>` symlink |
 | `settings` | `settings/<name>/settings.json`      | merged into `.claude/settings.json` |
-| `mcp` | planned                              | planned  |
+| `mcp` | `mcp/<name>/claude.json`, `mcp/<name>/codex.toml` | merged into `.mcp.json` and/or `.codex/config.toml` |
+| `codex-config` | `codex/config/<name>/config.toml` | merged into `.codex/config.toml` |
+
+Codex only loads project `.codex/config.toml` in trusted projects. Capshelf
+writes the project file and reports a non-failing status warning when Codex
+appears likely to ignore it.
 
 Each project gets a `.capshelf/` directory:
 
@@ -184,10 +199,10 @@ reported as external state instead of overwritten.
 | `update` | bump pins to data repo HEAD, then apply |
 | `share` | adopt an on-disk item into the data repo |
 | `move` | move an item between local and project scope |
-| `promote` | commit local edits for a tracked item back to the data repo |
+| `promote` | commit local edits or fragment source edits for a tracked item back to the data repo |
 | `keep-local` | mark drift as intentional |
 | `revert` | restore one item to its locked version |
-| `get-path` | print the installed path for editing |
+| `get-path` | print the editable source path; use `--output` for generated fragment outputs |
 
 Every command supports `--json` where useful for agent consumption. Exit codes
 are stable: `0` success, `2` not found, `3` conflict, `4` drift or upstream
@@ -207,11 +222,11 @@ make build                          # compile dist/capshelf
 
 ## Project Status
 
-Skills and settings fragments are implemented. MCP fragments, `validate`,
-`diff`, `doctor`, `journal`, `search`, and `bundle` are on the roadmap.
-
-Settings fragments support `add`, `update`, and `status --diff` today. `share`,
-`move`, and `promote` for settings will arrive in a later milestone.
+Skills, settings fragments, MCP fragments, and project-scoped Codex config
+fragments are implemented. Fragment outputs preserve project-local values and
+fragment promotion commits canonical data repo source files, not generated
+outputs. `validate`, `diff`, `doctor`, `journal`, `search`, `bundle`, and Codex
+custom agent copy items are on the roadmap.
 
 ## Further Reading
 

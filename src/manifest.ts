@@ -6,6 +6,7 @@ import { DEFAULT_INSTALL_MODE, manifestPath, manifestReadPath } from "./paths";
 import type { InstallMode } from "./paths";
 import { normalizeRemoteUrl } from "./git";
 import { MANIFEST_FILE, METADATA_DIR, PRODUCT_NAME } from "./identity";
+import type { ItemKind } from "./master";
 
 export const ManifestSchema = z
   .object({
@@ -23,6 +24,7 @@ export const ManifestSchema = z
     commands: z.array(z.string()).optional(),
     settings: z.array(z.string()).default([]),
     mcp: z.array(z.string()).default([]),
+    codexConfig: z.array(z.string()).default([]),
   })
   .superRefine((manifest, ctx) => {
     if ((manifest.commands?.length ?? 0) > 0) {
@@ -68,6 +70,41 @@ export async function saveManifest(project: string, m: Manifest): Promise<void> 
   const p = manifestPath(project);
   await mkdir(dirname(p), { recursive: true });
   await writeFile(p, JSON.stringify(m, null, 2) + "\n");
+}
+
+export function manifestNamesForKind(
+  manifest: Manifest,
+  kind: ItemKind,
+): string[] {
+  switch (kind) {
+    case "skills":
+      return manifest.skills;
+    case "settings":
+      return manifest.settings;
+    case "mcp":
+      return manifest.mcp;
+    case "codex-config":
+      return manifest.codexConfig;
+  }
+}
+
+export function addManifestName(
+  manifest: Manifest,
+  kind: ItemKind,
+  name: string,
+): void {
+  const list = manifestNamesForKind(manifest, kind);
+  if (!list.includes(name)) list.push(name);
+}
+
+export function removeManifestName(
+  manifest: Manifest,
+  kind: ItemKind,
+  name: string,
+): void {
+  const list = manifestNamesForKind(manifest, kind);
+  const index = list.indexOf(name);
+  if (index !== -1) list.splice(index, 1);
 }
 
 function hasLegacyDataRepo(value: unknown): boolean {

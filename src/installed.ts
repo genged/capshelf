@@ -6,6 +6,7 @@ import { shaOfGitVisibleItem, shaOfItem } from "./master";
 import { isGitRepo } from "./git";
 import {
   claudeDir,
+  codexProjectConfigDir,
   codexDir,
   detectInstallMode,
   installBaseDir,
@@ -20,12 +21,13 @@ export function installedPath(
 ): string {
   if (kind === "skills") return skillInstalledPath(project, name, mode);
 
-  const root = installBaseDir(project, mode);
   switch (kind) {
     case "settings":
       return join(claudeDir(project), "settings.json");
     case "mcp":
-      return join(root, "mcp", name);
+      return join(project, ".mcp.json");
+    case "codex-config":
+      return join(codexProjectConfigDir(project), "config.toml");
   }
 }
 

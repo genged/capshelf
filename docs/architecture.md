@@ -2,7 +2,11 @@
 
 ## Problem
 
-Multiple repos accumulate their own `.claude/` and `.agents/` configs — skills, settings, MCP servers, and related tool config. Some are project-specific, some are generic. There's no clean way to share them. Whole-directory symlink schemes are fragile, so capshelf keeps real managed copies per project and only uses per-skill `.claude` symlinks as a Codex/Claude compatibility surface.
+Multiple repos accumulate their own `.claude/`, `.agents/`, `.mcp.json`, and
+`.codex/` config. Some is project-specific, some is generic. There's no clean
+way to share it. Whole-directory symlink schemes are fragile, so capshelf keeps
+real managed copies per project for copy items and reconciles shared JSON/TOML
+fragments into project config outputs.
 
 Requirements:
 1. Share skills/settings/MCPs across repos from one or more user-owned **data repos**.
@@ -52,7 +56,7 @@ capshelf lives firmly in the second camp. The lock is the spec, `apply` is the r
 
 Verbs map to this model:
 
-- **`apply`** — converge `.claude/` to match manifest + lock. Idempotent, safe to run anytime.
+- **`apply`** — converge project files and generated config outputs to match manifest + lock. Idempotent, safe to run anytime.
 - **`add`** — add a data-repo item to the spec and materialize it, but only if the target path is absent or already locked.
 - **`status`** — show the diff between desired (lock) and actual (`.claude/`). Read-only.
 - **`update`** — bump the spec (lock pointer → data repo HEAD), then apply.
@@ -69,7 +73,7 @@ Naming `apply` rather than `install` is deliberate: the verb describes *convergi
 | origin | source of truth | examples | promotable? |
 |---|---|---|---|
 | **system** | bundled in the CLI binary | bootstrap `capshelf` skill, future built-ins | no — submit a PR to the capshelf repo |
-| **data** | a user-owned data repo (git) | user skills, settings/mcp fragments, codex agents | yes — `share` and `promote` commit to the data repo |
+| **data** | a user-owned data repo (git) | user skills, settings/MCP fragments, Codex config fragments | yes — `share` and `promote` commit to the data repo |
 
 Both kinds live in the same lockfile but with different entry schemas (see Lock below).
 
@@ -86,11 +90,14 @@ A data repo is any directory matching this layout, with its own git history:
 ├── settings/                   mergeable fragments (→ settings.json)
 │   └── <name>/
 │       └── settings.json
-├── mcp/                        mergeable fragments (→ .mcp.json)
-│   └── <name>/fragment.json
-├── codex/                      Codex-side mirror
-│   ├── agents/                 copy-whole-file items (.toml)
-│   └── config-fragments/       merge into ~/.codex/config.toml
+├── mcp/                        mergeable Claude/Codex MCP fragments
+│   └── <name>/
+│       ├── claude.json         (→ <project>/.mcp.json)
+│       └── codex.toml          (→ <project>/.codex/config.toml)
+├── codex/
+│   └── config/
+│       └── <name>/
+│           └── config.toml     (→ <project>/.codex/config.toml)
 ├── bundles/                    named presets (yaml)
 │   └── <name>.yml
 └── .git/                       required: a data repo MUST be a git repo
@@ -126,8 +133,7 @@ The capshelf source lives at `~/code/capshelf-cli/`:
 ```
 ~/code/capshelf-data/
 ├── skills/
-│   ├── capshelf/SKILL.md         bootstrap (will move into CLI bundle in M3)
-│   └── hello/SKILL.md              smoke-test dummy
+│   └── hello/SKILL.md            smoke-test dummy
 └── .git/
 ```
 
@@ -143,11 +149,13 @@ A real user creates their own data repos (`~/code/work-skills/`, `~/code/persona
 │   ├── .gitignore            contains local.json and local.lock.json
 │   ├── capshelf.json         committed manifest: install mode, items, optional dataRepoUpstream
 │   ├── local.json            gitignored local binding plus local skill intent
-│   └── capshelf.lock.json    committed lock: pinned sha + sourceCommit, tool-managed
+│   ├── capshelf.lock.json    committed lock: pinned sha + sourceCommit, tool-managed
 │   └── local.lock.json       gitignored lock for local-only items
 ├── .agents/skills/<name>/      default real skill directories
 ├── .claude/skills/<name>       default per-skill symlink to .agents/skills/<name>
-└── .claude/settings.json       Claude settings output, with local values preserved
+├── .claude/settings.json       Claude settings output, with local values preserved
+├── .mcp.json                   Claude shared project MCP output
+└── .codex/config.toml          Codex project config output
 ```
 
 `capshelf init --claude-only` stores real skill directories directly under `.claude/skills/<name>/` and does not create `.agents` compatibility symlinks.
@@ -159,7 +167,8 @@ Manifest:
   "dataRepoUpstream": "https://github.com/acme/work-skills",
   "skills":   ["security-review"],
   "settings": [],
-  "mcp":      []
+  "mcp":      [],
+  "codexConfig": []
 }
 ```
 
@@ -172,6 +181,10 @@ Local manifest:
   "mcp": []
 }
 ```
+
+Local scope is skills-only in current behavior. Fragment kinds preserve
+project-local values inside generated outputs instead of using clone-local
+manifest entries.
 
 `dataRepo` resolution order:
 1. `--data <path>` CLI flag (one-shot override)
@@ -206,10 +219,12 @@ data:   { source: "data",   sha, sourceCommit, appliedAt, label? }
 system: { source: "system", sha, cliVersion,   appliedAt }
 ```
 
-Lock keys are prefixed: `data/skills/<name>` or `system/skills/<name>`. Avoids collisions and makes the source obvious.
+Lock keys are prefixed, for example `data/skills/<name>`,
+`data/settings/<name>`, `data/mcp/<name>`, `data/codex-config/<name>`, or
+`system/skills/<name>`. This avoids collisions and makes the source obvious.
 
 - `sha` — content hash (identity).
-- `sourceCommit` — for data items, the **last-touching commit** in the data repo (`git log -1 --format=%H -- <path>`). Lets `apply`/`revert` retrieve historical content via `git show <commit>:<path>` even if the data repo's HEAD has moved past the locked version.
+- `sourceCommit` — for data items, the **last-touching commit** in the data repo (`git log -1 --format=%H -- <path>`). Fragment items use only canonical source files such as `settings/<name>/settings.json`, `mcp/<name>/claude.json`, `mcp/<name>/codex.toml`, and `codex/config/<name>/config.toml`. Lets `apply`/`revert` retrieve historical content via `git show <commit>:<path>` even if the data repo's HEAD has moved past the locked version.
 - `cliVersion` — for system items, the capshelf binary version that wrote the entry. Drives "update available" detection when the binary upgrades.
 
 CLI-only changes in the data repo (e.g. someone edits `src/foo.ts`) don't bump `sourceCommit` for unaffected data items — `lastTouchingCommit` is path-scoped.
@@ -220,27 +235,27 @@ CLI-only changes in the data repo (e.g. someone edits `src/foo.ts`) don't bump `
 |---|---|---|
 | skills | copy whole directory | default: `.agents/skills/<name>/` plus `.claude/skills/<name>` symlink; `--claude-only`: `.claude/skills/<name>/` |
 | settings | merge `settings/<name>/settings.json` fragments in manifest order | `.claude/settings.json` |
-| mcp | planned merge fragments | `.claude/.mcp.json` |
+| mcp | merge `mcp/<name>/claude.json` and/or `mcp/<name>/codex.toml` fragments | `.mcp.json` and/or `.codex/config.toml` |
+| codex-config | merge `codex/config/<name>/config.toml` fragments | `.codex/config.toml` |
 | codex/agents | planned copy whole file | `<project>/.codex/agents/<name>.toml` or `~/.codex/agents/` |
-| codex/config-fragments | planned merge | `~/.codex/config.toml` or project-local |
 
 Claude custom commands are represented as skills. In the default layout, a skill at `.agents/skills/<name>/SKILL.md` is exposed to Claude through `.claude/skills/<name>`. In Claude-only layout, the skill lives directly at `.claude/skills/<name>/SKILL.md`. capshelf does not manage `.claude/commands/`.
 
-### Merge rules (settings now; mcp and codex config planned)
+### Merge rules
 
 Deterministic, boring:
 
 | shape | strategy |
 |---|---|
-| objects | recursive merge |
-| arrays of strings (`permissions.allow`/`deny`) | concat + dedupe |
-| arrays of objects (`hooks.PostToolUse[]`) | concat in manifest order |
+| objects/tables | recursive merge |
+| arrays | concat in manifest order with deterministic dedupe |
 | scalars | last-fragment-wins |
 
-For settings, the existing project `.claude/settings.json` is the local base.
-On `update`, capshelf removes the old managed contribution, keeps local values
-that were not contributed by the old fragment, then merges the newly locked
-managed contribution on top.
+The existing generated output is the local base. On `add`, `apply`, `update`,
+`rm`, and `revert`, capshelf removes the old managed contribution, keeps local
+values that were not contributed by the old fragment set, then merges the newly
+locked managed contribution on top. It refuses unmanaged scalar or shape
+collisions instead of overwriting project-local values.
 
 ## Versioning: content-hash + last-touching-commit
 

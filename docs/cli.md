@@ -38,13 +38,13 @@ Current status shown as `[M?]` milestone number. See `milestones.md`.
 | `status [<item>]` | drift / update report for this project; `--project` and `--local` filter scopes; `--diff` explains local drift | M2 ✓ |
 | `add <item>` | install an item from the bound data repo; `--local` installs a clone-local skill | M2 ✓ |
 | `rm <item>` | remove from this project; `--local` removes clone-local skills | M2 ✓ |
-| `get-path <item>` | print absolute path to the installed item (for settings, the merged `.claude/settings.json`) | M4 ✓ |
-| `apply [<item>]` | reconcile project and local files with lockfiles (data items via `git show <sourceCommit>`; system items from bundled content); supports `--local` and `--dry-run` | M4 ✓ |
-| `update [<item>...]` | bump project pins by default; `--local` or an explicit local-only ref updates local pins; supports `--dry-run` | M4 ✓ |
-| `share <item>` | adopt a not-yet-shared on-disk item into the data repo; defaults to `--to local`, supports `--to project` | M5 ✓ |
+| `get-path <item>` | print the editable source path; fragments support `--output` for generated output paths and MCP supports `--target` | M5 ✓ |
+| `apply [<item>]` | reconcile project and local files with lockfiles (data items via `git show <sourceCommit>`; system items from bundled content; fragments via merged outputs); supports `--local` and `--dry-run` | M5 ✓ |
+| `update [<item>...]` | bump project pins by default; `--local` or an explicit local-only skill ref updates local pins; supports `--dry-run` | M5 ✓ |
+| `share <item>` | adopt a not-yet-shared on-disk item into the data repo; fragments require `--from` and project scope | M5 ✓ |
 | `move <item> --to <scope>` | move an already-tracked data item between local and project scope without changing data-repo content | M5 ✓ |
-| `promote <item>` | push edits for an already-tracked data item to the data repo; `--local` selects local-scope skills; settings fragments are rejected for now | M4 ✓ |
-| `keep-local <item>` | mark drifted item as intentional project-local divergence; supports `--local` | M4 ✓ |
+| `promote <item>` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects local-scope skills | M5 ✓ |
+| `keep-local <item>` | mark drifted copy-item content as intentional project-local divergence; supports `--local` for skills and rejects fragments | M4 ✓ |
 | `revert <item>` | discard local edits, restore locked version; supports `--local` | M4 ✓ |
 | `validate <name>` | lint an item (frontmatter, structure, broken refs) | M6 |
 | `diff <name> [<ref>]` | show what would change on apply/update/promote | M6 |
@@ -59,6 +59,7 @@ Current status shown as `[M?]` milestone number. See `milestones.md`.
 - `--json` — per-command structured output where supported
 - `--dry-run` — supported by `apply` and `update`; previews planned writes without changing files or lock state
 - `--diff` — supported by `status`; shows local drift against the locked content without changing files
+- `--target claude|codex` — used by multi-target MCP fragment commands such as `show`, `get-path`, and `share`
 - `--yes`/`-y` — planned for future commands that would otherwise prompt
 - `--quiet`/`-q` and `--cwd <path>` — planned, not currently implemented
 
@@ -249,32 +250,58 @@ An MCP server would let agents call `capshelf_add`, `capshelf_status`, etc. as f
 
 Everything else — search, edit, validate, promote, reconcile — is the agent's job.
 
-## Settings fragments
+## Config Fragments
 
-Claude settings fragments live in the data repo as `settings/<name>/settings.json`.
-Adding one records a lock entry and overlays the managed contribution into
-`.claude/settings.json` without discarding existing project-local settings:
+Fragments are data repo source files merged into project-owned config outputs:
+
+| Item ref | Source path | Output |
+|---|---|---|
+| `settings/<name>` | `settings/<name>/settings.json` | `.claude/settings.json` |
+| `mcp/<name> --target claude` | `mcp/<name>/claude.json` | `.mcp.json` |
+| `mcp/<name> --target codex` | `mcp/<name>/codex.toml` | `.codex/config.toml` |
+| `codex-config/<name>` | `codex/config/<name>/config.toml` | `.codex/config.toml` |
+
+`mcp/<name>` is one logical item. It can have a Claude target, a Codex target,
+or both. If both source files exist, `get-path mcp/<name>` requires
+`--target claude|codex`; `get-path --output` returns the generated output path.
+
+Examples:
 
 ```bash
 capshelf add settings/security-base
-capshelf update settings/security-base --dry-run
-capshelf update settings/security-base
+capshelf add mcp/github
+capshelf add codex-config/defaults
+
+capshelf get-path mcp/github --target codex
+capshelf get-path mcp/github --target codex --output
+capshelf status mcp/github --diff
 ```
 
-When a fragment changes in the data repo, `status settings/<name>` reports
-`update_available`. `update` removes the old managed contribution, keeps local
-additions in `.claude/settings.json`, and applies the newly locked fragment.
-`share`, `move`, and `promote` do not handle settings fragments yet; edit
-`settings/<name>/settings.json` in the data repo directly, commit it there, then
-run `capshelf update settings/<name>` in each project that should pick it up.
+Generated outputs preserve unmanaged project-local values. On reconciliation,
+capshelf removes the old managed contribution, keeps local values, detects
+unmanaged scalar or shape collisions, and then merges the newly locked fragments.
+Arrays concatenate with deterministic dedupe; objects and TOML tables merge
+recursively; scalars are last-fragment-wins. TOML comments in rewritten
+`.codex/config.toml` are not preserved.
 
-To inspect local settings drift:
+`share` for fragments requires an explicit source file and project scope:
 
 ```bash
-capshelf status settings/security-base --diff
+capshelf share settings/security --from ./settings.json --to project
+capshelf share mcp/github --target claude --from ./claude-mcp.json --to project
+capshelf share mcp/github --target codex --from ./codex-mcp.toml --to project
+capshelf share codex-config/defaults --from ./config.toml --to project
 ```
 
-All settings fragments share one output file, so a settings diff explains the
-merged `.claude/settings.json` output rather than only one fragment directory.
-When that shared output is reconciled, `apply` and `update` report it as
-`data/settings/(merged)` instead of attributing the write to one fragment.
+`promote` commits canonical source files, not generated outputs. For example,
+edit the path from `capshelf get-path mcp/github --target codex`, then run
+`capshelf promote mcp/github -m "update github mcp"`. `keep-local` and local
+scope are rejected for fragments; put project-only values directly in
+`.claude/settings.json`, `.mcp.json`, or `.codex/config.toml`.
+
+Codex only loads `.codex/config.toml` from trusted projects. When `codex` is on
+`PATH` and the current project does not appear trusted in Codex user config,
+`status` reports a warning without changing `status --strict` exit behavior.
+
+Old MCP copy-dir behavior is gone: capshelf does not write
+`.agents/mcp/<name>` and does not install `mcp/<name>/fragment.json`.

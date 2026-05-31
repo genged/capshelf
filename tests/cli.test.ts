@@ -756,7 +756,7 @@ describe("cli integration", () => {
     expect(localLock.items["data/skills/removed"].source).toBe("data");
   });
 
-  test("share supports project-scope mcp and rejects local-scope mcp", async () => {
+  test("share creates project-scope mcp fragments from explicit source files", async () => {
     const project = await tempRepo("capshelf-share-mcp-project-");
     const dataRepo = await tempRepo("capshelf-share-mcp-data-");
     const cli = join(import.meta.dir, "..", "src", "cli.ts");
@@ -770,23 +770,45 @@ describe("cli integration", () => {
     });
     expect(init.exitCode).toBe(0);
 
-    await mkdir(join(project, ".agents", "mcp", "server"), { recursive: true });
-    await writeFile(join(project, ".agents", "mcp", "server", "config.json"), "{}\n");
+    const source = join(project, "claude-mcp.json");
+    await writeFile(
+      source,
+      JSON.stringify({ mcpServers: { server: { command: "server-mcp" } } }),
+    );
 
     const rejected = Bun.spawnSync({
-      cmd: [process.execPath, cli, "share", "mcp/server"],
+      cmd: [process.execPath, cli, "share", "mcp/server", "--to", "project"],
       cwd: project,
       env: process.env,
       stdout: "pipe",
       stderr: "pipe",
     });
     expect(rejected.exitCode).toBe(3);
-    expect(rejected.stderr.toString()).toContain(
-      "local scope is not supported for mcp yet",
-    );
+    expect(rejected.stderr.toString()).toContain("requires --from");
+
+    const missingTarget = Bun.spawnSync({
+      cmd: [process.execPath, cli, "share", "mcp/server", "--from", source, "--to", "project"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(missingTarget.exitCode).toBe(3);
+    expect(missingTarget.stderr.toString()).toContain("requires --target");
 
     const shared = Bun.spawnSync({
-      cmd: [process.execPath, cli, "share", "mcp/server", "--to", "project"],
+      cmd: [
+        process.execPath,
+        cli,
+        "share",
+        "mcp/server",
+        "--target",
+        "claude",
+        "--from",
+        source,
+        "--to",
+        "project",
+      ],
       cwd: project,
       env: process.env,
       stdout: "pipe",
@@ -797,6 +819,67 @@ describe("cli integration", () => {
     expect(manifest.mcp).toEqual(["server"]);
     const lock = await file(join(project, ".capshelf", "capshelf.lock.json")).json();
     expect(lock.items["data/mcp/server"].source).toBe("data");
+    expect(await file(join(dataRepo, "mcp", "server", "claude.json")).exists())
+      .toBe(true);
+    const output = await file(join(project, ".mcp.json")).json();
+    expect(output.mcpServers.server.command).toBe("server-mcp");
+  });
+
+  test("status preserves fragment update availability when output drifted", async () => {
+    const project = await tempRepo("capshelf-status-fragment-update-project-");
+    const dataRepo = await tempRepo("capshelf-status-fragment-update-data-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+    const fragment = join(dataRepo, "settings", "security");
+
+    await mkdir(fragment, { recursive: true });
+    await writeFile(
+      join(fragment, "settings.json"),
+      JSON.stringify({ permissions: { deny: ["Bash(rm *)"] } }) + "\n",
+    );
+    await commitAll(dataRepo, "security v1");
+
+    const init = Bun.spawnSync({
+      cmd: [process.execPath, cli, "init", "--data", dataRepo],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(init.exitCode).toBe(0);
+
+    const add = Bun.spawnSync({
+      cmd: [process.execPath, cli, "add", "settings/security"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(add.exitCode).toBe(0);
+
+    await writeFile(
+      join(project, ".claude", "settings.json"),
+      JSON.stringify({ permissions: { allow: ["Bash(git status *)"] } }) + "\n",
+    );
+    await writeFile(
+      join(fragment, "settings.json"),
+      JSON.stringify({ permissions: { deny: ["Bash(curl *)"] } }) + "\n",
+    );
+    await commitAll(dataRepo, "security v2");
+
+    const status = Bun.spawnSync({
+      cmd: [process.execPath, cli, "status", "settings/security", "--json"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(status.exitCode).toBe(0);
+    const statusJson = JSON.parse(status.stdout.toString());
+    expect(statusJson.items[0].state).toBe("drifted_and_update");
+    expect(statusJson.items[0].upstreamSha).not.toBe(
+      statusJson.items[0].lockedSha,
+    );
   });
 
   test("migration commands are absent and legacy dataRepo fails manually", async () => {

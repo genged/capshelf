@@ -31,7 +31,7 @@ assert_fixed_contains 'PROJECT_MODE' "$A/.claude/settings.json"
 # --- status: three-way diff against drifted project settings ---
 printf '%s\n' '{"permissions":{"allow":["Bash(git status *)"],"deny":["Read(./.env)"]},"env":{"PROJECT_MODE":"dev"}}' > "$A/.claude/settings.json"
 (cd "$A/sub" && "${CLI[@]}" status settings/security --diff > "$TMP/settings-drift-diff.txt")
-assert_contains 'diff data/settings/\(merged\)' "$TMP/settings-drift-diff.txt"
+assert_contains 'diff data/settings/security' "$TMP/settings-drift-diff.txt"
 assert_fixed_contains 'Bash(curl *)' "$TMP/settings-drift-diff.txt"
 
 # --- apply: re-merges fragment into project settings ---
@@ -56,11 +56,22 @@ assert_fixed_contains 'Bash(wget *)' "$A/.claude/settings.json"
 assert_fixed_not_contains 'Bash(curl *)' "$A/.claude/settings.json"
 (cd "$A/sub" && "${CLI[@]}" status settings/security --strict --json >/dev/null)
 
-# --- promote: settings fragments are not promotable ---
-if (cd "$A/sub" && "${CLI[@]}" promote settings/security > "$TMP/promote-settings.txt" 2>&1); then
-  echo "expected promote to reject settings fragments"
+# --- get-path/promote: settings source edits commit canonical fragment files ---
+SETTINGS_PATH="$(cd "$A/sub" && "${CLI[@]}" get-path settings/security)"
+if [[ "$(canonical_path "$SETTINGS_PATH")" != "$(canonical_path "$DATA/settings/security/settings.json")" ]]; then
+  echo "unexpected settings get-path: $SETTINGS_PATH"
   exit 1
 fi
-assert_contains 'settings fragments' "$TMP/promote-settings.txt"
+OUTPUT_PATH="$(cd "$A/sub" && "${CLI[@]}" get-path settings/security --output)"
+if [[ "$(canonical_path "$OUTPUT_PATH")" != "$(canonical_path "$A/.claude/settings.json")" ]]; then
+  echo "unexpected settings output path: $OUTPUT_PATH"
+  exit 1
+fi
+printf '%s\n' '{"permissions":{"deny":["Read(./.env)","Bash(fetch *)"]}}' > "$DATA/settings/security/settings.json"
+(cd "$A/sub" && "${CLI[@]}" promote settings/security -m 'tighten settings' --json > "$TMP/settings-promote.json")
+assert_contains '"action": "promoted"' "$TMP/settings-promote.json"
+assert_fixed_contains 'Bash(fetch *)' "$A/.claude/settings.json"
+assert_fixed_not_contains 'Bash(wget *)' "$A/.claude/settings.json"
+assert_fixed_contains 'tighten settings' <(git -C "$DATA" log -1 --format=%s)
 
 echo "✓ smoke-settings ok ($TMP)"

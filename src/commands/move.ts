@@ -15,6 +15,7 @@ import { assertIsGitRepo } from "../git";
 import { globalOpts } from "../cli";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
 import type { ItemKind } from "../master";
+import { isFragmentItemKind } from "../master";
 import {
   assertLocalScopeSupported,
   ensureLocalExcludes,
@@ -57,19 +58,17 @@ export function registerMove(program: Command): void {
       const localConfig = await loadLocalConfig(project);
       const resolved = resolveMoveItem(ref, projectLock, localLock);
       if (!resolved) {
-        if (ref.kind === "settings") {
-          assertLocalScopeSupported(ref.kind, ref.name, "move");
-        }
-        if (ref.kind === "mcp" && to === "local") {
+        if (
+          ref.kind === "settings" ||
+          ref.kind === "codex-config" ||
+          (ref.kind === "mcp" && to === "local")
+        ) {
           assertLocalScopeSupported(ref.kind, ref.name, "move");
         }
         console.error("✗ not tracked in this project");
         process.exit(2);
       }
-      if (resolved.kind === "settings") {
-        assertLocalScopeSupported(resolved.kind, resolved.name, "move");
-      }
-      if (resolved.kind === "mcp" && to === "local") {
+      if (isFragmentItemKind(resolved.kind) && to === "local") {
         assertLocalScopeSupported(resolved.kind, resolved.name, "move");
       }
       const alreadyCurrent = alreadyInDestinationScope(

@@ -7,8 +7,9 @@ configuration across projects.
 
 The CLI lets a user keep reusable agent/project assets in a Git-backed data
 repo, then materialize selected items into individual code repositories. Today
-the supported item kinds are `skills`, `settings`, and `mcp`, with Claude
-settings fragments already implemented as mergeable JSON fragments.
+the supported item kinds are `skills`, `settings`, `mcp`, and `codex-config`.
+Skills are copy items; the other kinds are JSON/TOML fragments merged into
+project config outputs.
 
 ## What It Manages
 
@@ -48,8 +49,8 @@ Core commands:
   without changing data-repo content.
 - `keep-local` marks intentional project-local divergence.
 - `revert` restores one item to its locked version.
-- `promote` copies already-tracked local edits back into the data repo, commits
-  them, and updates only the calling project's lock.
+- `promote` copies already-tracked local edits or fragment source edits back
+  into the data repo, commits them, and updates only the calling project's lock.
 
 ## Git-Based Source Of Truth
 
@@ -76,10 +77,17 @@ The default install mode is `codex-compatible`:
 Projects can opt into `claude-only` mode, where real skills are installed
 directly under `.claude/skills/<name>/`.
 
-Settings fragments from the data repo are merged into
-`.claude/settings.json`. Existing project-local settings are preserved by
-removing the previous managed contribution and applying the newly locked
-managed contribution on top of the local base.
+Fragments from the data repo are merged into project config outputs:
+
+- `settings/<name>/settings.json` -> `.claude/settings.json`
+- `mcp/<name>/claude.json` -> `.mcp.json`
+- `mcp/<name>/codex.toml` -> `.codex/config.toml`
+- `codex/config/<name>/config.toml` -> `.codex/config.toml`
+
+Existing project-local config values are preserved by removing the previous
+managed contribution and applying the newly locked managed contribution on top
+of the local base. Fragment commands refuse unmanaged scalar or shape
+collisions instead of overwriting local values.
 
 ## Coexistence Rules
 

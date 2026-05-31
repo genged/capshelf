@@ -155,6 +155,10 @@ export function codexDir(project: string): string {
   return join(project, ".agents");
 }
 
+export function codexProjectConfigDir(project: string): string {
+  return join(project, ".codex");
+}
+
 export function installBaseDir(
   project: string,
   mode: InstallMode = detectInstallMode(project),

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dataKey } from "../src/lock";
 import { lastTouchingCommit } from "../src/git";
 import { shaOfGitVisibleItem } from "../src/master";
+import { lastTouchingFragmentCommit, shaOfFragmentItem } from "../src/fragments";
 import {
   buildStatusDiff,
   shouldShowLocalDiff,
@@ -31,6 +32,8 @@ describe("status diff helpers", () => {
     expect(shouldShowLocalDiff("drifted_and_update")).toBe(true);
     expect(shouldShowLocalDiff("missing_installed")).toBe(true);
     expect(shouldShowLocalDiff("drifted_and_upstream_dirty")).toBe(true);
+    expect(shouldShowLocalDiff("output_drift")).toBe(true);
+    expect(shouldShowLocalDiff("missing_output")).toBe(true);
     expect(shouldShowLocalDiff("update_available")).toBe(false);
     expect(shouldShowLocalDiff("ok")).toBe(false);
     expect(shouldShowLocalDiff("kept-local")).toBe(false);
@@ -102,6 +105,7 @@ describe("status diff helpers", () => {
         skills: ["hello"],
         settings: [],
         mcp: [],
+        codexConfig: [],
       },
       lock: {
         version: 2,
@@ -149,8 +153,12 @@ describe("status diff helpers", () => {
       JSON.stringify({ permissions: { deny: ["Bash(curl *)"] } }) + "\n",
     );
     await commitAll(dataRepo, "security settings");
-    const sourceCommit = await lastTouchingCommit(dataRepo, "settings/security");
-    const lockedSha = await shaOfGitVisibleItem(dataRepo, "settings/security");
+    const sourceCommit = await lastTouchingFragmentCommit(
+      dataRepo,
+      "settings",
+      "security",
+    );
+    const lockedSha = await shaOfFragmentItem(dataRepo, "settings", "security");
 
     await mkdir(join(project, ".claude"), { recursive: true });
     await writeFile(
@@ -166,6 +174,7 @@ describe("status diff helpers", () => {
         skills: [],
         settings: ["security"],
         mcp: [],
+        codexConfig: [],
       },
       lock: {
         version: 2,
@@ -182,15 +191,75 @@ describe("status diff helpers", () => {
         source: "data",
         kind: "settings",
         name: "security",
-        state: "drifted_local",
+        state: "output_drift",
         sourceCommit,
       },
     });
 
-    expect(diff?.item).toBe("data/settings/(merged)");
+    expect(diff?.item).toBe("data/settings/security");
     expect(diff?.path).toBe(settingsPath);
     expect(diff?.text).toContain("Bash(git status *)");
     expect(diff?.text).toContain("Bash(curl *)");
+  });
+
+  test("buildStatusDiff includes staged and untracked fragment source changes", async () => {
+    const dataRepo = await tempRepo("capshelf-status-source-diff-data-");
+    const project = await tempRepo("capshelf-status-source-diff-project-");
+    const fragment = join(dataRepo, "mcp", "server");
+
+    await mkdir(fragment, { recursive: true });
+    await writeFile(
+      join(fragment, "claude.json"),
+      JSON.stringify({ mcpServers: { server: { command: "locked-mcp" } } }) + "\n",
+    );
+    await commitAll(dataRepo, "server mcp");
+    const sourceCommit = await lastTouchingFragmentCommit(dataRepo, "mcp", "server");
+    const lockedSha = await shaOfFragmentItem(dataRepo, "mcp", "server");
+
+    await writeFile(
+      join(fragment, "claude.json"),
+      JSON.stringify({ mcpServers: { server: { command: "staged-mcp" } } }) + "\n",
+    );
+    await $`git -C ${dataRepo} add mcp/server/claude.json`.quiet();
+    await writeFile(
+      join(fragment, "codex.toml"),
+      '[mcp_servers.server]\ncommand = "untracked-mcp"\n',
+    );
+
+    const diff = await buildStatusDiff({
+      project,
+      dataRepo,
+      manifest: {
+        installMode: "codex-compatible",
+        skills: [],
+        settings: [],
+        mcp: ["server"],
+        codexConfig: [],
+      },
+      lock: {
+        version: 2,
+        items: {
+          [dataKey("mcp", "server")]: {
+            source: "data",
+            sha: lockedSha,
+            sourceCommit,
+            appliedAt: "2026-05-08T00:00:00.000Z",
+          },
+        },
+      },
+      row: {
+        source: "data",
+        kind: "mcp",
+        name: "server",
+        state: "source_dirty",
+        sourceCommit,
+      },
+    });
+
+    expect(diff?.item).toBe("data/mcp/server");
+    expect(diff?.text).toContain("staged-mcp");
+    expect(diff?.text).toContain("mcp/server/codex.toml");
+    expect(diff?.text).toContain('+command = "untracked-mcp"');
   });
 
   test("buildStatusDiff explains when a locked data commit is absent", async () => {
@@ -207,6 +276,7 @@ describe("status diff helpers", () => {
           skills: ["hello"],
           settings: [],
           mcp: [],
+          codexConfig: [],
         },
         lock: {
           version: 2,

@@ -143,6 +143,7 @@ describe("path normalization", () => {
       skills: [],
       settings: [],
       mcp: [],
+      codexConfig: [],
     });
     expect(detectInstallMode(project)).toBe("claude-only");
   });
@@ -155,6 +156,7 @@ describe("manifest commands migration", () => {
       skills: [],
       settings: [],
       mcp: [],
+      codexConfig: [],
     });
   });
 
@@ -224,6 +226,7 @@ describe("manifest commands migration", () => {
       commands: [],
       settings: [],
       mcp: [],
+      codexConfig: [],
     });
 
     expect("commands" in parsed).toBe(false);
@@ -247,6 +250,7 @@ describe("manifest commands migration", () => {
         commands: ["deploy"],
         settings: [],
         mcp: [],
+        codexConfig: [],
       }),
     ).toThrow(/commands are no longer managed/);
   });
@@ -262,6 +266,7 @@ describe("manifest commands migration", () => {
         skills: ["hello"],
         settings: [],
         mcp: [],
+        codexConfig: [],
       }),
     );
 
@@ -271,6 +276,7 @@ describe("manifest commands migration", () => {
       skills: ["hello"],
       settings: [],
       mcp: [],
+      codexConfig: [],
     });
   });
 
@@ -284,6 +290,7 @@ describe("manifest commands migration", () => {
         skills: [],
         settings: [],
         mcp: [],
+        codexConfig: [],
       }),
     );
 
@@ -299,6 +306,7 @@ describe("manifest commands migration", () => {
         skills: [],
         settings: [],
         mcp: [],
+        codexConfig: [],
       }),
     ).toThrow(/dataRepoUpstream/);
   });
@@ -310,6 +318,7 @@ describe("manifest commands migration", () => {
         skills: [],
         settings: [],
         mcp: [],
+        codexConfig: [],
       }),
     ).toThrow();
   });

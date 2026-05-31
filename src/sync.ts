@@ -16,6 +16,9 @@ export function targetDir(
   item: MasterItem,
   mode?: InstallMode,
 ): string {
+  if (item.kind !== "skills") {
+    throw new Error(`${item.kind}/${item.name} is a fragment item and has no install directory`);
+  }
   return installedPath(project, item.kind, item.name, mode);
 }
 
@@ -57,6 +60,9 @@ export async function copyItemIntoProject(
   item: MasterItem,
   mode?: InstallMode,
 ): Promise<string> {
+  if (item.kind !== "skills") {
+    throw new Error(`${item.kind}/${item.name} is a fragment item and cannot be copied into the project`);
+  }
   const dst = targetDir(project, item, mode);
   assertCanMaterializeInstalled(project, item.kind, item.name, mode);
   const sourceRepo = sourceRepoForItem(item);

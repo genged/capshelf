@@ -3,6 +3,7 @@ import { rm as fsRm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { projectRoot, resolveDataRepo } from "../paths";
 import { loadManifest, saveManifest } from "../manifest";
+import { manifestNamesForKind, removeManifestName } from "../manifest";
 import {
   loadLocalLock,
   loadLock,
@@ -11,7 +12,7 @@ import {
   dataKey,
 } from "../lock";
 import type { ItemKind } from "../master";
-import { ITEM_KINDS } from "../master";
+import { isFragmentItemKind, ITEM_KINDS } from "../master";
 import {
   installedPath,
   parseLockKey,
@@ -20,10 +21,14 @@ import {
 import { isSystemItemName } from "../bundled";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
-import { applySettingsFragments, settingsOutputPath } from "../settings";
 import { assertIsGitRepo } from "../git";
 import { globalOpts } from "../cli";
 import { loadLocalConfig, saveLocalConfig } from "../local-config";
+import {
+  applyFragmentOutput,
+  fragmentOutputPath,
+  lockedFragmentTargetsForItem,
+} from "../fragments";
 
 interface RmOptions {
   json?: boolean;
@@ -87,7 +92,8 @@ export function registerRm(program: Command): void {
       if (dataKeys.length === 0) {
         const manifestKinds = ITEM_KINDS.filter(
           (k) =>
-            (!ref.kind || k === ref.kind) && manifest[k].includes(ref.name),
+            (!ref.kind || k === ref.kind) &&
+            manifestNamesForKind(manifest, k).includes(ref.name),
         );
         if (manifestKinds.length > 0) {
           const label = ref.kind ? `${ref.kind}/${ref.name}` : ref.name;
@@ -106,6 +112,10 @@ export function registerRm(program: Command): void {
       const parsed = parseLockKey(dataKeys[0]!);
       const kind = parsed.kind as ItemKind;
       const name = parsed.name;
+      if (opts.local && isFragmentItemKind(kind)) {
+        console.error(`✗ --local is not supported for ${kind} fragments`);
+        process.exit(3);
+      }
       if (opts.local) {
         if (!localConfig) throw new Error("no local manifest exists");
         if (kind !== "skills") {
@@ -114,32 +124,47 @@ export function registerRm(program: Command): void {
         }
         localConfig.skills = localConfig.skills.filter((x) => x !== name);
       } else {
-        manifest[kind] = manifest[kind].filter((x) => x !== name);
+        removeManifestName(manifest, kind, name);
+      }
+
+      const entry = oldLock.items[dataKey(kind, name)];
+      if (!entry || entry.source !== "data") {
+        throw new Error(`expected data lock entry for data/${kind}/${name}`);
       }
       delete lock.items[dataKey(kind, name)];
 
-      const path =
-        kind === "settings"
-          ? settingsOutputPath(project)
-          : installedPath(project, kind, name, manifest.installMode);
+      let path = isFragmentItemKind(kind)
+        ? ""
+        : installedPath(project, kind, name, manifest.installMode);
       let removed = false;
-      if (kind === "settings") {
+      if (isFragmentItemKind(kind)) {
         const dataRepo = await resolveDataRepo({
           override: globalOpts(cmd).data,
           manifest: oldManifest,
           project,
         });
         await assertIsGitRepo(dataRepo);
-        const result = await applySettingsFragments({
-          project,
+        const targets = await lockedFragmentTargetsForItem(
           dataRepo,
-          manifest,
+          kind,
+          name,
+          entry,
           oldManifest,
-          nextManifest: manifest,
-          oldLock,
-          nextLock: lock,
-        });
-        removed = result.action === "reconciled";
+        );
+        path = targets[0] ? fragmentOutputPath(project, targets[0]) : "";
+        for (const target of targets) {
+          const result = await applyFragmentOutput({
+            project,
+            dataRepo,
+            manifest,
+            oldManifest,
+            nextManifest: manifest,
+            oldLock,
+            nextLock: lock,
+            target,
+          });
+          removed = removed || result.action === "reconciled";
+        }
       } else {
         removed = await removeInstallAliases(
           project,
@@ -182,7 +207,7 @@ export function registerRm(program: Command): void {
       }
       console.log(`✓ removed ${opts.local ? "local/" : ""}data/${kind}/${name}`);
       if (removed) {
-        console.log(`  ${kind === "settings" ? "updated" : "deleted"} ${path}`);
+        console.log(`  ${isFragmentItemKind(kind) ? "updated" : "deleted"} ${path}`);
       }
     });
 }

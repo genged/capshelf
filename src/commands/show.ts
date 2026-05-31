@@ -1,7 +1,7 @@
 import { Command } from "commander";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { shaOfGitVisibleItem } from "../master";
+import { isFragmentItemKind, shaOfGitVisibleItem } from "../master";
 import { projectRoot, resolveDataRepo } from "../paths";
 import { loadLock, dataKey, systemKey } from "../lock";
 import { loadManifest } from "../manifest";
@@ -10,16 +10,25 @@ import { assertIsGitRepo, gitVisibleFilesUnderPath } from "../git";
 import { globalOpts } from "../cli";
 import { findMasterItemByRef, parseItemRef } from "../item-ref";
 import { isIgnoredDotEntry } from "../dotfiles";
+import {
+  currentFragmentSourcesForItem,
+  fragmentOutputPath,
+  shaOfFragmentItem,
+  sourceMatchesCliTarget,
+  sourceTargetForCli,
+} from "../fragments";
 
 interface ShowOptions {
   json?: boolean;
   content?: boolean;
+  target?: string;
 }
 
 export function registerShow(program: Command): void {
   program
     .command("show <item>")
     .description("print metadata and content for an item (data or system)")
+    .option("--target <target>", "fragment target for mcp items: claude or codex")
     .option("--json", "output JSON (no content dump)")
     .option("--no-content", "skip content dump")
     .action(async (itemRef: string, opts: ShowOptions, cmd: Command) => {
@@ -45,7 +54,27 @@ export function registerShow(program: Command): void {
         console.error(`✗ not found: ${itemRef}`);
         process.exit(2);
       }
-      const masterSha = await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
+      const cliTarget = sourceTargetForCli(opts.target);
+      if (!isFragmentItemKind(item.kind) && cliTarget) {
+        console.error("✗ --target is only valid for mcp fragments");
+        process.exit(3);
+      }
+      if (isFragmentItemKind(item.kind) && item.kind !== "mcp" && cliTarget) {
+        console.error("✗ --target is only valid for mcp fragments");
+        process.exit(3);
+      }
+      const fragmentSources = isFragmentItemKind(item.kind)
+        ? (await currentFragmentSourcesForItem(dataRepo, item.kind, item.name)).filter(
+            (source) => sourceMatchesCliTarget(source, cliTarget),
+          )
+        : [];
+      if (isFragmentItemKind(item.kind) && fragmentSources.length === 0) {
+        console.error(`✗ no matching fragment source for ${itemRef}`);
+        process.exit(3);
+      }
+      const masterSha = isFragmentItemKind(item.kind)
+        ? await shaOfFragmentItem(dataRepo, item.kind, item.name)
+        : await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
       const lockEntry = lock.items[dataKey(item.kind, item.name)] ?? null;
 
       if (opts.json) {
@@ -58,6 +87,16 @@ export function registerShow(program: Command): void {
               path: item.path,
               masterSha,
               lockedSha: lockEntry?.sha ?? null,
+              ...(fragmentSources.length > 0 && {
+                sources: fragmentSources.map((source) => ({
+                  target: source.sourceTarget ?? source.target,
+                  sourcePath: source.relPath,
+                  outputPath: relativeProjectPath(
+                    project,
+                    fragmentOutputPath(project, source.target),
+                  ),
+                })),
+              }),
               sourceCommit:
                 lockEntry?.source === "data" ? lockEntry.sourceCommit : null,
               label:
@@ -91,6 +130,14 @@ export function registerShow(program: Command): void {
 
       if (opts.content === false) return;
 
+      if (isFragmentItemKind(item.kind)) {
+        for (const source of fragmentSources) {
+          console.log(`─── ${source.relPath} ─────────────────────`);
+          console.log(await readFile(join(dataRepo, ...source.relPath.split("/")), "utf-8"));
+        }
+        return;
+      }
+
       const info = await stat(item.path);
       if (info.isFile()) {
         console.log(`─── ${item.name} ─────────────────────`);
@@ -105,6 +152,10 @@ export function registerShow(program: Command): void {
         }
       }
     });
+}
+
+function relativeProjectPath(project: string, path: string): string {
+  return path.startsWith(`${project}/`) ? path.slice(project.length + 1) : path;
 }
 
 async function showSystem(

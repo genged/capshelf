@@ -1,8 +1,10 @@
 import { Command } from "commander";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { projectRoot, resolveDataRepo } from "../paths";
 import { loadManifest, saveManifest } from "../manifest";
+import { addManifestName } from "../manifest";
 import {
   dataKey,
   loadLocalLock,
@@ -12,7 +14,7 @@ import {
 } from "../lock";
 import type { DataLockEntry, Lock } from "../lock";
 import { isSystemItemName } from "../bundled";
-import { assertIsGitRepo } from "../git";
+import { assertIsGitRepo, assertRepoClean, commitInRepo } from "../git";
 import { globalOpts } from "../cli";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import {
@@ -29,11 +31,24 @@ import {
   printPrivateDotenvWarnings,
 } from "./promote";
 import { printRuntimeWarnings } from "../runtime-warnings";
+import {
+  applyFragmentOutput,
+  currentFragmentSourcesForItem,
+  fragmentOutputPath,
+  fragmentSourceCandidates,
+  isFragmentKind,
+  parseFragmentSourceText,
+  shaOfFragmentItem,
+  sourceMatchesCliTarget,
+  sourceTargetForCli,
+} from "../fragments";
 
 type ShareScope = "project" | "local";
 
 interface ShareOptions {
   to?: string;
+  from?: string;
+  target?: string;
   message?: string;
   json?: boolean;
 }
@@ -43,6 +58,8 @@ export function registerShare(program: Command): void {
     .command("share <item>")
     .description("adopt an on-disk item into the data repo and track it here")
     .option("--to <scope>", "resulting scope: local or project (default: local)")
+    .option("--from <path>", "source file for fragment items")
+    .option("--target <target>", "fragment target for mcp items: claude or codex")
     .option("-m, --message <msg>", "git commit message")
     .option("--json", "output JSON")
     .addHelpText(
@@ -61,16 +78,9 @@ export function registerShare(program: Command): void {
       const kind = ref.kind ?? "skills";
       const name = ref.name;
       const scope = parseShareScope(opts.to);
-      if (kind === "settings") {
-        assertLocalScopeSupported(kind, name, "share");
-      }
-      if (kind === "mcp" && scope === "local") {
-        assertLocalScopeSupported(
-          kind,
-          name,
-          "share",
-          "local scope is not supported for mcp yet; use --to project",
-        );
+      if (isFragmentKind(kind)) {
+        await shareFragment(kind, name, scope, opts, cmd);
+        return;
       }
 
       const project = projectRoot();
@@ -99,9 +109,6 @@ export function registerShare(program: Command): void {
       if (projectKey) {
         console.error(`✗ already tracked in project scope: ${kind}/${name}`);
         process.exit(3);
-      }
-      if (localKey && kind === "mcp") {
-        assertLocalScopeSupported(kind, name, "share");
       }
       if (scope === "local") {
         if (!localConfig) {
@@ -184,6 +191,131 @@ export function registerShare(program: Command): void {
     });
 }
 
+async function shareFragment(
+  kind: Exclude<ReturnType<typeof parseItemRef>["kind"], undefined | "skills">,
+  name: string,
+  scope: ShareScope,
+  opts: ShareOptions,
+  cmd: Command,
+): Promise<void> {
+  if (scope !== "project") {
+    assertLocalScopeSupported(kind, name, "share");
+  }
+  if (!opts.from) {
+    console.error(
+      `✗ share ${kind}/${name} requires --from <path>; generated outputs cannot be converted back to one fragment safely`,
+    );
+    process.exit(3);
+  }
+  const cliTarget = sourceTargetForCli(opts.target);
+  if (kind === "mcp" && cliTarget === null) {
+    console.error("✗ share mcp fragments requires --target claude or --target codex");
+    process.exit(3);
+  }
+  if (kind !== "mcp" && cliTarget !== null) {
+    console.error("✗ --target is only valid for mcp fragments");
+    process.exit(3);
+  }
+
+  const project = projectRoot();
+  const manifest = await loadManifest(project);
+  const projectLock = await loadLock(project);
+  const oldManifest = cloneJson(manifest);
+  const oldLock = cloneJson(projectLock);
+  const dataRepo = await resolveDataRepo({
+    override: globalOpts(cmd).data,
+    manifest,
+    project,
+  });
+  await assertIsGitRepo(dataRepo);
+  await assertRepoClean(dataRepo);
+
+  const source = fragmentSourceCandidates(kind, name).find((candidate) =>
+    sourceMatchesCliTarget(candidate, cliTarget),
+  );
+  if (!source) {
+    console.error(`✗ no canonical source target for ${kind}/${name}`);
+    process.exit(3);
+  }
+  const canonicalPath = join(dataRepo, ...source.relPath.split("/"));
+  if (existsSync(canonicalPath)) {
+    console.error(`✗ fragment source already exists: ${source.relPath}`);
+    process.exit(3);
+  }
+  const raw = await readFile(opts.from, "utf-8");
+  parseFragmentSourceText(source, raw);
+  await mkdir(dirname(canonicalPath), { recursive: true });
+  await writeFile(canonicalPath, raw);
+  const sourceCommit = await commitInRepo(
+    dataRepo,
+    [source.relPath],
+    opts.message ?? `capshelf: ${kind}/${name}`,
+  );
+  const sha = await shaOfFragmentItem(dataRepo, kind, name);
+
+  addManifestName(manifest, kind, name);
+  projectLock.items[dataKey(kind, name)] = {
+    source: "data",
+    sha,
+    sourceCommit,
+    appliedAt: new Date().toISOString(),
+  };
+
+  const sources = await currentFragmentSourcesForItem(dataRepo, kind, name);
+  const outputResults: Awaited<ReturnType<typeof applyFragmentOutput>>[] = [];
+  for (const target of [...new Set(sources.map((fragmentSource) => fragmentSource.target))]) {
+    outputResults.push(
+      await applyFragmentOutput({
+        project,
+        dataRepo,
+        manifest,
+        oldManifest,
+        nextManifest: manifest,
+        oldLock,
+        nextLock: projectLock,
+        target,
+      }),
+    );
+  }
+
+  await saveManifest(project, manifest);
+  await saveLock(project, projectLock);
+
+  if (opts.json) {
+    console.log(
+      JSON.stringify(
+        {
+          verb: "share",
+          kind,
+          name,
+          scope: "project",
+          action: "created",
+          sha,
+          sourceCommit,
+          committed: true,
+          sources: sources.map((fragmentSource) => ({
+            target: fragmentSource.sourceTarget ?? fragmentSource.target,
+            sourcePath: fragmentSource.relPath,
+            outputPath: fragmentOutputPath(project, fragmentSource.target),
+            outputAction:
+              outputResults.find((result) => result.target === fragmentSource.target)
+                ?.action ?? "already-current",
+          })),
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+
+  console.log(`✓ shared project/data/${kind}/${name} @ ${sha}`);
+  console.log(`  source commit: ${sourceCommit}`);
+  for (const fragmentSource of sources) {
+    console.log(`  ${fragmentSource.relPath}`);
+  }
+}
+
 function parseShareScope(value: string | undefined): ShareScope {
   if (value === undefined) return "local";
   if (value === "local" || value === "project") return value;
@@ -201,4 +333,8 @@ function preserveLabel(
     return entry;
   }
   return { ...entry, label: existing.label };
+}
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }

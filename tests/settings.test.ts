@@ -4,9 +4,8 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { dataKey, emptyLock } from "../src/lock";
-import { lastTouchingCommit } from "../src/git";
-import { shaOfItem } from "../src/master";
 import { emptyManifest } from "../src/manifest";
+import { lastTouchingFragmentCommit, shaOfFragmentItem } from "../src/fragments";
 import {
   applySettingsFragments,
   mergeSettingsFragments,
@@ -86,8 +85,12 @@ describe("settings fragments", () => {
       }),
     );
     await commitAll(dataRepo, "security v1");
-    const v1Commit = await lastTouchingCommit(dataRepo, "settings/security");
-    const v1Sha = await shaOfItem(fragment);
+    const v1Commit = await lastTouchingFragmentCommit(
+      dataRepo,
+      "settings",
+      "security",
+    );
+    const v1Sha = await shaOfFragmentItem(dataRepo, "settings", "security");
 
     const manifest = {
       ...emptyManifest(),
@@ -150,8 +153,12 @@ describe("settings fragments", () => {
       }),
     );
     await commitAll(dataRepo, "security v1");
-    const v1Commit = await lastTouchingCommit(dataRepo, "settings/security");
-    const v1Sha = await shaOfItem(fragment);
+    const v1Commit = await lastTouchingFragmentCommit(
+      dataRepo,
+      "settings",
+      "security",
+    );
+    const v1Sha = await shaOfFragmentItem(dataRepo, "settings", "security");
 
     await writeFile(
       join(fragment, "settings.json"),
@@ -162,8 +169,12 @@ describe("settings fragments", () => {
       }),
     );
     await commitAll(dataRepo, "security v2");
-    const v2Commit = await lastTouchingCommit(dataRepo, "settings/security");
-    const v2Sha = await shaOfItem(fragment);
+    const v2Commit = await lastTouchingFragmentCommit(
+      dataRepo,
+      "settings",
+      "security",
+    );
+    const v2Sha = await shaOfFragmentItem(dataRepo, "settings", "security");
 
     const manifest = {
       ...emptyManifest(),

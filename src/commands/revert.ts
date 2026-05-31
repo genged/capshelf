@@ -8,8 +8,12 @@ import { globalOpts } from "../cli";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import { materializeLockEntry } from "../materialize";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
-import { applySettingsFragments } from "../settings";
 import { printRuntimeWarnings } from "../runtime-warnings";
+import {
+  applyFragmentOutput,
+  isFragmentKind,
+  lockedFragmentTargetsForItem,
+} from "../fragments";
 
 interface RevertOptions {
   json?: boolean;
@@ -68,25 +72,45 @@ export function registerRevert(program: Command): void {
         delete entry.localReason;
       }
 
-      if (parsed.kind === "settings") {
+      if (isFragmentKind(parsed.kind)) {
+        if (opts.local) {
+          console.error(`✗ --local is not supported for ${parsed.kind} fragments`);
+          process.exit(3);
+        }
         if (!dataRepo) throw new Error("data repo is required");
-        const result = await applySettingsFragments({
-          project,
-          dataRepo,
-          manifest,
-          oldLock: lock,
-          nextLock: lock,
-        });
+        const targets =
+          entry.source === "data"
+            ? await lockedFragmentTargetsForItem(
+                dataRepo,
+                parsed.kind,
+                parsed.name,
+                entry,
+                manifest,
+              )
+            : [];
+        const results = [];
+        for (const target of targets) {
+          results.push(
+            await applyFragmentOutput({
+              project,
+              dataRepo,
+              manifest,
+              oldLock: lock,
+              nextLock: lock,
+              target,
+            }),
+          );
+        }
 
         if (opts.local) await saveLocalLock(project, lock);
         else await saveLock(project, lock);
 
         if (opts.json) {
-          console.log(JSON.stringify(result, null, 2));
+          console.log(JSON.stringify(results, null, 2));
           return;
         }
         console.log(`✓ reverted ${opts.local ? "local/" : ""}${parsed.source}/${parsed.kind}/${parsed.name}`);
-        console.log(`  ${result.path}`);
+        for (const result of results) console.log(`  ${result.path}`);
         return;
       }
 

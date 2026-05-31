@@ -3,6 +3,7 @@ import { projectRoot } from "../paths";
 import { loadLocalLock, loadLock, saveLocalLock, saveLock } from "../lock";
 import { parseLockKey } from "../installed";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
+import { isFragmentItemKind } from "../master";
 
 interface KeepLocalOptions {
   reason?: string;
@@ -49,6 +50,10 @@ export function registerKeepLocal(program: Command): void {
 
       const key = dataKeys[0]!;
       const parsed = parseLockKey(key);
+      if (isFragmentItemKind(parsed.kind)) {
+        console.error(`✗ ${keepLocalRejectMessage(parsed.kind)}`);
+        process.exit(3);
+      }
       const entry = lock.items[key]!;
       if (entry.source !== "data") {
         throw new Error(`expected data lock entry for ${key}`);
@@ -84,4 +89,15 @@ export function registerKeepLocal(program: Command): void {
         console.log(`✓ keeping local divergence for ${opts.local ? "local/" : ""}${parsed.kind}/${parsed.name}`);
       }
     });
+}
+
+function keepLocalRejectMessage(kind: Exclude<ReturnType<typeof parseLockKey>["kind"], "skills">): string {
+  switch (kind) {
+    case "settings":
+      return "keep-local is not supported for settings fragments; keep project-local values in .claude/settings.json";
+    case "mcp":
+      return "keep-local is not supported for mcp fragments; keep project-local values in .mcp.json or .codex/config.toml";
+    case "codex-config":
+      return "keep-local is not supported for codex-config fragments; keep project-local values in .codex/config.toml";
+  }
 }

@@ -1,10 +1,11 @@
 import { Command } from "commander";
 import { existsSync, lstatSync, readlinkSync } from "node:fs";
-import { readdir, rm as fsRm } from "node:fs/promises";
+import { readFile, readdir, rm as fsRm } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { projectRoot, resolveDataRepo } from "../paths";
 import { loadManifest, saveManifest } from "../manifest";
 import type { Manifest } from "../manifest";
+import { addManifestName, removeManifestName } from "../manifest";
 import {
   dataKey,
   loadLocalLock,
@@ -27,6 +28,7 @@ import {
   assertIsGitRepo,
   assertRepoClean,
   assertRepoCleanOutsidePath,
+  assertRepoCleanOutsidePaths,
   commitInRepo,
   gitVisibleFilesUnderPath,
   lastTouchingCommit,
@@ -48,6 +50,15 @@ import {
 } from "../runtime-warnings";
 import type { RuntimeWarning } from "../runtime-warnings";
 import { isIgnoredDotDirent, privateDotenvFiles } from "../dotfiles";
+import {
+  allCanonicalFragmentRelPaths,
+  applyFragmentOutput,
+  currentFragmentSourcesForItem,
+  isFragmentKind,
+  parseFragmentSourceText,
+  shaOfFragmentItem,
+  touchedFragmentTargetsForItem,
+} from "../fragments";
 
 interface PromoteOptions {
   create?: boolean;
@@ -215,11 +226,18 @@ async function promoteProjectTracked(
   }
 
   const parsed = parseLockKey(key);
-  if (parsed.kind === "settings") {
-    console.error(
-      `✗ promote is not supported for settings fragments yet; edit settings/${parsed.name}/settings.json in the data repo and run capshelf update settings/${parsed.name} in each project`,
+  if (isFragmentKind(parsed.kind)) {
+    const result = await promoteFragmentSource(
+      project,
+      dataRepo,
+      manifest,
+      projectLock,
+      parsed.kind,
+      parsed.name,
+      opts,
     );
-    process.exit(3);
+    addToManifest(manifest, parsed.kind, parsed.name);
+    return result;
   }
 
   const result = await syncTrackedIntoDataRepo(
@@ -299,6 +317,110 @@ async function rejectUntrackedPromote(
   process.exit(2);
 }
 
+async function promoteFragmentSource(
+  project: string,
+  dataRepo: string,
+  manifest: Manifest,
+  lock: Lock,
+  kind: Exclude<ItemKind, "skills">,
+  name: string,
+  opts: PromoteOptions,
+): Promise<PromoteResult> {
+  const key = dataKey(kind, name);
+  const entry = dataEntryOrThrow(lock.items[key], key);
+  const canonicalPaths = allCanonicalFragmentRelPaths(kind, name);
+  const existingSources = await currentFragmentSourcesForItem(
+    dataRepo,
+    kind,
+    name,
+  ).catch(() => []);
+  if (existingSources.length === 0) {
+    console.error(
+      `✗ data repo does not have canonical source files for ${kind}/${name}`,
+    );
+    process.exit(3);
+  }
+
+  await assertRepoCleanOutsidePaths(dataRepo, canonicalPaths);
+  let dirty = false;
+  const commitPaths: string[] = [];
+  for (const relPath of canonicalPaths) {
+    const pathDirty = (await statusPorcelain(dataRepo, relPath)).trim().length > 0;
+    if (pathDirty || existsSync(join(dataRepo, ...relPath.split("/")))) {
+      commitPaths.push(relPath);
+    }
+    dirty = dirty || pathDirty;
+  }
+  const currentSha = await shaOfFragmentItem(dataRepo, kind, name);
+  if (!dirty) {
+    if (currentSha === entry.sha) {
+      return {
+        source: "data",
+        kind,
+        name,
+        action: "already-current",
+        sha: currentSha,
+        sourceCommit: entry.sourceCommit,
+        committed: false,
+      };
+    }
+    console.error(
+      `✗ ${kind}/${name} has committed source changes not in this project lock; run capshelf update ${kind}/${name}`,
+    );
+    process.exit(3);
+  }
+
+  for (const source of existingSources) {
+    parseFragmentSourceText(
+      source,
+      await readFile(join(dataRepo, ...source.relPath.split("/")), "utf-8"),
+    );
+  }
+
+  const oldLock = cloneJson(lock);
+  const sourceCommit = await commitInRepo(
+    dataRepo,
+    commitPaths,
+    opts.message ?? `capshelf: ${kind}/${name}`,
+  );
+  const sha = await shaOfFragmentItem(dataRepo, kind, name);
+  const nextEntry = {
+    source: "data" as const,
+    sha,
+    sourceCommit,
+    appliedAt: new Date().toISOString(),
+    ...(entry.label !== undefined && { label: entry.label }),
+  };
+  lock.items[key] = nextEntry;
+
+  for (const target of await touchedFragmentTargetsForItem(
+    dataRepo,
+    kind,
+    name,
+    entry,
+    manifest,
+  )) {
+    await applyFragmentOutput({
+      project,
+      dataRepo,
+      manifest,
+      oldLock,
+      nextLock: lock,
+      target,
+    });
+  }
+
+  return {
+    source: "data",
+    kind,
+    name,
+    action: "promoted",
+    sha,
+    sourceCommit,
+    committed: true,
+  };
+}
+
 export async function syncTrackedIntoDataRepo(
   project: string,
   dataRepo: string,
@@ -310,9 +432,9 @@ export async function syncTrackedIntoDataRepo(
   const key = dataKey(kind, name);
   const entry = dataEntryOrThrow(lock.items[key], key);
 
-  if (kind === "settings") {
+  if (isFragmentKind(kind)) {
     console.error(
-      `✗ promote is not supported for settings fragments yet; edit settings/${name}/settings.json in the data repo and run capshelf update settings/${name} in each project`,
+      `✗ promote for ${kind}/${name} must use project-scope fragment source files`,
     );
     process.exit(3);
   }
@@ -453,9 +575,9 @@ export async function adoptIntoDataRepo(
   name: string,
   opts: AdoptOptions,
 ): Promise<PromoteResult> {
-  if (kind === "settings") {
+  if (isFragmentKind(kind)) {
     console.error(
-      `✗ share is not supported for settings yet; edit settings/${name}/settings.json in the data repo directly and run capshelf update settings/${name} in each project`,
+      `✗ share for ${kind}/${name} requires --from <path> --to project`,
     );
     process.exit(3);
   }
@@ -543,17 +665,10 @@ export async function moveScope(
   to: Scope,
   state: MoveScopeState,
 ): Promise<MoveScopeResult> {
-  if (kind === "settings") {
-    console.error(
-      `✗ move is not supported for settings yet; edit settings/${name}/settings.json in the data repo directly and run capshelf update settings/${name} in each project`,
-    );
-    process.exit(3);
-  }
-
   const key = dataKey(kind, name);
   const projectEntry = state.projectLock.items[key];
   const localEntry = state.localLock.items[key];
-  if (kind === "mcp" && (to === "local" || localEntry !== undefined)) {
+  if (isFragmentKind(kind) && (to === "local" || localEntry !== undefined)) {
     assertLocalScopeSupported(kind, name, "move");
   }
   if (to === "local") {
@@ -904,14 +1019,17 @@ function lstatOrNull(path: string): ReturnType<typeof lstatSync> | null {
 }
 
 export function addToManifest(m: Manifest, kind: ItemKind, name: string): void {
-  const list = m[kind];
-  if (!list.includes(name)) list.push(name);
+  addManifestName(m, kind, name);
 }
 
 function removeFromManifest(m: Manifest, kind: ItemKind, name: string): void {
-  m[kind] = m[kind].filter((x) => x !== name);
+  removeManifestName(m, kind, name);
 }
 
 function refDisplay(ref: ReturnType<typeof parseItemRef>): string {
   return `${ref.kind ? `${ref.kind}/` : ""}${ref.name}`;
+}
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }

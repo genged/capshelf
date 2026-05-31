@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -23,6 +23,10 @@ describe("parseItemRef", () => {
     expect(parseItemRef("skills/hello")).toEqual({
       kind: "skills",
       name: "hello",
+    });
+    expect(parseItemRef("codex-config/defaults")).toEqual({
+      kind: "codex-config",
+      name: "defaults",
     });
   });
 
@@ -72,6 +76,7 @@ describe("findMasterItemByRef", () => {
     const dataRepo = await tempDir();
     await mkdir(join(dataRepo, "skills", "auth"), { recursive: true });
     await mkdir(join(dataRepo, "settings", "auth"), { recursive: true });
+    await writeFile(join(dataRepo, "settings", "auth", "settings.json"), "{}\n");
 
     await expect(
       findMasterItemByRef(dataRepo, { name: "auth" }),

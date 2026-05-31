@@ -3,10 +3,11 @@ import { Command as CmdType } from "commander";
 import { existsSync } from "node:fs";
 import { projectRoot, resolveDataRepoOptional, homeRelative } from "../paths";
 import { loadLocalLock, loadLock } from "../lock";
-import type { Lock } from "../lock";
+import type { Lock, LockEntry } from "../lock";
 import { loadManifest } from "../manifest";
+import type { Manifest } from "../manifest";
 import type { ItemKind } from "../master";
-import { shaOfGitVisibleItem, shaOfItem } from "../master";
+import { isFragmentItemKind, shaOfGitVisibleItem, shaOfItem } from "../master";
 import { installedPath, shaOfInstalled, parseLockKey } from "../installed";
 import type { ItemSource } from "../installed";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
@@ -15,15 +16,22 @@ import { findMasterItemByRef, lockKeysForRef, parseItemRef } from "../item-ref";
 import { isPathClean } from "../git";
 import { listClaudePlugins, listSkillsShSkills } from "../external";
 import type { ExternalClaudePlugin, ExternalSkill } from "../external";
-import { settingsContributionState } from "../settings";
-import type { SettingsContributionState } from "../settings";
 import { buildStatusDiff } from "../status-diff";
 import type { StatusDiff } from "../status-diff";
 import {
+  codexProjectTrustWarnings,
+  isStrictRuntimeWarning,
   printRuntimeWarnings,
   runtimeWarningsForItem,
 } from "../runtime-warnings";
 import type { RuntimeWarning } from "../runtime-warnings";
+import {
+  allCanonicalFragmentRelPaths,
+  fragmentContributionState,
+  lockedFragmentTargetsForItem,
+  shaOfFragmentItem,
+  type FragmentContributionState,
+} from "../fragments";
 
 type State =
   | "ok"
@@ -31,9 +39,13 @@ type State =
   | "drifted_local"
   | "drifted_and_update"
   | "missing_installed"
+  | "missing_output"
   | "missing_upstream"
   | "upstream_dirty"
+  | "source_dirty"
   | "drifted_and_upstream_dirty"
+  | "output_drift"
+  | "source_dirty_and_output_drift"
   | "kept-local";
 
 interface StatusRow {
@@ -118,7 +130,7 @@ export function registerStatus(program: Command): void {
         const externalSkillNames = new Set(external.map((skill) => skill.name));
 
         const rows: StatusRow[] = [];
-        let settingsState: SettingsContributionState | null = null;
+        const fragmentStates = new Map<string, FragmentContributionState>();
         for (const target of targets) {
           const { scope, key } = target;
           const lock = scope === "local" ? localLock : projectLock;
@@ -132,20 +144,31 @@ export function registerStatus(program: Command): void {
             itemName,
             scope,
           );
-          if (source === "data" && kind === "settings") {
+          let fragmentOutputState: FragmentContributionState | null = null;
+          if (source === "data" && isFragmentItemKind(kind)) {
             if (dataRepo) {
-              settingsState ??= await settingsContributionState(
-                project,
-                dataRepo,
-                manifest,
-                lock,
-              );
+              const stateKey = `${scope}/${key}`;
+              if (!fragmentStates.has(stateKey)) {
+                fragmentStates.set(
+                  stateKey,
+                  await itemFragmentContributionState(
+                    project,
+                    dataRepo,
+                    manifest,
+                    lock,
+                    kind,
+                    itemName,
+                    entry,
+                  ),
+                );
+              }
+              fragmentOutputState = fragmentStates.get(stateKey)!;
               currentSha =
-                settingsState === "ok"
+                fragmentOutputState === "ok"
                   ? entry.sha
-                  : settingsState === "missing"
+                  : fragmentOutputState === "missing"
                     ? null
-                    : "settings-output-drift";
+                    : "fragment-output-drift";
             } else {
               currentSha = entry.sha;
             }
@@ -160,10 +183,14 @@ export function registerStatus(program: Command): void {
                 name: itemName,
               }).catch(() => null);
               if (masterItem) {
-                upstreamDirty = !(await isPathClean(dataRepo, masterItem.repoRelPath));
+                upstreamDirty = isFragmentItemKind(kind)
+                  ? await fragmentSourceDirty(dataRepo, kind, itemName)
+                  : !(await isPathClean(dataRepo, masterItem.repoRelPath));
                 upstreamSha = upstreamDirty
                   ? null
-                  : await shaOfGitVisibleItem(dataRepo, masterItem.repoRelPath);
+                  : isFragmentItemKind(kind)
+                    ? await shaOfFragmentItem(dataRepo, kind, itemName)
+                    : await shaOfGitVisibleItem(dataRepo, masterItem.repoRelPath);
               }
             }
           } else {
@@ -179,6 +206,18 @@ export function registerStatus(program: Command): void {
             currentSha !== null
           ) {
             state = "kept-local";
+          } else if (isFragmentItemKind(kind) && upstreamDirty) {
+            state =
+              fragmentOutputState === "drifted" || fragmentOutputState === "missing"
+                ? "source_dirty_and_output_drift"
+                : "source_dirty";
+          } else if (isFragmentItemKind(kind) && fragmentOutputState === "missing") {
+            state = "missing_output";
+          } else if (isFragmentItemKind(kind) && fragmentOutputState === "drifted") {
+            state =
+              upstreamSha !== null && upstreamSha !== entry.sha
+                ? "drifted_and_update"
+                : "output_drift";
           } else if (currentSha === null) state = "missing_installed";
           else if (upstreamDirty) {
             state =
@@ -217,7 +256,10 @@ export function registerStatus(program: Command): void {
               cliVersion: entry.cliVersion,
             }),
             ...runtimeWarningFields(
-              runtimeWarningsForItem(project, kind, itemName),
+              [
+                ...runtimeWarningsForItem(project, kind, itemName),
+                ...codexWarningsForItem(project, kind),
+              ],
             ),
           });
         }
@@ -276,7 +318,7 @@ export function registerStatus(program: Command): void {
           rows.some(
             (r) =>
               (r.state !== "ok" && r.state !== "kept-local") ||
-              (r.runtimeWarnings?.length ?? 0) > 0,
+              (r.runtimeWarnings?.some(isStrictRuntimeWarning) ?? false),
           )
         ) {
           process.exit(4);
@@ -297,11 +339,19 @@ function glyph(s: State): string {
       return "✎⚠";
     case "missing_installed":
       return "?";
+    case "missing_output":
+      return "?";
     case "missing_upstream":
       return "!";
     case "upstream_dirty":
       return "!";
+    case "source_dirty":
+      return "!";
     case "drifted_and_upstream_dirty":
+      return "✎!";
+    case "output_drift":
+      return "✎";
+    case "source_dirty_and_output_drift":
       return "✎!";
     case "kept-local":
       return "≠";
@@ -322,14 +372,22 @@ function describe(r: StatusRow): string {
       return `drifted + update available → ${r.upstreamSha}`;
     case "missing_installed":
       return "installed files missing — run: capshelf apply";
+    case "missing_output":
+      return "generated output missing — run: capshelf apply";
     case "missing_upstream":
       return r.source === "data"
         ? "no longer in data repo"
         : "no longer bundled in CLI";
     case "upstream_dirty":
       return "data repo has uncommitted changes for this item";
+    case "source_dirty":
+      return "data repo has uncommitted changes for this fragment";
     case "drifted_and_upstream_dirty":
       return "drifted + data repo has uncommitted changes for this item";
+    case "output_drift":
+      return "generated output drifted — run: capshelf apply";
+    case "source_dirty_and_output_drift":
+      return "generated output drifted + data repo has uncommitted fragment changes";
     case "kept-local":
       return r.localReason
         ? `kept local (${r.localReason})`
@@ -502,4 +560,52 @@ function personalClaudeExternals(
     }
   }
   return out;
+}
+
+function codexWarningsForItem(project: string, kind: ItemKind): RuntimeWarning[] {
+  if (kind !== "mcp" && kind !== "codex-config") return [];
+  return codexProjectTrustWarnings(project);
+}
+
+async function itemFragmentContributionState(
+  project: string,
+  dataRepo: string,
+  manifest: Manifest,
+  lock: Lock,
+  kind: Extract<ItemKind, "settings" | "mcp" | "codex-config">,
+  name: string,
+  entry: LockEntry,
+): Promise<FragmentContributionState> {
+  if (entry.source !== "data") return "ok";
+  const targets = await lockedFragmentTargetsForItem(
+    dataRepo,
+    kind,
+    name,
+    entry,
+    manifest,
+  );
+  let state: FragmentContributionState = "ok";
+  for (const target of targets) {
+    const targetState = await fragmentContributionState(
+      project,
+      dataRepo,
+      manifest,
+      lock,
+      target,
+    );
+    if (targetState === "missing") return "missing";
+    if (targetState === "drifted") state = "drifted";
+  }
+  return state;
+}
+
+async function fragmentSourceDirty(
+  dataRepo: string,
+  kind: Extract<ItemKind, "settings" | "mcp" | "codex-config">,
+  name: string,
+): Promise<boolean> {
+  for (const relPath of allCanonicalFragmentRelPaths(kind, name)) {
+    if (!(await isPathClean(dataRepo, relPath))) return true;
+  }
+  return false;
 }

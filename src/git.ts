@@ -61,10 +61,20 @@ export async function lastTouchingCommit(
   repo: string,
   relPath: string,
 ): Promise<string> {
+  return await lastTouchingCommitForPaths(repo, [relPath]);
+}
+
+export async function lastTouchingCommitForPaths(
+  repo: string,
+  relPaths: string[],
+): Promise<string> {
   await assertGitAvailable();
+  if (relPaths.length === 0) {
+    throw new Error("cannot compute last touching commit for an empty path list");
+  }
   let out: string;
   try {
-    out = await $`git -C ${repo} log -1 --format=%H -- ${relPath}`
+    out = await $`git -C ${repo} log -1 --format=%H -- ${relPaths}`
       .quiet()
       .text();
   } catch {
@@ -72,8 +82,9 @@ export async function lastTouchingCommit(
   }
   const sha = out.trim();
   if (!sha) {
+    const relPathLabel = relPaths.join(", ");
     throw new Error(
-      `no commit touches ${relPath} in ${repo}\n  commit it first: git -C ${repo} add ${relPath} && git -C ${repo} commit`,
+      `no commit touches ${relPathLabel} in ${repo}\n  commit it first: git -C ${repo} add ${relPaths.join(" ")} && git -C ${repo} commit`,
     );
   }
   return sha;
@@ -89,6 +100,16 @@ export async function showAtCommit(
     .quiet()
     .arrayBuffer();
   return Buffer.from(result);
+}
+
+export async function commitExists(repo: string, commit: string): Promise<boolean> {
+  await assertGitAvailable();
+  try {
+    await $`git -C ${repo} cat-file -e ${commit}^{commit}`.quiet();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export interface GitTreeEntry {
@@ -187,8 +208,16 @@ export async function statusPorcelainOutsidePath(
   repo: string,
   relPath: string,
 ): Promise<string> {
+  return await statusPorcelainOutsidePaths(repo, [relPath]);
+}
+
+export async function statusPorcelainOutsidePaths(
+  repo: string,
+  relPaths: string[],
+): Promise<string> {
   await assertGitAvailable();
-  return await $`git -C ${repo} status --porcelain -- . ${`:(exclude)${relPath}`}`
+  const excludes = relPaths.map((relPath) => `:(exclude)${relPath}`);
+  return await $`git -C ${repo} status --porcelain -- . ${excludes}`
     .quiet()
     .text();
 }
@@ -197,10 +226,18 @@ export async function assertRepoCleanOutsidePath(
   repo: string,
   relPath: string,
 ): Promise<void> {
-  const out = await statusPorcelainOutsidePath(repo, relPath);
+  await assertRepoCleanOutsidePaths(repo, [relPath]);
+}
+
+export async function assertRepoCleanOutsidePaths(
+  repo: string,
+  relPaths: string[],
+): Promise<void> {
+  const out = await statusPorcelainOutsidePaths(repo, relPaths);
   if (out.trim().length === 0) return;
+  const label = relPaths.join(", ");
   throw new Error(
-    `data repo has uncommitted changes outside ${relPath}\n  commit or stash unrelated changes first: git -C ${repo} status --short`,
+    `data repo has uncommitted changes outside ${label}\n  commit or stash unrelated changes first: git -C ${repo} status --short`,
   );
 }
 

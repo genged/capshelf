@@ -9,14 +9,20 @@ import { globalOpts } from "../cli";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
 import { materializeLockEntry } from "../materialize";
 import type { MaterializeResult } from "../materialize";
-import { applySettingsFragments } from "../settings";
-import type { SettingsApplyResult } from "../settings";
 import {
   findSkillsShSkill,
   listSkillsShSkills,
   skillsShConflictMessage,
 } from "../external";
 import { printRuntimeWarnings } from "../runtime-warnings";
+import {
+  applyFragmentOutput,
+  fragmentKindForTarget,
+  lockedFragmentTargetsForItem,
+  isFragmentKind,
+  type FragmentApplyResult,
+  type FragmentTarget,
+} from "../fragments";
 
 interface ApplyOptions {
   json?: boolean;
@@ -126,7 +132,7 @@ export function registerApply(program: Command): void {
       const externalSkillNames = new Set(externalSkills.map((s) => s.name));
       const results: Array<MaterializeResult | ApplyError | ApplyExternalSkip> =
         [];
-      let settingsResult: SettingsApplyResult | null = null;
+      const fragmentTargets = new Set<FragmentTarget>();
       for (const target of targets) {
         const { scope, key } = target;
         const lock = scope === "local" ? localLock : projectLock;
@@ -156,27 +162,29 @@ export function registerApply(program: Command): void {
           });
           continue;
         }
-        if (parsed.kind === "settings") {
+        if (isFragmentKind(parsed.kind)) {
           try {
             if (!dataRepo) throw new Error("data repo is required");
-            if (!settingsResult) {
-              settingsResult = await applySettingsFragments({
-                project,
-                dataRepo,
-                manifest,
-                oldLock: lock,
-                nextLock: lock,
-                dryRun: opts.dryRun,
-              });
-              results.push(addScope(scope, settingsApplyResult(settingsResult)));
+            const entry = lock.items[key]!;
+            if (entry.source !== "data") {
+              throw new Error(`expected data lock entry for ${key}`);
+            }
+            for (const outputTarget of await lockedFragmentTargetsForItem(
+              dataRepo,
+              parsed.kind,
+              parsed.name,
+              entry,
+              manifest,
+            )) {
+              fragmentTargets.add(outputTarget);
             }
           } catch (err) {
               results.push({
                 scope,
-                key: "data/settings/(merged)",
+                key,
               source: parsed.source,
               kind: parsed.kind,
-              name: "(merged)",
+              name: parsed.name,
               action: "error",
               error: err instanceof Error ? err.message : String(err),
             });
@@ -204,6 +212,39 @@ export function registerApply(program: Command): void {
             source: parsed.source,
             kind: parsed.kind,
             name: parsed.name,
+            action: "error",
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      for (const target of fragmentTargets) {
+        try {
+          if (!dataRepo) throw new Error("data repo is required");
+          results.push(
+            addScope(
+              "project",
+              fragmentApplyResult(
+                await applyFragmentOutput({
+                  project,
+                  dataRepo,
+                  manifest,
+                  oldLock: projectLock,
+                  nextLock: projectLock,
+                  target,
+                  dryRun: opts.dryRun,
+                }),
+              ),
+            ),
+          );
+        } catch (err) {
+          const kind = fragmentKindForTarget(target);
+          results.push({
+            scope: "project",
+            key: `data/${target}/(merged)`,
+            source: "data",
+            kind,
+            name: "(merged)",
             action: "error",
             error: err instanceof Error ? err.message : String(err),
           });
@@ -259,11 +300,12 @@ function printApplyResults(
   }
 }
 
-function settingsApplyResult(result: SettingsApplyResult): MaterializeResult {
+function fragmentApplyResult(result: FragmentApplyResult): MaterializeResult {
+  const kind = fragmentKindForTarget(result.target);
   return {
-    key: "data/settings/(merged)",
+    key: result.key,
     source: "data",
-    kind: "settings",
+    kind,
     name: "(merged)",
     action: result.action,
     path: result.path,

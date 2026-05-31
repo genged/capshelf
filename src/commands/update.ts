@@ -3,7 +3,7 @@ import { projectRoot, resolveDataRepo } from "../paths";
 import { loadManifest } from "../manifest";
 import { loadLocalLock, loadLock, saveLocalLock, saveLock } from "../lock";
 import { parseLockKey } from "../installed";
-import { shaOfGitVisibleItem } from "../master";
+import { isFragmentItemKind, shaOfGitVisibleItem } from "../master";
 import {
   assertIsGitRepo,
   assertRepoClean,
@@ -17,8 +17,6 @@ import {
   parseItemRef,
 } from "../item-ref";
 import { materializeLockEntry } from "../materialize";
-import { applySettingsFragments } from "../settings";
-import type { SettingsApplyResult } from "../settings";
 import {
   findSkillsShSkill,
   listSkillsShSkills,
@@ -29,6 +27,15 @@ import {
   runtimeWarningsForItem,
 } from "../runtime-warnings";
 import type { RuntimeWarning } from "../runtime-warnings";
+import {
+  applyFragmentOutput,
+  fragmentKindForTarget,
+  lastTouchingFragmentCommit,
+  shaOfFragmentItem,
+  touchedFragmentTargetsForItem,
+  type FragmentApplyResult,
+  type FragmentTarget,
+} from "../fragments";
 
 interface UpdateOptions {
   json?: boolean;
@@ -55,7 +62,7 @@ interface UpdateResult {
   sha?: string | null;
   currentSha?: string | null;
   lockedSha?: string;
-  plannedSha?: string;
+  plannedSha?: string | null;
   sourceCommit?: string;
   cliVersion?: string;
   dryRun?: true;
@@ -161,13 +168,13 @@ export function registerUpdate(program: Command): void {
         externalSkills.map((skill) => [skill.name, skill]),
       );
       const originalLock = cloneLock(projectLock);
-      const settingsNextLock = cloneLock(projectLock);
-      const pendingSettingsEntries = new Map<
+      const fragmentNextLock = cloneLock(projectLock);
+      const pendingFragmentEntries = new Map<
         string,
         (typeof projectLock.items)[string]
       >();
-      let settingsTouched = false;
-      let settingsLockChanged = false;
+      const touchedFragmentTargets = new Set<FragmentTarget>();
+      let fragmentLockChanged = false;
 
       for (const target of targets) {
         const { scope, key } = target;
@@ -225,11 +232,12 @@ export function registerUpdate(program: Command): void {
             });
             if (!item) throw new Error(`missing upstream item: ${parsed.kind}/${parsed.name}`);
 
-            const sha = await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
-            const sourceCommit = await lastTouchingCommit(
-              dataRepo,
-              item.repoRelPath,
-            );
+            const sha = isFragmentItemKind(parsed.kind)
+              ? await shaOfFragmentItem(dataRepo, parsed.kind, parsed.name)
+              : await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
+            const sourceCommit = isFragmentItemKind(parsed.kind)
+              ? await lastTouchingFragmentCommit(dataRepo, parsed.kind, parsed.name)
+              : await lastTouchingCommit(dataRepo, item.repoRelPath);
             const newEntry = {
               ...entry,
               sha,
@@ -241,14 +249,22 @@ export function registerUpdate(program: Command): void {
             };
             const lockWouldChange =
               sha !== entry.sha || sourceCommit !== entry.sourceCommit;
-            if (parsed.kind === "settings") {
+            if (isFragmentItemKind(parsed.kind)) {
               if (scope === "local") {
-                throw new Error("--local currently supports skills only");
+                throw new Error(`--local is not supported for ${parsed.kind} fragments`);
               }
-              settingsTouched = true;
-              settingsLockChanged = settingsLockChanged || lockWouldChange;
-              settingsNextLock.items[key] = newEntry;
-              pendingSettingsEntries.set(key, newEntry);
+              fragmentLockChanged = fragmentLockChanged || lockWouldChange;
+              fragmentNextLock.items[key] = newEntry;
+              pendingFragmentEntries.set(key, newEntry);
+              for (const target of await touchedFragmentTargetsForItem(
+                dataRepo,
+                parsed.kind,
+                parsed.name,
+                entry,
+                manifest,
+              )) {
+                touchedFragmentTargets.add(target);
+              }
               results.push({
                 key,
                 scope,
@@ -378,28 +394,31 @@ export function registerUpdate(program: Command): void {
         }
       }
 
-      if (settingsTouched && dataRepo) {
+      if (touchedFragmentTargets.size > 0 && dataRepo) {
         try {
-          const applied = await applySettingsFragments({
-            project,
-            dataRepo,
-            manifest,
-            oldLock: originalLock,
-            nextLock: settingsNextLock,
-            dryRun: opts.dryRun,
-          });
+          for (const target of touchedFragmentTargets) {
+            const applied = await applyFragmentOutput({
+              project,
+              dataRepo,
+              manifest,
+              oldLock: originalLock,
+              nextLock: fragmentNextLock,
+              target,
+              dryRun: opts.dryRun,
+            });
+            if (applied.action !== "already-current") {
+              results.push(fragmentMergedUpdateResult(applied));
+            }
+          }
           if (!opts.dryRun) {
-            for (const [key, entry] of pendingSettingsEntries) {
+            for (const [key, entry] of pendingFragmentEntries) {
               projectLock.items[key] = entry;
             }
-            projectChanged = projectChanged || settingsLockChanged;
-          }
-          if (applied.action !== "already-current") {
-            results.push(settingsMergedUpdateResult(applied));
+            projectChanged = projectChanged || fragmentLockChanged;
           }
         } catch (err) {
           results.push({
-            key: "data/settings/(merged)",
+            key: "data/fragments/(merged)",
             source: "data",
             kind: "settings",
             name: "(merged)",
@@ -469,11 +488,12 @@ function cloneLock<T>(lock: T): T {
   return JSON.parse(JSON.stringify(lock)) as T;
 }
 
-function settingsMergedUpdateResult(result: SettingsApplyResult): UpdateResult {
+function fragmentMergedUpdateResult(result: FragmentApplyResult): UpdateResult {
+  const kind = fragmentKindForTarget(result.target);
   return {
-    key: "data/settings/(merged)",
+    key: result.key,
     source: "data",
-    kind: "settings",
+    kind,
     name: "(merged)",
     action: result.action,
     currentSha: result.currentSha,

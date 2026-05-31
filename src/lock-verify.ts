@@ -5,6 +5,11 @@ import { lsTreeEntriesAtCommit, showAtCommit } from "./git";
 import type { Manifest } from "./manifest";
 import { hasIgnoredDotSegment } from "./dotfiles";
 import { missingSourceCommitMessage } from "./upstream-check";
+import {
+  allCanonicalItemRelPaths,
+  isFragmentItemKind,
+  itemRepoRelPath,
+} from "./master";
 
 export async function verifyDataLockEntries(
   dataRepo: string,
@@ -14,19 +19,56 @@ export async function verifyDataLockEntries(
   for (const [key, entry] of Object.entries(lock.items)) {
     if (entry.source !== "data") continue;
     const parsed = parseLockKey(key);
-    const relPath = `${parsed.kind}/${parsed.name}`;
-    const sha = await shaOfDataAtCommit(
-      dataRepo,
-      manifest,
-      relPath,
-      entry.sourceCommit,
-    );
+    const relPath = itemRepoRelPath(parsed.kind, parsed.name);
+    const sha = isFragmentItemKind(parsed.kind)
+      ? await shaOfFragmentAtCommit(
+          dataRepo,
+          manifest,
+          parsed.kind,
+          parsed.name,
+          entry.sourceCommit,
+        )
+      : await shaOfDataAtCommit(
+          dataRepo,
+          manifest,
+          relPath,
+          entry.sourceCommit,
+        );
     if (sha !== entry.sha) {
       throw new Error(
         `source ${relPath} at ${entry.sourceCommit} hashes to ${sha}, but lock expects ${entry.sha}`,
       );
     }
   }
+}
+
+async function shaOfFragmentAtCommit(
+  dataRepo: string,
+  manifest: Manifest,
+  kind: Exclude<ReturnType<typeof parseLockKey>["kind"], "skills">,
+  name: string,
+  commit: string,
+): Promise<string> {
+  const present: string[] = [];
+  for (const relPath of allCanonicalItemRelPaths(kind, name)) {
+    try {
+      await showAtCommit(dataRepo, commit, relPath);
+      present.push(relPath);
+    } catch {
+      // Target-specific fragment files are optional.
+    }
+  }
+  if (present.length === 0) {
+    throw new Error(missingSourceCommitMessage(dataRepo, commit, manifest));
+  }
+  const hasher = new Bun.CryptoHasher("sha256");
+  for (const relPath of present.sort()) {
+    hasher.update(relPath);
+    hasher.update("\0");
+    hasher.update(await showAtCommit(dataRepo, commit, relPath));
+    hasher.update("\0");
+  }
+  return hasher.digest("hex").slice(0, 12);
 }
 
 async function shaOfDataAtCommit(

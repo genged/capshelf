@@ -11,15 +11,24 @@ import { installedPath } from "./installed";
 import { findSystemItem } from "./bundled";
 import { assertGitAvailable, lsTreeAtCommit, showAtCommit } from "./git";
 import { gitVisibleFilesUnderPath, isGitRepo } from "./git";
-import { planSettingsOutput } from "./settings";
 import { hasIgnoredDotSegment, isIgnoredDotDirent } from "./dotfiles";
 import { missingSourceCommitMessage } from "./upstream-check";
+import {
+  allCanonicalFragmentRelPaths,
+  isFragmentKind,
+  lockedFragmentTargetsForItem,
+  planFragmentOutput,
+} from "./fragments";
 
 type LocalDiffState =
   | "drifted_local"
   | "drifted_and_update"
   | "missing_installed"
-  | "drifted_and_upstream_dirty";
+  | "missing_output"
+  | "drifted_and_upstream_dirty"
+  | "output_drift"
+  | "source_dirty"
+  | "source_dirty_and_output_drift";
 
 interface DiffableStatusRow {
   source: ItemSource;
@@ -48,7 +57,11 @@ export function shouldShowLocalDiff(state: string): state is LocalDiffState {
     state === "drifted_local" ||
     state === "drifted_and_update" ||
     state === "missing_installed" ||
-    state === "drifted_and_upstream_dirty"
+    state === "missing_output" ||
+    state === "drifted_and_upstream_dirty" ||
+    state === "output_drift" ||
+    state === "source_dirty" ||
+    state === "source_dirty_and_output_drift"
   );
 }
 
@@ -58,23 +71,53 @@ export async function buildStatusDiff(
   const { row } = opts;
   if (!shouldShowLocalDiff(row.state)) return null;
 
-  if (row.kind === "settings") {
+  if (isFragmentKind(row.kind)) {
     if (!opts.dataRepo) return null;
-    const item = `${row.source}/settings/(merged)`;
-    const plan = await planSettingsOutput({
-      project: opts.project,
-      dataRepo: opts.dataRepo,
-      manifest: opts.manifest,
-      oldLock: opts.lock,
-      nextLock: opts.lock,
-    });
-    const text = await unifiedDiff(
-      `${plan.path} (current)`,
-      `${plan.path} (locked)`,
-      plan.currentText ?? "",
-      plan.plannedText,
+    if (!row.sourceCommit) return null;
+    const entry = {
+      source: "data" as const,
+      sha: "",
+      sourceCommit: row.sourceCommit,
+      appliedAt: "",
+    };
+    const targets = await lockedFragmentTargetsForItem(
+      opts.dataRepo,
+      row.kind,
+      row.name,
+      entry,
+      opts.manifest,
     );
-    return text ? { item, path: plan.path, text } : null;
+    const parts: string[] = [];
+    let firstPath = "";
+    for (const target of targets) {
+      const plan = await planFragmentOutput({
+        project: opts.project,
+        dataRepo: opts.dataRepo,
+        manifest: opts.manifest,
+        oldLock: opts.lock,
+        nextLock: opts.lock,
+        target,
+      });
+      firstPath ||= plan.path;
+      const text = await unifiedDiff(
+        `${plan.path} (current)`,
+        `${plan.path} (locked)`,
+        plan.currentText ?? "",
+        plan.plannedText ?? "",
+      );
+      if (text) parts.push(text);
+    }
+    if (row.state === "source_dirty" || row.state === "source_dirty_and_output_drift") {
+      const sourceDiff = await dataRepoDiff(
+        opts.dataRepo,
+        allCanonicalFragmentRelPaths(row.kind, row.name),
+      );
+      if (sourceDiff) parts.push(sourceDiff);
+    }
+    const text = parts.join("\n");
+    return text
+      ? { item: `${row.source}/${row.kind}/${row.name}`, path: firstPath, text }
+      : null;
   }
 
   const item = `${row.source}/${row.kind}/${row.name}`;
@@ -91,6 +134,43 @@ export async function buildStatusDiff(
         text,
       }
     : null;
+}
+
+async function dataRepoDiff(dataRepo: string, relPaths: string[]): Promise<string> {
+  await assertGitAvailable();
+  const result = await $`git -C ${dataRepo} diff HEAD -- ${relPaths}`.quiet().nothrow();
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.toString().trim() || "git diff failed");
+  }
+  const parts = [result.stdout.toString()].filter((text) => text.length > 0);
+  for (const relPath of await untrackedDataRepoFiles(dataRepo, relPaths)) {
+    const untracked = await $`git -C ${dataRepo} diff --no-index -- /dev/null ${relPath}`
+      .quiet()
+      .nothrow();
+    if (untracked.exitCode !== 0 && untracked.exitCode !== 1) {
+      throw new Error(untracked.stderr.toString().trim() || "git diff failed");
+    }
+    const text = untracked.stdout.toString();
+    if (text.length > 0) parts.push(text);
+  }
+  return parts.join("\n");
+}
+
+async function untrackedDataRepoFiles(
+  dataRepo: string,
+  relPaths: string[],
+): Promise<string[]> {
+  const result = await $`git -C ${dataRepo} ls-files -z --others --exclude-standard -- ${relPaths}`
+    .quiet()
+    .nothrow();
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.toString().trim() || "git ls-files failed");
+  }
+  return result.stdout
+    .toString()
+    .split("\0")
+    .filter((path) => path.length > 0)
+    .sort();
 }
 
 async function expectedFilesForRow(

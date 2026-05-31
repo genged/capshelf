@@ -1,14 +1,25 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { join, basename, relative } from "node:path";
+import { join, basename } from "node:path";
 import { isIgnoredDotDirent } from "./dotfiles";
 import { gitVisibleFilesUnderPath } from "./git";
 
-export const ITEM_KINDS = ["skills", "settings", "mcp"] as const;
+export const ITEM_KINDS = ["skills", "settings", "mcp", "codex-config"] as const;
 export type ItemKind = (typeof ITEM_KINDS)[number];
+export type FragmentItemKind = Exclude<ItemKind, "skills">;
+
+export const FRAGMENT_ITEM_KINDS = [
+  "settings",
+  "mcp",
+  "codex-config",
+] as const satisfies readonly FragmentItemKind[];
 
 export function isItemKind(value: string): value is ItemKind {
   return ITEM_KINDS.includes(value as ItemKind);
+}
+
+export function isFragmentItemKind(value: ItemKind): value is FragmentItemKind {
+  return value !== "skills";
 }
 
 export interface MasterItem {
@@ -37,18 +48,20 @@ export async function listMasterItems(
   const kinds: readonly ItemKind[] = kind ? [kind] : ITEM_KINDS;
   const items: MasterItem[] = [];
   for (const k of kinds) {
-    const dir = join(dataRepo, k);
+    const dir = masterListDir(dataRepo, k);
     if (!existsSync(dir)) continue;
     const entries = await readdir(dir, { withFileTypes: true });
     for (const e of entries) {
       if (!e.isDirectory()) continue;
       if (e.name.startsWith(".")) continue;
-      const abs = join(dir, e.name);
+      if (!(await isInstallableDataItem(dataRepo, k, e.name))) continue;
+      const repoRelPath = itemRepoRelPath(k, e.name);
+      const abs = join(dataRepo, ...repoRelPath.split("/"));
       items.push({
         kind: k,
         name: e.name,
         path: abs,
-        repoRelPath: relative(dataRepo, abs),
+        repoRelPath,
       });
     }
   }
@@ -126,4 +139,66 @@ async function shaOfItemFiles(itemPath: string, files: string[]): Promise<string
     }
   }
   return hasher.digest("hex").slice(0, 12);
+}
+
+export function itemRepoRelPath(kind: ItemKind, name: string): string {
+  switch (kind) {
+    case "skills":
+      return `skills/${name}`;
+    case "settings":
+      return `settings/${name}`;
+    case "mcp":
+      return `mcp/${name}`;
+    case "codex-config":
+      return `codex/config/${name}`;
+  }
+}
+
+export function allCanonicalItemRelPaths(
+  kind: ItemKind,
+  name: string,
+): string[] {
+  switch (kind) {
+    case "skills":
+      return [itemRepoRelPath(kind, name)];
+    case "settings":
+      return [`settings/${name}/settings.json`];
+    case "mcp":
+      return [`mcp/${name}/claude.json`, `mcp/${name}/codex.toml`];
+    case "codex-config":
+      return [`codex/config/${name}/config.toml`];
+  }
+}
+
+export async function canonicalItemRelPaths(
+  dataRepo: string,
+  kind: ItemKind,
+  name: string,
+): Promise<string[]> {
+  if (kind === "skills") return [itemRepoRelPath(kind, name)];
+  const paths = allCanonicalItemRelPaths(kind, name).filter((relPath) =>
+    existsSync(join(dataRepo, ...relPath.split("/"))),
+  );
+  if (paths.length === 0) {
+    throw new Error(
+      `data repo does not have canonical source files for ${kind}/${name}`,
+    );
+  }
+  return paths;
+}
+
+function masterListDir(dataRepo: string, kind: ItemKind): string {
+  if (kind === "codex-config") return join(dataRepo, "codex", "config");
+  return join(dataRepo, kind);
+}
+
+async function isInstallableDataItem(
+  dataRepo: string,
+  kind: ItemKind,
+  name: string,
+): Promise<boolean> {
+  if (kind === "skills") return true;
+  return allCanonicalItemRelPaths(kind, name).some((relPath) =>
+    existsSync(join(dataRepo, ...relPath.split("/"))),
+  );
 }
