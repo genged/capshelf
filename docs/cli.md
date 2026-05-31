@@ -2,11 +2,11 @@
 
 ## Design principles
 
-1. **Agent-first.** The primary user is a coding agent, not a human. Every command has `--json` (machine output) and `--yes` (no prompts) modes. Stable exit codes.
+1. **Agent-first.** The primary user is a coding agent, not a human. Commands expose `--json` where structured output is useful. Stable exit codes.
 2. **Verbs over flags.** `add`, `rm`, `share`, `move`, and `promote` are first-class. You rarely type a path.
-3. **Kind inference.** Names are unique across kinds in master (`doctor` enforces this). `capshelf add security-review` Just Works. Disambiguate with `skills/security-review` if needed.
+3. **Kind inference.** Bare names work when they resolve to one item. Disambiguate with `skills/security-review` if needed.
 4. **Read-only by default for foreign projects.** `update` in project A cannot affect project B. `share` and `promote` write only the bound data repo and the calling project; B only changes when it runs `update` or `add`.
-5. **No silent writes.** Every command shows what it touched. `--quiet` exists for scripts.
+5. **No silent writes.** Mutating commands show what they touched; use `--json` where scripts need structured output.
 
 Claude custom commands are modeled as skills. capshelf does not manage `.claude/commands/`; create `skills/<name>/SKILL.md` for a reusable `/<name>` entry.
 
@@ -26,32 +26,30 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
 
 ## Command surface
 
-Current status shown as `[M?]` milestone number. See `milestones.md`.
-
-| verb | purpose | status |
+| verb | purpose | availability |
 |---|---|---|
-| `init` | scaffold a new project (manifest + lock, install bundled system items, bind data repo) | M1 ✓ (data binding in M3) |
-| `set-data <path>` | bind this machine to the project's data repo clone via `.capshelf/local.json` | M4 ✓ |
-| `set-upstream <url>` | write the committed `dataRepoUpstream` URL in `.capshelf/capshelf.json` | M4 ✓ |
-| `ls` | list items in master (default) or in this project (`--here`) | M2 ✓ |
-| `show <item>` | print metadata + content for one item | M2 ✓ |
-| `status [<item>]` | drift / update report for this project; `--project` and `--local` filter scopes; `--diff` explains local drift | M2 ✓ |
-| `add <item>` | install an item from the bound data repo; `--local` installs a clone-local skill | M2 ✓ |
-| `rm <item>` | remove from this project; `--local` removes clone-local skills | M2 ✓ |
-| `get-path <item>` | print the editable source path; fragments support `--output` for generated output paths and MCP supports `--target` | M5 ✓ |
-| `apply [<item>]` | reconcile project and local files with lockfiles (data items via `git show <sourceCommit>`; system items from bundled content; fragments via merged outputs); supports `--local` and `--dry-run` | M5 ✓ |
-| `update [<item>...]` | bump project pins by default; `--local` or an explicit local-only skill ref updates local pins; supports `--dry-run` | M5 ✓ |
-| `share <item>` | adopt a not-yet-shared on-disk item into the data repo; fragments require `--from` and project scope | M5 ✓ |
-| `move <item> --to <scope>` | move an already-tracked data item between local and project scope without changing data-repo content | M5 ✓ |
-| `promote <item>` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects local-scope skills | M5 ✓ |
-| `keep-local <item>` | mark drifted copy-item content as intentional project-local divergence; supports `--local` for skills and rejects fragments | M4 ✓ |
-| `revert <item>` | discard local edits, restore locked version; supports `--local` | M4 ✓ |
-| `validate <name>` | lint an item (frontmatter, structure, broken refs) | M6 |
-| `diff <name> [<ref>]` | show what would change on apply/update/promote | M6 |
-| `doctor` | audit integrity (requires/conflicts, lockfile drift, uniqueness, system/data namespace collisions) | M6 |
-| `journal` | recent activity (who/when/what) | M6 |
-| `search` | fuzzy-find by name/tag across the data repo | M6 |
-| `bundle` | apply / save / list bundles | M6 |
+| `init` | scaffold a new project (manifest + lock, install bundled system items, bind data repo) | implemented |
+| `set-data <path>` | bind this machine to the project's data repo clone via `.capshelf/local.json` | implemented |
+| `set-upstream <url>` | write the committed `dataRepoUpstream` URL in `.capshelf/capshelf.json` | implemented |
+| `ls` | list items in master (default) or in this project (`--here`) | implemented |
+| `show <item>` | print metadata + content for one item | implemented |
+| `status [<item>]` | drift / update report for this project; `--project` and `--local` filter scopes; `--diff` explains local drift | implemented |
+| `add <item>` | install an item from the bound data repo; `--local` installs a clone-local skill | implemented |
+| `rm <item>` | remove from this project; `--local` removes clone-local skills | implemented |
+| `get-path <item>` | print the editable path; skills return their managed directory, fragments support `--output` for generated output paths, and MCP supports `--target` | implemented |
+| `apply [<item>]` | reconcile project and local files with lockfiles (data items via `git show <sourceCommit>`; system items from bundled content; fragments via merged outputs); supports `--local` and `--dry-run` | implemented |
+| `update [<item>...]` | bump project pins by default; `--local` or an explicit local-only skill ref updates local pins; supports `--dry-run` | implemented |
+| `share <item>` | adopt a not-yet-shared on-disk item into the data repo; fragments require `--from` and project scope | implemented |
+| `move <item> --to <scope>` | move an already-tracked data item between local and project scope without changing data-repo content | implemented |
+| `promote <item>` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects local-scope skills | implemented |
+| `keep-local <item>` | mark drifted copy-item content as intentional project-local divergence; supports `--local` for skills and rejects fragments | implemented |
+| `revert <item>` | discard local edits, restore locked version; supports `--local` | implemented |
+| `validate <name>` | lint an item (frontmatter, structure, broken refs) | roadmap |
+| `diff <name> [<ref>]` | show what would change on apply/update/promote | roadmap |
+| `doctor` | audit integrity (requires/conflicts, lockfile drift, uniqueness, system/data namespace collisions) | roadmap |
+| `journal` | recent activity (who/when/what) | roadmap |
+| `search` | fuzzy-find by name/tag across the data repo | roadmap |
+| `bundle` | apply / save / list bundles | roadmap |
 
 ## Common Flags
 
@@ -60,8 +58,6 @@ Current status shown as `[M?]` milestone number. See `milestones.md`.
 - `--dry-run` — supported by `apply` and `update`; previews planned writes without changing files or lock state
 - `--diff` — supported by `status`; shows local drift against the locked content without changing files
 - `--target claude|codex` — used by multi-target MCP fragment commands such as `show`, `get-path`, and `share`
-- `--yes`/`-y` — planned for future commands that would otherwise prompt
-- `--quiet`/`-q` and `--cwd <path>` — planned, not currently implemented
 
 ## Init Layout
 
@@ -118,9 +114,9 @@ registered.
 | 0 | success |
 | 1 | generic error (missing args, bad config, I/O) |
 | 2 | item not found in data repo |
-| 3 | conflict (`conflicts-with`, promote would clobber, operation rejected on a system item, or path is managed by skills.sh) |
+| 3 | conflict (promote would clobber, operation rejected on a system item, untracked target would be overwritten, or path is managed by skills.sh) |
 | 4 | drift detected (for `status --strict`) or upstream verification failed |
-| 5 | requires not met |
+| 5 | reserved for future unmet-requires checks |
 | 6 | reserved for data repo not configured |
 | 7 | required dependency missing (`git` not found on `PATH`) |
 
@@ -153,22 +149,32 @@ data repo at <path> is bound to the wrong upstream.
         capshelf set-upstream <new-url>
 ```
 
-## The edit loop (M4)
+## The edit loop
 
 The core agent-driven flow. Works on data items only — system items are read-only from the project's perspective.
 
 ```
  agent: capshelf get-path security-review
-   ← { path: ".agents/skills/security-review/SKILL.md",
-        locked_sha: "9f2c1e", source_commit: "abc123",
-        data_repo_sha: "9f2c1e" }
+   ← .agents/skills/security-review
 
- agent: Edit tool on that file
+ agent: Edit tool on .agents/skills/security-review/SKILL.md
 
- agent: capshelf status security-review
-   ← { state: "drifted_local", locked_sha: "9f2c1e",
-        current_sha: "fa17b2", data_repo_sha: "9f2c1e",
-        diff_summary: "+12 -3" }
+ agent: capshelf status security-review --json
+   ← {
+       "items": [
+         {
+           "scope": "project",
+           "source": "data",
+           "kind": "skills",
+           "name": "security-review",
+           "state": "drifted_local",
+           "lockedSha": "9f2c1e",
+           "currentSha": "fa17b2",
+           "upstreamSha": "9f2c1e",
+           "sourceCommit": "abc123"
+         }
+       ]
+     }
 
  agent (or user) chooses:
    capshelf promote security-review -m "add SQLi check"
@@ -176,7 +182,7 @@ The core agent-driven flow. Works on data items only — system items are read-o
    capshelf revert security-review     # uses sourceCommit + git show to restore
 ```
 
-## Adopting a local skill (M5)
+## Adopting a local skill
 
 ```
 mkdir -p .agents/skills/write-migration .claude/skills
@@ -246,9 +252,11 @@ An MCP server would let agents call `capshelf_add`, `capshelf_status`, etc. as f
 
 1. Approve a `promote` when the agent surfaces it.
 2. Glance at `capshelf status` when starting a project.
-3. Choose a bundle / architecture for a new project.
+3. Make project-specific policy decisions for new projects.
 
-Everything else — search, edit, validate, promote, reconcile — is the agent's job.
+Everything else in the current CLI surface — inspect, edit, share, move,
+promote, and reconcile — is the agent's job. Search, validation, and bundles
+are roadmap workflow extensions.
 
 ## Config Fragments
 

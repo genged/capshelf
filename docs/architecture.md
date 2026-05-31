@@ -58,7 +58,7 @@ Verbs map to this model:
 
 - **`apply`** — converge project files and generated config outputs to match manifest + lock. Idempotent, safe to run anytime.
 - **`add`** — add a data-repo item to the spec and materialize it, but only if the target path is absent or already locked.
-- **`status`** — show the diff between desired (lock) and actual (`.claude/`). Read-only.
+- **`status`** — show the diff between desired (lock) and actual project files. Read-only.
 - **`update`** — bump the spec (lock pointer → data repo HEAD), then apply.
 - **`revert`** — discard local edits to one item by reapplying its locked content.
 - **`share`** — adopt not-yet-shared on-disk content into the data repo, then track it in local or project scope.
@@ -98,24 +98,26 @@ A data repo is any directory matching this layout, with its own git history:
 │   └── config/
 │       └── <name>/
 │           └── config.toml     (→ <project>/.codex/config.toml)
-├── bundles/                    named presets (yaml)
-│   └── <name>.yml
 └── .git/                       required: a data repo MUST be a git repo
 ```
+
+Planned data-repo extensions include bundles and metadata sidecars, but the
+current CLI discovers installable items only from `skills/`, `settings/`,
+`mcp/`, and `codex/config/`.
 
 Multiple data repos can coexist on a single machine. Projects pick one in their manifest.
 
 ## CLI source repo
 
-The capshelf source lives at `~/code/capshelf-cli/`:
+The capshelf source repository contains:
 
 ```
-~/code/capshelf-cli/
+<capshelf-source>/
 ├── src/
-│   ├── bundled/                    bundled system items (compiled into binary, M3+)
+│   ├── bundled/                    bundled system items compiled into the binary
 │   │   └── skills/capshelf/SKILL.md
 │   ├── cli.ts
-│   ├── git.ts                      git wrapper module (M3+)
+│   ├── git.ts                      git wrapper module
 │   └── …
 ├── dist/                           built binary (gitignored)
 ├── package.json
@@ -128,7 +130,8 @@ The capshelf source lives at `~/code/capshelf-cli/`:
 
 ## Smoke-test data repo
 
-`capshelf-cli`'s smoke tests need *some* data repo to point at. By convention this is `~/code/capshelf-data/`:
+The source repo's smoke tests need *some* data repo to point at. A common local
+fixture is `~/code/capshelf-data/`:
 
 ```
 ~/code/capshelf-data/
@@ -264,8 +267,6 @@ collisions instead of overwriting project-local values.
 - For system items, the lockfile records `cliVersion` — the capshelf binary version that produced the bundled content.
 - Optional human `label` (e.g. `"v3"`) is decoration, not identity.
 
-See `decisions.md#adr-003` and `adr-009`.
-
 ## Parallel-PR safety
 
 Three rules together guarantee that an edit in one project never disturbs another:
@@ -305,9 +306,10 @@ JSON output, `status` lists the personal skill under
 `external/  (Personal Claude)`, and `status --strict` exits 4 until the personal
 skill is removed or renamed.
 
-## Metadata
+## Roadmap Metadata
 
-Optional `.capshelf.yml` (or JSON) sibling to each item:
+The current CLI does not parse item metadata sidecars. A planned extension is an
+optional `.capshelf.yml` (or JSON) sibling to each item:
 
 ```yaml
 name: security-review
@@ -318,16 +320,21 @@ requires: [settings/permissions-base]
 conflicts-with: [skills/quick-review]
 ```
 
-The tool uses this for:
+The planned metadata behavior is:
 - warn on `add` if `requires` not present
 - refuse on `add` if `conflicts-with` collides
 - filter `ls --tag security`
 
-For early milestones, metadata lives in YAML frontmatter inside `SKILL.md` (Claude Code convention).
+Today, skill YAML frontmatter in `SKILL.md` is preserved as item content for
+Claude/Codex consumption, but capshelf does not enforce metadata requirements
+or provide tag filtering.
 
-## Bundles
+## Roadmap Bundles
 
-Bundles are manifest macros. `capshelf init --bundle go-backend` expands the bundle into the project manifest; after that, each item is locked independently. Bundles are **not** a versioning unit.
+Bundles are not implemented in the current CLI. The intended model is a
+manifest macro: a future bundle command would expand a named bundle into the
+project manifest, and after that each item would be locked independently.
+Bundles would not be a versioning unit.
 
 ```yaml
 # bundles/go-backend.yml
@@ -343,4 +350,7 @@ Same model, different output paths. Codex items live under `codex/` in a data re
 
 ## What the human does (and doesn't)
 
-Humans approve data-repo writes, glance at `status` when starting a project, and make bundle-composition decisions. Agents handle the rest — search, edit, validate, share, move, promote, reconcile — via the CLI surface in `cli.md`.
+Humans approve data-repo writes and glance at `status` when starting a project.
+Agents handle the current CLI workflow — inspect, edit, share, move, promote,
+and reconcile — via the CLI surface in `cli.md`. Search, validation, and bundle
+composition are roadmap workflows.

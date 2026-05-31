@@ -103,7 +103,7 @@ capshelf update
 Edit a skill locally, then choose what to do with the drift:
 
 ```bash
-$EDITOR "$(capshelf get-path security-review)"
+$EDITOR "$(capshelf get-path security-review)/SKILL.md"
 capshelf status security-review --diff
 
 capshelf promote security-review -m "tighten security review checklist"
@@ -202,11 +202,11 @@ reported as external state instead of overwritten.
 | `promote` | commit local edits or fragment source edits for a tracked item back to the data repo |
 | `keep-local` | mark drift as intentional |
 | `revert` | restore one item to its locked version |
-| `get-path` | print the editable source path; use `--output` for generated fragment outputs |
+| `get-path` | print the editable path; skills return their directory, fragments return source files, and `--output` returns generated fragment outputs |
 
-Every command supports `--json` where useful for agent consumption. Exit codes
-are stable: `0` success, `2` not found, `3` conflict, `4` drift or upstream
-mismatch, `5` unmet requires, `7` missing `git`. Full reference:
+Commands support `--json` where useful for agent consumption. Exit codes are
+stable: `0` success, `2` not found, `3` conflict, `4` drift or upstream
+mismatch, `5` reserved for future unmet-requires checks, `7` missing `git`. Full reference:
 [`docs/cli.md`](docs/cli.md).
 
 ## Development
