@@ -31,9 +31,7 @@ describe("parseItemRef", () => {
   });
 
   test("rejects unsupported kinds", () => {
-    expect(() => parseItemRef("commands/deploy")).toThrow(
-      /invalid item kind/,
-    );
+    expect(() => parseItemRef("commands/deploy")).toThrow(/invalid item kind/);
   });
 
   test("rejects lock-key-shaped refs", () => {
@@ -76,7 +74,10 @@ describe("findMasterItemByRef", () => {
     const dataRepo = await tempDir();
     await mkdir(join(dataRepo, "skills", "auth"), { recursive: true });
     await mkdir(join(dataRepo, "settings", "auth"), { recursive: true });
-    await writeFile(join(dataRepo, "settings", "auth", "settings.json"), "{}\n");
+    await writeFile(
+      join(dataRepo, "settings", "auth", "settings.json"),
+      "{}\n",
+    );
 
     await expect(
       findMasterItemByRef(dataRepo, { name: "auth" }),
@@ -117,9 +118,9 @@ describe("lockKeysForRef", () => {
   });
 
   test("matches explicit kind refs", () => {
-    expect(lockKeysForRef(lock, { kind: "skills", name: "capshelf" })).toEqual(
-      ["system/skills/capshelf"],
-    );
+    expect(lockKeysForRef(lock, { kind: "skills", name: "capshelf" })).toEqual([
+      "system/skills/capshelf",
+    ]);
   });
 
   test("does not match the wrong kind", () => {
@@ -149,16 +150,18 @@ describe("lockKeyForRef", () => {
   };
 
   test("uses source filtering to disambiguate lock keys", () => {
-    expect(lockKeyForRef(lock, { kind: "skills", name: "shared" }, "data")).toBe(
-      "data/skills/shared",
-    );
+    expect(
+      lockKeyForRef(lock, { kind: "skills", name: "shared" }, "data"),
+    ).toBe("data/skills/shared");
     expect(
       lockKeyForRef(lock, { kind: "skills", name: "shared" }, "system"),
     ).toBe("system/skills/shared");
   });
 
   test("returns null when no lock key matches", () => {
-    expect(lockKeyForRef(lock, { kind: "settings", name: "shared" })).toBeNull();
+    expect(
+      lockKeyForRef(lock, { kind: "settings", name: "shared" }),
+    ).toBeNull();
   });
 
   test("rejects ambiguous lock keys when source is not specified", () => {

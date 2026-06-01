@@ -62,19 +62,25 @@ describe("cli integration", () => {
     });
 
     expect(result.exitCode).toBe(0);
-    const manifest = await file(join(project, ".capshelf", "capshelf.json")).json();
+    const manifest = await file(
+      join(project, ".capshelf", "capshelf.json"),
+    ).json();
     expect(manifest.dataRepo).toBeUndefined();
     expect(manifest.dataRepoUpstream).toBeUndefined();
-    expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual({
-      dataRepo,
-      skills: [],
-      settings: [],
-      mcp: [],
-    });
-    expect(await readFile(join(project, ".capshelf", ".gitignore"), "utf-8")).toContain(
-      "local.json",
+    expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual(
+      {
+        dataRepo,
+        skills: [],
+        settings: [],
+        mcp: [],
+      },
     );
-    expect(await file(join(project, ".capshelf", "capshelf.lock.json")).exists()).toBe(true);
+    expect(
+      await readFile(join(project, ".capshelf", ".gitignore"), "utf-8"),
+    ).toContain("local.json");
+    expect(
+      await file(join(project, ".capshelf", "capshelf.lock.json")).exists(),
+    ).toBe(true);
   });
 
   test("init honors --no-upstream for repos with origin", async () => {
@@ -92,7 +98,9 @@ describe("cli integration", () => {
     });
 
     expect(result.exitCode).toBe(0);
-    const manifest = await file(join(project, ".capshelf", "capshelf.json")).json();
+    const manifest = await file(
+      join(project, ".capshelf", "capshelf.json"),
+    ).json();
     expect(manifest.dataRepoUpstream).toBeUndefined();
   });
 
@@ -159,7 +167,10 @@ describe("cli integration", () => {
     const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
     await mkdir(join(originalRepo, "skills", "hello"), { recursive: true });
-    await writeFile(join(originalRepo, "skills", "hello", "SKILL.md"), "hello\n");
+    await writeFile(
+      join(originalRepo, "skills", "hello", "SKILL.md"),
+      "hello\n",
+    );
     await commitAll(originalRepo, "hello");
 
     await mkdir(join(wrongRepo, "skills", "hello"), { recursive: true });
@@ -194,8 +205,9 @@ describe("cli integration", () => {
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr.toString()).toContain("does not contain commit");
-    expect(await file(join(project, ".capshelf", "local.json")).json())
-      .toEqual({ dataRepo: originalRepo, skills: [], settings: [], mcp: [] });
+    expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual(
+      { dataRepo: originalRepo, skills: [], settings: [], mcp: [] },
+    );
   });
 
   test("add --local writes local manifest, lock, excludes, and status group", async () => {
@@ -204,7 +216,10 @@ describe("cli integration", () => {
     const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
     await mkdir(join(dataRepo, "skills", "local-only"), { recursive: true });
-    await writeFile(join(dataRepo, "skills", "local-only", "SKILL.md"), "local\n");
+    await writeFile(
+      join(dataRepo, "skills", "local-only", "SKILL.md"),
+      "local\n",
+    );
     await commitAll(dataRepo, "local skill");
 
     const init = Bun.spawnSync({
@@ -225,20 +240,32 @@ describe("cli integration", () => {
     });
     expect(add.exitCode).toBe(0);
 
-    expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual({
-      dataRepo,
-      skills: ["local-only"],
-      settings: [],
-      mcp: [],
-    });
-    const localLock = await file(join(project, ".capshelf", "local.lock.json")).json();
+    expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual(
+      {
+        dataRepo,
+        skills: ["local-only"],
+        settings: [],
+        mcp: [],
+      },
+    );
+    const localLock = await file(
+      join(project, ".capshelf", "local.lock.json"),
+    ).json();
     expect(localLock.items["data/skills/local-only"].source).toBe("data");
-    const projectManifest = await file(join(project, ".capshelf", "capshelf.json")).json();
+    const projectManifest = await file(
+      join(project, ".capshelf", "capshelf.json"),
+    ).json();
     expect(projectManifest.skills).toEqual([]);
-    const metadataIgnore = await readFile(join(project, ".capshelf", ".gitignore"), "utf-8");
+    const metadataIgnore = await readFile(
+      join(project, ".capshelf", ".gitignore"),
+      "utf-8",
+    );
     expect(metadataIgnore).toContain("local.json");
     expect(metadataIgnore).toContain("local.lock.json");
-    const exclude = await readFile(join(project, ".git", "info", "exclude"), "utf-8");
+    const exclude = await readFile(
+      join(project, ".git", "info", "exclude"),
+      "utf-8",
+    );
     expect(exclude).not.toContain(".capshelf/local.json");
     expect(exclude).not.toContain(".capshelf/local.lock.json");
     expect(exclude).toContain(".agents/skills/local-only/");
@@ -273,21 +300,31 @@ describe("cli integration", () => {
     });
     expect(move.exitCode).toBe(0);
 
-    expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual({
-      dataRepo,
-      skills: [],
-      settings: [],
-      mcp: [],
-    });
-    const nextLocalLock = await file(join(project, ".capshelf", "local.lock.json")).json();
+    expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual(
+      {
+        dataRepo,
+        skills: [],
+        settings: [],
+        mcp: [],
+      },
+    );
+    const nextLocalLock = await file(
+      join(project, ".capshelf", "local.lock.json"),
+    ).json();
     expect(nextLocalLock.items["data/skills/local-only"]).toBeUndefined();
-    const nextProjectManifest = await file(join(project, ".capshelf", "capshelf.json")).json();
+    const nextProjectManifest = await file(
+      join(project, ".capshelf", "capshelf.json"),
+    ).json();
     expect(nextProjectManifest.skills).toEqual(["local-only"]);
-    const nextExclude = await readFile(join(project, ".git", "info", "exclude"), "utf-8");
+    const nextExclude = await readFile(
+      join(project, ".git", "info", "exclude"),
+      "utf-8",
+    );
     expect(nextExclude).not.toContain(".agents/skills/local-only/");
     expect(nextExclude).not.toContain(".claude/skills/local-only");
 
-    const gitStatus = await $`git -C ${project} status --short -- .agents/skills/local-only .claude/skills/local-only`.text();
+    const gitStatus =
+      await $`git -C ${project} status --short -- .agents/skills/local-only .claude/skills/local-only`.text();
     expect(gitStatus).toContain(".agents/skills/local-only");
   });
 
@@ -305,8 +342,13 @@ describe("cli integration", () => {
     });
     expect(init.exitCode).toBe(0);
 
-    await mkdir(join(project, ".agents", "skills", "draft"), { recursive: true });
-    await writeFile(join(project, ".agents", "skills", "draft", "SKILL.md"), "draft\n");
+    await mkdir(join(project, ".agents", "skills", "draft"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(project, ".agents", "skills", "draft", "SKILL.md"),
+      "draft\n",
+    );
 
     const share = Bun.spawnSync({
       cmd: [process.execPath, cli, "share", "skills/draft"],
@@ -317,18 +359,29 @@ describe("cli integration", () => {
     });
     expect(share.exitCode).toBe(0);
 
-    expect(await file(join(dataRepo, "skills", "draft", "SKILL.md")).text()).toBe("draft\n");
-    expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual({
-      dataRepo,
-      skills: ["draft"],
-      settings: [],
-      mcp: [],
-    });
-    const localLock = await file(join(project, ".capshelf", "local.lock.json")).json();
+    expect(
+      await file(join(dataRepo, "skills", "draft", "SKILL.md")).text(),
+    ).toBe("draft\n");
+    expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual(
+      {
+        dataRepo,
+        skills: ["draft"],
+        settings: [],
+        mcp: [],
+      },
+    );
+    const localLock = await file(
+      join(project, ".capshelf", "local.lock.json"),
+    ).json();
     expect(localLock.items["data/skills/draft"].source).toBe("data");
-    const manifest = await file(join(project, ".capshelf", "capshelf.json")).json();
+    const manifest = await file(
+      join(project, ".capshelf", "capshelf.json"),
+    ).json();
     expect(manifest.skills).toEqual([]);
-    const exclude = await readFile(join(project, ".git", "info", "exclude"), "utf-8");
+    const exclude = await readFile(
+      join(project, ".git", "info", "exclude"),
+      "utf-8",
+    );
     expect(exclude).toContain(".agents/skills/draft/");
   });
 
@@ -364,12 +417,19 @@ describe("cli integration", () => {
       stderr: "pipe",
     });
     expect(share.exitCode).toBe(0);
-    expect(await file(join(dataRepo, "skills", "ignored", "SKILL.md")).text()).toBe(
-      "ignored content\n",
-    );
+    expect(
+      await file(join(dataRepo, "skills", "ignored", "SKILL.md")).text(),
+    ).toBe("ignored content\n");
 
     const status = Bun.spawnSync({
-      cmd: [process.execPath, cli, "status", "--local", "skills/ignored", "--json"],
+      cmd: [
+        process.execPath,
+        cli,
+        "status",
+        "--local",
+        "skills/ignored",
+        "--json",
+      ],
       cwd: project,
       env: process.env,
       stdout: "pipe",
@@ -394,8 +454,13 @@ describe("cli integration", () => {
     });
     expect(init.exitCode).toBe(0);
 
-    await mkdir(join(project, ".agents", "skills", "policy"), { recursive: true });
-    await writeFile(join(project, ".agents", "skills", "policy", "SKILL.md"), "policy\n");
+    await mkdir(join(project, ".agents", "skills", "policy"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(project, ".agents", "skills", "policy", "SKILL.md"),
+      "policy\n",
+    );
 
     const share = Bun.spawnSync({
       cmd: [process.execPath, cli, "share", "skills/policy", "--to", "project"],
@@ -406,13 +471,22 @@ describe("cli integration", () => {
     });
     expect(share.exitCode).toBe(0);
 
-    const manifest = await file(join(project, ".capshelf", "capshelf.json")).json();
+    const manifest = await file(
+      join(project, ".capshelf", "capshelf.json"),
+    ).json();
     expect(manifest.skills).toEqual(["policy"]);
-    const lock = await file(join(project, ".capshelf", "capshelf.lock.json")).json();
+    const lock = await file(
+      join(project, ".capshelf", "capshelf.lock.json"),
+    ).json();
     expect(lock.items["data/skills/policy"].source).toBe("data");
-    const localConfig = await file(join(project, ".capshelf", "local.json")).json();
+    const localConfig = await file(
+      join(project, ".capshelf", "local.json"),
+    ).json();
     expect(localConfig.skills).toEqual([]);
-    const exclude = await readFile(join(project, ".git", "info", "exclude"), "utf-8");
+    const exclude = await readFile(
+      join(project, ".git", "info", "exclude"),
+      "utf-8",
+    );
     expect(exclude).not.toContain(".agents/skills/policy/");
   });
 
@@ -451,9 +525,14 @@ describe("cli integration", () => {
     expect(share.stderr.toString()).toContain(
       "local install path is already tracked by git",
     );
-    const exclude = await readFile(join(project, ".git", "info", "exclude"), "utf-8");
+    const exclude = await readFile(
+      join(project, ".git", "info", "exclude"),
+      "utf-8",
+    );
     expect(exclude).not.toContain(".agents/skills/tracked/");
-    expect(await file(join(dataRepo, "skills", "tracked")).exists()).toBe(false);
+    expect(await file(join(dataRepo, "skills", "tracked")).exists()).toBe(
+      false,
+    );
   });
 
   test("move changes tracked skill scope in both directions", async () => {
@@ -491,15 +570,21 @@ describe("cli integration", () => {
       stderr: "pipe",
     });
     expect(toProject.exitCode).toBe(0);
-    expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual({
-      dataRepo,
-      skills: [],
-      settings: [],
-      mcp: [],
-    });
-    let manifest = await file(join(project, ".capshelf", "capshelf.json")).json();
+    expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual(
+      {
+        dataRepo,
+        skills: [],
+        settings: [],
+        mcp: [],
+      },
+    );
+    let manifest = await file(
+      join(project, ".capshelf", "capshelf.json"),
+    ).json();
     expect(manifest.skills).toEqual(["toggle"]);
-    let localLock = await file(join(project, ".capshelf", "local.lock.json")).json();
+    let localLock = await file(
+      join(project, ".capshelf", "local.lock.json"),
+    ).json();
     expect(localLock.items["data/skills/toggle"]).toBeUndefined();
 
     const toLocal = Bun.spawnSync({
@@ -512,11 +597,18 @@ describe("cli integration", () => {
     expect(toLocal.exitCode).toBe(0);
     manifest = await file(join(project, ".capshelf", "capshelf.json")).json();
     expect(manifest.skills).toEqual([]);
-    localLock = await file(join(project, ".capshelf", "local.lock.json")).json();
+    localLock = await file(
+      join(project, ".capshelf", "local.lock.json"),
+    ).json();
     expect(localLock.items["data/skills/toggle"].source).toBe("data");
-    const localConfig = await file(join(project, ".capshelf", "local.json")).json();
+    const localConfig = await file(
+      join(project, ".capshelf", "local.json"),
+    ).json();
     expect(localConfig.skills).toEqual(["toggle"]);
-    const exclude = await readFile(join(project, ".git", "info", "exclude"), "utf-8");
+    const exclude = await readFile(
+      join(project, ".git", "info", "exclude"),
+      "utf-8",
+    );
     expect(exclude).toContain(".agents/skills/toggle/");
   });
 
@@ -526,7 +618,10 @@ describe("cli integration", () => {
     const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
     await mkdir(join(dataRepo, "skills", "partial"), { recursive: true });
-    await writeFile(join(dataRepo, "skills", "partial", "SKILL.md"), "partial\n");
+    await writeFile(
+      join(dataRepo, "skills", "partial", "SKILL.md"),
+      "partial\n",
+    );
     await commitAll(dataRepo, "partial skill");
 
     const init = Bun.spawnSync({
@@ -551,11 +646,15 @@ describe("cli integration", () => {
     const manifestPath = join(project, ".capshelf", "capshelf.json");
     const localLock = await file(localLockPath).json();
     const projectLock = await file(projectLockPath).json();
-    projectLock.items["data/skills/partial"] = localLock.items["data/skills/partial"];
-    await writeFile(projectLockPath, JSON.stringify(projectLock, null, 2) + "\n");
+    projectLock.items["data/skills/partial"] =
+      localLock.items["data/skills/partial"];
+    await writeFile(
+      projectLockPath,
+      `${JSON.stringify(projectLock, null, 2)}\n`,
+    );
     const manifest = await file(manifestPath).json();
     manifest.skills.push("partial");
-    await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
     const recovered = Bun.spawnSync({
       cmd: [process.execPath, cli, "move", "skills/partial", "--to", "project"],
@@ -568,7 +667,9 @@ describe("cli integration", () => {
 
     const nextLocalLock = await file(localLockPath).json();
     expect(nextLocalLock.items["data/skills/partial"]).toBeUndefined();
-    const localConfig = await file(join(project, ".capshelf", "local.json")).json();
+    const localConfig = await file(
+      join(project, ".capshelf", "local.json"),
+    ).json();
     expect(localConfig.skills).toEqual([]);
     const nextManifest = await file(manifestPath).json();
     expect(nextManifest.skills).toEqual(["partial"]);
@@ -614,17 +715,27 @@ describe("cli integration", () => {
           projectLock.items["data/skills/partial-local"],
       },
     };
-    await writeFile(localLockPath, JSON.stringify(localLock, null, 2) + "\n");
+    await writeFile(localLockPath, `${JSON.stringify(localLock, null, 2)}\n`);
     const localConfig = await file(localConfigPath).json();
     localConfig.skills.push("partial-local");
-    await writeFile(localConfigPath, JSON.stringify(localConfig, null, 2) + "\n");
+    await writeFile(
+      localConfigPath,
+      `${JSON.stringify(localConfig, null, 2)}\n`,
+    );
     await writeFile(
       join(project, ".git", "info", "exclude"),
       ".agents/skills/partial-local/\n.claude/skills/partial-local\n",
     );
 
     const recovered = Bun.spawnSync({
-      cmd: [process.execPath, cli, "move", "skills/partial-local", "--to", "local"],
+      cmd: [
+        process.execPath,
+        cli,
+        "move",
+        "skills/partial-local",
+        "--to",
+        "local",
+      ],
       cwd: project,
       env: process.env,
       stdout: "pipe",
@@ -634,10 +745,14 @@ describe("cli integration", () => {
 
     const nextProjectLock = await file(projectLockPath).json();
     expect(nextProjectLock.items["data/skills/partial-local"]).toBeUndefined();
-    const nextManifest = await file(join(project, ".capshelf", "capshelf.json")).json();
+    const nextManifest = await file(
+      join(project, ".capshelf", "capshelf.json"),
+    ).json();
     expect(nextManifest.skills).toEqual([]);
     const nextLocalLock = await file(localLockPath).json();
-    expect(nextLocalLock.items["data/skills/partial-local"].source).toBe("data");
+    expect(nextLocalLock.items["data/skills/partial-local"].source).toBe(
+      "data",
+    );
   });
 
   test("promote --local syncs a local-scope skill without changing project scope", async () => {
@@ -646,7 +761,10 @@ describe("cli integration", () => {
     const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
     await mkdir(join(dataRepo, "skills", "local-edit"), { recursive: true });
-    await writeFile(join(dataRepo, "skills", "local-edit", "SKILL.md"), "before\n");
+    await writeFile(
+      join(dataRepo, "skills", "local-edit", "SKILL.md"),
+      "before\n",
+    );
     await commitAll(dataRepo, "local edit skill");
 
     const init = Bun.spawnSync({
@@ -666,8 +784,13 @@ describe("cli integration", () => {
     });
     expect(add.exitCode).toBe(0);
 
-    const beforeLock = await file(join(project, ".capshelf", "local.lock.json")).json();
-    await writeFile(join(project, ".agents", "skills", "local-edit", "SKILL.md"), "after\n");
+    const beforeLock = await file(
+      join(project, ".capshelf", "local.lock.json"),
+    ).json();
+    await writeFile(
+      join(project, ".agents", "skills", "local-edit", "SKILL.md"),
+      "after\n",
+    );
     const promote = Bun.spawnSync({
       cmd: [
         process.execPath,
@@ -686,12 +809,18 @@ describe("cli integration", () => {
     expect(promote.exitCode).toBe(0);
     expect(promote.stderr.toString()).not.toContain("deprecated");
 
-    expect(await file(join(dataRepo, "skills", "local-edit", "SKILL.md")).text()).toBe("after\n");
-    const afterLock = await file(join(project, ".capshelf", "local.lock.json")).json();
+    expect(
+      await file(join(dataRepo, "skills", "local-edit", "SKILL.md")).text(),
+    ).toBe("after\n");
+    const afterLock = await file(
+      join(project, ".capshelf", "local.lock.json"),
+    ).json();
     expect(afterLock.items["data/skills/local-edit"].sha).not.toBe(
       beforeLock.items["data/skills/local-edit"].sha,
     );
-    const manifest = await file(join(project, ".capshelf", "capshelf.json")).json();
+    const manifest = await file(
+      join(project, ".capshelf", "capshelf.json"),
+    ).json();
     expect(manifest.skills).toEqual([]);
   });
 
@@ -701,9 +830,14 @@ describe("cli integration", () => {
     const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
     await mkdir(join(dataRepo, "skills", "removed"), { recursive: true });
-    await writeFile(join(dataRepo, "skills", "removed", "SKILL.md"), "before\n");
+    await writeFile(
+      join(dataRepo, "skills", "removed", "SKILL.md"),
+      "before\n",
+    );
     await commitAll(dataRepo, "removed skill");
-    const originalHead = (await $`git -C ${dataRepo} rev-parse HEAD`.text()).trim();
+    const originalHead = (
+      await $`git -C ${dataRepo} rev-parse HEAD`.text()
+    ).trim();
 
     const init = Bun.spawnSync({
       cmd: [process.execPath, cli, "init", "--data", dataRepo],
@@ -743,16 +877,22 @@ describe("cli integration", () => {
       stderr: "pipe",
     });
     expect(promote.exitCode).toBe(1);
-    expect(promote.stderr.toString()).toContain("unknown option '--to-project'");
+    expect(promote.stderr.toString()).toContain(
+      "unknown option '--to-project'",
+    );
     expect((await $`git -C ${dataRepo} rev-parse HEAD`.text()).trim()).toBe(
       originalHead,
     );
-    expect(await file(join(dataRepo, "skills", "removed", "SKILL.md")).text()).toBe(
-      "before\n",
-    );
-    const manifest = await file(join(project, ".capshelf", "capshelf.json")).json();
+    expect(
+      await file(join(dataRepo, "skills", "removed", "SKILL.md")).text(),
+    ).toBe("before\n");
+    const manifest = await file(
+      join(project, ".capshelf", "capshelf.json"),
+    ).json();
     expect(manifest.skills).toEqual([]);
-    const localLock = await file(join(project, ".capshelf", "local.lock.json")).json();
+    const localLock = await file(
+      join(project, ".capshelf", "local.lock.json"),
+    ).json();
     expect(localLock.items["data/skills/removed"].source).toBe("data");
   });
 
@@ -787,7 +927,16 @@ describe("cli integration", () => {
     expect(rejected.stderr.toString()).toContain("requires --from");
 
     const missingTarget = Bun.spawnSync({
-      cmd: [process.execPath, cli, "share", "mcp/server", "--from", source, "--to", "project"],
+      cmd: [
+        process.execPath,
+        cli,
+        "share",
+        "mcp/server",
+        "--from",
+        source,
+        "--to",
+        "project",
+      ],
       cwd: project,
       env: process.env,
       stdout: "pipe",
@@ -815,12 +964,17 @@ describe("cli integration", () => {
       stderr: "pipe",
     });
     expect(shared.exitCode).toBe(0);
-    const manifest = await file(join(project, ".capshelf", "capshelf.json")).json();
+    const manifest = await file(
+      join(project, ".capshelf", "capshelf.json"),
+    ).json();
     expect(manifest.mcp).toEqual(["server"]);
-    const lock = await file(join(project, ".capshelf", "capshelf.lock.json")).json();
+    const lock = await file(
+      join(project, ".capshelf", "capshelf.lock.json"),
+    ).json();
     expect(lock.items["data/mcp/server"].source).toBe("data");
-    expect(await file(join(dataRepo, "mcp", "server", "claude.json")).exists())
-      .toBe(true);
+    expect(
+      await file(join(dataRepo, "mcp", "server", "claude.json")).exists(),
+    ).toBe(true);
     const output = await file(join(project, ".mcp.json")).json();
     expect(output.mcpServers.server.command).toBe("server-mcp");
   });
@@ -834,7 +988,7 @@ describe("cli integration", () => {
     await mkdir(fragment, { recursive: true });
     await writeFile(
       join(fragment, "settings.json"),
-      JSON.stringify({ permissions: { deny: ["Bash(rm *)"] } }) + "\n",
+      `${JSON.stringify({ permissions: { deny: ["Bash(rm *)"] } })}\n`,
     );
     await commitAll(dataRepo, "security v1");
 
@@ -858,11 +1012,11 @@ describe("cli integration", () => {
 
     await writeFile(
       join(project, ".claude", "settings.json"),
-      JSON.stringify({ permissions: { allow: ["Bash(git status *)"] } }) + "\n",
+      `${JSON.stringify({ permissions: { allow: ["Bash(git status *)"] } })}\n`,
     );
     await writeFile(
       join(fragment, "settings.json"),
-      JSON.stringify({ permissions: { deny: ["Bash(curl *)"] } }) + "\n",
+      `${JSON.stringify({ permissions: { deny: ["Bash(curl *)"] } })}\n`,
     );
     await commitAll(dataRepo, "security v2");
 

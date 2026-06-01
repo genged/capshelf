@@ -1,5 +1,5 @@
-import { Command } from "commander";
-import { Command as CmdType } from "commander";
+import type { Command } from "commander";
+import type { Command as CmdType } from "commander";
 import { existsSync } from "node:fs";
 import { projectRoot, resolveDataRepoOptional, homeRelative } from "../paths";
 import { loadLocalLock, loadLock } from "../lock";
@@ -90,12 +90,19 @@ export function registerStatus(program: Command): void {
     .command("status [item]")
     .description("drift / update report for the current project")
     .option("--json", "output JSON")
-    .option("--strict", "exit 4 if any item is neither up-to-date nor kept-local")
+    .option(
+      "--strict",
+      "exit 4 if any item is neither up-to-date nor kept-local",
+    )
     .option("--diff", "show local drift diff against the locked content")
     .option("--project", "show committed project-scope items only")
     .option("--local", "show clone-local items only")
     .action(
-      async (itemRef: string | undefined, opts: StatusOptions, cmd: CmdType) => {
+      async (
+        itemRef: string | undefined,
+        opts: StatusOptions,
+        cmd: CmdType,
+      ) => {
         const project = projectRoot();
         const manifest = await loadManifest(project);
         if (opts.project && opts.local) {
@@ -190,7 +197,10 @@ export function registerStatus(program: Command): void {
                   ? null
                   : isFragmentItemKind(kind)
                     ? await shaOfFragmentItem(dataRepo, kind, itemName)
-                    : await shaOfGitVisibleItem(dataRepo, masterItem.repoRelPath);
+                    : await shaOfGitVisibleItem(
+                        dataRepo,
+                        masterItem.repoRelPath,
+                      );
               }
             }
           } else {
@@ -208,12 +218,19 @@ export function registerStatus(program: Command): void {
             state = "kept-local";
           } else if (isFragmentItemKind(kind) && upstreamDirty) {
             state =
-              fragmentOutputState === "drifted" || fragmentOutputState === "missing"
+              fragmentOutputState === "drifted" ||
+              fragmentOutputState === "missing"
                 ? "source_dirty_and_output_drift"
                 : "source_dirty";
-          } else if (isFragmentItemKind(kind) && fragmentOutputState === "missing") {
+          } else if (
+            isFragmentItemKind(kind) &&
+            fragmentOutputState === "missing"
+          ) {
             state = "missing_output";
-          } else if (isFragmentItemKind(kind) && fragmentOutputState === "drifted") {
+          } else if (
+            isFragmentItemKind(kind) &&
+            fragmentOutputState === "drifted"
+          ) {
             state =
               upstreamSha !== null && upstreamSha !== entry.sha
                 ? "drifted_and_update"
@@ -255,12 +272,10 @@ export function registerStatus(program: Command): void {
             ...(entry.source === "system" && {
               cliVersion: entry.cliVersion,
             }),
-            ...runtimeWarningFields(
-              [
-                ...runtimeWarningsForItem(project, kind, itemName),
-                ...codexWarningsForItem(project, kind),
-              ],
-            ),
+            ...runtimeWarningFields([
+              ...runtimeWarningsForItem(project, kind, itemName),
+              ...codexWarningsForItem(project, kind),
+            ]),
           });
         }
 
@@ -287,7 +302,7 @@ export function registerStatus(program: Command): void {
           console.log(
             JSON.stringify(
               {
-              project,
+                project,
                 dataRepo,
                 cliVersion: CLI_VERSION,
                 count: rows.length,
@@ -389,9 +404,7 @@ function describe(r: StatusRow): string {
     case "source_dirty_and_output_drift":
       return "generated output drifted + data repo has uncommitted fragment changes";
     case "kept-local":
-      return r.localReason
-        ? `kept local (${r.localReason})`
-        : "kept local";
+      return r.localReason ? `kept local (${r.localReason})` : "kept local";
   }
 }
 
@@ -486,8 +499,12 @@ function statusTargets(
 ): Array<{ scope: "project" | "local"; key: string }> {
   const includeProject = !opts.local;
   const includeLocal = !opts.project;
-  const projectKeys = ref ? lockKeysForRef(projectLock, ref) : Object.keys(projectLock.items);
-  const localKeys = ref ? lockKeysForRef(localLock, ref) : Object.keys(localLock.items);
+  const projectKeys = ref
+    ? lockKeysForRef(projectLock, ref)
+    : Object.keys(projectLock.items);
+  const localKeys = ref
+    ? lockKeysForRef(localLock, ref)
+    : Object.keys(localLock.items);
   return [
     ...(includeProject
       ? projectKeys.map((key) => ({ scope: "project" as const, key }))
@@ -562,7 +579,10 @@ function personalClaudeExternals(
   return out;
 }
 
-function codexWarningsForItem(project: string, kind: ItemKind): RuntimeWarning[] {
+function codexWarningsForItem(
+  project: string,
+  kind: ItemKind,
+): RuntimeWarning[] {
   if (kind !== "mcp" && kind !== "codex-config") return [];
   return codexProjectTrustWarnings(project);
 }

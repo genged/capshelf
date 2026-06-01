@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import type { Command } from "commander";
 import { existsSync, lstatSync, readlinkSync } from "node:fs";
 import { readFile, readdir, rm as fsRm } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
@@ -156,10 +156,23 @@ export function registerPromote(program: Command): void {
           );
           process.exit(3);
         }
-        result = await promoteCreate(project, dataRepo, manifest, lock, ref, opts);
+        result = await promoteCreate(
+          project,
+          dataRepo,
+          manifest,
+          lock,
+          ref,
+          opts,
+        );
         saveProject = true;
       } else if (opts.local) {
-        result = await promoteLocalTracked(project, dataRepo, localLock, ref, opts);
+        result = await promoteLocalTracked(
+          project,
+          dataRepo,
+          localLock,
+          ref,
+          opts,
+        );
         saveLocal = true;
       } else {
         result = await promoteProjectTracked(
@@ -219,7 +232,9 @@ async function promoteProjectTracked(
       const parsed = parseLockKey(localKey);
       const display = `${parsed.kind}/${parsed.name}`;
       console.error(`✗ not tracked in project scope: ${display}`);
-      console.error(`  found in local scope; run: capshelf promote ${display} --local`);
+      console.error(
+        `  found in local scope; run: capshelf promote ${display} --local`,
+      );
       process.exit(2);
     }
     return await rejectUntrackedPromote(project, projectLock, ref);
@@ -345,7 +360,8 @@ async function promoteFragmentSource(
   let dirty = false;
   const commitPaths: string[] = [];
   for (const relPath of canonicalPaths) {
-    const pathDirty = (await statusPorcelain(dataRepo, relPath)).trim().length > 0;
+    const pathDirty =
+      (await statusPorcelain(dataRepo, relPath)).trim().length > 0;
     if (pathDirty || existsSync(join(dataRepo, ...relPath.split("/")))) {
       commitPaths.push(relPath);
     }
@@ -464,7 +480,9 @@ export async function syncTrackedIntoDataRepo(
     opts.scope ?? "project",
   );
   if (!snapshot) {
-    throw new Error(`installed files are missing: ${installedPath(project, kind, name)}`);
+    throw new Error(
+      `installed files are missing: ${installedPath(project, kind, name)}`,
+    );
   }
   const { localPath, sha } = snapshot;
   if (sha === entry.sha) {
@@ -495,7 +513,8 @@ export async function syncTrackedIntoDataRepo(
     );
   }
 
-  const dirty = (await statusPorcelain(dataRepo, repoRelPath)).trim().length > 0;
+  const dirty =
+    (await statusPorcelain(dataRepo, repoRelPath)).trim().length > 0;
   const sourceCommit = dirty
     ? await commitInRepo(
         dataRepo,
@@ -546,16 +565,10 @@ async function promoteCreate(
     process.exit(3);
   }
 
-  const adopted = await adoptIntoDataRepo(
-    project,
-    dataRepo,
-    kind,
-    ref.name,
-    {
-      installMode: manifest.installMode,
-      message: opts.message,
-    },
-  );
+  const adopted = await adoptIntoDataRepo(project, dataRepo, kind, ref.name, {
+    installMode: manifest.installMode,
+    message: opts.message,
+  });
 
   addToManifest(manifest, kind, ref.name);
   lock.items[dataKey(kind, ref.name)] = {
@@ -607,12 +620,7 @@ export async function adoptIntoDataRepo(
   }
 
   if (kind === "skills") {
-    assertCanNormalizeAdoptedSkill(
-      project,
-      name,
-      adoption,
-      opts.installMode,
-    );
+    assertCanNormalizeAdoptedSkill(project, name, adoption, opts.installMode);
   }
   await assertRepoClean(dataRepo);
   const adoptionRelPath = relative(project, adoption.path);
@@ -754,7 +762,8 @@ export async function moveScope(
       );
     }
     state.localLock.items[key] = nextEntry;
-    if (!state.localConfig.skills.includes(name)) state.localConfig.skills.push(name);
+    if (!state.localConfig.skills.includes(name))
+      state.localConfig.skills.push(name);
   }
 
   if (from === "project") {
@@ -763,7 +772,9 @@ export async function moveScope(
   } else {
     delete state.localLock.items[key];
     if (state.localConfig) {
-      state.localConfig.skills = state.localConfig.skills.filter((x) => x !== name);
+      state.localConfig.skills = state.localConfig.skills.filter(
+        (x) => x !== name,
+      );
     }
   }
 
@@ -783,7 +794,9 @@ export function printPrivateDotenvWarnings(files: string[] = []): void {
   for (const file of files) {
     console.log(`  ${file}`);
   }
-  console.log("  Tracked git content is promotable, but review these paths for secrets.");
+  console.log(
+    "  Tracked git content is promotable, but review these paths for secrets.",
+  );
 }
 
 interface ItemSnapshot {
@@ -813,7 +826,9 @@ async function installedSnapshot(
   return {
     source: "git-visible",
     localPath,
-    sha: await shaOfInstalled(project, kind, name) ?? await shaOfItem(localPath),
+    sha:
+      (await shaOfInstalled(project, kind, name)) ??
+      (await shaOfItem(localPath)),
     files: await gitVisibleFilesUnderPath(project, relPath),
   };
 }
@@ -882,9 +897,7 @@ function assertCanNormalizeAdoptedSkill(
     console.error(
       `✗ compatibility symlink points somewhere else: ${claudePath} -> ${target}`,
     );
-    console.error(
-      `  expected it to point at: ${managedPath}`,
-    );
+    console.error(`  expected it to point at: ${managedPath}`);
     process.exit(3);
   }
 }
@@ -896,7 +909,11 @@ function findAdoptionSource(
   mode: Manifest["installMode"],
 ): AdoptionSource | null {
   if (kind === "mcp") {
-    return existingItemDir(installedPath(project, kind, name, mode), "installed", kind);
+    return existingItemDir(
+      installedPath(project, kind, name, mode),
+      "installed",
+      kind,
+    );
   }
   if (kind === "settings") return null;
 
@@ -996,7 +1013,7 @@ function dataEntryOrThrow(
   entry: Lock["items"][string] | undefined,
   key: string,
 ): DataLockEntry {
-  if (!entry || entry.source !== "data") {
+  if (entry?.source !== "data") {
     throw new Error(`expected data lock entry for ${key}`);
   }
   return entry;

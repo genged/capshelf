@@ -29,7 +29,7 @@ export function expandTilde(p: string): string {
 export function homeRelative(p: string): string {
   const home = homedir();
   if (p === home) return "~";
-  if (p.startsWith(home + "/")) return "~/" + p.slice(home.length + 1);
+  if (p.startsWith(`${home}/`)) return `~/${p.slice(home.length + 1)}`;
   return p;
 }
 
@@ -39,7 +39,10 @@ interface ResolveOpts {
   project?: string;
 }
 
-export function normalizePath(p: string, baseDir: string = process.cwd()): string {
+export function normalizePath(
+  p: string,
+  baseDir: string = process.cwd(),
+): string {
   const expanded = expandTilde(p);
   return isAbsolute(expanded) ? expanded : resolve(baseDir, expanded);
 }
@@ -174,7 +177,10 @@ export function detectInstallMode(project: string): InstallMode {
     installMode?: unknown;
   };
   if (parsed.installMode === undefined) return DEFAULT_INSTALL_MODE;
-  if (typeof parsed.installMode === "string" && isInstallMode(parsed.installMode)) {
+  if (
+    typeof parsed.installMode === "string" &&
+    isInstallMode(parsed.installMode)
+  ) {
     return parsed.installMode;
   }
   throw new Error(

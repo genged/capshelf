@@ -1,6 +1,11 @@
 import type { Manifest } from "./manifest";
 import { normalizeRemoteUrl, originRemoteUrl } from "./git";
-import { LOCK_FILE, LOCAL_CONFIG_FILE, MANIFEST_FILE, METADATA_DIR } from "./identity";
+import {
+  LOCK_FILE,
+  LOCAL_CONFIG_FILE,
+  MANIFEST_FILE,
+  METADATA_DIR,
+} from "./identity";
 
 export class UpstreamVerificationError extends Error {
   readonly exitCode = 4;
@@ -27,7 +32,7 @@ export async function verifyDataRepoUpstream(
   const origin = await originRemoteUrl(dataRepo);
   if (origin === null) {
     throw new UpstreamVerificationError(
-        `data repo at ${dataRepo} has no \`origin\` remote configured.\n` +
+      `data repo at ${dataRepo} has no \`origin\` remote configured.\n` +
         `  ${METADATA_DIR}/${MANIFEST_FILE} declares dataRepoUpstream: ${upstream}\n` +
         "  add the remote and retry:\n" +
         `    git -C ${dataRepo} remote add origin ${upstream}`,

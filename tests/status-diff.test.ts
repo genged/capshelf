@@ -6,7 +6,10 @@ import { tmpdir } from "node:os";
 import { dataKey } from "../src/lock";
 import { lastTouchingCommit } from "../src/git";
 import { shaOfGitVisibleItem } from "../src/master";
-import { lastTouchingFragmentCommit, shaOfFragmentItem } from "../src/fragments";
+import {
+  lastTouchingFragmentCommit,
+  shaOfFragmentItem,
+} from "../src/fragments";
 import {
   buildStatusDiff,
   shouldShowLocalDiff,
@@ -66,9 +69,9 @@ describe("status diff helpers", () => {
     const emptyPath = await mkdtemp(join(tmpdir(), "capshelf-empty-path-"));
     process.env.PATH = emptyPath;
     try {
-      await expect(unifiedDiff("current", "locked", "a\n", "b\n")).rejects.toThrow(
-        /git is required but was not found on PATH/,
-      );
+      await expect(
+        unifiedDiff("current", "locked", "a\n", "b\n"),
+      ).rejects.toThrow(/git is required but was not found on PATH/);
     } finally {
       process.env.PATH = oldPath;
     }
@@ -150,7 +153,7 @@ describe("status diff helpers", () => {
     await mkdir(fragment, { recursive: true });
     await writeFile(
       join(fragment, "settings.json"),
-      JSON.stringify({ permissions: { deny: ["Bash(curl *)"] } }) + "\n",
+      `${JSON.stringify({ permissions: { deny: ["Bash(curl *)"] } })}\n`,
     );
     await commitAll(dataRepo, "security settings");
     const sourceCommit = await lastTouchingFragmentCommit(
@@ -163,7 +166,7 @@ describe("status diff helpers", () => {
     await mkdir(join(project, ".claude"), { recursive: true });
     await writeFile(
       settingsPath,
-      JSON.stringify({ permissions: { allow: ["Bash(git status *)"] } }) + "\n",
+      `${JSON.stringify({ permissions: { allow: ["Bash(git status *)"] } })}\n`,
     );
 
     const diff = await buildStatusDiff({
@@ -210,15 +213,21 @@ describe("status diff helpers", () => {
     await mkdir(fragment, { recursive: true });
     await writeFile(
       join(fragment, "claude.json"),
-      JSON.stringify({ mcpServers: { server: { command: "locked-mcp" } } }) + "\n",
+      JSON.stringify({ mcpServers: { server: { command: "locked-mcp" } } }) +
+        "\n",
     );
     await commitAll(dataRepo, "server mcp");
-    const sourceCommit = await lastTouchingFragmentCommit(dataRepo, "mcp", "server");
+    const sourceCommit = await lastTouchingFragmentCommit(
+      dataRepo,
+      "mcp",
+      "server",
+    );
     const lockedSha = await shaOfFragmentItem(dataRepo, "mcp", "server");
 
     await writeFile(
       join(fragment, "claude.json"),
-      JSON.stringify({ mcpServers: { server: { command: "staged-mcp" } } }) + "\n",
+      JSON.stringify({ mcpServers: { server: { command: "staged-mcp" } } }) +
+        "\n",
     );
     await $`git -C ${dataRepo} add mcp/server/claude.json`.quiet();
     await writeFile(
@@ -297,6 +306,8 @@ describe("status diff helpers", () => {
           sourceCommit: "abc123",
         },
       }),
-    ).rejects.toThrow(/current dataRepoUpstream: https:\/\/github.com\/mg\/agent-shared/);
+    ).rejects.toThrow(
+      /current dataRepoUpstream: https:\/\/github.com\/mg\/agent-shared/,
+    );
   });
 });

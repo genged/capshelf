@@ -144,7 +144,8 @@ export function fragmentOutputSpec(target: FragmentTarget): FragmentOutputSpec {
       return {
         target,
         format: "toml",
-        outputPath: (project) => join(codexProjectConfigDir(project), "config.toml"),
+        outputPath: (project) =>
+          join(codexProjectConfigDir(project), "config.toml"),
         normalizeOutput: identityOutput,
         isSyntheticOnly: isEmptyObject,
         validateFragment: validateCodexConfigFragment,
@@ -308,7 +309,9 @@ export async function planFragmentOutput(
   const path = spec.outputPath(opts.project);
   const currentText = existsSync(path) ? await readFile(path, "utf-8") : null;
   const current =
-    currentText === null ? {} : spec.parse(currentText, relative(opts.project, path));
+    currentText === null
+      ? {}
+      : spec.parse(currentText, relative(opts.project, path));
   const rawOldManaged = await mergeFragmentContributions({
     dataRepo: opts.dataRepo,
     manifest: opts.oldManifest ?? opts.manifest,
@@ -334,7 +337,9 @@ export async function planFragmentOutput(
   const planned = spec.normalizeOutput(
     mergeConfigValues(base, rawNextManaged) as ConfigObject,
   );
-  const plannedText = spec.isSyntheticOnly(planned) ? null : spec.stringify(planned);
+  const plannedText = spec.isSyntheticOnly(planned)
+    ? null
+    : spec.stringify(planned);
   const currentSha = currentText === null ? null : shaOfConfig(current);
   const plannedSha = plannedText === null ? null : shaOfConfig(planned);
   const changed =
@@ -395,7 +400,10 @@ export async function fragmentContributionState(
   );
   if (spec.isSyntheticOnly(managed)) return "ok";
   if (!existsSync(path)) return "missing";
-  const current = spec.parse(await readFile(path, "utf-8"), relative(project, path));
+  const current = spec.parse(
+    await readFile(path, "utf-8"),
+    relative(project, path),
+  );
   return containsManagedOutput(current, managed) ? "ok" : "drifted";
 }
 
@@ -444,10 +452,18 @@ export async function touchedFragmentTargetsForItem(
   manifest?: Manifest,
 ): Promise<FragmentTarget[]> {
   const targets = oldEntry
-    ? await lockedFragmentTargetsForItem(dataRepo, kind, name, oldEntry, manifest)
+    ? await lockedFragmentTargetsForItem(
+        dataRepo,
+        kind,
+        name,
+        oldEntry,
+        manifest,
+      )
     : [];
   try {
-    targets.push(...(await currentFragmentTargetsForItem(dataRepo, kind, name)));
+    targets.push(
+      ...(await currentFragmentTargetsForItem(dataRepo, kind, name)),
+    );
   } catch {
     // Missing current upstream is handled by the caller for item-level status.
   }
@@ -458,7 +474,9 @@ export function allFragmentTargets(): FragmentTarget[] {
   return ["claude-settings", "claude-mcp", "codex-config"];
 }
 
-export function fragmentTargetsForKinds(kinds: Iterable<FragmentItemKind>): FragmentTarget[] {
+export function fragmentTargetsForKinds(
+  kinds: Iterable<FragmentItemKind>,
+): FragmentTarget[] {
   const targets: FragmentTarget[] = [];
   for (const kind of kinds) {
     switch (kind) {
@@ -476,7 +494,9 @@ export function fragmentTargetsForKinds(kinds: Iterable<FragmentItemKind>): Frag
   return [...new Set(targets)];
 }
 
-export function fragmentKindForTarget(target: FragmentTarget): FragmentItemKind {
+export function fragmentKindForTarget(
+  target: FragmentTarget,
+): FragmentItemKind {
   switch (target) {
     case "claude-settings":
       return "settings";
@@ -487,7 +507,9 @@ export function fragmentKindForTarget(target: FragmentTarget): FragmentItemKind 
   }
 }
 
-export function sourceTargetForCli(value: string | undefined): FragmentSourceTarget | null {
+export function sourceTargetForCli(
+  value: string | undefined,
+): FragmentSourceTarget | null {
   if (value === undefined) return null;
   if (value === "claude" || value === "codex") return value;
   throw new Error(`invalid target "${value}" (expected claude or codex)`);
@@ -500,7 +522,10 @@ export function sourceMatchesCliTarget(
   return target === null || source.sourceTarget === target;
 }
 
-export function assertFragmentKind(kind: ItemKind, verb: string): FragmentItemKind {
+export function assertFragmentKind(
+  kind: ItemKind,
+  verb: string,
+): FragmentItemKind {
   if (isFragmentItemKind(kind)) return kind;
   throw new Error(`${verb} expected a fragment item`);
 }
@@ -533,7 +558,7 @@ async function fragmentValuesForTarget(opts: {
   for (const kind of contributionKindsForTarget(opts.target)) {
     for (const name of manifestNamesForKind(opts.manifest, kind)) {
       const entry = opts.lock.items[dataKey(kind, name)];
-      if (!entry || entry.source !== "data" || entry.local === true) continue;
+      if (entry?.source !== "data" || entry.local === true) continue;
       await assertSourceCommitExists(
         opts.dataRepo,
         entry.sourceCommit,
@@ -541,7 +566,13 @@ async function fragmentValuesForTarget(opts: {
       );
       for (const source of fragmentSourceCandidates(kind, name)) {
         if (source.target !== opts.target) continue;
-        if (!(await sourceExistsAtCommit(opts.dataRepo, entry.sourceCommit, source.relPath))) {
+        if (
+          !(await sourceExistsAtCommit(
+            opts.dataRepo,
+            entry.sourceCommit,
+            source.relPath,
+          ))
+        ) {
           continue;
         }
         values.push({
@@ -559,7 +590,9 @@ async function fragmentValuesForTarget(opts: {
   return values;
 }
 
-function contributionKindsForTarget(target: FragmentTarget): FragmentItemKind[] {
+function contributionKindsForTarget(
+  target: FragmentTarget,
+): FragmentItemKind[] {
   switch (target) {
     case "claude-settings":
       return ["settings"];
@@ -634,7 +667,9 @@ function containsManagedOutput(
       const currentArray = current[key];
       if (!Array.isArray(currentArray)) return false;
       const currentKeys = new Set(currentArray.map(stableStringifyConfig));
-      return value.every((entry) => currentKeys.has(stableStringifyConfig(entry)));
+      return value.every((entry) =>
+        currentKeys.has(stableStringifyConfig(entry)),
+      );
     }
     if (isPlainConfigObject(value)) {
       const currentValue = current[key];

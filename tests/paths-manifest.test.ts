@@ -46,13 +46,18 @@ describe("path normalization", () => {
   });
 
   test("normalizes relative paths against an explicit base", () => {
-    expect(normalizePath("../data", "/tmp/project/sub")).toBe("/tmp/project/data");
+    expect(normalizePath("../data", "/tmp/project/sub")).toBe(
+      "/tmp/project/data",
+    );
   });
 
   test("resolves relative local config dataRepo from the project root", async () => {
     const project = await tempDir();
     await mkdir(join(project, ".capshelf"), { recursive: true });
-    await writeFile(localConfigPath(project), JSON.stringify({ dataRepo: "../data" }));
+    await writeFile(
+      localConfigPath(project),
+      JSON.stringify({ dataRepo: "../data" }),
+    );
     expect(
       await resolveDataRepo({
         manifest: emptyManifest(),
@@ -87,7 +92,9 @@ describe("path normalization", () => {
         }),
       ).toBe(normalizePath("../local", project));
 
-      expect(await resolveDataRepo({ manifest: null })).toBe("/tmp/from-capshelf-env");
+      expect(await resolveDataRepo({ manifest: null })).toBe(
+        "/tmp/from-capshelf-env",
+      );
     } finally {
       if (oldCapshelfHome === undefined) delete process.env.CAPSHELF_HOME;
       else process.env.CAPSHELF_HOME = oldCapshelfHome;
@@ -130,8 +137,12 @@ describe("path normalization", () => {
       join(homedir(), ".claude", "skills", "hello"),
     );
     expect(codexDir(project)).toBe(join(project, ".agents"));
-    expect(manifestPath(project)).toBe(join(project, ".capshelf", "capshelf.json"));
-    expect(lockPath(project)).toBe(join(project, ".capshelf", "capshelf.lock.json"));
+    expect(manifestPath(project)).toBe(
+      join(project, ".capshelf", "capshelf.json"),
+    );
+    expect(lockPath(project)).toBe(
+      join(project, ".capshelf", "capshelf.lock.json"),
+    );
     expect(detectInstallMode(project)).toBe(DEFAULT_INSTALL_MODE);
     expect(installBaseDir(project)).toBe(join(project, ".agents"));
     expect(installBaseDir(project, "claude-only")).toBe(
@@ -203,7 +214,10 @@ describe("manifest commands migration", () => {
       settings: [],
       mcp: [],
     });
-    const gitignore = await readFile(join(project, ".capshelf", ".gitignore"), "utf-8");
+    const gitignore = await readFile(
+      join(project, ".capshelf", ".gitignore"),
+      "utf-8",
+    );
     expect(gitignore.match(/^local\.json$/gm)?.length).toBe(1);
     expect(gitignore.match(/^local\.lock\.json$/gm)?.length).toBe(1);
   });
@@ -215,9 +229,9 @@ describe("manifest commands migration", () => {
 
     await ensureGitignored(project, "local.json");
 
-    expect(await readFile(join(project, ".capshelf", ".gitignore"), "utf-8")).toBe(
-      "# local state\nlocal.json\n",
-    );
+    expect(
+      await readFile(join(project, ".capshelf", ".gitignore"), "utf-8"),
+    ).toBe("# local state\nlocal.json\n");
   });
 
   test("drops empty legacy commands arrays on parse and save", async () => {
@@ -294,9 +308,7 @@ describe("manifest commands migration", () => {
       }),
     );
 
-    await expect(loadManifest(project)).rejects.toThrow(
-      /fix it manually/,
-    );
+    await expect(loadManifest(project)).rejects.toThrow(/fix it manually/);
   });
 
   test("ManifestSchema rejects unsupported dataRepoUpstream values", () => {

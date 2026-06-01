@@ -86,9 +86,9 @@ describe("git cleanliness helpers", () => {
 
     await writeFile(join(repo, "skills", "hello", "SKILL.md"), "dirty\n");
 
-    await expect(assertRepoCleanOutsidePath(repo, "skills/hello")).resolves.toBe(
-      undefined,
-    );
+    await expect(
+      assertRepoCleanOutsidePath(repo, "skills/hello"),
+    ).resolves.toBe(undefined);
   });
 
   test("detects changes outside a promoted path", async () => {
@@ -128,9 +128,10 @@ describe("git cleanliness helpers", () => {
     const status = await $`git -C ${repo} status --porcelain`.quiet().text();
     expect(status).toContain("README.md");
 
-    const committedFiles = await $`git -C ${repo} diff-tree --no-commit-id --name-only -r HEAD`
-      .quiet()
-      .text();
+    const committedFiles =
+      await $`git -C ${repo} diff-tree --no-commit-id --name-only -r HEAD`
+        .quiet()
+        .text();
     expect(committedFiles.trim()).toBe("skills/hello/SKILL.md");
   });
 
@@ -193,14 +194,28 @@ describe("git historical content helpers", () => {
 describe("remote URL normalization", () => {
   test("collapses supported equivalence classes", () => {
     const canonical = "https://github.com/mg/agent-shared";
-    expect(normalizeRemoteUrl("https://github.com/mg/agent-shared")).toBe(canonical);
-    expect(normalizeRemoteUrl("https://github.com/mg/agent-shared.git")).toBe(canonical);
-    expect(normalizeRemoteUrl("https://github.com/mg/agent-shared/")).toBe(canonical);
-    expect(normalizeRemoteUrl("git@github.com:mg/agent-shared.git")).toBe(canonical);
-    expect(normalizeRemoteUrl("ssh://git@github.com/mg/agent-shared")).toBe(canonical);
-    expect(normalizeRemoteUrl("https://token@github.com/mg/agent-shared.git")).toBe(canonical);
+    expect(normalizeRemoteUrl("https://github.com/mg/agent-shared")).toBe(
+      canonical,
+    );
+    expect(normalizeRemoteUrl("https://github.com/mg/agent-shared.git")).toBe(
+      canonical,
+    );
+    expect(normalizeRemoteUrl("https://github.com/mg/agent-shared/")).toBe(
+      canonical,
+    );
+    expect(normalizeRemoteUrl("git@github.com:mg/agent-shared.git")).toBe(
+      canonical,
+    );
+    expect(normalizeRemoteUrl("ssh://git@github.com/mg/agent-shared")).toBe(
+      canonical,
+    );
+    expect(
+      normalizeRemoteUrl("https://token@github.com/mg/agent-shared.git"),
+    ).toBe(canonical);
     expect(normalizeRemoteUrl("github:mg/agent-shared")).toBe(canonical);
-    expect(normalizeRemoteUrl("HTTPS://GitHub.com/mg/agent-shared")).toBe(canonical);
+    expect(normalizeRemoteUrl("HTTPS://GitHub.com/mg/agent-shared")).toBe(
+      canonical,
+    );
   });
 
   test("lowercases scheme and host but preserves path case", () => {
@@ -210,9 +225,9 @@ describe("remote URL normalization", () => {
   });
 
   test("strips embedded credentials", () => {
-    expect(normalizeRemoteUrl("https://user:token@example.com/team/repo.git")).toBe(
-      "https://example.com/team/repo",
-    );
+    expect(
+      normalizeRemoteUrl("https://user:token@example.com/team/repo.git"),
+    ).toBe("https://example.com/team/repo");
   });
 
   test("returns null for unsupported values", () => {

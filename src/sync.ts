@@ -17,7 +17,9 @@ export function targetDir(
   mode?: InstallMode,
 ): string {
   if (item.kind !== "skills") {
-    throw new Error(`${item.kind}/${item.name} is a fragment item and has no install directory`);
+    throw new Error(
+      `${item.kind}/${item.name} is a fragment item and has no install directory`,
+    );
   }
   return installedPath(project, item.kind, item.name, mode);
 }
@@ -34,7 +36,10 @@ export async function copyRecursive(src: string, dst: string): Promise<void> {
   }
 }
 
-export async function replaceDirFromDir(src: string, dst: string): Promise<void> {
+export async function replaceDirFromDir(
+  src: string,
+  dst: string,
+): Promise<void> {
   if (existsSync(dst)) await rm(dst, { recursive: true, force: true });
   await copyRecursive(src, dst);
 }
@@ -61,7 +66,9 @@ export async function copyItemIntoProject(
   mode?: InstallMode,
 ): Promise<string> {
   if (item.kind !== "skills") {
-    throw new Error(`${item.kind}/${item.name} is a fragment item and cannot be copied into the project`);
+    throw new Error(
+      `${item.kind}/${item.name} is a fragment item and cannot be copied into the project`,
+    );
   }
   const dst = targetDir(project, item, mode);
   assertCanMaterializeInstalled(project, item.kind, item.name, mode);

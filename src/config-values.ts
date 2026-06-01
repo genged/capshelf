@@ -28,7 +28,8 @@ export function mergeConfigValues(
   if (isPlainConfigObject(base) && isPlainConfigObject(overlay)) {
     const out: ConfigObject = { ...base };
     for (const [key, value] of Object.entries(overlay)) {
-      out[key] = key in out ? mergeConfigValues(out[key], value) : cloneConfig(value);
+      out[key] =
+        key in out ? mergeConfigValues(out[key], value) : cloneConfig(value);
     }
     return out;
   }
@@ -70,7 +71,9 @@ export function containsManagedValue(
   if (Array.isArray(managed)) {
     if (!Array.isArray(current)) return false;
     const currentKeys = new Set(current.map(stableStringifyConfig));
-    return managed.every((value) => currentKeys.has(stableStringifyConfig(value)));
+    return managed.every((value) =>
+      currentKeys.has(stableStringifyConfig(value)),
+    );
   }
 
   if (isPlainConfigObject(managed)) {
@@ -141,9 +144,7 @@ export function shaOfConfig(value: ConfigValue): string {
 }
 
 export function cloneConfig<T extends ConfigValue | undefined>(value: T): T {
-  return value === undefined
-    ? value
-    : (JSON.parse(JSON.stringify(value)) as T);
+  return value === undefined ? value : (JSON.parse(JSON.stringify(value)) as T);
 }
 
 export function isPlainConfigObject(value: unknown): value is ConfigObject {

@@ -31,7 +31,9 @@ export function parseItemRef(input: string): ItemRef {
       `"${input}" looks like a lock key; use ${parts[1]}/${parts.slice(2).join("/")} instead`,
     );
   }
-  throw new Error(`invalid item ref "${input}" (expected <name> or <kind>/<name>)`);
+  throw new Error(
+    `invalid item ref "${input}" (expected <name> or <kind>/<name>)`,
+  );
 }
 
 export function formatItemRef(ref: ItemRef): string {

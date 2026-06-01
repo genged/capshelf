@@ -4,9 +4,16 @@ import {
   type ConfigObject,
   type ConfigValue,
 } from "./config-values";
-import { parse as parseToml, stringify as stringifyToml, TomlDate } from "smol-toml";
+import {
+  parse as parseToml,
+  stringify as stringifyToml,
+  TomlDate,
+} from "smol-toml";
 
-export function parseTomlConfigObject(raw: string, label: string): ConfigObject {
+export function parseTomlConfigObject(
+  raw: string,
+  label: string,
+): ConfigObject {
   const parsed = parseToml(raw) as unknown;
   if (!isPlainConfigObject(parsed)) {
     throw new Error(`${label} must contain a TOML table`);
@@ -65,7 +72,9 @@ function validateTomlValue(value: ConfigValue, label: string): void {
     throw new Error(`${label} contains null, which is not valid TOML`);
   }
   if (value instanceof TomlDate) {
-    throw new Error(`${label} contains a TOML date, which capshelf does not round-trip in M5`);
+    throw new Error(
+      `${label} contains a TOML date, which capshelf does not round-trip in M5`,
+    );
   }
   if (Array.isArray(value)) {
     for (const [index, entry] of value.entries()) {

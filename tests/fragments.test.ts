@@ -80,7 +80,11 @@ describe("fragment output planning", () => {
       JSON.stringify({ theme: "dark" }),
     );
     await commitAll(dataRepo, "theme");
-    const sourceCommit = await lastTouchingFragmentCommit(dataRepo, "settings", "theme");
+    const sourceCommit = await lastTouchingFragmentCommit(
+      dataRepo,
+      "settings",
+      "theme",
+    );
     const sha = await shaOfFragmentItem(dataRepo, "settings", "theme");
     const manifest = { ...emptyManifest(), settings: ["theme"] };
     const oldLock = emptyLock();
@@ -114,13 +118,27 @@ describe("fragment output planning", () => {
     const project = await tempDir("capshelf-fragments-project-");
     const fragment = join(dataRepo, "settings", "theme");
     await mkdir(fragment, { recursive: true });
-    await writeFile(join(fragment, "settings.json"), JSON.stringify({ theme: "dark" }));
+    await writeFile(
+      join(fragment, "settings.json"),
+      JSON.stringify({ theme: "dark" }),
+    );
     await commitAll(dataRepo, "theme v1");
-    const v1Commit = await lastTouchingFragmentCommit(dataRepo, "settings", "theme");
+    const v1Commit = await lastTouchingFragmentCommit(
+      dataRepo,
+      "settings",
+      "theme",
+    );
     const v1Sha = await shaOfFragmentItem(dataRepo, "settings", "theme");
-    await writeFile(join(fragment, "settings.json"), JSON.stringify({ theme: "light" }));
+    await writeFile(
+      join(fragment, "settings.json"),
+      JSON.stringify({ theme: "light" }),
+    );
     await commitAll(dataRepo, "theme v2");
-    const v2Commit = await lastTouchingFragmentCommit(dataRepo, "settings", "theme");
+    const v2Commit = await lastTouchingFragmentCommit(
+      dataRepo,
+      "settings",
+      "theme",
+    );
     const v2Sha = await shaOfFragmentItem(dataRepo, "settings", "theme");
     const manifest = { ...emptyManifest(), settings: ["theme"] };
     const oldLock = emptyLock();
@@ -163,7 +181,11 @@ describe("fragment output planning", () => {
       JSON.stringify({ theme: "dark" }),
     );
     await commitAll(dataRepo, "theme");
-    const sourceCommit = await lastTouchingFragmentCommit(dataRepo, "settings", "theme");
+    const sourceCommit = await lastTouchingFragmentCommit(
+      dataRepo,
+      "settings",
+      "theme",
+    );
     const sha = await shaOfFragmentItem(dataRepo, "settings", "theme");
     const oldManifest = { ...emptyManifest(), settings: ["theme"] };
     const nextManifest = emptyManifest();
@@ -203,7 +225,9 @@ describe("fragment output planning", () => {
     const dataRepo = await tempRepo();
     const project = await tempDir("capshelf-fragments-project-");
     await mkdir(join(dataRepo, "mcp", "github"), { recursive: true });
-    await mkdir(join(dataRepo, "codex", "config", "defaults"), { recursive: true });
+    await mkdir(join(dataRepo, "codex", "config", "defaults"), {
+      recursive: true,
+    });
     await writeFile(
       join(dataRepo, "mcp", "github", "claude.json"),
       JSON.stringify({ mcpServers: { github: { command: "github-mcp" } } }),
@@ -217,14 +241,22 @@ describe("fragment output planning", () => {
       'model = "gpt-5"\nsandbox = "workspace-write"\n',
     );
     await commitAll(dataRepo, "fragments");
-    const mcpCommit = await lastTouchingFragmentCommit(dataRepo, "mcp", "github");
+    const mcpCommit = await lastTouchingFragmentCommit(
+      dataRepo,
+      "mcp",
+      "github",
+    );
     const mcpSha = await shaOfFragmentItem(dataRepo, "mcp", "github");
     const codexCommit = await lastTouchingFragmentCommit(
       dataRepo,
       "codex-config",
       "defaults",
     );
-    const codexSha = await shaOfFragmentItem(dataRepo, "codex-config", "defaults");
+    const codexSha = await shaOfFragmentItem(
+      dataRepo,
+      "codex-config",
+      "defaults",
+    );
     const manifest = {
       ...emptyManifest(),
       mcp: ["github"],

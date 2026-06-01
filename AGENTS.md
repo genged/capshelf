@@ -34,18 +34,24 @@ More info: `docs/project-brief.md`,  `docs/architecture.md`, `docs/cli.md`,
 
 ## Development Commands
 
+- `bun run typecheck` runs `tsc --noEmit` (Bun does not type-check on its own).
+- `bun run lint` checks formatting + lint with Biome; `bun run lint:fix` writes
+  safe fixes and `bun run format` reformats only. Biome is provided in CI by the
+  `biomejs/setup-biome` action; locally install it (`bunx @biomejs/biome`,
+  Homebrew, or as a devDependency once the lockfile is regenerated).
 - `bun test` runs the unit test suite.
 - `make smoke` runs all smoke tests.
 - `make smoke-modes`, `make smoke-skills`, and `make smoke-settings` run
   focused smoke suites.
-- `make check` runs unit tests plus all smoke tests.
+- `make check` runs typecheck, lint, unit tests, plus all smoke tests.
 - `bun run src/cli.ts <verb> [args]` runs the CLI from source.
 - `bun run build` or `make build` compiles `dist/capshelf`.
 - `make install` builds and copies the binary to `~/.local/bin/capshelf`
 
-For broad CLI behavior changes, run `bun test` and the relevant smoke suite at
-minimum. Run `make check` before treating cross-command or layout work as done.
-For a docs-only change, `git diff --check` is usually enough.
+For broad CLI behavior changes, run `bun run typecheck`, `bun test`, and the
+relevant smoke suite at minimum. Run `make check` before treating cross-command
+or layout work as done. For a docs-only change, `git diff --check` is usually
+enough.
 
 ## Git
 

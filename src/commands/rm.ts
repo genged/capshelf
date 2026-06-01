@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import type { Command } from "commander";
 import { rm as fsRm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { projectRoot, resolveDataRepo } from "../paths";
@@ -52,7 +52,9 @@ export function registerRm(program: Command): void {
 
       const project = projectRoot();
       const manifest = await loadManifest(project);
-      const lock = opts.local ? await loadLocalLock(project) : await loadLock(project);
+      const lock = opts.local
+        ? await loadLocalLock(project)
+        : await loadLock(project);
       const localConfig = opts.local ? await loadLocalConfig(project) : null;
       const oldManifest = cloneJson(manifest);
       const oldLock = cloneJson(lock);
@@ -128,7 +130,7 @@ export function registerRm(program: Command): void {
       }
 
       const entry = oldLock.items[dataKey(kind, name)];
-      if (!entry || entry.source !== "data") {
+      if (entry?.source !== "data") {
         throw new Error(`expected data lock entry for data/${kind}/${name}`);
       }
       delete lock.items[dataKey(kind, name)];
@@ -205,9 +207,13 @@ export function registerRm(program: Command): void {
         );
         return;
       }
-      console.log(`✓ removed ${opts.local ? "local/" : ""}data/${kind}/${name}`);
+      console.log(
+        `✓ removed ${opts.local ? "local/" : ""}data/${kind}/${name}`,
+      );
       if (removed) {
-        console.log(`  ${isFragmentItemKind(kind) ? "updated" : "deleted"} ${path}`);
+        console.log(
+          `  ${isFragmentItemKind(kind) ? "updated" : "deleted"} ${path}`,
+        );
       }
     });
 }

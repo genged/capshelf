@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { dataKey, emptyLock } from "../src/lock";
 import { emptyManifest } from "../src/manifest";
-import { lastTouchingFragmentCommit, shaOfFragmentItem } from "../src/fragments";
+import {
+  lastTouchingFragmentCommit,
+  shaOfFragmentItem,
+} from "../src/fragments";
 import {
   applySettingsFragments,
   mergeSettingsFragments,
@@ -40,7 +43,12 @@ describe("settings fragments", () => {
             deny: ["Read(./.env)"],
           },
           hooks: {
-            PostToolUse: [{ matcher: "Edit", hooks: [{ type: "command", command: "lint" }] }],
+            PostToolUse: [
+              {
+                matcher: "Edit",
+                hooks: [{ type: "command", command: "lint" }],
+              },
+            ],
           },
           theme: "light",
         },
@@ -50,7 +58,12 @@ describe("settings fragments", () => {
             deny: ["Bash(curl *)"],
           },
           hooks: {
-            PostToolUse: [{ matcher: "Write", hooks: [{ type: "command", command: "format" }] }],
+            PostToolUse: [
+              {
+                matcher: "Write",
+                hooks: [{ type: "command", command: "format" }],
+              },
+            ],
           },
           theme: "dark",
         },
@@ -125,10 +138,7 @@ describe("settings fragments", () => {
     expect(result.action).toBe("reconciled");
     const applied = JSON.parse(await file(settingsOutputPath(project)).text());
     expect(applied.permissions.allow).toEqual(["Bash(git status *)"]);
-    expect(applied.permissions.deny).toEqual([
-      "Read(./.env)",
-      "Bash(curl *)",
-    ]);
+    expect(applied.permissions.deny).toEqual(["Read(./.env)", "Bash(curl *)"]);
     expect(applied.env).toEqual({ PROJECT_MODE: "dev" });
     expect(applied.$schema).toBe(
       "https://json.schemastore.org/claude-code-settings.json",

@@ -26,7 +26,9 @@ describe("lock schema", () => {
 
     await saveLock(project, lock);
 
-    expect(JSON.parse(await readFile(lockPath(project), "utf-8"))).toEqual(lock);
+    expect(JSON.parse(await readFile(lockPath(project), "utf-8"))).toEqual(
+      lock,
+    );
     expect(await loadLock(project)).toEqual(lock);
   });
 

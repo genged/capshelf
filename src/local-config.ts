@@ -3,11 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { $ } from "bun";
-import {
-  LOCAL_CONFIG_FILE,
-  LOCAL_LOCK_FILE,
-  METADATA_DIR,
-} from "./identity";
+import { LOCAL_CONFIG_FILE, LOCAL_LOCK_FILE, METADATA_DIR } from "./identity";
 import { expandTilde } from "./paths";
 import type { ItemKind } from "./master";
 
@@ -34,7 +30,9 @@ export async function loadLocalConfig(
 ): Promise<LocalConfig | null> {
   const path = localConfigPath(project);
   if (!existsSync(path)) return null;
-  const parsed = LocalConfigSchema.parse(JSON.parse(await readFile(path, "utf-8")));
+  const parsed = LocalConfigSchema.parse(
+    JSON.parse(await readFile(path, "utf-8")),
+  );
   return {
     dataRepo: expandTilde(parsed.dataRepo),
     skills: parsed.skills,
@@ -49,7 +47,7 @@ export async function saveLocalConfig(
 ): Promise<void> {
   const path = localConfigPath(project);
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, JSON.stringify(cfg, null, 2) + "\n");
+  await writeFile(path, `${JSON.stringify(cfg, null, 2)}\n`);
   await ensureGitignored(project, LOCAL_CONFIG_FILE);
   await ensureGitignored(project, LOCAL_LOCK_FILE);
 }
@@ -83,7 +81,9 @@ export async function ensureLocalExcludes(
 
   const excludePath = join(project, ".git", "info", "exclude");
   await mkdir(dirname(excludePath), { recursive: true });
-  const raw = existsSync(excludePath) ? await readFile(excludePath, "utf-8") : "";
+  const raw = existsSync(excludePath)
+    ? await readFile(excludePath, "utf-8")
+    : "";
   const existing = new Set(raw.split(/\r?\n/).map((line) => line.trim()));
   const additions = entries.filter((entry) => !existing.has(entry));
   if (additions.length === 0) return;
@@ -130,7 +130,7 @@ export async function assertLocalInstallPathsUntracked(
 
 export function assertLocalScopeSupported(
   kind: ItemKind,
-  name: string,
+  _name: string,
   verb: string,
   mcpMessage = "local scope is not supported for mcp fragments; keep project-local values in .mcp.json or .codex/config.toml",
 ): void {
@@ -151,7 +151,10 @@ export function assertLocalScopeSupported(
   process.exit(3);
 }
 
-async function trackedPathExists(repo: string, relPath: string): Promise<boolean> {
+async function trackedPathExists(
+  repo: string,
+  relPath: string,
+): Promise<boolean> {
   try {
     const out = await $`git -C ${repo} ls-files -- ${relPath}`.quiet().text();
     return out.trim().length > 0;

@@ -11,6 +11,10 @@
     "dev": "bun run src/cli.ts",
     "test": "bun test",
     "coverage": "bun test --coverage",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
     "build": "mkdir -p dist && bun build --compile --minify --target=bun ./src/cli.ts --outfile=./dist/capshelf",
     "smoke": "make smoke"
   },
@@ -20,6 +24,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.4.16",
     "@types/bun": "latest",
     "typescript": "^5.6.0"
   }

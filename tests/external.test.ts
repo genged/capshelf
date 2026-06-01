@@ -44,8 +44,9 @@ describe("skills.sh lock reader", () => {
       name: "alpha",
       source: "acme/alpha",
     });
-    expect(skillsShConflictMessage({ name: "alpha", source: "acme/alpha" }))
-      .toContain("skills.sh remove alpha");
+    expect(
+      skillsShConflictMessage({ name: "alpha", source: "acme/alpha" }),
+    ).toContain("skills.sh remove alpha");
   });
 });
 

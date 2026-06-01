@@ -8,7 +8,10 @@ import {
 const CLAUDE_SETTINGS_SCHEMA =
   "https://json.schemastore.org/claude-code-settings.json";
 
-export function parseJsonConfigObject(raw: string, label: string): ConfigObject {
+export function parseJsonConfigObject(
+  raw: string,
+  label: string,
+): ConfigObject {
   const parsed = JSON.parse(raw) as ConfigValue;
   if (!isPlainConfigObject(parsed)) {
     throw new Error(`${label} must contain a JSON object`);
@@ -17,10 +20,12 @@ export function parseJsonConfigObject(raw: string, label: string): ConfigObject 
 }
 
 export function stringifyJsonConfig(value: ConfigObject): string {
-  return JSON.stringify(stableSortConfig(value), null, 2) + "\n";
+  return `${JSON.stringify(stableSortConfig(value), null, 2)}\n`;
 }
 
-export function normalizeClaudeSettingsOutput(value: ConfigObject): ConfigObject {
+export function normalizeClaudeSettingsOutput(
+  value: ConfigObject,
+): ConfigObject {
   const nonSchemaKeys = Object.keys(value).filter((key) => key !== "$schema");
   if (nonSchemaKeys.length === 0) return {};
   if ("$schema" in value) return value;

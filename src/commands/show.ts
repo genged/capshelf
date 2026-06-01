@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import type { Command } from "commander";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { isFragmentItemKind, shaOfGitVisibleItem } from "../master";
@@ -28,7 +28,10 @@ export function registerShow(program: Command): void {
   program
     .command("show <item>")
     .description("print metadata and content for an item (data or system)")
-    .option("--target <target>", "fragment target for mcp items: claude or codex")
+    .option(
+      "--target <target>",
+      "fragment target for mcp items: claude or codex",
+    )
     .option("--json", "output JSON (no content dump)")
     .option("--no-content", "skip content dump")
     .action(async (itemRef: string, opts: ShowOptions, cmd: Command) => {
@@ -38,7 +41,10 @@ export function registerShow(program: Command): void {
       const lock = await loadLock(project);
 
       const systemItem = findSystemItem(ref.name);
-      if (systemItem && (ref.kind === undefined || systemItem.kind === ref.kind)) {
+      if (
+        systemItem &&
+        (ref.kind === undefined || systemItem.kind === ref.kind)
+      ) {
         await showSystem(ref.name, lock, opts);
         return;
       }
@@ -64,9 +70,9 @@ export function registerShow(program: Command): void {
         process.exit(3);
       }
       const fragmentSources = isFragmentItemKind(item.kind)
-        ? (await currentFragmentSourcesForItem(dataRepo, item.kind, item.name)).filter(
-            (source) => sourceMatchesCliTarget(source, cliTarget),
-          )
+        ? (
+            await currentFragmentSourcesForItem(dataRepo, item.kind, item.name)
+          ).filter((source) => sourceMatchesCliTarget(source, cliTarget))
         : [];
       if (isFragmentItemKind(item.kind) && fragmentSources.length === 0) {
         console.error(`✗ no matching fragment source for ${itemRef}`);
@@ -100,9 +106,7 @@ export function registerShow(program: Command): void {
               sourceCommit:
                 lockEntry?.source === "data" ? lockEntry.sourceCommit : null,
               label:
-                lockEntry?.source === "data"
-                  ? (lockEntry.label ?? null)
-                  : null,
+                lockEntry?.source === "data" ? (lockEntry.label ?? null) : null,
               appliedAt: lockEntry?.appliedAt ?? null,
             },
             null,
@@ -115,8 +119,7 @@ export function registerShow(program: Command): void {
       console.log(`data/${item.kind}/${item.name}`);
       console.log(`  master sha: ${masterSha}`);
       if (lockEntry) {
-        const drift =
-          lockEntry.sha !== masterSha ? " (update available)" : "";
+        const drift = lockEntry.sha !== masterSha ? " (update available)" : "";
         console.log(`  locked sha: ${lockEntry.sha}${drift}`);
         if (lockEntry.source === "data") {
           console.log(`  source commit: ${lockEntry.sourceCommit}`);
@@ -133,7 +136,12 @@ export function registerShow(program: Command): void {
       if (isFragmentItemKind(item.kind)) {
         for (const source of fragmentSources) {
           console.log(`─── ${source.relPath} ─────────────────────`);
-          console.log(await readFile(join(dataRepo, ...source.relPath.split("/")), "utf-8"));
+          console.log(
+            await readFile(
+              join(dataRepo, ...source.relPath.split("/")),
+              "utf-8",
+            ),
+          );
         }
         return;
       }
@@ -143,7 +151,10 @@ export function registerShow(program: Command): void {
         console.log(`─── ${item.name} ─────────────────────`);
         console.log(await readFile(item.path, "utf-8"));
       } else {
-        const files = await gitVisibleFilesUnderPath(dataRepo, item.repoRelPath);
+        const files = await gitVisibleFilesUnderPath(
+          dataRepo,
+          item.repoRelPath,
+        );
         for (const file of files) {
           if (file.includes("/")) continue;
           if (isIgnoredDotEntry(file)) continue;

@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import type { Command } from "commander";
 import { projectRoot, resolveDataRepo } from "../paths";
 import { loadManifest, saveManifest } from "../manifest";
 import type { Manifest } from "../manifest";
@@ -83,7 +83,8 @@ export function registerAdd(program: Command): void {
       if (opts.local && isFragmentItemKind(item.kind)) {
         assertLocalScopeSupported(item.kind, item.name, "add --local");
       }
-      if (opts.local) assertLocalScopeSupported(item.kind, item.name, "add --local");
+      if (opts.local)
+        assertLocalScopeSupported(item.kind, item.name, "add --local");
 
       // Refuse to add from a dirty path. Otherwise the locked sha (hashed from
       // working tree) would not match git show <sourceCommit> (the last commit
@@ -110,7 +111,13 @@ export function registerAdd(program: Command): void {
       const dst = isFragmentItemKind(item.kind)
         ? fragmentOutputPath(
             project,
-            (await currentFragmentTargetsForItem(dataRepo, item.kind, item.name))[0]!,
+            (
+              await currentFragmentTargetsForItem(
+                dataRepo,
+                item.kind,
+                item.name,
+              )
+            )[0]!,
           )
         : targetDir(project, item, manifest.installMode);
 
@@ -159,7 +166,8 @@ export function registerAdd(program: Command): void {
             "no local manifest exists; run capshelf init or capshelf set-data first",
           );
         }
-        if (!localConfig.skills.includes(item.name)) localConfig.skills.push(item.name);
+        if (!localConfig.skills.includes(item.name))
+          localConfig.skills.push(item.name);
       } else {
         addToManifest(manifest, item);
       }
@@ -173,9 +181,12 @@ export function registerAdd(program: Command): void {
       const sources = isFragmentItemKind(item.kind)
         ? await currentFragmentSourcesForItem(dataRepo, item.kind, item.name)
         : [];
-      const outputResults: Awaited<ReturnType<typeof applyFragmentOutput>>[] = [];
+      const outputResults: Awaited<ReturnType<typeof applyFragmentOutput>>[] =
+        [];
       if (isFragmentItemKind(item.kind)) {
-        for (const target of [...new Set(sources.map((source) => source.target))]) {
+        for (const target of [
+          ...new Set(sources.map((source) => source.target)),
+        ]) {
           outputResults.push(
             await applyFragmentOutput({
               project,
@@ -226,8 +237,9 @@ export function registerAdd(program: Command): void {
                     fragmentOutputPath(project, source.target),
                   ),
                   outputAction:
-                    outputResults.find((result) => result.target === source.target)
-                      ?.action ?? "already-current",
+                    outputResults.find(
+                      (result) => result.target === source.target,
+                    )?.action ?? "already-current",
                 })),
               }),
               ...(runtimeWarnings.length > 0 && { runtimeWarnings }),

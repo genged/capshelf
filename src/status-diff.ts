@@ -107,7 +107,10 @@ export async function buildStatusDiff(
       );
       if (text) parts.push(text);
     }
-    if (row.state === "source_dirty" || row.state === "source_dirty_and_output_drift") {
+    if (
+      row.state === "source_dirty" ||
+      row.state === "source_dirty_and_output_drift"
+    ) {
       const sourceDiff = await dataRepoDiff(
         opts.dataRepo,
         allCanonicalFragmentRelPaths(row.kind, row.name),
@@ -136,17 +139,23 @@ export async function buildStatusDiff(
     : null;
 }
 
-async function dataRepoDiff(dataRepo: string, relPaths: string[]): Promise<string> {
+async function dataRepoDiff(
+  dataRepo: string,
+  relPaths: string[],
+): Promise<string> {
   await assertGitAvailable();
-  const result = await $`git -C ${dataRepo} diff HEAD -- ${relPaths}`.quiet().nothrow();
+  const result = await $`git -C ${dataRepo} diff HEAD -- ${relPaths}`
+    .quiet()
+    .nothrow();
   if (result.exitCode !== 0) {
     throw new Error(result.stderr.toString().trim() || "git diff failed");
   }
   const parts = [result.stdout.toString()].filter((text) => text.length > 0);
   for (const relPath of await untrackedDataRepoFiles(dataRepo, relPaths)) {
-    const untracked = await $`git -C ${dataRepo} diff --no-index -- /dev/null ${relPath}`
-      .quiet()
-      .nothrow();
+    const untracked =
+      await $`git -C ${dataRepo} diff --no-index -- /dev/null ${relPath}`
+        .quiet()
+        .nothrow();
     if (untracked.exitCode !== 0 && untracked.exitCode !== 1) {
       throw new Error(untracked.stderr.toString().trim() || "git diff failed");
     }
@@ -160,9 +169,10 @@ async function untrackedDataRepoFiles(
   dataRepo: string,
   relPaths: string[],
 ): Promise<string[]> {
-  const result = await $`git -C ${dataRepo} ls-files -z --others --exclude-standard -- ${relPaths}`
-    .quiet()
-    .nothrow();
+  const result =
+    await $`git -C ${dataRepo} ls-files -z --others --exclude-standard -- ${relPaths}`
+      .quiet()
+      .nothrow();
   if (result.exitCode !== 0) {
     throw new Error(result.stderr.toString().trim() || "git ls-files failed");
   }
@@ -192,7 +202,11 @@ async function expectedFilesForRow(
     files = await lsTreeAtCommit(opts.dataRepo, row.sourceCommit, repoRelPath);
   } catch {
     throw new Error(
-      missingSourceCommitMessage(opts.dataRepo, row.sourceCommit, opts.manifest),
+      missingSourceCommitMessage(
+        opts.dataRepo,
+        row.sourceCommit,
+        opts.manifest,
+      ),
     );
   }
   const out = new Map<string, string>();
@@ -216,7 +230,9 @@ async function showExpectedFile(
   try {
     return await showAtCommit(opts.dataRepo, commit, file);
   } catch {
-    throw new Error(missingSourceCommitMessage(opts.dataRepo, commit, opts.manifest));
+    throw new Error(
+      missingSourceCommitMessage(opts.dataRepo, commit, opts.manifest),
+    );
   }
 }
 
@@ -297,7 +313,13 @@ export async function unifiedDiff(
       throw new Error(result.stderr.toString().trim() || "git diff failed");
     }
     const text = result.stdout.toString();
-    return normalizeDiffHeaders(text, currentPath, expectedPath, fromLabel, toLabel);
+    return normalizeDiffHeaders(
+      text,
+      currentPath,
+      expectedPath,
+      fromLabel,
+      toLabel,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

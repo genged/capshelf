@@ -54,14 +54,18 @@ export async function listSkillsShSkills(
 }
 
 export async function readSkillsShLock(project: string): Promise<Set<string>> {
-  return new Set((await listSkillsShSkills(project)).map((skill) => skill.name));
+  return new Set(
+    (await listSkillsShSkills(project)).map((skill) => skill.name),
+  );
 }
 
 export async function findSkillsShSkill(
   project: string,
   name: string,
 ): Promise<ExternalSkill | null> {
-  return (await listSkillsShSkills(project)).find((s) => s.name === name) ?? null;
+  return (
+    (await listSkillsShSkills(project)).find((s) => s.name === name) ?? null
+  );
 }
 
 export function skillsShConflictMessage(skill: ExternalSkill): string {

@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import type { Command } from "commander";
 import { projectRoot, resolveDataRepo } from "../paths";
 import { loadManifest } from "../manifest";
 import { loadLocalLock, loadLock, saveLocalLock, saveLock } from "../lock";
@@ -29,7 +29,9 @@ export function registerRevert(program: Command): void {
     .action(async (itemRef: string, opts: RevertOptions, cmd: Command) => {
       const project = projectRoot();
       const manifest = await loadManifest(project);
-      const lock = opts.local ? await loadLocalLock(project) : await loadLock(project);
+      const lock = opts.local
+        ? await loadLocalLock(project)
+        : await loadLock(project);
       const ref = parseItemRef(itemRef);
       const key = lockKeyForRef(lock, ref);
       if (!key) {
@@ -74,7 +76,9 @@ export function registerRevert(program: Command): void {
 
       if (isFragmentKind(parsed.kind)) {
         if (opts.local) {
-          console.error(`✗ --local is not supported for ${parsed.kind} fragments`);
+          console.error(
+            `✗ --local is not supported for ${parsed.kind} fragments`,
+          );
           process.exit(3);
         }
         if (!dataRepo) throw new Error("data repo is required");
@@ -109,7 +113,9 @@ export function registerRevert(program: Command): void {
           console.log(JSON.stringify(results, null, 2));
           return;
         }
-        console.log(`✓ reverted ${opts.local ? "local/" : ""}${parsed.source}/${parsed.kind}/${parsed.name}`);
+        console.log(
+          `✓ reverted ${opts.local ? "local/" : ""}${parsed.source}/${parsed.kind}/${parsed.name}`,
+        );
         for (const result of results) console.log(`  ${result.path}`);
         return;
       }
@@ -130,7 +136,9 @@ export function registerRevert(program: Command): void {
         console.log(JSON.stringify(result, null, 2));
         return;
       }
-      console.log(`✓ reverted ${opts.local ? "local/" : ""}${parsed.source}/${parsed.kind}/${parsed.name}`);
+      console.log(
+        `✓ reverted ${opts.local ? "local/" : ""}${parsed.source}/${parsed.kind}/${parsed.name}`,
+      );
       console.log(`  ${result.path}`);
       printRuntimeWarnings(result.runtimeWarnings);
     });

@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import type { Command } from "commander";
 import { projectRoot, resolveDataRepo } from "../paths";
 import { loadManifest } from "../manifest";
 import { loadLocalLock, loadLock } from "../lock";
@@ -61,137 +61,135 @@ export function registerApply(program: Command): void {
     .option("--json", "output JSON")
     .action(
       async (itemRef: string | undefined, opts: ApplyOptions, cmd: Command) => {
-      const project = projectRoot();
-      const manifest = await loadManifest(project);
-      const projectLock = await loadLock(project);
-      const localLock = await loadLocalLock(project);
-      assertNoScopeCollisions(projectLock, localLock);
+        const project = projectRoot();
+        const manifest = await loadManifest(project);
+        const projectLock = await loadLock(project);
+        const localLock = await loadLocalLock(project);
+        assertNoScopeCollisions(projectLock, localLock);
 
-      let targets: Array<{ scope: "project" | "local"; key: string }>;
-      if (itemRef) {
-        const ref = parseItemRef(itemRef);
-        const matches = [
-          ...lockKeysForRef(projectLock, ref).map((key) => ({
-            scope: "project" as const,
-            key,
-          })),
-          ...lockKeysForRef(localLock, ref).map((key) => ({
-            scope: "local" as const,
-            key,
-          })),
-        ].filter((target) => !opts.local || target.scope === "local");
-        if (matches.length === 0) {
-          if (ref.kind === undefined || ref.kind === "skills") {
-            const external = await findSkillsShSkill(project, ref.name);
-            if (external) {
+        let targets: Array<{ scope: "project" | "local"; key: string }>;
+        if (itemRef) {
+          const ref = parseItemRef(itemRef);
+          const matches = [
+            ...lockKeysForRef(projectLock, ref).map((key) => ({
+              scope: "project" as const,
+              key,
+            })),
+            ...lockKeysForRef(localLock, ref).map((key) => ({
+              scope: "local" as const,
+              key,
+            })),
+          ].filter((target) => !opts.local || target.scope === "local");
+          if (matches.length === 0) {
+            if (ref.kind === undefined || ref.kind === "skills") {
+              const external = await findSkillsShSkill(project, ref.name);
+              if (external) {
+                console.error(
+                  `✗ not applying skills/${ref.name} — ${skillsShConflictMessage(external)}`,
+                );
+                process.exit(3);
+              }
+            }
+            console.error(`✗ not tracked in this project: ${itemRef}`);
+            process.exit(2);
+          }
+          if (matches.length > 1) {
+            throw new Error(
+              `ambiguous item "${ref.name}": found in ${matches
+                .map((target) => `${target.scope}/${target.key}`)
+                .join(", ")}; use --local or remove one owner`,
+            );
+          }
+          targets = matches;
+        } else {
+          targets = [
+            ...(!opts.local
+              ? Object.keys(projectLock.items).map((key) => ({
+                  scope: "project" as const,
+                  key,
+                }))
+              : []),
+            ...Object.keys(localLock.items).map((key) => ({
+              scope: "local" as const,
+              key,
+            })),
+          ];
+        }
+
+        const needsDataRepo = targets.some(
+          (target) => parseLockKey(target.key).source === "data",
+        );
+        const dataRepo = needsDataRepo
+          ? await resolveDataRepo({
+              override: globalOpts(cmd).data,
+              manifest,
+              project,
+            })
+          : undefined;
+        if (dataRepo) await assertIsGitRepo(dataRepo);
+
+        const externalSkills = await listSkillsShSkills(project);
+        const externalSkillNames = new Set(externalSkills.map((s) => s.name));
+        const results: Array<
+          MaterializeResult | ApplyError | ApplyExternalSkip
+        > = [];
+        const fragmentTargets = new Set<FragmentTarget>();
+        for (const target of targets) {
+          const { scope, key } = target;
+          const lock = scope === "local" ? localLock : projectLock;
+          const parsed = parseLockKey(key);
+          if (parsed.kind === "skills" && externalSkillNames.has(parsed.name)) {
+            const external = await findSkillsShSkill(project, parsed.name);
+            const message = external
+              ? skillsShConflictMessage(external)
+              : "managed by skills.sh";
+            if (itemRef) {
               console.error(
-                `✗ not applying skills/${ref.name} — ${skillsShConflictMessage(external)}`,
+                `✗ not applying skills/${parsed.name} — ${message}`,
               );
               process.exit(3);
             }
-          }
-          console.error(`✗ not tracked in this project: ${itemRef}`);
-          process.exit(2);
-        }
-        if (matches.length > 1) {
-          throw new Error(
-            `ambiguous item "${ref.name}": found in ${matches
-              .map((target) => `${target.scope}/${target.key}`)
-              .join(", ")}; use --local or remove one owner`,
-          );
-        }
-        targets = matches;
-      } else {
-        targets = [
-          ...(!opts.local
-            ? Object.keys(projectLock.items).map((key) => ({
-                scope: "project" as const,
-                key,
-              }))
-            : []),
-          ...Object.keys(localLock.items).map((key) => ({
-            scope: "local" as const,
-            key,
-          })),
-        ];
-      }
-
-      const needsDataRepo = targets.some(
-        (target) => parseLockKey(target.key).source === "data",
-      );
-      const dataRepo = needsDataRepo
-        ? await resolveDataRepo({
-            override: globalOpts(cmd).data,
-            manifest,
-            project,
-          })
-        : undefined;
-      if (dataRepo) await assertIsGitRepo(dataRepo);
-
-      const externalSkills = await listSkillsShSkills(project);
-      const externalSkillNames = new Set(externalSkills.map((s) => s.name));
-      const results: Array<MaterializeResult | ApplyError | ApplyExternalSkip> =
-        [];
-      const fragmentTargets = new Set<FragmentTarget>();
-      for (const target of targets) {
-        const { scope, key } = target;
-        const lock = scope === "local" ? localLock : projectLock;
-        const parsed = parseLockKey(key);
-        if (
-          parsed.kind === "skills" &&
-          externalSkillNames.has(parsed.name)
-        ) {
-          const external = await findSkillsShSkill(project, parsed.name);
-          const message = external
-            ? skillsShConflictMessage(external)
-            : "managed by skills.sh";
-          if (itemRef) {
-            console.error(
-              `✗ not applying skills/${parsed.name} — ${message}`,
-            );
-            process.exit(3);
-          }
-          results.push({
-            scope,
-            key,
-            source: parsed.source,
-            kind: parsed.kind,
-            name: parsed.name,
-            action: "skipped-external",
-            message,
-          });
-          continue;
-        }
-        if (isFragmentKind(parsed.kind)) {
-          try {
-            if (!dataRepo) throw new Error("data repo is required");
-            const entry = lock.items[key]!;
-            if (entry.source !== "data") {
-              throw new Error(`expected data lock entry for ${key}`);
-            }
-            for (const outputTarget of await lockedFragmentTargetsForItem(
-              dataRepo,
-              parsed.kind,
-              parsed.name,
-              entry,
-              manifest,
-            )) {
-              fragmentTargets.add(outputTarget);
-            }
-          } catch (err) {
-              results.push({
-                scope,
-                key,
+            results.push({
+              scope,
+              key,
               source: parsed.source,
               kind: parsed.kind,
               name: parsed.name,
-              action: "error",
-              error: err instanceof Error ? err.message : String(err),
+              action: "skipped-external",
+              message,
             });
+            continue;
           }
-          continue;
-        }
-        try {
+          if (isFragmentKind(parsed.kind)) {
+            try {
+              if (!dataRepo) throw new Error("data repo is required");
+              const entry = lock.items[key]!;
+              if (entry.source !== "data") {
+                throw new Error(`expected data lock entry for ${key}`);
+              }
+              for (const outputTarget of await lockedFragmentTargetsForItem(
+                dataRepo,
+                parsed.kind,
+                parsed.name,
+                entry,
+                manifest,
+              )) {
+                fragmentTargets.add(outputTarget);
+              }
+            } catch (err) {
+              results.push({
+                scope,
+                key,
+                source: parsed.source,
+                kind: parsed.kind,
+                name: parsed.name,
+                action: "error",
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+            continue;
+          }
+          try {
             results.push(
               addScope(
                 scope,
@@ -204,66 +202,71 @@ export function registerApply(program: Command): void {
                   dryRun: opts.dryRun,
                 }),
               ),
-          );
-        } catch (err) {
-          results.push({
-            scope,
-            key,
-            source: parsed.source,
-            kind: parsed.kind,
-            name: parsed.name,
-            action: "error",
-            error: err instanceof Error ? err.message : String(err),
-          });
+            );
+          } catch (err) {
+            results.push({
+              scope,
+              key,
+              source: parsed.source,
+              kind: parsed.kind,
+              name: parsed.name,
+              action: "error",
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
         }
-      }
 
-      for (const target of fragmentTargets) {
-        try {
-          if (!dataRepo) throw new Error("data repo is required");
-          results.push(
-            addScope(
-              "project",
-              fragmentApplyResult(
-                await applyFragmentOutput({
-                  project,
-                  dataRepo,
-                  manifest,
-                  oldLock: projectLock,
-                  nextLock: projectLock,
-                  target,
-                  dryRun: opts.dryRun,
-                }),
+        for (const target of fragmentTargets) {
+          try {
+            if (!dataRepo) throw new Error("data repo is required");
+            results.push(
+              addScope(
+                "project",
+                fragmentApplyResult(
+                  await applyFragmentOutput({
+                    project,
+                    dataRepo,
+                    manifest,
+                    oldLock: projectLock,
+                    nextLock: projectLock,
+                    target,
+                    dryRun: opts.dryRun,
+                  }),
+                ),
               ),
+            );
+          } catch (err) {
+            const kind = fragmentKindForTarget(target);
+            results.push({
+              scope: "project",
+              key: `data/${target}/(merged)`,
+              source: "data",
+              kind,
+              name: "(merged)",
+              action: "error",
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+
+        if (opts.json) {
+          console.log(
+            JSON.stringify(
+              {
+                project,
+                dataRepo,
+                dryRun: opts.dryRun === true,
+                items: results,
+              },
+              null,
+              2,
             ),
           );
-        } catch (err) {
-          const kind = fragmentKindForTarget(target);
-          results.push({
-            scope: "project",
-            key: `data/${target}/(merged)`,
-            source: "data",
-            kind,
-            name: "(merged)",
-            action: "error",
-            error: err instanceof Error ? err.message : String(err),
-          });
+        } else {
+          printApplyResults(results);
         }
-      }
 
-      if (opts.json) {
-        console.log(
-          JSON.stringify(
-            { project, dataRepo, dryRun: opts.dryRun === true, items: results },
-            null,
-            2,
-          ),
-        );
-      } else {
-        printApplyResults(results);
-      }
-
-      if (results.some((r) => r.action === "error")) process.exit(1);
+        if (results.some((r) => r.action === "error")) process.exit(1);
       },
     );
 }

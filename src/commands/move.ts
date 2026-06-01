@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import type { Command } from "commander";
 import { projectRoot, resolveDataRepo } from "../paths";
 import { loadManifest, saveManifest } from "../manifest";
 import {
@@ -173,7 +173,10 @@ function resolveMoveItem(
   return [...resolved.values()][0] ?? null;
 }
 
-function dataKeysForRef(lock: Lock, ref: ReturnType<typeof parseItemRef>): string[] {
+function dataKeysForRef(
+  lock: Lock,
+  ref: ReturnType<typeof parseItemRef>,
+): string[] {
   return lockKeysForRef(lock, ref).filter((key) => {
     const parsed = parseLockKey(key);
     return parsed.source === "data";

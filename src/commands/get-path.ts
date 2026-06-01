@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import type { Command } from "commander";
 import { join } from "node:path";
 import { projectRoot, resolveDataRepo } from "../paths";
 import { loadLock } from "../lock";
@@ -24,9 +24,14 @@ interface GetPathOptions {
 export function registerGetPath(program: Command): void {
   program
     .command("get-path <item>")
-    .description("print the installed path for a locked item so it can be edited")
+    .description(
+      "print the installed path for a locked item so it can be edited",
+    )
     .option("--output", "print the generated output path for a fragment")
-    .option("--target <target>", "fragment target for mcp items: claude or codex")
+    .option(
+      "--target <target>",
+      "fragment target for mcp items: claude or codex",
+    )
     .option("--json", "output JSON")
     .action(async (itemRef: string, opts: GetPathOptions, cmd: Command) => {
       const ref = parseItemRef(itemRef);
@@ -42,7 +47,9 @@ export function registerGetPath(program: Command): void {
       const parsed = parseLockKey(key);
       const cliTarget = sourceTargetForCli(opts.target);
       if (!isFragmentKind(parsed.kind) && (opts.output || cliTarget)) {
-        console.error("✗ --output and --target are only valid for fragment items");
+        console.error(
+          "✗ --output and --target are only valid for fragment items",
+        );
         process.exit(3);
       }
       if (isFragmentKind(parsed.kind) && parsed.kind !== "mcp" && cliTarget) {
@@ -60,11 +67,13 @@ export function registerGetPath(program: Command): void {
           project,
         });
         await assertIsGitRepo(dataRepo);
-        const sources = (await currentFragmentSourcesForItem(
-          dataRepo,
-          parsed.kind,
-          parsed.name,
-        )).filter((source) => sourceMatchesCliTarget(source, cliTarget));
+        const sources = (
+          await currentFragmentSourcesForItem(
+            dataRepo,
+            parsed.kind,
+            parsed.name,
+          )
+        ).filter((source) => sourceMatchesCliTarget(source, cliTarget));
         if (sources.length === 0) {
           console.error(
             `✗ ${parsed.kind}/${parsed.name} does not have target ${opts.target ?? ""}`,

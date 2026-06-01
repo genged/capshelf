@@ -1,4 +1,10 @@
-import { accessSync, constants, existsSync, readFileSync, realpathSync } from "node:fs";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  readFileSync,
+  realpathSync,
+} from "node:fs";
 import { delimiter } from "node:path";
 import { join, resolve } from "node:path";
 import type { ItemKind } from "./master";
@@ -47,7 +53,10 @@ export function runtimeWarningsForItem(
 
 export function codexProjectTrustWarnings(project: string): RuntimeWarning[] {
   if (!commandExists("codex")) return [];
-  const configPath = join(process.env.CODEX_HOME ?? joinHomeCodex(), "config.toml");
+  const configPath = join(
+    process.env.CODEX_HOME ?? joinHomeCodex(),
+    "config.toml",
+  );
   if (isCodexProjectTrusted(configPath, project)) return [];
   return [
     {
@@ -64,7 +73,9 @@ export function printRuntimeWarnings(
 ): void {
   for (const warning of warnings) {
     if (warning.type === "shadowed_by_personal_claude_skill") {
-      console.log(`${indent}⚠ personal Claude skill shadows this project skill`);
+      console.log(
+        `${indent}⚠ personal Claude skill shadows this project skill`,
+      );
       console.log(`${indent}  ${warning.message}`);
     } else if (warning.type === "codex_project_untrusted") {
       console.log(`${indent}⚠ Codex project config may be ignored`);
@@ -119,7 +130,11 @@ function isCodexProjectTrusted(configPath: string, project: string): boolean {
   } catch {
     return false;
   }
-  if (typeof parsed !== "object" || parsed === null || !("projects" in parsed)) {
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    !("projects" in parsed)
+  ) {
     return false;
   }
   const projects = (parsed as { projects?: unknown }).projects;

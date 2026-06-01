@@ -70,7 +70,9 @@ export async function lastTouchingCommitForPaths(
 ): Promise<string> {
   await assertGitAvailable();
   if (relPaths.length === 0) {
-    throw new Error("cannot compute last touching commit for an empty path list");
+    throw new Error(
+      "cannot compute last touching commit for an empty path list",
+    );
   }
   let out: string;
   try {
@@ -102,7 +104,10 @@ export async function showAtCommit(
   return Buffer.from(result);
 }
 
-export async function commitExists(repo: string, commit: string): Promise<boolean> {
+export async function commitExists(
+  repo: string,
+  commit: string,
+): Promise<boolean> {
   await assertGitAvailable();
   try {
     await $`git -C ${repo} cat-file -e ${commit}^{commit}`.quiet();
@@ -169,9 +174,10 @@ export async function gitVisibleFilesUnderPath(
 ): Promise<string[]> {
   await assertGitAvailable();
   const normalized = normalizeGitPath(relPath);
-  const out = await $`git -C ${repo} ls-files -z --cached --others --exclude-standard -- ${normalized}`
-    .quiet()
-    .text();
+  const out =
+    await $`git -C ${repo} ls-files -z --cached --others --exclude-standard -- ${normalized}`
+      .quiet()
+      .text();
   return out
     .split("\0")
     .filter((path) => path.length > 0)
@@ -290,9 +296,7 @@ export function normalizeRemoteUrl(url: string): string | null {
 
   const scpLikeMatch = /^git@([^:]+):(.+)$/.exec(input);
   if (scpLikeMatch) {
-    return normalizeUrlLike(
-      `https://${scpLikeMatch[1]!}/${scpLikeMatch[2]!}`,
-    );
+    return normalizeUrlLike(`https://${scpLikeMatch[1]!}/${scpLikeMatch[2]!}`);
   }
 
   const sshMatch = /^ssh:\/\/(?:[^@/]+@)?([^/]+)\/(.+)$/i.exec(input);
@@ -328,7 +332,10 @@ function normalizeUrlLike(input: string): string | null {
 }
 
 function normalizeGitPath(path: string): string {
-  return path.split(/[\\/]+/).filter(Boolean).join("/");
+  return path
+    .split(/[\\/]+/)
+    .filter(Boolean)
+    .join("/");
 }
 
 function relativeToGitPath(path: string, root: string): string {

@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { DEFAULT_INSTALL_MODE, manifestPath, manifestReadPath } from "./paths";
 import type { InstallMode } from "./paths";
@@ -16,9 +15,12 @@ export const ManifestSchema = z
     dataRepoUpstream: z
       .string()
       .optional()
-      .refine((value) => value === undefined || normalizeRemoteUrl(value) !== null, {
-        message: "dataRepoUpstream must be a supported git remote URL",
-      }),
+      .refine(
+        (value) => value === undefined || normalizeRemoteUrl(value) !== null,
+        {
+          message: "dataRepoUpstream must be a supported git remote URL",
+        },
+      ),
     dataRepo: z.never().optional(),
     skills: z.array(z.string()).default([]),
     commands: z.array(z.string()).optional(),
@@ -36,7 +38,9 @@ export const ManifestSchema = z
       });
     }
   })
-  .transform(({ commands: _commands, dataRepo: _dataRepo, ...manifest }) => manifest);
+  .transform(
+    ({ commands: _commands, dataRepo: _dataRepo, ...manifest }) => manifest,
+  );
 
 export type Manifest = z.infer<typeof ManifestSchema> & {
   installMode: InstallMode;
@@ -66,10 +70,13 @@ export async function loadManifest(project: string): Promise<Manifest> {
   return ManifestSchema.parse(parsed);
 }
 
-export async function saveManifest(project: string, m: Manifest): Promise<void> {
+export async function saveManifest(
+  project: string,
+  m: Manifest,
+): Promise<void> {
   const p = manifestPath(project);
   await mkdir(dirname(p), { recursive: true });
-  await writeFile(p, JSON.stringify(m, null, 2) + "\n");
+  await writeFile(p, `${JSON.stringify(m, null, 2)}\n`);
 }
 
 export function manifestNamesForKind(

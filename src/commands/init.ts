@@ -1,9 +1,5 @@
-import { Command } from "commander";
-import {
-  DEFAULT_INSTALL_MODE,
-  projectRoot,
-  resolveDataRepo,
-} from "../paths";
+import type { Command } from "commander";
+import { DEFAULT_INSTALL_MODE, projectRoot, resolveDataRepo } from "../paths";
 import type { InstallMode } from "../paths";
 import { loadManifest, saveManifest } from "../manifest";
 import { loadLock, saveLock, systemKey } from "../lock";
@@ -39,7 +35,10 @@ export function registerInit(program: Command): void {
     .option("--data <path>", "data repo to bind this project to")
     .option("--upstream <url>", "declared upstream URL for the data repo")
     .option("--no-upstream", "omit dataRepoUpstream even when origin exists")
-    .option("--claude-only", "install directly under .claude without .agents symlinks")
+    .option(
+      "--claude-only",
+      "install directly under .claude without .agents symlinks",
+    )
     .option("--json", "output JSON")
     .action(async (opts: InitOptions, cmd: Command) => {
       const project = projectRoot();
@@ -159,7 +158,8 @@ async function initUpstream(
   if (opts.upstream === false) return null;
   if (opts.upstream) {
     const normalized = normalizeRemoteUrl(opts.upstream);
-    if (!normalized) throw new Error(`unsupported git remote URL: ${opts.upstream}`);
+    if (!normalized)
+      throw new Error(`unsupported git remote URL: ${opts.upstream}`);
     return normalized;
   }
 
@@ -168,7 +168,9 @@ async function initUpstream(
 }
 
 function hasUpstreamFlag(argv: string[] = process.argv): boolean {
-  return argv.some((arg) => arg === "--upstream" || arg.startsWith("--upstream="));
+  return argv.some(
+    (arg) => arg === "--upstream" || arg.startsWith("--upstream="),
+  );
 }
 
 function hasNoUpstreamFlag(argv: string[] = process.argv): boolean {

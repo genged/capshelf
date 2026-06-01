@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import type { Command } from "commander";
 import {
   projectRoot,
   resolveDataRepo,
@@ -30,10 +30,15 @@ interface LsOptions {
 export function registerLs(program: Command): void {
   program
     .command("ls")
-    .description("list available items (data repo + system) or installed items with --here")
+    .description(
+      "list available items (data repo + system) or installed items with --here",
+    )
     .option("--here", "list items installed in the current project")
     .option("--json", "output JSON")
-    .option("-k, --kind <kind>", "filter by kind (skills|settings|mcp|codex-config)")
+    .option(
+      "-k, --kind <kind>",
+      "filter by kind (skills|settings|mcp|codex-config)",
+    )
     .action(async (opts: LsOptions, cmd: Command) => {
       if (opts.kind && !ITEM_KINDS.includes(opts.kind as ItemKind)) {
         throw new Error(
@@ -110,7 +115,7 @@ async function lsAvailable(
   const byKind = new Map<ItemKind, typeof dataItems>();
   for (const i of dataItems) {
     if (!byKind.has(i.kind)) byKind.set(i.kind, []);
-    byKind.get(i.kind)!.push(i);
+    byKind.get(i.kind)?.push(i);
   }
   for (const k of ITEM_KINDS) {
     const list = byKind.get(k);
@@ -131,7 +136,10 @@ async function shaOfDataItem(
     : await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
 }
 
-async function lsHere(kind: ItemKind | undefined, json: boolean): Promise<void> {
+async function lsHere(
+  kind: ItemKind | undefined,
+  json: boolean,
+): Promise<void> {
   const project = projectRoot();
   const manifest = await loadManifest(project);
   const lock = await loadLock(project);

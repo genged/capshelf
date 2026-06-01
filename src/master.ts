@@ -4,7 +4,12 @@ import { join, basename } from "node:path";
 import { isIgnoredDotDirent } from "./dotfiles";
 import { gitVisibleFilesUnderPath } from "./git";
 
-export const ITEM_KINDS = ["skills", "settings", "mcp", "codex-config"] as const;
+export const ITEM_KINDS = [
+  "skills",
+  "settings",
+  "mcp",
+  "codex-config",
+] as const;
 export type ItemKind = (typeof ITEM_KINDS)[number];
 export type FragmentItemKind = Exclude<ItemKind, "skills">;
 
@@ -122,7 +127,10 @@ export async function shaOfGitVisibleItem(
   );
 }
 
-async function shaOfItemFiles(itemPath: string, files: string[]): Promise<string> {
+async function shaOfItemFiles(
+  itemPath: string,
+  files: string[],
+): Promise<string> {
   const hasher = new Bun.CryptoHasher("sha256");
   const info = await stat(itemPath);
   if (info.isFile()) {

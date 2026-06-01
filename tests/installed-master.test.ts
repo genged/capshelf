@@ -137,8 +137,9 @@ describe("installed item paths and hashes", () => {
       recursive: true,
     });
 
-    await expect(ensureInstallAliases(project, "skills", "hello")).rejects
-      .toThrow(/not a symlink/);
+    await expect(
+      ensureInstallAliases(project, "skills", "hello"),
+    ).rejects.toThrow(/not a symlink/);
   });
 
   test("removes broken managed compatibility symlinks", async () => {
@@ -149,8 +150,9 @@ describe("installed item paths and hashes", () => {
     await symlink("../../.agents/skills/hello", linkPath, "dir");
 
     expect(lstatSync(linkPath).isSymbolicLink()).toBe(true);
-    expect(await removeInstallAliases(project, "skills", "hello", realPath))
-      .toBe(true);
+    expect(
+      await removeInstallAliases(project, "skills", "hello", realPath),
+    ).toBe(true);
     expect(() => lstatSync(linkPath)).toThrow();
   });
 });
@@ -180,8 +182,9 @@ describe("sync materialization", () => {
     expect(existsSync(join(dst, "SKILL.md"))).toBe(true);
     expect(isExecutable(join(dst, "scripts", "run.sh"))).toBe(true);
     expect(existsSync(join(dst, "stale.txt"))).toBe(false);
-    expect(lstatSync(join(project, ".claude", "skills", "hello")).isSymbolicLink())
-      .toBe(true);
+    expect(
+      lstatSync(join(project, ".claude", "skills", "hello")).isSymbolicLink(),
+    ).toBe(true);
   });
 
   test("copies tracked dotfiles as item content", async () => {
@@ -259,8 +262,9 @@ describe("sync materialization", () => {
     expect(existsSync(join(dst, "SKILL.md"))).toBe(true);
     expect(existsSync(join(dst, "stale.txt"))).toBe(false);
     expect(
-      lstatSync(join(project, ".claude", "skills", "system-hello"))
-        .isSymbolicLink(),
+      lstatSync(
+        join(project, ".claude", "skills", "system-hello"),
+      ).isSymbolicLink(),
     ).toBe(true);
   });
 });
@@ -314,15 +318,20 @@ describe("master item discovery and hashing", () => {
     await mkdir(join(dataRepo, "skills", ".hidden"), { recursive: true });
     await mkdir(join(dataRepo, "skills", ".gitignore"), { recursive: true });
     await mkdir(join(dataRepo, "settings", "base"), { recursive: true });
-    await writeFile(join(dataRepo, "settings", "base", "settings.json"), "{}\n");
+    await writeFile(
+      join(dataRepo, "settings", "base", "settings.json"),
+      "{}\n",
+    );
     await mkdir(join(dataRepo, "mcp", "github"), { recursive: true });
     await writeFile(join(dataRepo, "mcp", "github", "claude.json"), "{}\n");
     await mkdir(join(dataRepo, "mcp", "ignored"), { recursive: true });
     await writeFile(join(dataRepo, "mcp", "ignored", "fragment.json"), "{}\n");
-    await mkdir(join(dataRepo, "codex", "config", "defaults"), { recursive: true });
+    await mkdir(join(dataRepo, "codex", "config", "defaults"), {
+      recursive: true,
+    });
     await writeFile(
       join(dataRepo, "codex", "config", "defaults", "config.toml"),
-      "model = \"gpt-5\"\n",
+      'model = "gpt-5"\n',
     );
 
     const items = await listMasterItems(dataRepo);
@@ -340,7 +349,10 @@ describe("master item discovery and hashing", () => {
     await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
     await mkdir(join(dataRepo, "skills", "auth"), { recursive: true });
     await mkdir(join(dataRepo, "settings", "auth"), { recursive: true });
-    await writeFile(join(dataRepo, "settings", "auth", "settings.json"), "{}\n");
+    await writeFile(
+      join(dataRepo, "settings", "auth", "settings.json"),
+      "{}\n",
+    );
 
     expect((await findMasterItem(dataRepo, "hello"))?.kind).toBe("skills");
     expect(await findMasterItem(dataRepo, "missing")).toBeNull();

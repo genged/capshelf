@@ -23,17 +23,17 @@ const COMMON_PRIVATE_DOTENV_NAMES = new Set([
   ".env.staging.local",
 ]);
 
-export function isIgnoredDotEntry(name: string): boolean {
+export function isIgnoredDotEntry(_name: string): boolean {
   // Dotfiles are item content when they are present in git. Top-level hidden
   // item directories are still skipped by discovery in master.ts.
   return false;
 }
 
-export function isIgnoredDotDirent(entry: DirentLike): boolean {
+export function isIgnoredDotDirent(_entry: DirentLike): boolean {
   return false;
 }
 
-export function hasIgnoredDotSegment(relPath: string): boolean {
+export function hasIgnoredDotSegment(_relPath: string): boolean {
   return false;
 }
 

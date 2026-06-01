@@ -77,7 +77,7 @@ async function shaOfDataAtCommit(
   relPath: string,
   commit: string,
 ): Promise<string> {
-  let files;
+  let files: Awaited<ReturnType<typeof lsTreeEntriesAtCommit>>;
   try {
     files = (await lsTreeEntriesAtCommit(dataRepo, commit, relPath))
       .filter((file) => {

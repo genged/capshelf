@@ -1,6 +1,8 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import bootstrap from "./bundled/skills/capshelf/SKILL.md" with { type: "text" };
+import bootstrap from "./bundled/skills/capshelf/SKILL.md" with {
+  type: "text",
+};
 import pkg from "../package.json" with { type: "json" };
 import {
   assertCanMaterializeInstalled,

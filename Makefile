@@ -1,6 +1,6 @@
 BIN_DIR ?= $(HOME)/.local/bin
 
-.PHONY: install dev build test check smoke smoke-modes smoke-skills smoke-settings smoke-mcp smoke-codex-config clean deps
+.PHONY: install dev build test typecheck lint check smoke smoke-modes smoke-skills smoke-settings smoke-mcp smoke-codex-config clean deps
 
 deps:
 	bun install
@@ -18,7 +18,13 @@ install: build
 test:
 	bun test
 
-check: test smoke
+typecheck: deps
+	bun run typecheck
+
+lint:
+	bun run lint
+
+check: typecheck lint test smoke
 
 dev:
 	bun run src/cli.ts

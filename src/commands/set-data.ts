@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import type { Command } from "commander";
 import { isAbsolute, resolve } from "node:path";
 import { assertIsGitRepo } from "../git";
 import { loadManifest } from "../manifest";

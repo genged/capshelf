@@ -50,7 +50,7 @@ export async function loadLock(project: string): Promise<Lock> {
 export async function saveLock(project: string, lock: Lock): Promise<void> {
   const p = lockPath(project);
   await mkdir(dirname(p), { recursive: true });
-  await writeFile(p, JSON.stringify(lock, null, 2) + "\n");
+  await writeFile(p, `${JSON.stringify(lock, null, 2)}\n`);
 }
 
 export async function loadLocalLock(project: string): Promise<Lock> {
@@ -72,10 +72,13 @@ export async function loadLocalLock(project: string): Promise<Lock> {
   }
 }
 
-export async function saveLocalLock(project: string, lock: Lock): Promise<void> {
+export async function saveLocalLock(
+  project: string,
+  lock: Lock,
+): Promise<void> {
   const p = localLockPath(project);
   await mkdir(dirname(p), { recursive: true });
-  await writeFile(p, JSON.stringify(lock, null, 2) + "\n");
+  await writeFile(p, `${JSON.stringify(lock, null, 2)}\n`);
 }
 
 export function dataKey(kind: string, name: string): string {

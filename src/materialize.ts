@@ -57,7 +57,9 @@ export async function materializeLockEntry(
 ): Promise<MaterializeResult> {
   const { source, kind, name } = parseLockKey(opts.key);
   if (isFragmentItemKind(kind)) {
-    throw new Error(`${kind}/${name} is a fragment item and must be reconciled through fragment outputs`);
+    throw new Error(
+      `${kind}/${name} is a fragment item and must be reconciled through fragment outputs`,
+    );
   }
   const dst = installedPath(opts.project, kind, name);
   const runtimeWarnings = runtimeWarningsForItem(opts.project, kind, name);

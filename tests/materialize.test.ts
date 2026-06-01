@@ -40,7 +40,10 @@ describe("materializeLockEntry", () => {
     await mkdir(dataItem, { recursive: true });
     await writeFile(join(dataItem, "SKILL.md"), "hello v1\n");
     await writeFile(join(dataItem, ".gitignore"), "generated/\n");
-    await writeFile(join(dataItem, ".env.1password"), "API_KEY=op://vault/key\n");
+    await writeFile(
+      join(dataItem, ".env.1password"),
+      "API_KEY=op://vault/key\n",
+    );
     await writeFile(join(dataItem, ".secret"), "secret\n");
     await mkdir(join(dataItem, "scripts"), { recursive: true });
     await writeFile(join(dataItem, "scripts", "run.sh"), "#!/bin/sh\n");
@@ -86,8 +89,9 @@ describe("materializeLockEntry", () => {
       existsSync(join(installed, "nested", ".gitignore", "ignored.txt")),
     ).toBe(true);
     expect(existsSync(join(installed, "stale.txt"))).toBe(false);
-    expect(lstatSync(join(project, ".claude", "skills", "hello")).isSymbolicLink())
-      .toBe(true);
+    expect(
+      lstatSync(join(project, ".claude", "skills", "hello")).isSymbolicLink(),
+    ).toBe(true);
   });
 
   test("dry-run reports reconciliation without touching installed files", async () => {
@@ -122,7 +126,9 @@ describe("materializeLockEntry", () => {
     expect(result.action).toBe("would-reconcile");
     expect(result.dryRun).toBe(true);
     expect(result.plannedSha).toBe(sha);
-    expect(await file(join(installed, "SKILL.md")).text()).toBe("local drift\n");
+    expect(await file(join(installed, "SKILL.md")).text()).toBe(
+      "local drift\n",
+    );
     expect(existsSync(join(installed, "stale.txt"))).toBe(true);
     expect(existsSync(join(project, ".claude", "skills", "hello"))).toBe(false);
   });

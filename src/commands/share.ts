@@ -1,4 +1,4 @@
-import { Command } from "commander";
+import type { Command } from "commander";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -57,9 +57,15 @@ export function registerShare(program: Command): void {
   program
     .command("share <item>")
     .description("adopt an on-disk item into the data repo and track it here")
-    .option("--to <scope>", "resulting scope: local or project (default: local)")
+    .option(
+      "--to <scope>",
+      "resulting scope: local or project (default: local)",
+    )
     .option("--from <path>", "source file for fragment items")
-    .option("--target <target>", "fragment target for mcp items: claude or codex")
+    .option(
+      "--target <target>",
+      "fragment target for mcp items: claude or codex",
+    )
     .option("-m, --message <msg>", "git commit message")
     .option("--json", "output JSON")
     .addHelpText(
@@ -122,7 +128,9 @@ export function registerShare(program: Command): void {
       const adopted = await adoptIntoDataRepo(project, dataRepo, kind, name, {
         installMode: manifest.installMode,
         message: opts.message,
-        ...((scope === "local" || localKey) && { sourceScope: "local" as const }),
+        ...((scope === "local" || localKey) && {
+          sourceScope: "local" as const,
+        }),
       });
 
       const entry = {
@@ -209,7 +217,9 @@ async function shareFragment(
   }
   const cliTarget = sourceTargetForCli(opts.target);
   if (kind === "mcp" && cliTarget === null) {
-    console.error("✗ share mcp fragments requires --target claude or --target codex");
+    console.error(
+      "✗ share mcp fragments requires --target claude or --target codex",
+    );
     process.exit(3);
   }
   if (kind !== "mcp" && cliTarget !== null) {
@@ -263,7 +273,9 @@ async function shareFragment(
 
   const sources = await currentFragmentSourcesForItem(dataRepo, kind, name);
   const outputResults: Awaited<ReturnType<typeof applyFragmentOutput>>[] = [];
-  for (const target of [...new Set(sources.map((fragmentSource) => fragmentSource.target))]) {
+  for (const target of [
+    ...new Set(sources.map((fragmentSource) => fragmentSource.target)),
+  ]) {
     outputResults.push(
       await applyFragmentOutput({
         project,
@@ -298,8 +310,9 @@ async function shareFragment(
             sourcePath: fragmentSource.relPath,
             outputPath: fragmentOutputPath(project, fragmentSource.target),
             outputAction:
-              outputResults.find((result) => result.target === fragmentSource.target)
-                ?.action ?? "already-current",
+              outputResults.find(
+                (result) => result.target === fragmentSource.target,
+              )?.action ?? "already-current",
           })),
         },
         null,
@@ -329,7 +342,7 @@ function preserveLabel(
   key: string,
 ): DataLockEntry {
   const existing = localLock.items[key];
-  if (!existing || existing.source !== "data" || existing.label === undefined) {
+  if (existing?.source !== "data" || existing.label === undefined) {
     return entry;
   }
   return { ...entry, label: existing.label };

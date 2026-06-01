@@ -57,6 +57,8 @@ export async function settingsContributionState(
   );
 }
 
-export function mergeSettingsFragments(fragments: ConfigObject[]): ConfigObject {
+export function mergeSettingsFragments(
+  fragments: ConfigObject[],
+): ConfigObject {
   return mergeConfigObjects(fragments);
 }

@@ -59,6 +59,8 @@ describe("upstream verification", () => {
   test("skips origin checks when the manifest has no upstream", async () => {
     const repo = await tempRepo("capshelf-upstream-skipped-");
 
-    await expect(verifyDataRepoUpstream(repo, manifest())).resolves.toBeUndefined();
+    await expect(
+      verifyDataRepoUpstream(repo, manifest()),
+    ).resolves.toBeUndefined();
   });
 });
