@@ -12,6 +12,7 @@ import {
   dataKey,
 } from "../lock";
 import type { ItemKind } from "../master";
+import { NotFoundError, PreconditionError } from "../errors";
 import { isFragmentItemKind, ITEM_KINDS } from "../master";
 import {
   installedPath,
@@ -44,10 +45,9 @@ export function registerRm(program: Command): void {
     .action(async (itemRef: string, opts: RmOptions, cmd: Command) => {
       const ref = parseItemRef(itemRef);
       if (isSystemItemName(ref.name)) {
-        console.error(
-          `✗ "${ref.name}" is a system item — managed by the CLI, cannot be removed. It will be re-installed by 'capshelf init' anyway.`,
+        throw new PreconditionError(
+          `"${ref.name}" is a system item — managed by the CLI, cannot be removed. It will be re-installed by 'capshelf init' anyway.`,
         );
-        process.exit(3);
       }
 
       const project = projectRoot();
@@ -73,10 +73,9 @@ export function registerRm(program: Command): void {
           external &&
           (ref.kind === "skills" || hasLockedSkill || dataKeys.length === 0)
         ) {
-          console.error(
-            `✗ not removing skills/${ref.name} — ${skillsShConflictMessage(external)}`,
+          throw new PreconditionError(
+            `not removing skills/${ref.name} — ${skillsShConflictMessage(external)}`,
           );
-          process.exit(3);
         }
       }
 
@@ -99,30 +98,26 @@ export function registerRm(program: Command): void {
         );
         if (manifestKinds.length > 0) {
           const label = ref.kind ? `${ref.kind}/${ref.name}` : ref.name;
-          console.error(
-            `✗ not removing ${label} — no data lock entry exists, so installed files are not managed by capshelf`,
+          throw new PreconditionError(
+            `not removing ${label} — no data lock entry exists, so installed files are not managed by capshelf\n` +
+              "  remove local-only files manually, or repair the lock before running capshelf rm",
           );
-          console.error(
-            "  remove local-only files manually, or repair the lock before running capshelf rm",
-          );
-          process.exit(3);
         }
-        console.error(`✗ not installed in this project: ${itemRef}`);
-        process.exit(2);
+        throw new NotFoundError(`not installed in this project: ${itemRef}`);
       }
 
       const parsed = parseLockKey(dataKeys[0]!);
       const kind = parsed.kind as ItemKind;
       const name = parsed.name;
       if (opts.local && isFragmentItemKind(kind)) {
-        console.error(`✗ --local is not supported for ${kind} fragments`);
-        process.exit(3);
+        throw new PreconditionError(
+          `--local is not supported for ${kind} fragments`,
+        );
       }
       if (opts.local) {
         if (!localConfig) throw new Error("no local manifest exists");
         if (kind !== "skills") {
-          console.error("✗ --local currently supports skills only");
-          process.exit(3);
+          throw new PreconditionError("--local currently supports skills only");
         }
         localConfig.skills = localConfig.skills.filter((x) => x !== name);
       } else {

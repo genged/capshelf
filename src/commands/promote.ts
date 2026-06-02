@@ -24,6 +24,7 @@ import {
 } from "../installed";
 import { shaOfGitVisibleItem, shaOfItem } from "../master";
 import type { ItemKind } from "../master";
+import { CheckFailedError, NotFoundError, PreconditionError } from "../errors";
 import {
   assertIsGitRepo,
   assertRepoClean,
@@ -127,10 +128,9 @@ export function registerPromote(program: Command): void {
     .action(async (itemRef: string, opts: PromoteOptions, cmd: Command) => {
       const ref = parseItemRef(itemRef);
       if (isSystemItemName(ref.name)) {
-        console.error(
-          `✗ "${ref.name}" is a system item — submit a PR to the capshelf repo instead`,
+        throw new PreconditionError(
+          `"${ref.name}" is a system item — submit a PR to the capshelf repo instead`,
         );
-        process.exit(3);
       }
 
       const project = projectRoot();
@@ -151,10 +151,9 @@ export function registerPromote(program: Command): void {
       let saveLocal = false;
       if (opts.create) {
         if (opts.local) {
-          console.error(
-            `✗ promote ${itemRef} --local --create is no longer supported; use: capshelf share ${itemRef}`,
+          throw new PreconditionError(
+            `promote ${itemRef} --local --create is no longer supported; use: capshelf share ${itemRef}`,
           );
-          process.exit(3);
         }
         result = await promoteCreate(
           project,
@@ -231,11 +230,10 @@ async function promoteProjectTracked(
     if (localKey) {
       const parsed = parseLockKey(localKey);
       const display = `${parsed.kind}/${parsed.name}`;
-      console.error(`✗ not tracked in project scope: ${display}`);
-      console.error(
-        `  found in local scope; run: capshelf promote ${display} --local`,
+      throw new NotFoundError(
+        `not tracked in project scope: ${display}\n` +
+          `  found in local scope; run: capshelf promote ${display} --local`,
       );
-      process.exit(2);
     }
     return await rejectUntrackedPromote(project, projectLock, ref);
   }
@@ -279,14 +277,12 @@ async function promoteLocalTracked(
     if (ref.kind === undefined || ref.kind === "skills") {
       const external = await findSkillsShSkill(project, ref.name);
       if (external) {
-        console.error(
-          `✗ not promoting skills/${ref.name} — ${skillsShConflictMessage(external)}`,
+        throw new PreconditionError(
+          `not promoting skills/${ref.name} — ${skillsShConflictMessage(external)}`,
         );
-        process.exit(3);
       }
     }
-    console.error(`✗ not tracked in local scope: ${refDisplay(ref)}`);
-    process.exit(2);
+    throw new NotFoundError(`not tracked in local scope: ${refDisplay(ref)}`);
   }
 
   const parsed = parseLockKey(key);
@@ -309,27 +305,25 @@ async function rejectUntrackedPromote(
   if (ref.kind === undefined || ref.kind === "skills") {
     const external = await findSkillsShSkill(project, ref.name);
     if (external) {
-      console.error(
-        `✗ not promoting skills/${ref.name} — ${skillsShConflictMessage(external)}`,
+      throw new PreconditionError(
+        `not promoting skills/${ref.name} — ${skillsShConflictMessage(external)}`,
       );
-      process.exit(3);
     }
   }
   const systemKey = lockKeyForRef(lock, ref, "system");
   if (systemKey) {
-    console.error(
-      `✗ ${ref.name} is a system item — submit a PR to the capshelf repo instead`,
+    throw new PreconditionError(
+      `${ref.name} is a system item — submit a PR to the capshelf repo instead`,
     );
-    process.exit(3);
   }
   const display = refDisplay(ref);
-  console.error(`✗ not tracked in this project: ${display}`);
-  if (ref.kind === undefined || ref.kind === "skills") {
-    console.error(
-      `  to adopt a local-only skill into the data repo, run: capshelf share ${display} --to project`,
-    );
-  }
-  process.exit(2);
+  const adoptHint =
+    ref.kind === undefined || ref.kind === "skills"
+      ? `\n  to adopt a local-only skill into the data repo, run: capshelf share ${display} --to project`
+      : "";
+  throw new NotFoundError(
+    `not tracked in this project: ${display}${adoptHint}`,
+  );
 }
 
 async function promoteFragmentSource(
@@ -350,10 +344,9 @@ async function promoteFragmentSource(
     name,
   ).catch(() => []);
   if (existingSources.length === 0) {
-    console.error(
-      `✗ data repo does not have canonical source files for ${kind}/${name}`,
+    throw new PreconditionError(
+      `data repo does not have canonical source files for ${kind}/${name}`,
     );
-    process.exit(3);
   }
 
   await assertRepoCleanOutsidePaths(dataRepo, canonicalPaths);
@@ -380,10 +373,9 @@ async function promoteFragmentSource(
         committed: false,
       };
     }
-    console.error(
-      `✗ ${kind}/${name} has committed source changes not in this project lock; run capshelf update ${kind}/${name}`,
+    throw new PreconditionError(
+      `${kind}/${name} has committed source changes not in this project lock; run capshelf update ${kind}/${name}`,
     );
-    process.exit(3);
   }
 
   for (const source of existingSources) {
@@ -449,28 +441,25 @@ export async function syncTrackedIntoDataRepo(
   const entry = dataEntryOrThrow(lock.items[key], key);
 
   if (isFragmentKind(kind)) {
-    console.error(
-      `✗ promote for ${kind}/${name} must use project-scope fragment source files`,
+    throw new PreconditionError(
+      `promote for ${kind}/${name} must use project-scope fragment source files`,
     );
-    process.exit(3);
   }
 
   if (kind === "skills") {
     const external = await findSkillsShSkill(project, name);
     if (external) {
-      console.error(
-        `✗ not promoting skills/${name} — ${skillsShConflictMessage(external)}`,
+      throw new PreconditionError(
+        `not promoting skills/${name} — ${skillsShConflictMessage(external)}`,
       );
-      process.exit(3);
     }
   }
 
   const repoRelPath = `${kind}/${name}`;
   if (!existsSync(join(dataRepo, repoRelPath))) {
-    console.error(
-      `✗ data repo does not have ${repoRelPath}; run "capshelf share ${kind}/${name}" instead`,
+    throw new PreconditionError(
+      `data repo does not have ${repoRelPath}; run "capshelf share ${kind}/${name}" instead`,
     );
-    process.exit(3);
   }
 
   const snapshot = await installedSnapshot(
@@ -555,14 +544,14 @@ async function promoteCreate(
 ): Promise<PromoteResult> {
   const kind = ref.kind ?? "skills";
   if (kind !== "skills") {
-    console.error(
-      "✗ promote --create can only adopt local skills; use capshelf share for new mcp items",
+    throw new PreconditionError(
+      "promote --create can only adopt local skills; use capshelf share for new mcp items",
     );
-    process.exit(3);
   }
   if (lockKeyForRef(lock, { kind, name: ref.name })) {
-    console.error(`✗ already tracked in this project: ${kind}/${ref.name}`);
-    process.exit(3);
+    throw new PreconditionError(
+      `already tracked in this project: ${kind}/${ref.name}`,
+    );
   }
 
   const adopted = await adoptIntoDataRepo(project, dataRepo, kind, ref.name, {
@@ -589,34 +578,32 @@ export async function adoptIntoDataRepo(
   opts: AdoptOptions,
 ): Promise<PromoteResult> {
   if (isFragmentKind(kind)) {
-    console.error(
-      `✗ share for ${kind}/${name} requires --from <path> --to project`,
+    throw new PreconditionError(
+      `share for ${kind}/${name} requires --from <path> --to project`,
     );
-    process.exit(3);
   }
   if (kind === "skills") {
     const external = await findSkillsShSkill(project, name);
     if (external) {
-      console.error(
-        `✗ not adopting skills/${name} — ${skillsShConflictMessage(external)}`,
+      throw new PreconditionError(
+        `not adopting skills/${name} — ${skillsShConflictMessage(external)}`,
       );
-      process.exit(3);
     }
   }
 
   const adoption = findAdoptionSource(project, kind, name, opts.installMode);
   if (!adoption) {
-    console.error(
-      `✗ local item does not exist: ${expectedAdoptionPath(project, kind, name, opts.installMode)}`,
+    throw new NotFoundError(
+      `local item does not exist: ${expectedAdoptionPath(project, kind, name, opts.installMode)}`,
     );
-    process.exit(2);
   }
 
   const repoRelPath = `${kind}/${name}`;
   const dataPath = join(dataRepo, repoRelPath);
   if (existsSync(dataPath)) {
-    console.error(`✗ data repo item already exists: ${repoRelPath}`);
-    process.exit(3);
+    throw new PreconditionError(
+      `data repo item already exists: ${repoRelPath}`,
+    );
   }
 
   if (kind === "skills") {
@@ -683,8 +670,7 @@ export async function moveScope(
     assertLocalScopeSupported(kind, name, "move");
   }
   if (!projectEntry && !localEntry) {
-    console.error(`✗ not tracked in this project: ${kind}/${name}`);
-    process.exit(2);
+    throw new NotFoundError(`not tracked in this project: ${kind}/${name}`);
   }
 
   let from: Scope;
@@ -693,10 +679,9 @@ export async function moveScope(
     const projectData = dataEntryOrThrow(projectEntry, key);
     const localData = dataEntryOrThrow(localEntry, key);
     if (!dataEntriesMatch(projectData, localData)) {
-      console.error(
-        `✗ ${kind}/${name} is owned by both project and local scope with different lock entries; remove one owner manually`,
+      throw new PreconditionError(
+        `${kind}/${name} is owned by both project and local scope with different lock entries; remove one owner manually`,
       );
-      process.exit(3);
     }
     from = to === "project" ? "local" : "project";
     sourceEntry = from === "project" ? projectData : localData;
@@ -722,10 +707,9 @@ export async function moveScope(
 
   const repoRelPath = `${kind}/${name}`;
   if (!existsSync(join(dataRepo, repoRelPath))) {
-    console.error(
-      `✗ data repo does not have ${repoRelPath}; run "capshelf share ${kind}/${name} --to ${to}" instead`,
+    throw new PreconditionError(
+      `data repo does not have ${repoRelPath}; run "capshelf share ${kind}/${name} --to ${to}" instead`,
     );
-    process.exit(3);
   }
 
   const currentSnapshot = await installedSnapshot(
@@ -736,10 +720,9 @@ export async function moveScope(
   );
   const currentSha = currentSnapshot?.sha ?? null;
   if (currentSha !== sourceEntry.sha) {
-    console.error(
-      `✗ ${kind}/${name} has uncommitted local edits; run "capshelf promote" or "capshelf revert" first`,
+    throw new CheckFailedError(
+      `${kind}/${name} has uncommitted local edits; run "capshelf promote" or "capshelf revert" first`,
     );
-    process.exit(4);
   }
 
   if (to === "local") {
@@ -886,19 +869,17 @@ function assertCanNormalizeAdoptedSkill(
   const stat = lstatOrNull(claudePath);
   if (!stat) return;
   if (!stat.isSymbolicLink()) {
-    console.error(
-      `✗ compatibility path already exists but is not a symlink: ${claudePath}`,
+    throw new PreconditionError(
+      `compatibility path already exists but is not a symlink: ${claudePath}`,
     );
-    process.exit(3);
   }
 
   const target = resolve(dirname(claudePath), readlinkSync(claudePath));
   if (resolve(target) !== resolve(managedPath)) {
-    console.error(
-      `✗ compatibility symlink points somewhere else: ${claudePath} -> ${target}`,
+    throw new PreconditionError(
+      `compatibility symlink points somewhere else: ${claudePath} -> ${target}\n` +
+        `  expected it to point at: ${managedPath}`,
     );
-    console.error(`  expected it to point at: ${managedPath}`);
-    process.exit(3);
   }
 }
 
@@ -928,13 +909,10 @@ function findAdoptionSource(
   const claudeStat = lstatOrNull(claudePath);
 
   if (codex && claudeStat && !claudeStat.isSymbolicLink()) {
-    console.error(
-      `✗ ambiguous local skill paths for skills/${name}: ${codexPath} and ${claudePath}`,
+    throw new PreconditionError(
+      `ambiguous local skill paths for skills/${name}: ${codexPath} and ${claudePath}\n` +
+        "  remove one path or make .claude/skills point at .agents/skills before adopting",
     );
-    console.error(
-      "  remove one path or make .claude/skills point at .agents/skills before adopting",
-    );
-    process.exit(3);
   }
   if (codex) return codex;
 
@@ -957,12 +935,12 @@ function existingItemDir(
   const stat = lstatOrNull(path);
   if (!stat) return null;
   if (!stat.isDirectory()) {
-    console.error(`✗ local ${kind} path is not a directory: ${path}`);
-    process.exit(3);
+    throw new PreconditionError(
+      `local ${kind} path is not a directory: ${path}`,
+    );
   }
   if (kind === "skills" && !existsSync(join(path, "SKILL.md"))) {
-    console.error(`✗ local skill is missing SKILL.md: ${path}`);
-    process.exit(3);
+    throw new PreconditionError(`local skill is missing SKILL.md: ${path}`);
   }
   return { path, kind: sourceKind };
 }

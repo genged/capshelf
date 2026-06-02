@@ -10,6 +10,7 @@ import {
 } from "../lock";
 import type { Lock } from "../lock";
 import { ensureInstallAliases, parseLockKey } from "../installed";
+import { NotFoundError, PreconditionError } from "../errors";
 import { isSystemItemName } from "../bundled";
 import { assertIsGitRepo } from "../git";
 import { globalOpts } from "../cli";
@@ -44,10 +45,9 @@ export function registerMove(program: Command): void {
     .action(async (itemRef: string, opts: MoveOptions, cmd: Command) => {
       const ref = parseItemRef(itemRef);
       if (isSystemItemName(ref.name)) {
-        console.error(
-          `✗ "${ref.name}" is a system item — submit a PR to the capshelf repo instead`,
+        throw new PreconditionError(
+          `"${ref.name}" is a system item — submit a PR to the capshelf repo instead`,
         );
-        process.exit(3);
       }
       const to = parseMoveScope(opts.to);
 
@@ -65,8 +65,7 @@ export function registerMove(program: Command): void {
         ) {
           assertLocalScopeSupported(ref.kind, ref.name, "move");
         }
-        console.error("✗ not tracked in this project");
-        process.exit(2);
+        throw new NotFoundError("not tracked in this project");
       }
       if (isFragmentItemKind(resolved.kind) && to === "local") {
         assertLocalScopeSupported(resolved.kind, resolved.name, "move");
@@ -142,8 +141,9 @@ export function registerMove(program: Command): void {
 
 function parseMoveScope(value: string | undefined): Scope {
   if (value === "local" || value === "project") return value;
-  console.error(`✗ invalid scope "${value ?? ""}" (expected local or project)`);
-  process.exit(3);
+  throw new PreconditionError(
+    `invalid scope "${value ?? ""}" (expected local or project)`,
+  );
 }
 
 function resolveMoveItem(

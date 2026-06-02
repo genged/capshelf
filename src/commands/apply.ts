@@ -6,6 +6,7 @@ import type { Lock } from "../lock";
 import { parseLockKey } from "../installed";
 import { assertIsGitRepo } from "../git";
 import { globalOpts } from "../cli";
+import { NotFoundError, PreconditionError, ResultExitError } from "../errors";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
 import { materializeLockEntry } from "../materialize";
 import type { MaterializeResult } from "../materialize";
@@ -84,14 +85,12 @@ export function registerApply(program: Command): void {
             if (ref.kind === undefined || ref.kind === "skills") {
               const external = await findSkillsShSkill(project, ref.name);
               if (external) {
-                console.error(
-                  `✗ not applying skills/${ref.name} — ${skillsShConflictMessage(external)}`,
+                throw new PreconditionError(
+                  `not applying skills/${ref.name} — ${skillsShConflictMessage(external)}`,
                 );
-                process.exit(3);
               }
             }
-            console.error(`✗ not tracked in this project: ${itemRef}`);
-            process.exit(2);
+            throw new NotFoundError(`not tracked in this project: ${itemRef}`);
           }
           if (matches.length > 1) {
             throw new Error(
@@ -144,10 +143,9 @@ export function registerApply(program: Command): void {
               ? skillsShConflictMessage(external)
               : "managed by skills.sh";
             if (itemRef) {
-              console.error(
-                `✗ not applying skills/${parsed.name} — ${message}`,
+              throw new PreconditionError(
+                `not applying skills/${parsed.name} — ${message}`,
               );
-              process.exit(3);
             }
             results.push({
               scope,
@@ -266,7 +264,9 @@ export function registerApply(program: Command): void {
           printApplyResults(results);
         }
 
-        if (results.some((r) => r.action === "error")) process.exit(1);
+        if (results.some((r) => r.action === "error")) {
+          throw new ResultExitError(1);
+        }
       },
     );
 }

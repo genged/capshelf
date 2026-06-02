@@ -1,5 +1,6 @@
 import type { Manifest } from "./manifest";
 import { normalizeRemoteUrl, originRemoteUrl } from "./git";
+import { CheckFailedError } from "./errors";
 import {
   LOCK_FILE,
   LOCAL_CONFIG_FILE,
@@ -7,9 +8,8 @@ import {
   METADATA_DIR,
 } from "./identity";
 
-export class UpstreamVerificationError extends Error {
-  readonly exitCode = 4;
-}
+/** Exit 4. Kept here so existing `./upstream-check` imports stay valid. */
+export class UpstreamVerificationError extends CheckFailedError {}
 
 export function normalizedManifestUpstream(manifest: Manifest): string | null {
   if (!manifest.dataRepoUpstream) return null;

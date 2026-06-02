@@ -5,6 +5,7 @@ import { loadLocalLock, loadLock, saveLocalLock, saveLock } from "../lock";
 import { parseLockKey } from "../installed";
 import { assertIsGitRepo } from "../git";
 import { globalOpts } from "../cli";
+import { NotFoundError, PreconditionError } from "../errors";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import { materializeLockEntry } from "../materialize";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
@@ -38,24 +39,21 @@ export function registerRevert(program: Command): void {
         if (ref.kind === undefined || ref.kind === "skills") {
           const external = await findSkillsShSkill(project, ref.name);
           if (external) {
-            console.error(
-              `✗ not reverting skills/${ref.name} — ${skillsShConflictMessage(external)}`,
+            throw new PreconditionError(
+              `not reverting skills/${ref.name} — ${skillsShConflictMessage(external)}`,
             );
-            process.exit(3);
           }
         }
-        console.error(`✗ not tracked in this project: ${itemRef}`);
-        process.exit(2);
+        throw new NotFoundError(`not tracked in this project: ${itemRef}`);
       }
 
       const parsed = parseLockKey(key);
       if (parsed.kind === "skills") {
         const external = await findSkillsShSkill(project, parsed.name);
         if (external) {
-          console.error(
-            `✗ not reverting skills/${parsed.name} — ${skillsShConflictMessage(external)}`,
+          throw new PreconditionError(
+            `not reverting skills/${parsed.name} — ${skillsShConflictMessage(external)}`,
           );
-          process.exit(3);
         }
       }
       const dataRepo =
@@ -76,10 +74,9 @@ export function registerRevert(program: Command): void {
 
       if (isFragmentKind(parsed.kind)) {
         if (opts.local) {
-          console.error(
-            `✗ --local is not supported for ${parsed.kind} fragments`,
+          throw new PreconditionError(
+            `--local is not supported for ${parsed.kind} fragments`,
           );
-          process.exit(3);
         }
         if (!dataRepo) throw new Error("data repo is required");
         const targets =

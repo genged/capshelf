@@ -2,16 +2,14 @@ import { $ } from "bun";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
 import { basename, delimiter, join } from "node:path";
+import { CliError, ExitCode } from "./errors";
 
 const GIT_MISSING_MESSAGE =
   "git is required but was not found on PATH\n  install Git, then retry";
 
-export class GitUnavailableError extends Error {
-  readonly exitCode = 7;
-
+export class GitUnavailableError extends CliError {
   constructor() {
-    super(GIT_MISSING_MESSAGE);
-    this.name = "GitUnavailableError";
+    super(GIT_MISSING_MESSAGE, { exitCode: ExitCode.GitUnavailable });
   }
 }
 

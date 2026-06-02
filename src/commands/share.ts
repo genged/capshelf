@@ -16,6 +16,7 @@ import type { DataLockEntry, Lock } from "../lock";
 import { isSystemItemName } from "../bundled";
 import { assertIsGitRepo, assertRepoClean, commitInRepo } from "../git";
 import { globalOpts } from "../cli";
+import { PreconditionError } from "../errors";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import {
   assertLocalInstallPathsUntracked,
@@ -75,10 +76,9 @@ export function registerShare(program: Command): void {
     .action(async (itemRef: string, opts: ShareOptions, cmd: Command) => {
       const ref = parseItemRef(itemRef);
       if (isSystemItemName(ref.name)) {
-        console.error(
-          `✗ "${ref.name}" is a system item — submit a PR to the capshelf repo instead`,
+        throw new PreconditionError(
+          `"${ref.name}" is a system item — submit a PR to the capshelf repo instead`,
         );
-        process.exit(3);
       }
 
       const kind = ref.kind ?? "skills";
@@ -103,18 +103,18 @@ export function registerShare(program: Command): void {
 
       const repoRelPath = `${kind}/${name}`;
       if (existsSync(join(dataRepo, repoRelPath))) {
-        console.error(
-          `✗ data repo already has ${repoRelPath}; use promote to push edits, or move to change scope`,
+        throw new PreconditionError(
+          `data repo already has ${repoRelPath}; use promote to push edits, or move to change scope`,
         );
-        process.exit(3);
       }
 
       const key = dataKey(kind, name);
       const projectKey = lockKeyForRef(projectLock, { kind, name }, "data");
       const localKey = lockKeyForRef(localLock, { kind, name }, "data");
       if (projectKey) {
-        console.error(`✗ already tracked in project scope: ${kind}/${name}`);
-        process.exit(3);
+        throw new PreconditionError(
+          `already tracked in project scope: ${kind}/${name}`,
+        );
       }
       if (scope === "local") {
         if (!localConfig) {
@@ -210,21 +210,18 @@ async function shareFragment(
     assertLocalScopeSupported(kind, name, "share");
   }
   if (!opts.from) {
-    console.error(
-      `✗ share ${kind}/${name} requires --from <path>; generated outputs cannot be converted back to one fragment safely`,
+    throw new PreconditionError(
+      `share ${kind}/${name} requires --from <path>; generated outputs cannot be converted back to one fragment safely`,
     );
-    process.exit(3);
   }
   const cliTarget = sourceTargetForCli(opts.target);
   if (kind === "mcp" && cliTarget === null) {
-    console.error(
-      "✗ share mcp fragments requires --target claude or --target codex",
+    throw new PreconditionError(
+      "share mcp fragments requires --target claude or --target codex",
     );
-    process.exit(3);
   }
   if (kind !== "mcp" && cliTarget !== null) {
-    console.error("✗ --target is only valid for mcp fragments");
-    process.exit(3);
+    throw new PreconditionError("--target is only valid for mcp fragments");
   }
 
   const project = projectRoot();
@@ -244,13 +241,15 @@ async function shareFragment(
     sourceMatchesCliTarget(candidate, cliTarget),
   );
   if (!source) {
-    console.error(`✗ no canonical source target for ${kind}/${name}`);
-    process.exit(3);
+    throw new PreconditionError(
+      `no canonical source target for ${kind}/${name}`,
+    );
   }
   const canonicalPath = join(dataRepo, ...source.relPath.split("/"));
   if (existsSync(canonicalPath)) {
-    console.error(`✗ fragment source already exists: ${source.relPath}`);
-    process.exit(3);
+    throw new PreconditionError(
+      `fragment source already exists: ${source.relPath}`,
+    );
   }
   const raw = await readFile(opts.from, "utf-8");
   parseFragmentSourceText(source, raw);
@@ -332,8 +331,9 @@ async function shareFragment(
 function parseShareScope(value: string | undefined): ShareScope {
   if (value === undefined) return "local";
   if (value === "local" || value === "project") return value;
-  console.error(`✗ invalid scope "${value}" (expected local or project)`);
-  process.exit(3);
+  throw new PreconditionError(
+    `invalid scope "${value}" (expected local or project)`,
+  );
 }
 
 function preserveLabel(

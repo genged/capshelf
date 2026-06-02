@@ -6,6 +6,7 @@ import { installedPath, parseLockKey } from "../installed";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import { loadManifest } from "../manifest";
 import { globalOpts } from "../cli";
+import { NotFoundError, PreconditionError } from "../errors";
 import { assertIsGitRepo } from "../git";
 import {
   currentFragmentSourcesForItem,
@@ -40,21 +41,18 @@ export function registerGetPath(program: Command): void {
       const lock = await loadLock(project);
       const key = lockKeyForRef(lock, ref);
       if (!key) {
-        console.error(`✗ not tracked in this project: ${itemRef}`);
-        process.exit(2);
+        throw new NotFoundError(`not tracked in this project: ${itemRef}`);
       }
 
       const parsed = parseLockKey(key);
       const cliTarget = sourceTargetForCli(opts.target);
       if (!isFragmentKind(parsed.kind) && (opts.output || cliTarget)) {
-        console.error(
-          "✗ --output and --target are only valid for fragment items",
+        throw new PreconditionError(
+          "--output and --target are only valid for fragment items",
         );
-        process.exit(3);
       }
       if (isFragmentKind(parsed.kind) && parsed.kind !== "mcp" && cliTarget) {
-        console.error("✗ --target is only valid for mcp fragments");
-        process.exit(3);
+        throw new PreconditionError("--target is only valid for mcp fragments");
       }
 
       let path: string;
@@ -75,16 +73,14 @@ export function registerGetPath(program: Command): void {
           )
         ).filter((source) => sourceMatchesCliTarget(source, cliTarget));
         if (sources.length === 0) {
-          console.error(
-            `✗ ${parsed.kind}/${parsed.name} does not have target ${opts.target ?? ""}`,
+          throw new PreconditionError(
+            `${parsed.kind}/${parsed.name} does not have target ${opts.target ?? ""}`,
           );
-          process.exit(3);
         }
         if (sources.length > 1) {
-          console.error(
-            `✗ mcp/${parsed.name} has multiple targets; pass --target claude or --target codex`,
+          throw new PreconditionError(
+            `mcp/${parsed.name} has multiple targets; pass --target claude or --target codex`,
           );
-          process.exit(3);
         }
         const source = sources[0]!;
         sourcePath = join(dataRepo, ...source.relPath.split("/"));

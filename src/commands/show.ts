@@ -8,6 +8,7 @@ import { loadManifest } from "../manifest";
 import { findSystemItem, shaOfSystemItem } from "../bundled";
 import { assertIsGitRepo, gitVisibleFilesUnderPath } from "../git";
 import { globalOpts } from "../cli";
+import { NotFoundError, PreconditionError } from "../errors";
 import { findMasterItemByRef, parseItemRef } from "../item-ref";
 import { isIgnoredDotEntry } from "../dotfiles";
 import {
@@ -57,17 +58,14 @@ export function registerShow(program: Command): void {
       await assertIsGitRepo(dataRepo);
       const item = await findMasterItemByRef(dataRepo, ref);
       if (!item) {
-        console.error(`✗ not found: ${itemRef}`);
-        process.exit(2);
+        throw new NotFoundError(`not found: ${itemRef}`);
       }
       const cliTarget = sourceTargetForCli(opts.target);
       if (!isFragmentItemKind(item.kind) && cliTarget) {
-        console.error("✗ --target is only valid for mcp fragments");
-        process.exit(3);
+        throw new PreconditionError("--target is only valid for mcp fragments");
       }
       if (isFragmentItemKind(item.kind) && item.kind !== "mcp" && cliTarget) {
-        console.error("✗ --target is only valid for mcp fragments");
-        process.exit(3);
+        throw new PreconditionError("--target is only valid for mcp fragments");
       }
       const fragmentSources = isFragmentItemKind(item.kind)
         ? (
@@ -75,8 +73,9 @@ export function registerShow(program: Command): void {
           ).filter((source) => sourceMatchesCliTarget(source, cliTarget))
         : [];
       if (isFragmentItemKind(item.kind) && fragmentSources.length === 0) {
-        console.error(`✗ no matching fragment source for ${itemRef}`);
-        process.exit(3);
+        throw new PreconditionError(
+          `no matching fragment source for ${itemRef}`,
+        );
       }
       const masterSha = isFragmentItemKind(item.kind)
         ? await shaOfFragmentItem(dataRepo, item.kind, item.name)
@@ -176,8 +175,7 @@ async function showSystem(
 ): Promise<void> {
   const item = findSystemItem(name);
   if (!item) {
-    console.error(`✗ system item not found: ${name}`);
-    process.exit(2);
+    throw new NotFoundError(`system item not found: ${name}`);
   }
   const bundledSha = await shaOfSystemItem(item);
   const lockEntry = lock.items[systemKey(item.kind, item.name)] ?? null;

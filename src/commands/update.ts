@@ -7,6 +7,7 @@ import { isFragmentItemKind, shaOfGitVisibleItem } from "../master";
 import { assertIsGitRepo, assertRepoClean, lastTouchingCommit } from "../git";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
 import { globalOpts } from "../cli";
+import { NotFoundError, PreconditionError, ResultExitError } from "../errors";
 import { findMasterItemByRef, lockKeysForRef, parseItemRef } from "../item-ref";
 import { materializeLockEntry } from "../materialize";
 import {
@@ -109,14 +110,14 @@ export function registerUpdate(program: Command): void {
               if (ref.kind === undefined || ref.kind === "skills") {
                 const external = await findSkillsShSkill(project, ref.name);
                 if (external) {
-                  console.error(
-                    `✗ not updating skills/${ref.name} — ${skillsShConflictMessage(external)}`,
+                  throw new PreconditionError(
+                    `not updating skills/${ref.name} — ${skillsShConflictMessage(external)}`,
                   );
-                  process.exit(3);
                 }
               }
-              console.error(`✗ not tracked in this project: ${itemRef}`);
-              process.exit(2);
+              throw new NotFoundError(
+                `not tracked in this project: ${itemRef}`,
+              );
             }
             if (matches.length > 1) {
               throw new Error(
@@ -176,30 +177,29 @@ export function registerUpdate(program: Command): void {
           const lock = scope === "local" ? localLock : projectLock;
           const parsed = parseLockKey(key);
           const entry = lock.items[key]!;
-          try {
-            if (
-              parsed.kind === "skills" &&
-              externalSkillByName.has(parsed.name)
-            ) {
-              const message = skillsShConflictMessage(
-                externalSkillByName.get(parsed.name)!,
+          if (
+            parsed.kind === "skills" &&
+            externalSkillByName.has(parsed.name)
+          ) {
+            const message = skillsShConflictMessage(
+              externalSkillByName.get(parsed.name)!,
+            );
+            if (explicit) {
+              throw new PreconditionError(
+                `not updating skills/${parsed.name} — ${message}`,
               );
-              if (explicit) {
-                console.error(
-                  `✗ not updating skills/${parsed.name} — ${message}`,
-                );
-                process.exit(3);
-              }
-              results.push({
-                key,
-                source: parsed.source,
-                kind: parsed.kind,
-                name: parsed.name,
-                action: "skipped-external",
-                error: message,
-              });
-              continue;
             }
+            results.push({
+              key,
+              source: parsed.source,
+              kind: parsed.kind,
+              name: parsed.name,
+              action: "skipped-external",
+              error: message,
+            });
+            continue;
+          }
+          try {
             if (entry.source === "data") {
               if (entry.local === true) {
                 const runtimeWarnings = runtimeWarningsForItem(
@@ -453,7 +453,9 @@ export function registerUpdate(program: Command): void {
         } else {
           printUpdateResults(results);
         }
-        if (results.some((r) => r.action === "error")) process.exit(1);
+        if (results.some((r) => r.action === "error")) {
+          throw new ResultExitError(1);
+        }
       },
     );
 }

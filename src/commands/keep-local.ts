@@ -4,6 +4,7 @@ import { loadLocalLock, loadLock, saveLocalLock, saveLock } from "../lock";
 import { parseLockKey } from "../installed";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
 import { isFragmentItemKind } from "../master";
+import { NotFoundError, PreconditionError } from "../errors";
 
 interface KeepLocalOptions {
   reason?: string;
@@ -45,20 +46,17 @@ export function registerKeepLocal(program: Command): void {
       }
       if (dataKeys.length === 0) {
         if (keys.some((key) => parseLockKey(key).source === "system")) {
-          console.error(
-            `✗ ${itemRef} is a system item — local divergence is not tracked for bundled items`,
+          throw new PreconditionError(
+            `${itemRef} is a system item — local divergence is not tracked for bundled items`,
           );
-          process.exit(3);
         }
-        console.error(`✗ not tracked in this project: ${itemRef}`);
-        process.exit(2);
+        throw new NotFoundError(`not tracked in this project: ${itemRef}`);
       }
 
       const key = dataKeys[0]!;
       const parsed = parseLockKey(key);
       if (isFragmentItemKind(parsed.kind)) {
-        console.error(`✗ ${keepLocalRejectMessage(parsed.kind)}`);
-        process.exit(3);
+        throw new PreconditionError(keepLocalRejectMessage(parsed.kind));
       }
       const entry = lock.items[key]!;
       if (entry.source !== "data") {

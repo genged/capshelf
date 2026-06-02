@@ -17,8 +17,7 @@ import { registerShare } from "./commands/share";
 import { registerMove } from "./commands/move";
 import { registerSetData } from "./commands/set-data";
 import { registerSetUpstream } from "./commands/set-upstream";
-import { GitUnavailableError } from "./git";
-import { UpstreamVerificationError } from "./upstream-check";
+import { CliError } from "./errors";
 import { HOME_ENV, PRODUCT_NAME } from "./identity";
 
 const program = new Command();
@@ -49,16 +48,42 @@ registerMove(program);
 registerSetData(program);
 registerSetUpstream(program);
 
-program.parseAsync(process.argv).catch((err: unknown) => {
-  const msg = err instanceof Error ? err.message : String(err);
-  console.error(`✗ ${msg}`);
-  process.exit(exitCodeForError(err));
-});
+/**
+ * Parse argv and run the matched command, returning the process exit code.
+ * This is the only place that decides exit codes for domain failures, and it
+ * never calls `process.exit`, so it is callable in-process from tests.
+ *
+ * Commander still owns usage-layer exits (help, --version, unknown command,
+ * missing argument); those are not routed through here.
+ */
+export async function main(argv: string[] = process.argv): Promise<number> {
+  try {
+    await program.parseAsync(argv);
+    return 0;
+  } catch (err) {
+    return reportError(err);
+  }
+}
 
-function exitCodeForError(err: unknown): number {
-  if (err instanceof GitUnavailableError) return err.exitCode;
-  if (err instanceof UpstreamVerificationError) return err.exitCode;
+function reportError(err: unknown): number {
+  if (err instanceof CliError) {
+    // A message-less CliError (ResultExitError) only sets the code; the command
+    // has already printed its own report.
+    if (err.message) {
+      console.error(`✗ ${err.message}`);
+      if (err.hint) console.error(`  ${err.hint}`);
+    }
+    return err.exitCode;
+  }
+  console.error(`✗ ${err instanceof Error ? err.message : String(err)}`);
+  if (process.env.CAPSHELF_DEBUG && err instanceof Error && err.stack) {
+    console.error(err.stack);
+  }
   return 1;
+}
+
+if (import.meta.main) {
+  process.exit(await main());
 }
 
 export interface GlobalOptions {

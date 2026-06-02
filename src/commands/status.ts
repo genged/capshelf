@@ -10,6 +10,7 @@ import type { ItemKind } from "../master";
 import { isFragmentItemKind, shaOfGitVisibleItem, shaOfItem } from "../master";
 import { installedPath, shaOfInstalled, parseLockKey } from "../installed";
 import type { ItemSource } from "../installed";
+import { ResultExitError } from "../errors";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
 import { globalOpts } from "../cli";
 import { findMasterItemByRef, lockKeysForRef, parseItemRef } from "../item-ref";
@@ -336,7 +337,7 @@ export function registerStatus(program: Command): void {
               (r.runtimeWarnings?.some(isStrictRuntimeWarning) ?? false),
           )
         ) {
-          process.exit(4);
+          throw new ResultExitError(4);
         }
       },
     );

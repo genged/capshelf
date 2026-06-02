@@ -5,6 +5,7 @@ import { z } from "zod";
 import { $ } from "bun";
 import { LOCAL_CONFIG_FILE, LOCAL_LOCK_FILE, METADATA_DIR } from "./identity";
 import { expandTilde } from "./paths";
+import { PreconditionError } from "./errors";
 import type { ItemKind } from "./master";
 
 const LocalConfigSchema = z.object({
@@ -119,11 +120,12 @@ export async function assertLocalInstallPathsUntracked(
   ]) {
     const tracked = await trackedPathExists(project, relPath);
     if (tracked) {
-      console.error(
-        `✗ local install path is already tracked by git: ${relPath}\n` +
-          "  .git/info/exclude cannot protect tracked files; remove it from git or use project scope",
+      throw new PreconditionError(
+        `local install path is already tracked by git: ${relPath}`,
+        {
+          hint: ".git/info/exclude cannot protect tracked files; remove it from git or use project scope",
+        },
       );
-      process.exit(3);
     }
   }
 }
@@ -136,19 +138,16 @@ export function assertLocalScopeSupported(
 ): void {
   if (kind === "skills") return;
   if (kind === "settings") {
-    console.error(
-      `✗ ${verb} is not supported for settings fragments; keep project-local values in .claude/settings.json`,
+    throw new PreconditionError(
+      `${verb} is not supported for settings fragments; keep project-local values in .claude/settings.json`,
     );
-    process.exit(3);
   }
   if (kind === "mcp") {
-    console.error(`✗ ${mcpMessage}`);
-    process.exit(3);
+    throw new PreconditionError(mcpMessage);
   }
-  console.error(
-    `✗ ${verb} is not supported for codex-config fragments; keep project-local values in .codex/config.toml`,
+  throw new PreconditionError(
+    `${verb} is not supported for codex-config fragments; keep project-local values in .codex/config.toml`,
   );
-  process.exit(3);
 }
 
 async function trackedPathExists(

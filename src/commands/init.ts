@@ -12,6 +12,7 @@ import {
 import { findInstallConflict } from "../installed";
 import { assertIsGitRepo, normalizeRemoteUrl, originRemoteUrl } from "../git";
 import { globalOpts } from "../cli";
+import { PreconditionError } from "../errors";
 import { saveLocalConfig } from "../local-config";
 import {
   printRuntimeWarnings,
@@ -68,14 +69,11 @@ export function registerInit(program: Command): void {
           installMode,
         );
         if (lock.items[key] === undefined && conflict) {
-          console.error(
-            `✗ not installing system/${item.kind}/${item.name} — target already exists but is not managed by capshelf`,
+          throw new PreconditionError(
+            `not installing system/${item.kind}/${item.name} — target already exists but is not managed by capshelf\n` +
+              `  existing path: ${conflict}\n` +
+              "  remove it manually or choose a different local skill name before running capshelf init",
           );
-          console.error(`  existing path: ${conflict}`);
-          console.error(
-            "  remove it manually or choose a different local skill name before running capshelf init",
-          );
-          process.exit(3);
         }
       }
 

@@ -12,6 +12,7 @@ import {
 } from "../lock";
 import { isFragmentItemKind, shaOfGitVisibleItem } from "../master";
 import type { MasterItem } from "../master";
+import { NotFoundError, PreconditionError } from "../errors";
 import { copyItemIntoProject, targetDir } from "../sync";
 import { findInstallConflict } from "../installed";
 import { isSystemItemName } from "../bundled";
@@ -54,10 +55,9 @@ export function registerAdd(program: Command): void {
     .action(async (itemRef: string, opts: AddOptions, cmd: Command) => {
       const ref = parseItemRef(itemRef);
       if (isSystemItemName(ref.name)) {
-        console.error(
-          `✗ "${ref.name}" is a system item — managed by the CLI, not addable from a data repo. It is installed automatically by 'capshelf init'.`,
+        throw new PreconditionError(
+          `"${ref.name}" is a system item — managed by the CLI, not addable from a data repo. It is installed automatically by 'capshelf init'.`,
         );
-        process.exit(3);
       }
 
       const project = projectRoot();
@@ -77,8 +77,9 @@ export function registerAdd(program: Command): void {
 
       const item = await findMasterItemByRef(dataRepo, ref);
       if (!item) {
-        console.error(`✗ not found in data repo (${dataRepo}): ${itemRef}`);
-        process.exit(2);
+        throw new NotFoundError(
+          `not found in data repo (${dataRepo}): ${itemRef}`,
+        );
       }
       if (opts.local && isFragmentItemKind(item.kind)) {
         assertLocalScopeSupported(item.kind, item.name, "add --local");
@@ -99,10 +100,9 @@ export function registerAdd(program: Command): void {
       const otherLock = opts.local ? projectLock : localLock;
       if (otherLock.items[key] !== undefined) {
         const otherScope = opts.local ? "project" : "local";
-        console.error(
-          `✗ ${item.kind}/${item.name} is already owned by ${otherScope} scope; remove one owner before adding another`,
+        throw new PreconditionError(
+          `${item.kind}/${item.name} is already owned by ${otherScope} scope; remove one owner before adding another`,
         );
-        process.exit(3);
       }
       const alreadyInManifest = opts.local
         ? (localConfig?.skills.includes(item.name) ?? false)
@@ -124,10 +124,9 @@ export function registerAdd(program: Command): void {
       if (item.kind === "skills") {
         const external = await findSkillsShSkill(project, item.name);
         if (external) {
-          console.error(
-            `✗ not installing ${item.kind}/${item.name} — ${skillsShConflictMessage(external)}`,
+          throw new PreconditionError(
+            `not installing ${item.kind}/${item.name} — ${skillsShConflictMessage(external)}`,
           );
-          process.exit(3);
         }
       }
 
@@ -140,14 +139,11 @@ export function registerAdd(program: Command): void {
             manifest.installMode,
           );
       if (!alreadyInLock && conflict) {
-        console.error(
-          `✗ not installing ${item.kind}/${item.name} — target already exists but is not managed by capshelf`,
+        throw new PreconditionError(
+          `not installing ${item.kind}/${item.name} — target already exists but is not managed by capshelf\n` +
+            `  existing path: ${conflict}\n` +
+            `  remove it manually, choose a different name, or adopt it with: capshelf share ${item.kind}/${item.name} --to project`,
         );
-        console.error(`  existing path: ${conflict}`);
-        console.error(
-          `  remove it manually, choose a different name, or adopt it with: capshelf share ${item.kind}/${item.name} --to project`,
-        );
-        process.exit(3);
       }
       if (opts.local) {
         await assertLocalInstallPathsUntracked(project, item.name);

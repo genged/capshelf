@@ -7,6 +7,7 @@ import { loadLocalConfig, saveLocalConfig } from "../local-config";
 import { normalizePath, projectRoot } from "../paths";
 import { verifyDataLockEntries } from "../lock-verify";
 import { verifyDataRepoUpstream } from "../upstream-check";
+import { PreconditionError } from "../errors";
 
 export function registerSetData(program: Command): void {
   program
@@ -22,8 +23,12 @@ export function registerSetData(program: Command): void {
       try {
         await assertIsGitRepo(dataRepo);
       } catch (err) {
-        console.error(`✗ ${err instanceof Error ? err.message : String(err)}`);
-        process.exit(3);
+        // Preserve the historical behavior: any failure to validate the data
+        // repo (including git being unavailable) surfaces as exit 3 here.
+        throw new PreconditionError(
+          err instanceof Error ? err.message : String(err),
+          { cause: err },
+        );
       }
 
       await verifyDataRepoUpstream(dataRepo, manifest);
