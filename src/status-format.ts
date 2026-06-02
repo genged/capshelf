@@ -1,4 +1,5 @@
 import { homeRelative } from "./paths";
+import { assertNever } from "./assert";
 import { formatRuntimeWarnings } from "./runtime-warnings";
 import type { ExternalClaudePlugin, ExternalSkill } from "./external";
 import type {
@@ -35,6 +36,8 @@ export function glyph(s: State): string {
       return "✎!";
     case "kept-local":
       return "≠";
+    default:
+      return assertNever(s);
   }
 }
 
@@ -70,6 +73,8 @@ export function describe(r: StatusRow): string {
       return "generated output drifted + data repo has uncommitted fragment changes";
     case "kept-local":
       return r.localReason ? `kept local (${r.localReason})` : "kept local";
+    default:
+      return assertNever(r.state);
   }
 }
 
