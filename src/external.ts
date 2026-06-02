@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { z } from "zod";
 
 export type ClaudePluginScope = "managed" | "user" | "project" | "local";
 
@@ -19,17 +20,18 @@ export interface ExternalClaudePlugin {
   settingsPath: string;
 }
 
-interface SkillsShEntry {
-  source?: string;
-}
+// skills-lock.json is written by skills.sh; validate only the shape we read
+// and let Zod strip any other fields it carries (version, sourceType, …).
+const SkillsShLockSchema = z.object({
+  skills: z.record(z.object({ source: z.string().optional() })).optional(),
+});
 
-interface SkillsShLock {
-  skills?: Record<string, SkillsShEntry>;
-}
-
-interface ClaudeSettings {
-  enabledPlugins?: unknown;
-}
+// Claude Code settings.json. enabledPlugins is narrowed structurally by
+// parseEnabledPlugins below (it accepts both the array and object forms), so
+// the schema only needs to assert the top level is an object.
+const ClaudeSettingsSchema = z.object({
+  enabledPlugins: z.unknown().optional(),
+});
 
 interface ClaudePluginSettingsPaths {
   managed?: string[];
@@ -44,7 +46,9 @@ export async function listSkillsShSkills(
   const path = join(project, "skills-lock.json");
   if (!existsSync(path)) return [];
 
-  const parsed = JSON.parse(await readFile(path, "utf-8")) as SkillsShLock;
+  const parsed = SkillsShLockSchema.parse(
+    JSON.parse(await readFile(path, "utf-8")),
+  );
   return Object.entries(parsed.skills ?? {})
     .map(([name, entry]) => ({
       name,
@@ -122,9 +126,9 @@ async function readClaudePluginsFromSettings(settings: {
 }): Promise<ExternalClaudePlugin[]> {
   if (!existsSync(settings.path)) return [];
 
-  const parsed = JSON.parse(
-    await readFile(settings.path, "utf-8"),
-  ) as ClaudeSettings;
+  const parsed = ClaudeSettingsSchema.parse(
+    JSON.parse(await readFile(settings.path, "utf-8")),
+  );
   return parseEnabledPlugins(parsed.enabledPlugins).map(({ id, enabled }) => {
     const { name, marketplace } = splitPluginId(id);
     return {

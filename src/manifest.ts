@@ -1,7 +1,12 @@
 import { z } from "zod";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import { DEFAULT_INSTALL_MODE, manifestPath, manifestReadPath } from "./paths";
+import {
+  DEFAULT_INSTALL_MODE,
+  InstallModeSchema,
+  manifestPath,
+  manifestReadPath,
+} from "./paths";
 import type { InstallMode } from "./paths";
 import { normalizeRemoteUrl } from "./git";
 import { MANIFEST_FILE, METADATA_DIR, PRODUCT_NAME } from "./identity";
@@ -9,9 +14,7 @@ import type { ItemKind } from "./master";
 
 export const ManifestSchema = z
   .object({
-    installMode: z
-      .enum(["codex-compatible", "claude-only"])
-      .default(DEFAULT_INSTALL_MODE),
+    installMode: InstallModeSchema.default(DEFAULT_INSTALL_MODE),
     dataRepoUpstream: z
       .string()
       .optional()

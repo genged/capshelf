@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import { z } from "zod";
 import type { Manifest } from "./manifest";
 import {
   HOME_ENV,
@@ -14,7 +15,8 @@ import {
 import { loadLocalConfig } from "./local-config";
 import { verifyDataRepoUpstream } from "./upstream-check";
 
-export type InstallMode = "codex-compatible" | "claude-only";
+export const InstallModeSchema = z.enum(["codex-compatible", "claude-only"]);
+export type InstallMode = z.infer<typeof InstallModeSchema>;
 export const DEFAULT_INSTALL_MODE: InstallMode = "codex-compatible";
 
 export function expandTilde(p: string): string {
@@ -138,10 +140,6 @@ export function projectRoot(cwd: string = process.cwd()): string {
   return cwd;
 }
 
-export function isInstallMode(value: string): value is InstallMode {
-  return value === "codex-compatible" || value === "claude-only";
-}
-
 export function claudeDir(project: string): string {
   return join(project, ".claude");
 }
@@ -169,23 +167,17 @@ export function installBaseDir(
   return mode === "claude-only" ? claudeDir(project) : codexDir(project);
 }
 
+const ManifestInstallModeSchema = z.object({
+  installMode: InstallModeSchema.optional(),
+});
+
 export function detectInstallMode(project: string): InstallMode {
   const source = manifestReadPath(project) ?? manifestPath(project);
   if (!existsSync(source)) return DEFAULT_INSTALL_MODE;
-
-  const parsed = JSON.parse(readFileSync(source, "utf-8")) as {
-    installMode?: unknown;
-  };
-  if (parsed.installMode === undefined) return DEFAULT_INSTALL_MODE;
-  if (
-    typeof parsed.installMode === "string" &&
-    isInstallMode(parsed.installMode)
-  ) {
-    return parsed.installMode;
-  }
-  throw new Error(
-    `invalid installMode in ${source}: expected codex-compatible or claude-only`,
+  const parsed = ManifestInstallModeSchema.parse(
+    JSON.parse(readFileSync(source, "utf-8")),
   );
+  return parsed.installMode ?? DEFAULT_INSTALL_MODE;
 }
 
 export function manifestPath(project: string): string {
