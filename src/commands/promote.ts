@@ -334,7 +334,7 @@ async function promoteFragmentSource(
     );
   }
 
-  const oldLock = cloneJson(lock);
+  const oldLock = structuredClone(lock);
   const sourceCommit = await commitInRepo(
     dataRepo,
     commitPaths,
@@ -517,8 +517,4 @@ async function promoteCreate(
   };
 
   return adopted;
-}
-
-function cloneJson<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
 }

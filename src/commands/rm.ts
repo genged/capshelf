@@ -56,8 +56,8 @@ export function registerRm(program: Command): void {
         ? await loadLocalLock(project)
         : await loadLock(project);
       const localConfig = opts.local ? await loadLocalConfig(project) : null;
-      const oldManifest = cloneJson(manifest);
-      const oldLock = cloneJson(lock);
+      const oldManifest = structuredClone(manifest);
+      const oldLock = structuredClone(lock);
 
       const dataKeys = lockKeysForRef(lock, ref).filter((key) => {
         const parsed = parseLockKey(key);
@@ -211,8 +211,4 @@ export function registerRm(program: Command): void {
         );
       }
     });
-}
-
-function cloneJson<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
 }

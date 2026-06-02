@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readlinkSync } from "node:fs";
+import { existsSync, readlinkSync } from "node:fs";
 import { rm as fsRm } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import type { ItemKind } from "./master";
@@ -22,6 +22,7 @@ import {
   type PromoteResult,
 } from "./promote-core";
 import { adoptionSnapshot } from "./item-snapshot";
+import { lstatOrNull } from "./fs-utils";
 
 interface AdoptionSource {
   path: string;
@@ -220,20 +221,4 @@ async function normalizeAdoptedSkill(
     await fsRm(adoption.path, { recursive: true, force: true });
   }
   await ensureInstallAliases(project, "skills", name, mode);
-}
-
-function lstatOrNull(path: string): ReturnType<typeof lstatSync> | null {
-  try {
-    return lstatSync(path);
-  } catch (err) {
-    if (
-      err &&
-      typeof err === "object" &&
-      "code" in err &&
-      err.code === "ENOENT"
-    ) {
-      return null;
-    }
-    throw err;
-  }
 }

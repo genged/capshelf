@@ -225,8 +225,8 @@ async function shareFragment(
   const project = projectRoot();
   const manifest = await loadManifest(project);
   const projectLock = await loadLock(project);
-  const oldManifest = cloneJson(manifest);
-  const oldLock = cloneJson(projectLock);
+  const oldManifest = structuredClone(manifest);
+  const oldLock = structuredClone(projectLock);
   const dataRepo = await resolveDataRepo({
     override: globalOpts(cmd).data,
     manifest,
@@ -344,8 +344,4 @@ function preserveLabel(
     return entry;
   }
   return { ...entry, label: existing.label };
-}
-
-function cloneJson<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
 }

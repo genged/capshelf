@@ -65,7 +65,7 @@ export function registerAdd(program: Command): void {
       const projectLock = await loadLock(project);
       const localLock = await loadLocalLock(project);
       const lock = opts.local ? localLock : projectLock;
-      const oldLock = cloneLock(lock);
+      const oldLock = structuredClone(lock);
       const localConfig = await loadLocalConfig(project);
 
       const dataRepo = await resolveDataRepo({
@@ -257,10 +257,6 @@ export function registerAdd(program: Command): void {
 
 function addToManifest(m: Manifest, item: MasterItem): void {
   addManifestName(m, item.kind, item.name);
-}
-
-function cloneLock<T>(lock: T): T {
-  return JSON.parse(JSON.stringify(lock)) as T;
 }
 
 function relativeProjectPath(project: string, path: string): string {

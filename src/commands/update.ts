@@ -163,8 +163,8 @@ export function registerUpdate(program: Command): void {
         const externalSkillByName = new Map(
           externalSkills.map((skill) => [skill.name, skill]),
         );
-        const originalLock = cloneLock(projectLock);
-        const fragmentNextLock = cloneLock(projectLock);
+        const originalLock = structuredClone(projectLock);
+        const fragmentNextLock = structuredClone(projectLock);
         const pendingFragmentEntries = new Map<
           string,
           (typeof projectLock.items)[string]
@@ -495,10 +495,6 @@ function printUpdateDetails(r: UpdateResult): void {
   if (r.sourceCommit) console.log(`  source commit: ${r.sourceCommit}`);
   if (r.cliVersion) console.log(`  cli version: ${r.cliVersion}`);
   printRuntimeWarnings(r.runtimeWarnings);
-}
-
-function cloneLock<T>(lock: T): T {
-  return JSON.parse(JSON.stringify(lock)) as T;
 }
 
 function fragmentMergedUpdateResult(result: FragmentApplyResult): UpdateResult {

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { localLockPath, lockPath, lockReadPath } from "./paths";
+import { isErrno } from "./fs-utils";
 
 export const DataLockEntrySchema = z.object({
   source: z.literal("data"),
@@ -60,12 +61,7 @@ export async function loadLocalLock(project: string): Promise<Lock> {
     const parsed = JSON.parse(raw);
     return LockSchema.parse(parsed);
   } catch (err) {
-    if (
-      err &&
-      typeof err === "object" &&
-      "code" in err &&
-      err.code === "ENOENT"
-    ) {
+    if (isErrno(err, "ENOENT")) {
       return emptyLock();
     }
     throw err;

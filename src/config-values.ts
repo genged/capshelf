@@ -144,7 +144,7 @@ export function shaOfConfig(value: ConfigValue): string {
 }
 
 export function cloneConfig<T extends ConfigValue | undefined>(value: T): T {
-  return value === undefined ? value : (JSON.parse(JSON.stringify(value)) as T);
+  return structuredClone(value);
 }
 
 export function isPlainConfigObject(value: unknown): value is ConfigObject {

@@ -1,4 +1,5 @@
-import { existsSync, lstatSync, readlinkSync } from "node:fs";
+import { existsSync, readlinkSync } from "node:fs";
+import { lstatOrNull } from "./fs-utils";
 import { mkdir, rm, symlink } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { ITEM_KINDS, isItemKind, type ItemKind } from "./master";
@@ -197,22 +198,6 @@ function skillInstalledPath(
   }
 
   return join(installBaseDir(project, mode), "skills", name);
-}
-
-function lstatOrNull(path: string): ReturnType<typeof lstatSync> | null {
-  try {
-    return lstatSync(path);
-  } catch (err) {
-    if (
-      err &&
-      typeof err === "object" &&
-      "code" in err &&
-      err.code === "ENOENT"
-    ) {
-      return null;
-    }
-    throw err;
-  }
 }
 
 function pathExists(path: string): boolean {
