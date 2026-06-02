@@ -24,8 +24,8 @@ import {
   removeLocalExcludes,
   saveLocalConfig,
 } from "../local-config";
-import { moveScope } from "./promote";
-import type { MoveScopeResult, Scope } from "./promote";
+import { moveScope } from "../move-scope";
+import type { MoveScopeResult, Scope } from "../promote-core";
 
 interface MoveOptions {
   to?: string;

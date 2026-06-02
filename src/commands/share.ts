@@ -26,11 +26,9 @@ import {
   removeLocalExcludes,
   saveLocalConfig,
 } from "../local-config";
-import {
-  addToManifest,
-  adoptIntoDataRepo,
-  printPrivateDotenvWarnings,
-} from "./promote";
+import { addToManifest } from "../promote-core";
+import { adoptIntoDataRepo } from "../data-repo-adopt";
+import { printPrivateDotenvWarnings } from "../dotfiles";
 import { printRuntimeWarnings } from "../runtime-warnings";
 import {
   applyFragmentOutput,

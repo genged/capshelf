@@ -47,3 +47,14 @@ export function isPrivateDotenvPath(relPath: string): boolean {
 export function privateDotenvFiles(relPaths: Iterable<string>): string[] {
   return [...relPaths].filter(isPrivateDotenvPath).sort();
 }
+
+export function printPrivateDotenvWarnings(files: string[] = []): void {
+  if (files.length === 0) return;
+  console.log("⚠ private-looking dotenv file promoted");
+  for (const file of files) {
+    console.log(`  ${file}`);
+  }
+  console.log(
+    "  Tracked git content is promotable, but review these paths for secrets.",
+  );
+}
