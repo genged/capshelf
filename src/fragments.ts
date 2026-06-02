@@ -37,6 +37,7 @@ import {
 import { dataKey, type DataLockEntry, type Lock } from "./lock";
 import type { Manifest } from "./manifest";
 import { manifestNamesForKind } from "./manifest";
+import { PreconditionError } from "./errors";
 import { claudeDir, codexProjectConfigDir } from "./paths";
 import {
   assertPathClean,
@@ -215,7 +216,7 @@ export async function fragmentSources(
     existsSync(join(dataRepo, ...source.relPath.split("/"))),
   );
   if (sources.length === 0) {
-    throw new Error(
+    throw new PreconditionError(
       `data repo does not have canonical source files for ${kind}/${name}`,
     );
   }

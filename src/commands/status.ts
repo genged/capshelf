@@ -112,14 +112,21 @@ export function registerStatus(program: Command): void {
         const projectLock = await loadLock(project);
         const localLock = await loadLocalLock(project);
         assertNoScopeCollisions(projectLock, localLock);
-        // Optional: status should still produce a report when the data repo
-        // isn't configured or has gone missing. Data items just report
-        // missing_upstream in that case.
-        const dataRepo = await resolveDataRepoOptional({
+        // Status still produces a report when the data repo isn't configured
+        // or has gone missing on disk: data items report missing_upstream
+        // instead of crashing. Treating a configured-but-absent path as null
+        // here degrades both fragment and copy items uniformly, and lets the
+        // per-item master/git calls below surface genuine errors (ambiguous
+        // refs, permission failures) instead of swallowing them.
+        const resolvedDataRepo = await resolveDataRepoOptional({
           override: globalOpts(cmd).data,
           manifest,
           project,
         });
+        const dataRepo =
+          resolvedDataRepo && existsSync(resolvedDataRepo)
+            ? resolvedDataRepo
+            : null;
 
         const ref = itemRef ? parseItemRef(itemRef) : undefined;
         const targets = statusTargets(projectLock, localLock, ref, opts);
@@ -189,7 +196,7 @@ export function registerStatus(program: Command): void {
               const masterItem = await findMasterItemByRef(dataRepo, {
                 kind,
                 name: itemName,
-              }).catch(() => null);
+              });
               if (masterItem) {
                 upstreamDirty = isFragmentItemKind(kind)
                   ? await fragmentSourceDirty(dataRepo, kind, itemName)

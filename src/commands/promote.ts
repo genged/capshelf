@@ -338,16 +338,14 @@ async function promoteFragmentSource(
   const key = dataKey(kind, name);
   const entry = dataEntryOrThrow(lock.items[key], key);
   const canonicalPaths = allCanonicalFragmentRelPaths(kind, name);
+  // Throws a PreconditionError when the data repo has no canonical source
+  // files (the only expected empty case); letting it surface means genuine
+  // git/fs failures propagate instead of being masked as "no source files."
   const existingSources = await currentFragmentSourcesForItem(
     dataRepo,
     kind,
     name,
-  ).catch(() => []);
-  if (existingSources.length === 0) {
-    throw new PreconditionError(
-      `data repo does not have canonical source files for ${kind}/${name}`,
-    );
-  }
+  );
 
   await assertRepoCleanOutsidePaths(dataRepo, canonicalPaths);
   let dirty = false;
