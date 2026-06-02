@@ -20,7 +20,7 @@ export const FRAGMENT_ITEM_KINDS = [
 ] as const satisfies readonly FragmentItemKind[];
 
 export function isItemKind(value: string): value is ItemKind {
-  return ITEM_KINDS.includes(value as ItemKind);
+  return (ITEM_KINDS as readonly string[]).includes(value);
 }
 
 export function isFragmentItemKind(value: ItemKind): value is FragmentItemKind {

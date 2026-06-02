@@ -38,6 +38,7 @@ import { dataKey, type DataLockEntry, type Lock } from "./lock";
 import type { Manifest } from "./manifest";
 import { manifestNamesForKind } from "./manifest";
 import { PreconditionError } from "./errors";
+import { assertNever } from "./assert";
 import { claudeDir, codexProjectConfigDir } from "./paths";
 import {
   assertPathClean,
@@ -153,6 +154,8 @@ export function fragmentOutputSpec(target: FragmentTarget): FragmentOutputSpec {
         parse: parseTomlConfigObject,
         stringify: stringifyTomlConfig,
       };
+    default:
+      return assertNever(target);
   }
 }
 
@@ -204,6 +207,8 @@ export function fragmentSourceCandidates(
           relPath: `codex/config/${name}/config.toml`,
         },
       ];
+    default:
+      return assertNever(kind);
   }
 }
 
@@ -490,6 +495,8 @@ export function fragmentTargetsForKinds(
       case "codex-config":
         targets.push("codex-config");
         break;
+      default:
+        assertNever(kind);
     }
   }
   return [...new Set(targets)];
@@ -505,6 +512,8 @@ export function fragmentKindForTarget(
       return "mcp";
     case "codex-config":
       return "codex-config";
+    default:
+      return assertNever(target);
   }
 }
 
@@ -601,6 +610,8 @@ function contributionKindsForTarget(
       return ["mcp"];
     case "codex-config":
       return ["codex-config", "mcp"];
+    default:
+      return assertNever(target);
   }
 }
 
