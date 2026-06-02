@@ -67,20 +67,29 @@ export function codexProjectTrustWarnings(project: string): RuntimeWarning[] {
   ];
 }
 
+export function formatRuntimeWarnings(
+  warnings: RuntimeWarning[] = [],
+  indent = "",
+): string[] {
+  const lines: string[] = [];
+  for (const warning of warnings) {
+    if (warning.type === "shadowed_by_personal_claude_skill") {
+      lines.push(`${indent}⚠ personal Claude skill shadows this project skill`);
+      lines.push(`${indent}  ${warning.message}`);
+    } else if (warning.type === "codex_project_untrusted") {
+      lines.push(`${indent}⚠ Codex project config may be ignored`);
+      lines.push(`${indent}  ${warning.message}`);
+    }
+  }
+  return lines;
+}
+
 export function printRuntimeWarnings(
   warnings: RuntimeWarning[] = [],
   indent = "",
 ): void {
-  for (const warning of warnings) {
-    if (warning.type === "shadowed_by_personal_claude_skill") {
-      console.log(
-        `${indent}⚠ personal Claude skill shadows this project skill`,
-      );
-      console.log(`${indent}  ${warning.message}`);
-    } else if (warning.type === "codex_project_untrusted") {
-      console.log(`${indent}⚠ Codex project config may be ignored`);
-      console.log(`${indent}  ${warning.message}`);
-    }
+  for (const line of formatRuntimeWarnings(warnings, indent)) {
+    console.log(line);
   }
 }
 
