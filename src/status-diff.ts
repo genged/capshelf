@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import { $ } from "bun";
@@ -291,7 +291,9 @@ async function readInstalledFiles(
   for (const rel of expectedFiles.keys()) files.add(rel);
   for (const rel of [...files].sort()) {
     const file = join(root, ...rel.split("/"));
-    if (existsSync(file)) out.set(rel, await readFile(file));
+    if (existsSync(file) && (await lstat(file)).isFile()) {
+      out.set(rel, await readFile(file));
+    }
   }
   return out;
 }

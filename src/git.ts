@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { constants } from "node:fs";
 import { access } from "node:fs/promises";
-import { basename, delimiter, join } from "node:path";
+import { basename, delimiter, join, resolve } from "node:path";
 import { CliError, ExitCode } from "./errors";
 
 const GIT_MISSING_MESSAGE =
@@ -49,6 +49,31 @@ export async function isGitRepo(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export async function gitWorkTreeRoot(path: string): Promise<string | null> {
+  await assertGitAvailable();
+  try {
+    const out = await $`git -C ${path} rev-parse --show-toplevel`
+      .quiet()
+      .text();
+    return resolve(out.trim());
+  } catch {
+    return null;
+  }
+}
+
+export async function isGitWorkTreeRoot(path: string): Promise<boolean> {
+  const root = await gitWorkTreeRoot(path);
+  return root !== null && root === resolve(path);
+}
+
+export async function gitInfoExcludePath(repo: string): Promise<string | null> {
+  if (!(await isGitWorkTreeRoot(repo))) return null;
+  const out = await $`git -C ${repo} rev-parse --git-path info/exclude`
+    .quiet()
+    .text();
+  return resolve(repo, out.trim());
 }
 
 /**

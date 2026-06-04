@@ -12,6 +12,7 @@ import {
 } from "../src/fragments";
 import {
   buildStatusDiff,
+  currentCopyItemSha,
   shouldShowLocalDiff,
   unifiedDiff,
 } from "../src/status-diff";
@@ -164,6 +165,75 @@ describe("status diff helpers", () => {
     expect(diff?.text).not.toContain("upstream delete");
 
     expect(await file(join(installed, "extra.md")).text()).toBe("local add\n");
+  });
+
+  test("copy item status handles a locked file replaced by a directory", async () => {
+    const dataRepo = await tempRepo("capshelf-status-file-dir-data-");
+    const project = await tempRepo("capshelf-status-file-dir-project-");
+    const dataItem = join(dataRepo, "skills", "hello");
+    const installed = join(project, ".agents", "skills", "hello");
+
+    await mkdir(dataItem, { recursive: true });
+    await writeFile(join(dataItem, "SKILL.md"), "locked file\n");
+    await commitAll(dataRepo, "hello skill");
+    const sourceCommit = await lastTouchingCommit(dataRepo, "skills/hello");
+    const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+
+    await mkdir(join(installed, "SKILL.md"), { recursive: true });
+    await writeFile(join(installed, "SKILL.md", "nested.txt"), "local dir\n");
+
+    await expect(
+      currentCopyItemSha({
+        project,
+        dataRepo,
+        manifest: {
+          installMode: "codex-compatible",
+          skills: ["hello"],
+          settings: [],
+          mcp: [],
+          codexConfig: [],
+        },
+        source: "data",
+        kind: "skills",
+        name: "hello",
+        sourceCommit,
+      }),
+    ).resolves.toMatch(/^[0-9a-f]{12}$/);
+
+    const diff = await buildStatusDiff({
+      project,
+      dataRepo,
+      manifest: {
+        installMode: "codex-compatible",
+        skills: ["hello"],
+        settings: [],
+        mcp: [],
+        codexConfig: [],
+      },
+      lock: {
+        version: 2,
+        items: {
+          [dataKey("skills", "hello")]: {
+            source: "data",
+            sha: lockedSha,
+            sourceCommit,
+            appliedAt: "2026-05-08T00:00:00.000Z",
+          },
+        },
+      },
+      row: {
+        source: "data",
+        kind: "skills",
+        name: "hello",
+        state: "drifted_local",
+        sourceCommit,
+      },
+    });
+
+    expect(diff?.text).toContain("--- SKILL.md (current)");
+    expect(diff?.text).toContain("+locked file");
+    expect(diff?.text).toContain("--- SKILL.md/nested.txt (current)");
+    expect(diff?.text).toContain("-local dir");
   });
 
   test("buildStatusDiff compares settings drift against merged locked output", async () => {

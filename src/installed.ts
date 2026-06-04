@@ -4,7 +4,7 @@ import { mkdir, rm, symlink } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import { ITEM_KINDS, isItemKind, type ItemKind } from "./master";
 import { shaOfGitVisibleItem, shaOfItem } from "./master";
-import { isGitRepo } from "./git";
+import { isGitWorkTreeRoot } from "./git";
 import {
   claudeDir,
   codexProjectConfigDir,
@@ -139,7 +139,7 @@ export async function shaOfInstalled(
 ): Promise<string | null> {
   const p = installedPath(project, kind, name);
   if (!existsSync(p)) return null;
-  if (await isGitRepo(project)) {
+  if (await isGitWorkTreeRoot(project)) {
     const rel = relative(project, p);
     if (rel && !rel.startsWith("..")) {
       return shaOfGitVisibleItem(project, rel);

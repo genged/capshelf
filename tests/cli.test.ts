@@ -83,6 +83,46 @@ describe("cli integration", () => {
     ).toBe(true);
   });
 
+  test("project commands require running from the capshelf project root", async () => {
+    const project = await tempRepo("capshelf-root-only-project-");
+    const dataRepo = await tempRepo("capshelf-root-only-data-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+
+    const init = Bun.spawnSync({
+      cmd: [process.execPath, cli, "init", "--data", dataRepo],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(init.exitCode).toBe(0);
+
+    await mkdir(join(project, "nested"), { recursive: true });
+    const fromNested = Bun.spawnSync({
+      cmd: [process.execPath, cli, "status"],
+      cwd: join(project, "nested"),
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(fromNested.exitCode).toBe(1);
+    expect(fromNested.stderr.toString()).toContain(
+      "not a capshelf project root",
+    );
+
+    const fromMetadata = Bun.spawnSync({
+      cmd: [process.execPath, cli, "status"],
+      cwd: join(project, ".capshelf"),
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(fromMetadata.exitCode).toBe(1);
+    expect(fromMetadata.stderr.toString()).toContain(
+      "not a capshelf project root",
+    );
+  });
+
   test("init honors --no-upstream for repos with origin", async () => {
     const project = await tempRepo("capshelf-init-no-upstream-project-");
     const dataRepo = await tempRepo("capshelf-init-no-upstream-data-");
@@ -136,8 +176,9 @@ describe("cli integration", () => {
     const project = await tempRepo("capshelf-set-data-project-");
     const dataRepo = await tempRepo("capshelf-set-data-data-");
     const cli = join(import.meta.dir, "..", "src", "cli.ts");
+    await mkdir(join(project, ".capshelf"), { recursive: true });
     await writeFile(
-      join(project, "capshelf.json"),
+      join(project, ".capshelf", "capshelf.json"),
       JSON.stringify({
         installMode: "codex-compatible",
         dataRepoUpstream: "https://github.com/org/canonical",
@@ -369,6 +410,45 @@ describe("cli integration", () => {
         mcp: [],
       },
     );
+  });
+
+  test("add --local treats a capshelf project nested under parent git as non-git", async () => {
+    const parent = await tempRepo("capshelf-local-parent-git-");
+    const project = join(parent, "examples", "old-albums");
+    const dataRepo = await tempRepo("capshelf-local-nested-data-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+
+    await mkdir(join(project), { recursive: true });
+    await mkdir(join(dataRepo, "skills", "local-only"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "skills", "local-only", "SKILL.md"),
+      "local\n",
+    );
+    await commitAll(dataRepo, "local skill");
+
+    const init = Bun.spawnSync({
+      cmd: [process.execPath, cli, "init", "--data", dataRepo],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(init.exitCode).toBe(0);
+
+    const add = Bun.spawnSync({
+      cmd: [process.execPath, cli, "add", "--local", "local-only"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(add.exitCode).toBe(0);
+    expect(await file(join(project, ".git", "info", "exclude")).exists()).toBe(
+      false,
+    );
+    expect(
+      await file(join(parent, ".git", "info", "exclude")).text(),
+    ).not.toContain(".agents/skills/local-only/");
   });
 
   test("share adopts a new skill into local scope by default", async () => {
@@ -1546,8 +1626,9 @@ describe("cli integration", () => {
     const project = await tempRepo("capshelf-migrate-data-project-");
     const dataRepo = await tempRepo("capshelf-migrate-data-data-");
     const cli = join(import.meta.dir, "..", "src", "cli.ts");
+    await mkdir(join(project, ".capshelf"), { recursive: true });
     await writeFile(
-      join(project, "capshelf.json"),
+      join(project, ".capshelf", "capshelf.json"),
       JSON.stringify({
         installMode: "codex-compatible",
         dataRepo,

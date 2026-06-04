@@ -7,7 +7,7 @@ import { LOCAL_CONFIG_FILE, LOCAL_LOCK_FILE, METADATA_DIR } from "./identity";
 import { expandTilde } from "./paths";
 import { PreconditionError } from "./errors";
 import type { ItemKind } from "./master";
-import { isGitRepo } from "./git";
+import { gitInfoExcludePath, isGitWorkTreeRoot } from "./git";
 
 const LocalConfigSchema = z.object({
   dataRepo: z.string().min(1),
@@ -75,14 +75,14 @@ export async function ensureLocalExcludes(
   project: string,
   skillName: string,
 ): Promise<void> {
-  if (!(await isGitRepo(project))) return;
+  const excludePath = await gitInfoExcludePath(project);
+  if (!excludePath) return;
   await assertLocalInstallPathsUntracked(project, skillName);
   const entries = [
     `.agents/skills/${skillName}/`,
     `.claude/skills/${skillName}`,
   ];
 
-  const excludePath = join(project, ".git", "info", "exclude");
   await mkdir(dirname(excludePath), { recursive: true });
   const raw = existsSync(excludePath)
     ? await readFile(excludePath, "utf-8")
@@ -116,7 +116,7 @@ export async function assertLocalInstallPathsUntracked(
   project: string,
   skillName: string,
 ): Promise<void> {
-  if (!(await isGitRepo(project))) return;
+  if (!(await isGitWorkTreeRoot(project))) return;
   for (const relPath of [
     `.agents/skills/${skillName}`,
     `.claude/skills/${skillName}`,

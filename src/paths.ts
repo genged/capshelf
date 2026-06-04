@@ -130,15 +130,16 @@ async function verifyResolvedUpstream(
 }
 
 export function projectRoot(cwd: string = process.cwd()): string {
-  let d = resolve(cwd);
-  while (d !== "/" && d.length > 1) {
-    if (manifestReadPath(d)) return d;
-    if (existsSync(join(d, ".git"))) return d;
-    const parent = resolve(d, "..");
-    if (parent === d) break;
-    d = parent;
-  }
-  return cwd;
+  const project = resolve(cwd);
+  if (existsSync(manifestPath(project))) return project;
+  throw new Error(
+    `not a capshelf project root: ${project}\n` +
+      `  run this command from the directory containing ${METADATA_DIR}/${MANIFEST_FILE}, or initialize this directory with: ${PRODUCT_NAME} init --data <path>`,
+  );
+}
+
+export function initProjectRoot(cwd: string = process.cwd()): string {
+  return resolve(cwd);
 }
 
 export function claudeDir(project: string): string {

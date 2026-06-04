@@ -11,6 +11,8 @@ Resolution order: `--data <path>` flag > the project's gitignored `.capshelf/loc
 
 Capshelf metadata lives under `.capshelf/`: committed `capshelf.json` and `capshelf.lock.json`, plus gitignored `local.json` and `local.lock.json` for the per-machine data repo path and local-only skill pins. By default, real skill directories live under `.agents/skills/<name>` and Claude sees them through per-skill symlinks at `.claude/skills/<name>`. Use `capshelf init --claude-only` only when a project should install directly under `.claude/`.
 
+Run project commands from the project root: the directory containing `.capshelf/capshelf.json`. Capshelf does not walk upward from subdirectories or fall back to Git roots. `capshelf init` creates `.capshelf/` in the current directory.
+
 When the user asks to add, remove, edit, or update shared config, use the `capshelf` CLI. **Do not hand-edit** `.capshelf/capshelf.json` or `.capshelf/capshelf.lock.json` — they are tool-managed.
 
 ## How it works

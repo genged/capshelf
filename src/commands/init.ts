@@ -1,5 +1,9 @@
 import type { Command } from "commander";
-import { DEFAULT_INSTALL_MODE, projectRoot, resolveDataRepo } from "../paths";
+import {
+  DEFAULT_INSTALL_MODE,
+  initProjectRoot,
+  resolveDataRepo,
+} from "../paths";
 import type { InstallMode } from "../paths";
 import { loadManifest, saveManifest } from "../manifest";
 import { loadLock, saveLock, systemKey } from "../lock";
@@ -42,7 +46,7 @@ export function registerInit(program: Command): void {
     )
     .option("--json", "output JSON")
     .action(async (opts: InitOptions, cmd: Command) => {
-      const project = projectRoot();
+      const project = initProjectRoot();
       const manifest = await loadManifest(project);
       const installMode = resolveInstallMode(manifest.installMode, opts);
       const lock = await loadLock(project);

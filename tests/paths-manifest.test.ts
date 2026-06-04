@@ -115,43 +115,52 @@ describe("path normalization", () => {
     }
   });
 
-  test("finds project root from a nested git checkout", async () => {
+  test("projectRoot accepts only the current capshelf project root", async () => {
+    const project = await tempDir();
+    await mkdir(join(project, ".capshelf"), { recursive: true });
+    await writeFile(
+      join(project, ".capshelf", "capshelf.json"),
+      JSON.stringify(emptyManifest()),
+    );
+
+    expect(projectRoot(project)).toBe(project);
+  });
+
+  test("projectRoot rejects subdirectories of a capshelf project", async () => {
+    const project = await tempDir();
+    await mkdir(join(project, ".capshelf"), { recursive: true });
+    await writeFile(
+      join(project, ".capshelf", "capshelf.json"),
+      JSON.stringify(emptyManifest()),
+    );
+    const nested = join(project, "nested");
+    await mkdir(nested, { recursive: true });
+
+    expect(() => projectRoot(nested)).toThrow(/not a capshelf project root/);
+  });
+
+  test("projectRoot rejects the capshelf metadata directory itself", async () => {
+    const project = await tempDir();
+    const metadata = join(project, ".capshelf");
+    await mkdir(metadata, { recursive: true });
+    await writeFile(
+      join(metadata, "capshelf.json"),
+      JSON.stringify(emptyManifest()),
+    );
+
+    expect(() => projectRoot(metadata)).toThrow(/not a capshelf project root/);
+  });
+
+  test("projectRoot rejects git repos without capshelf metadata", async () => {
     const project = await tempDir();
     await mkdir(join(project, ".git"), { recursive: true });
-    await mkdir(join(project, "a", "b"), { recursive: true });
 
-    expect(projectRoot(join(project, "a", "b"))).toBe(project);
+    expect(() => projectRoot(project)).toThrow(/not a capshelf project root/);
   });
 
-  test("finds project root from nested capshelf metadata without git", async () => {
-    const project = await tempDir();
-    await mkdir(join(project, ".capshelf"), { recursive: true });
-    await writeFile(
-      join(project, ".capshelf", "capshelf.json"),
-      JSON.stringify(emptyManifest()),
-    );
-    await mkdir(join(project, "a", "b"), { recursive: true });
-
-    expect(projectRoot(join(project, "a", "b"))).toBe(project);
-  });
-
-  test("prefers capshelf metadata over a parent git checkout", async () => {
-    const parent = await tempDir();
-    const project = join(parent, "examples", "old-albums");
-    await mkdir(join(parent, ".git"), { recursive: true });
-    await mkdir(join(project, ".capshelf"), { recursive: true });
-    await writeFile(
-      join(project, ".capshelf", "capshelf.json"),
-      JSON.stringify(emptyManifest()),
-    );
-    await mkdir(join(project, "nested"), { recursive: true });
-
-    expect(projectRoot(join(project, "nested"))).toBe(project);
-  });
-
-  test("projectRoot falls back to cwd when no git root exists", async () => {
+  test("projectRoot rejects uninitialized directories", async () => {
     const dir = await tempDir();
-    expect(projectRoot(dir)).toBe(dir);
+    expect(() => projectRoot(dir)).toThrow(/not a capshelf project root/);
   });
 
   test("resolves root metadata and install mode directories", async () => {

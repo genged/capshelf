@@ -27,6 +27,10 @@ The lockfile is the safety boundary. Data items are pinned by content hash and
 the last data-repo commit that touched that item path. System items are bundled
 inside the CLI and pinned by content hash plus CLI version.
 
+Project commands run only from the project root, the directory containing
+`.capshelf/capshelf.json`. `init` creates `.capshelf/` in the current
+directory.
+
 ## Mental Model
 
 This is closer to a declarative reconciler than a package installer. The

@@ -163,9 +163,9 @@ A real user creates their own data repos (`~/code/work-skills/`, `~/code/persona
 
 `capshelf init --claude-only` stores real skill directories directly under `.claude/skills/<name>/` and does not create `.agents` compatibility symlinks.
 
-Commands discover the project root by walking upward to the nearest capshelf
-manifest before considering a parent Git checkout. That lets initialized
-non-Git projects work normally, even when they live inside a larger repository.
+Project commands must be run from the project root, the directory containing
+`.capshelf/capshelf.json`. Capshelf does not walk upward from subdirectories or
+fall back to Git roots. `init` creates `.capshelf/` in the current directory.
 
 Manifest:
 ```json
