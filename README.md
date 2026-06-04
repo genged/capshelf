@@ -2,7 +2,7 @@
   <img src="docs/logo.png" alt="Capshelf logo" width="200" />
 </p>
 <h1 align="center">Capshelf</h1>
-<h3 align="center">Shared Agent Configuration for Every Repo</h3>
+<h3 align="center">Shared Agent Configuration between Repositories</h3>
 <p align="center">
 <a href="https://github.com/genged/capshelf/actions/workflows/release.yml">
   <img src="https://github.com/genged/capshelf/actions/workflows/release.yml/badge.svg" alt="Release status"/>
