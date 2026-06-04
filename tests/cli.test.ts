@@ -325,6 +325,28 @@ describe("cli integration", () => {
     expect(statusJson.items[0].name).toBe("local-only");
     expect(statusJson.items[0].state).toBe("ok");
 
+    const lsHere = Bun.spawnSync({
+      cmd: [process.execPath, cli, "ls", "--here", "--json"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(lsHere.exitCode).toBe(0);
+    const installedItems = JSON.parse(lsHere.stdout.toString()) as Array<{
+      scope?: string;
+      kind?: string;
+      name?: string;
+    }>;
+    expect(
+      installedItems.some(
+        (item) =>
+          item.scope === "local" &&
+          item.kind === "skills" &&
+          item.name === "local-only",
+      ),
+    ).toBe(true);
+
     const move = Bun.spawnSync({
       cmd: [
         process.execPath,
@@ -367,6 +389,72 @@ describe("cli integration", () => {
     const gitStatus =
       await $`git -C ${project} status --short -- .agents/skills/local-only .claude/skills/local-only`.text();
     expect(gitStatus).toContain(".agents/skills/local-only");
+  });
+
+  test("rm --local removes local skill files and git exclude entries", async () => {
+    const project = await tempRepo("capshelf-rm-local-project-");
+    const dataRepo = await tempRepo("capshelf-rm-local-data-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+
+    await mkdir(join(dataRepo, "skills", "local-remove"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(dataRepo, "skills", "local-remove", "SKILL.md"),
+      "remove me\n",
+    );
+    await commitAll(dataRepo, "local removable skill");
+
+    const init = Bun.spawnSync({
+      cmd: [process.execPath, cli, "init", "--data", dataRepo],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(init.exitCode).toBe(0);
+
+    const add = Bun.spawnSync({
+      cmd: [process.execPath, cli, "add", "--local", "skills/local-remove"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(add.exitCode).toBe(0);
+    let exclude = await readFile(
+      join(project, ".git", "info", "exclude"),
+      "utf-8",
+    );
+    expect(exclude).toContain(".agents/skills/local-remove/");
+    expect(exclude).toContain(".claude/skills/local-remove");
+
+    const rm = Bun.spawnSync({
+      cmd: [process.execPath, cli, "rm", "--local", "skills/local-remove"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(rm.exitCode).toBe(0);
+
+    const localConfig = await file(
+      join(project, ".capshelf", "local.json"),
+    ).json();
+    expect(localConfig.skills).toEqual([]);
+    const localLock = await file(
+      join(project, ".capshelf", "local.lock.json"),
+    ).json();
+    expect(localLock.items["data/skills/local-remove"]).toBeUndefined();
+    expect(
+      await file(join(project, ".agents", "skills", "local-remove")).exists(),
+    ).toBe(false);
+    expect(
+      await file(join(project, ".claude", "skills", "local-remove")).exists(),
+    ).toBe(false);
+    exclude = await readFile(join(project, ".git", "info", "exclude"), "utf-8");
+    expect(exclude).not.toContain(".agents/skills/local-remove/");
+    expect(exclude).not.toContain(".claude/skills/local-remove");
   });
 
   test("add --local works in non-git projects without git excludes", async () => {

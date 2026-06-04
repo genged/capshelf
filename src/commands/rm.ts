@@ -24,7 +24,11 @@ import { lockKeysForRef, parseItemRef } from "../item-ref";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import { assertIsGitRepo } from "../git";
 import { globalOpts } from "../cli";
-import { loadLocalConfig, saveLocalConfig } from "../local-config";
+import {
+  loadLocalConfig,
+  removeLocalExcludes,
+  saveLocalConfig,
+} from "../local-config";
 import {
   applyFragmentOutput,
   fragmentOutputPath,
@@ -178,6 +182,7 @@ export function registerRm(program: Command): void {
 
       if (opts.local) {
         if (!localConfig) throw new Error("expected local manifest");
+        await removeLocalExcludes(project, name);
         await saveLocalConfig(project, localConfig);
         await saveLocalLock(project, lock);
       } else {

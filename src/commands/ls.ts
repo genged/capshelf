@@ -13,13 +13,14 @@ import {
   shaOfGitVisibleItem,
 } from "../master";
 import type { ItemKind } from "../master";
-import { loadLock } from "../lock";
+import { loadLocalLock, loadLock } from "../lock";
 import { loadManifest } from "../manifest";
 import { parseLockKey } from "../installed";
 import { SYSTEM_ITEMS, shaOfSystemItem } from "../bundled";
 import { assertIsGitRepo } from "../git";
 import { globalOpts } from "../cli";
 import { shaOfFragmentItem } from "../fragments";
+import { assertNoScopeCollisions } from "../status-core";
 
 interface LsOptions {
   here?: boolean;
@@ -142,11 +143,21 @@ async function lsHere(
 ): Promise<void> {
   const project = projectRoot();
   const manifest = await loadManifest(project);
-  const lock = await loadLock(project);
-  const entries = Object.entries(lock.items).map(([key, entry]) => {
+  const projectLock = await loadLock(project);
+  const localLock = await loadLocalLock(project);
+  assertNoScopeCollisions(projectLock, localLock);
+
+  const projectEntries = Object.entries(projectLock.items).map(
+    ([key, entry]) => {
+      const { kind: k, name } = parseLockKey(key);
+      return { scope: "project" as const, kind: k, name, ...entry };
+    },
+  );
+  const localEntries = Object.entries(localLock.items).map(([key, entry]) => {
     const { kind: k, name } = parseLockKey(key);
-    return { kind: k, name, ...entry };
+    return { scope: "local" as const, kind: k, name, ...entry };
   });
+  const entries = [...projectEntries, ...localEntries];
   const filtered = kind ? entries.filter((e) => e.kind === kind) : entries;
 
   if (json) {
@@ -161,27 +172,42 @@ async function lsHere(
   console.log(project);
   console.log("");
 
-  const system = filtered.filter((e) => e.source === "system");
-  const data = filtered.filter((e) => e.source === "data");
+  const system = filtered.filter(
+    (e) => e.scope === "project" && e.source === "system",
+  );
+  const projectData = filtered.filter(
+    (e) => e.scope === "project" && e.source === "data",
+  );
+  const localData = filtered.filter(
+    (e) => e.scope === "local" && e.source === "data",
+  );
   const dataRepo = await resolveDataRepoOptional({ manifest, project });
   const dataRepoLabel = dataRepo ? homeRelative(dataRepo) : null;
+  let printedSection = false;
 
   if (system.length > 0) {
     console.log(`system/  (bundled in capshelf ${CLI_VERSION})`);
     for (const e of system) {
       console.log(`  ${e.kind}/${e.name.padEnd(26)} ${e.sha}`);
     }
-    if (data.length > 0) console.log("");
+    printedSection = true;
   }
-  if (data.length > 0) {
-    const dataHeader = dataRepoLabel
-      ? `data/  (from ${dataRepoLabel})`
-      : "data/  (no data repo bound - run set-data <path>)";
-    console.log(dataHeader);
-    for (const e of data) {
+
+  for (const section of [
+    { label: "data", entries: projectData },
+    { label: "local/data", entries: localData },
+  ]) {
+    if (section.entries.length === 0) continue;
+    if (printedSection) console.log("");
+    const header = dataRepoLabel
+      ? `${section.label}/  (from ${dataRepoLabel})`
+      : `${section.label}/  (no data repo bound - run set-data <path>)`;
+    console.log(header);
+    for (const e of section.entries) {
       const label =
         e.source === "data" && "label" in e && e.label ? ` ${e.label}` : "";
       console.log(`  ${e.kind}/${e.name.padEnd(26)} ${e.sha}${label}`);
     }
+    printedSection = true;
   }
 }
