@@ -84,8 +84,10 @@ describe("status diff helpers", () => {
     const installed = join(project, ".agents", "skills", "hello");
 
     await mkdir(dataItem, { recursive: true });
+    await mkdir(join(dataItem, "scripts"), { recursive: true });
     await writeFile(join(dataItem, "SKILL.md"), "locked v1\n");
     await writeFile(join(dataItem, "deleted.md"), "locked delete\n");
+    await writeFile(join(dataItem, "scripts", ".gitignore"), ".venv/\n");
     await commitAll(dataRepo, "hello v1");
     const sourceCommit = await lastTouchingCommit(dataRepo, "skills/hello");
     const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
@@ -95,10 +97,28 @@ describe("status diff helpers", () => {
     await commitAll(dataRepo, "hello v2");
 
     await mkdir(installed, { recursive: true });
+    await mkdir(join(installed, "scripts"), { recursive: true });
     await writeFile(join(installed, "SKILL.md"), "local edit\n");
     await writeFile(join(installed, "deleted.md"), "local before delete\n");
+    await writeFile(join(installed, "scripts", ".gitignore"), ".venv/\n");
     await rm(join(installed, "deleted.md"));
     await writeFile(join(installed, "extra.md"), "local add\n");
+    await mkdir(
+      join(installed, "scripts", ".venv", "lib", "python3.14", "site-packages"),
+      { recursive: true },
+    );
+    await writeFile(
+      join(
+        installed,
+        "scripts",
+        ".venv",
+        "lib",
+        "python3.14",
+        "site-packages",
+        "_virtualenv.py",
+      ),
+      "generated venv\n",
+    );
 
     const diff = await buildStatusDiff({
       project,
@@ -138,6 +158,8 @@ describe("status diff helpers", () => {
     expect(diff?.text).toContain("+locked v1");
     expect(diff?.text).toContain("+locked delete");
     expect(diff?.text).toContain("-local add");
+    expect(diff?.text).not.toContain("_virtualenv.py");
+    expect(diff?.text).not.toContain("generated venv");
     expect(diff?.text).not.toContain("upstream v2");
     expect(diff?.text).not.toContain("upstream delete");
 
@@ -203,6 +225,39 @@ describe("status diff helpers", () => {
     expect(diff?.path).toBe(settingsPath);
     expect(diff?.text).toContain("Bash(git status *)");
     expect(diff?.text).toContain("Bash(curl *)");
+  });
+
+  test("buildStatusDiff does not raw-walk copy items without locked files", async () => {
+    const project = await mkdtemp(join(tmpdir(), "capshelf-status-no-lock-"));
+    const installed = join(project, ".agents", "skills", "hello");
+
+    await mkdir(join(installed, "scripts", ".venv"), { recursive: true });
+    await writeFile(
+      join(installed, "scripts", ".venv", "pyvenv.cfg"),
+      "venv\n",
+    );
+
+    const diff = await buildStatusDiff({
+      project,
+      dataRepo: null,
+      manifest: {
+        installMode: "codex-compatible",
+        skills: ["hello"],
+        settings: [],
+        mcp: [],
+        codexConfig: [],
+      },
+      lock: { version: 2, items: {} },
+      row: {
+        source: "data",
+        kind: "skills",
+        name: "hello",
+        state: "drifted_local",
+        sourceCommit: "missing",
+      },
+    });
+
+    expect(diff).toBeNull();
   });
 
   test("buildStatusDiff includes staged and untracked fragment source changes", async () => {

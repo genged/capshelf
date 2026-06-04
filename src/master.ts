@@ -127,7 +127,7 @@ export async function shaOfGitVisibleItem(
   );
 }
 
-async function shaOfItemFiles(
+export async function shaOfItemFiles(
   itemPath: string,
   files: string[],
 ): Promise<string> {

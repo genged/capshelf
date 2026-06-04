@@ -12,6 +12,10 @@ Claude custom commands are modeled as skills. capshelf does not manage `.claude/
 
 Capshelf metadata lives under `.capshelf/` at the project root. `.capshelf/capshelf.json` and `.capshelf/capshelf.lock.json` are committed; `.capshelf/local.json` and `.capshelf/local.lock.json` are gitignored by `.capshelf/.gitignore` and store the per-machine data repo path plus local-only item intent and pins. By default, skills are installed as real directories under `.agents/skills/<name>` and exposed to Claude through per-skill symlinks at `.claude/skills/<name>`. Use `capshelf init --claude-only` only when a project should install directly under `.claude/` without `.agents` symlinks.
 
+Commands resolve the project root by walking upward to the nearest capshelf
+manifest first, then to the nearest Git checkout. This supports initialized
+non-Git projects, including ones nested under a larger Git repository.
+
 Claude also loads personal skills from `~/.claude/skills/<name>`. If a personal
 skill has the same name as a project-managed skill, Claude will use the personal
 skill first. Capshelf does not manage the personal copy, but `init`, `add`,
@@ -56,7 +60,9 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
 - `--data <path>` — global override for the data repo (otherwise resolved from `.capshelf/local.json`, then `$CAPSHELF_HOME`, then fail)
 - `--json` — per-command structured output where supported
 - `--dry-run` — supported by `apply` and `update`; previews planned writes without changing files or lock state
-- `--diff` — supported by `status`; shows local drift against the locked content without changing files
+- `--diff` — supported by `status`; shows local drift against the locked
+  content without changing files. For copy items, extra current files are
+  filtered through `.gitignore` files inside the installed item.
 - `--target claude|codex` — used by multi-target MCP fragment commands such as `show`, `get-path`, and `share`
 
 ## Init Layout
@@ -202,6 +208,10 @@ default layout, `share` can also adopt a real `.claude/skills/<name>/` directory
 when `.agents/skills/<name>/` does not already exist. After the data-repo commit
 succeeds, capshelf normalizes the project to the default layout: real files under
 `.agents/skills/<name>/` and a `.claude/skills/<name>` symlink.
+Local-scope skill adoption and promotion copy only files visible after applying
+the skill directory's own `.gitignore` files. In Git projects, local-scope
+skills also add their install paths to `.git/info/exclude`; non-Git projects
+skip Git excludes and rely on `.capshelf/local.json` plus `.capshelf/local.lock.json`.
 
 `promote --create` still works for one minor release, but prints a deprecation
 hint. `promote --local --to-project` has been removed; use `share` for adoption

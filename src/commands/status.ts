@@ -15,7 +15,7 @@ import { globalOpts } from "../cli";
 import { findMasterItemByRef, parseItemRef } from "../item-ref";
 import { isPathClean } from "../git";
 import { listClaudePlugins, listSkillsShSkills } from "../external";
-import { buildStatusDiff } from "../status-diff";
+import { buildStatusDiff, currentCopyItemSha } from "../status-diff";
 import type { StatusDiff } from "../status-diff";
 import {
   codexProjectTrustWarnings,
@@ -115,12 +115,18 @@ export function registerStatus(program: Command): void {
           if (kind === "skills" && externalSkillNames.has(itemName)) continue;
 
           const entry = lock.items[key]!;
-          let currentSha = await currentInstalledSha(
-            project,
-            kind,
-            itemName,
-            scope,
-          );
+          let currentSha = isFragmentItemKind(kind)
+            ? await currentInstalledSha(project, kind, itemName, scope)
+            : await currentCopyItemSha({
+                project,
+                dataRepo,
+                manifest,
+                source,
+                kind,
+                name: itemName,
+                sourceCommit:
+                  entry.source === "data" ? entry.sourceCommit : undefined,
+              });
           let fragmentOutputState: FragmentContributionState | null = null;
           if (source === "data" && isFragmentItemKind(kind)) {
             if (dataRepo) {

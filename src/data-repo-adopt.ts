@@ -11,7 +11,7 @@ import {
   installedPath,
 } from "./installed";
 import { assertRepoClean, commitInRepo } from "./git";
-import { replaceDirFromDir, replaceDirFromGitVisibleFiles } from "./sync";
+import { replaceDirFromFiles, replaceDirFromGitVisibleFiles } from "./sync";
 import { findSkillsShSkill, skillsShConflictMessage } from "./external";
 import { runtimeWarningsForItem } from "./runtime-warnings";
 import { privateDotenvFiles } from "./dotfiles";
@@ -19,6 +19,7 @@ import { isFragmentKind } from "./fragments";
 import {
   expectedAdoptionPath,
   type AdoptOptions,
+  type ItemSnapshot,
   type PromoteResult,
 } from "./promote-core";
 import { adoptionSnapshot } from "./item-snapshot";
@@ -78,7 +79,7 @@ export async function adoptIntoDataRepo(
   );
   const privateDotenvWarnings = privateDotenvFiles(snapshot.files);
   if (snapshot.source === "filesystem") {
-    await replaceDirFromDir(adoption.path, dataPath);
+    await replaceDirFromFiles(adoption.path, snapshot.files, dataPath);
   } else {
     await replaceDirFromGitVisibleFiles(
       project,
@@ -94,7 +95,13 @@ export async function adoptIntoDataRepo(
   );
 
   if (kind === "skills") {
-    await normalizeAdoptedSkill(project, name, adoption, opts.installMode);
+    await normalizeAdoptedSkill(
+      project,
+      name,
+      adoption,
+      opts.installMode,
+      snapshot,
+    );
   }
   const runtimeWarnings = runtimeWarningsForItem(project, kind, name);
 
@@ -206,18 +213,23 @@ async function normalizeAdoptedSkill(
   name: string,
   adoption: AdoptionSource,
   mode: Manifest["installMode"],
+  snapshot: ItemSnapshot,
 ): Promise<void> {
   if (mode !== "codex-compatible") return;
 
   if (adoption.kind === "claude-real") {
     const managedPath = codexSkillPath(project, name);
-    const adoptionRelPath = relative(project, adoption.path);
-    await replaceDirFromGitVisibleFiles(
-      project,
-      adoptionRelPath,
-      adoption.path,
-      managedPath,
-    );
+    if (snapshot.source === "filesystem") {
+      await replaceDirFromFiles(adoption.path, snapshot.files, managedPath);
+    } else {
+      const adoptionRelPath = relative(project, adoption.path);
+      await replaceDirFromGitVisibleFiles(
+        project,
+        adoptionRelPath,
+        adoption.path,
+        managedPath,
+      );
+    }
     await fsRm(adoption.path, { recursive: true, force: true });
   }
   await ensureInstallAliases(project, "skills", name, mode);

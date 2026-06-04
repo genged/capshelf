@@ -41,6 +41,9 @@ Core commands:
 - `status` reports local drift, upstream changes, missing files, and external
   ownership.
 - `status --diff` compares current files against the locked source commit.
+  Extra current files in copy items are filtered by `.gitignore` files inside
+  the installed item, so generated directories stay local even in non-Git
+  projects.
 - `apply` converges installed files back to the lock.
 - `update` advances lock entries to current upstream content and applies them.
 - `share` adopts a not-yet-shared on-disk item into the data repo and tracks it
@@ -66,6 +69,10 @@ Data repos must be Git repositories. The CLI uses Git to:
 This is what makes parallel project work safe. If project A promotes a new
 version of a shared skill, only project A's lock changes. If project A shares a
 new skill, project B stays unchanged until it explicitly runs `add` or `update`.
+For local-scope skills, filesystem snapshots use the skill's own `.gitignore`
+rules before hashing or copying into the data repo. Git projects also use
+`.git/info/exclude` to keep local-scope install paths untracked; non-Git
+projects skip that Git-only protection.
 
 ## Install Layout
 

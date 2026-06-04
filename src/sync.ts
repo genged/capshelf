@@ -44,6 +44,20 @@ export async function replaceDirFromDir(
   await copyRecursive(src, dst);
 }
 
+export async function replaceDirFromFiles(
+  src: string,
+  files: string[],
+  dst: string,
+): Promise<void> {
+  if (existsSync(dst)) await rm(dst, { recursive: true, force: true });
+  for (const rel of files) {
+    const from = join(src, ...rel.split("/"));
+    const to = join(dst, ...rel.split("/"));
+    await mkdir(dirname(to), { recursive: true });
+    await copyFile(from, to);
+  }
+}
+
 export async function replaceDirFromGitVisibleFiles(
   repo: string,
   relPath: string,

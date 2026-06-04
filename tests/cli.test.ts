@@ -328,6 +328,49 @@ describe("cli integration", () => {
     expect(gitStatus).toContain(".agents/skills/local-only");
   });
 
+  test("add --local works in non-git projects without git excludes", async () => {
+    const project = await tempDir("capshelf-local-non-git-project-");
+    const dataRepo = await tempRepo("capshelf-local-non-git-data-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+
+    await mkdir(join(dataRepo, "skills", "local-only"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "skills", "local-only", "SKILL.md"),
+      "local\n",
+    );
+    await commitAll(dataRepo, "local skill");
+
+    const init = Bun.spawnSync({
+      cmd: [process.execPath, cli, "init", "--data", dataRepo],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(init.exitCode).toBe(0);
+
+    const add = Bun.spawnSync({
+      cmd: [process.execPath, cli, "add", "--local", "local-only"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(add.exitCode).toBe(0);
+
+    expect(await file(join(project, ".git", "info", "exclude")).exists()).toBe(
+      false,
+    );
+    expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual(
+      {
+        dataRepo,
+        skills: ["local-only"],
+        settings: [],
+        mcp: [],
+      },
+    );
+  });
+
   test("share adopts a new skill into local scope by default", async () => {
     const project = await tempRepo("capshelf-share-local-project-");
     const dataRepo = await tempRepo("capshelf-share-local-data-");
@@ -438,6 +481,63 @@ describe("cli integration", () => {
     expect(status.exitCode).toBe(0);
     const statusJson = JSON.parse(status.stdout.toString());
     expect(statusJson.items[0].state).toBe("ok");
+  });
+
+  test("share normalizes real claude skills in non-git projects without generated files", async () => {
+    const project = await tempDir("capshelf-share-claude-non-git-project-");
+    const dataRepo = await tempRepo("capshelf-share-claude-non-git-data-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+
+    const init = Bun.spawnSync({
+      cmd: [process.execPath, cli, "init", "--data", dataRepo],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(init.exitCode).toBe(0);
+
+    const skillDir = join(project, ".claude", "skills", "from-claude");
+    await mkdir(join(skillDir, "scripts", ".venv"), { recursive: true });
+    await writeFile(join(skillDir, "SKILL.md"), "from claude\n");
+    await writeFile(join(skillDir, "scripts", ".gitignore"), ".venv/\n");
+    await writeFile(join(skillDir, "scripts", "run.sh"), "#!/bin/sh\n");
+    await writeFile(join(skillDir, "scripts", ".venv", "pyvenv.cfg"), "venv\n");
+
+    const share = Bun.spawnSync({
+      cmd: [
+        process.execPath,
+        cli,
+        "share",
+        "skills/from-claude",
+        "--to",
+        "project",
+      ],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(share.exitCode).toBe(0);
+
+    expect(
+      await file(join(dataRepo, "skills", "from-claude", "SKILL.md")).text(),
+    ).toBe("from claude\n");
+    expect(
+      await file(
+        join(dataRepo, "skills", "from-claude", "scripts", "run.sh"),
+      ).text(),
+    ).toBe("#!/bin/sh\n");
+    expect(
+      await file(
+        join(dataRepo, "skills", "from-claude", "scripts", ".venv"),
+      ).exists(),
+    ).toBe(false);
+    expect(
+      await file(
+        join(project, ".agents", "skills", "from-claude", "SKILL.md"),
+      ).text(),
+    ).toBe("from claude\n");
   });
 
   test("share adopts a new skill into project scope", async () => {
@@ -612,6 +712,54 @@ describe("cli integration", () => {
     expect(exclude).toContain(".agents/skills/toggle/");
   });
 
+  test("move to local works in non-git projects without git excludes", async () => {
+    const project = await tempDir("capshelf-move-non-git-project-");
+    const dataRepo = await tempRepo("capshelf-move-non-git-data-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+
+    await mkdir(join(dataRepo, "skills", "toggle"), { recursive: true });
+    await writeFile(join(dataRepo, "skills", "toggle", "SKILL.md"), "toggle\n");
+    await commitAll(dataRepo, "toggle skill");
+
+    const init = Bun.spawnSync({
+      cmd: [process.execPath, cli, "init", "--data", dataRepo],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(init.exitCode).toBe(0);
+
+    const add = Bun.spawnSync({
+      cmd: [process.execPath, cli, "add", "skills/toggle"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(add.exitCode).toBe(0);
+
+    const move = Bun.spawnSync({
+      cmd: [process.execPath, cli, "move", "skills/toggle", "--to", "local"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(move.exitCode).toBe(0);
+    expect(await file(join(project, ".git", "info", "exclude")).exists()).toBe(
+      false,
+    );
+    expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual(
+      {
+        dataRepo,
+        skills: ["toggle"],
+        settings: [],
+        mcp: [],
+      },
+    );
+  });
+
   test("move recovers a partial local-to-project scope change", async () => {
     const project = await tempRepo("capshelf-move-partial-project-");
     const dataRepo = await tempRepo("capshelf-move-partial-data-");
@@ -760,10 +908,16 @@ describe("cli integration", () => {
     const dataRepo = await tempRepo("capshelf-promote-local-data-");
     const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
-    await mkdir(join(dataRepo, "skills", "local-edit"), { recursive: true });
+    await mkdir(join(dataRepo, "skills", "local-edit", "scripts"), {
+      recursive: true,
+    });
     await writeFile(
       join(dataRepo, "skills", "local-edit", "SKILL.md"),
       "before\n",
+    );
+    await writeFile(
+      join(dataRepo, "skills", "local-edit", "scripts", ".gitignore"),
+      ".venv/\n",
     );
     await commitAll(dataRepo, "local edit skill");
 
@@ -791,6 +945,26 @@ describe("cli integration", () => {
       join(project, ".agents", "skills", "local-edit", "SKILL.md"),
       "after\n",
     );
+    await writeFile(
+      join(project, ".agents", "skills", "local-edit", "scripts", "new.py"),
+      "print('new')\n",
+    );
+    await mkdir(
+      join(project, ".agents", "skills", "local-edit", "scripts", ".venv"),
+      { recursive: true },
+    );
+    await writeFile(
+      join(
+        project,
+        ".agents",
+        "skills",
+        "local-edit",
+        "scripts",
+        ".venv",
+        "pyvenv.cfg",
+      ),
+      "generated\n",
+    );
     const promote = Bun.spawnSync({
       cmd: [
         process.execPath,
@@ -812,6 +986,23 @@ describe("cli integration", () => {
     expect(
       await file(join(dataRepo, "skills", "local-edit", "SKILL.md")).text(),
     ).toBe("after\n");
+    expect(
+      await file(
+        join(dataRepo, "skills", "local-edit", "scripts", "new.py"),
+      ).text(),
+    ).toBe("print('new')\n");
+    expect(
+      await file(
+        join(
+          dataRepo,
+          "skills",
+          "local-edit",
+          "scripts",
+          ".venv",
+          "pyvenv.cfg",
+        ),
+      ).exists(),
+    ).toBe(false);
     const afterLock = await file(
       join(project, ".capshelf", "local.lock.json"),
     ).json();
@@ -822,6 +1013,109 @@ describe("cli integration", () => {
       join(project, ".capshelf", "capshelf.json"),
     ).json();
     expect(manifest.skills).toEqual([]);
+  });
+
+  test("promote syncs a project-scope skill from a non-git project", async () => {
+    const project = await tempDir("capshelf-promote-non-git-project-");
+    const dataRepo = await tempRepo("capshelf-promote-non-git-data-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+
+    await mkdir(join(dataRepo, "skills", "keyword-research", "scripts"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(dataRepo, "skills", "keyword-research", "SKILL.md"),
+      "before\n",
+    );
+    await writeFile(
+      join(dataRepo, "skills", "keyword-research", "scripts", ".gitignore"),
+      ".venv/\n",
+    );
+    await writeFile(
+      join(dataRepo, "skills", "keyword-research", "scripts", "run.sh"),
+      "#!/bin/sh\n",
+    );
+    await commitAll(dataRepo, "keyword research skill");
+
+    const init = Bun.spawnSync({
+      cmd: [process.execPath, cli, "init", "--data", dataRepo],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(init.exitCode).toBe(0);
+
+    const add = Bun.spawnSync({
+      cmd: [process.execPath, cli, "add", "keyword-research"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(add.exitCode).toBe(0);
+
+    const installed = join(project, ".agents", "skills", "keyword-research");
+    await writeFile(join(installed, "SKILL.md"), "after\n");
+    await writeFile(join(installed, "scripts", "parse.py"), "print('new')\n");
+    await mkdir(
+      join(installed, "scripts", ".venv", "lib", "python3.14", "site-packages"),
+      { recursive: true },
+    );
+    await writeFile(
+      join(
+        installed,
+        "scripts",
+        ".venv",
+        "lib",
+        "python3.14",
+        "site-packages",
+        "_virtualenv.py",
+      ),
+      "generated\n",
+    );
+
+    const promote = Bun.spawnSync({
+      cmd: [
+        process.execPath,
+        cli,
+        "promote",
+        "keyword-research",
+        "-m",
+        "promote keyword research",
+      ],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(promote.exitCode).toBe(0);
+    expect(
+      await file(
+        join(dataRepo, "skills", "keyword-research", "SKILL.md"),
+      ).text(),
+    ).toBe("after\n");
+    expect(
+      await file(
+        join(dataRepo, "skills", "keyword-research", "scripts", "parse.py"),
+      ).text(),
+    ).toBe("print('new')\n");
+    expect(
+      await file(
+        join(
+          dataRepo,
+          "skills",
+          "keyword-research",
+          "scripts",
+          ".venv",
+          "lib",
+          "python3.14",
+          "site-packages",
+          "_virtualenv.py",
+        ),
+      ).exists(),
+    ).toBe(false);
   });
 
   test("removed promote local-to-project flag rejects before data repo writes", async () => {
@@ -1034,6 +1328,218 @@ describe("cli integration", () => {
     expect(statusJson.items[0].upstreamSha).not.toBe(
       statusJson.items[0].lockedSha,
     );
+  });
+
+  test("status --diff ignores untracked generated files in copy items", async () => {
+    const project = await tempRepo("capshelf-status-untracked-project-");
+    const dataRepo = await tempRepo("capshelf-status-untracked-data-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+    const skill = join(dataRepo, "skills", "keyword-research");
+
+    await mkdir(join(skill, "scripts"), { recursive: true });
+    await writeFile(join(skill, "SKILL.md"), "keyword research\n");
+    await writeFile(join(skill, "scripts", ".gitignore"), ".venv/\n");
+    await commitAll(dataRepo, "keyword research skill");
+
+    const init = Bun.spawnSync({
+      cmd: [process.execPath, cli, "init", "--data", dataRepo],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(init.exitCode).toBe(0);
+
+    const add = Bun.spawnSync({
+      cmd: [process.execPath, cli, "add", "skills/keyword-research"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(add.exitCode).toBe(0);
+
+    const installed = join(project, ".agents", "skills", "keyword-research");
+    await mkdir(
+      join(installed, "scripts", ".venv", "lib", "python3.14", "site-packages"),
+      { recursive: true },
+    );
+    await writeFile(
+      join(
+        installed,
+        "scripts",
+        ".venv",
+        "lib",
+        "python3.14",
+        "site-packages",
+        "_virtualenv.py",
+      ),
+      "generated venv\n",
+    );
+
+    const status = Bun.spawnSync({
+      cmd: [
+        process.execPath,
+        cli,
+        "status",
+        "skills/keyword-research",
+        "--diff",
+        "--json",
+      ],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(status.exitCode).toBe(0);
+    expect(status.stdout.toString()).not.toContain("_virtualenv.py");
+    const statusJson = JSON.parse(status.stdout.toString());
+    expect(statusJson.items[0].state).toBe("ok");
+    expect(statusJson.diffs).toEqual([]);
+  });
+
+  test("status --diff ignores local-only virtualenv files in non-git projects", async () => {
+    const project = await tempDir("capshelf-status-non-git-local-venv-");
+    const dataRepo = await tempRepo("capshelf-status-local-venv-data-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+    const skill = join(dataRepo, "skills", "keyword-research");
+
+    await mkdir(join(skill, "scripts"), { recursive: true });
+    await writeFile(join(skill, "SKILL.md"), "keyword research\n");
+    await writeFile(join(skill, "scripts", ".gitignore"), ".venv/\n");
+    await writeFile(join(skill, "scripts", "run.sh"), "#!/bin/sh\n");
+    await commitAll(dataRepo, "keyword research without venv");
+
+    const init = Bun.spawnSync({
+      cmd: [process.execPath, cli, "init", "--data", dataRepo],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(init.exitCode).toBe(0);
+
+    const add = Bun.spawnSync({
+      cmd: [process.execPath, cli, "add", "skills/keyword-research"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(add.exitCode).toBe(0);
+
+    await mkdir(
+      join(
+        project,
+        ".agents",
+        "skills",
+        "keyword-research",
+        "scripts",
+        ".venv",
+      ),
+      { recursive: true },
+    );
+    await writeFile(
+      join(
+        project,
+        ".agents",
+        "skills",
+        "keyword-research",
+        "scripts",
+        ".venv",
+        "pyvenv.cfg",
+      ),
+      "local generated venv\n",
+    );
+
+    const status = Bun.spawnSync({
+      cmd: [
+        process.execPath,
+        cli,
+        "status",
+        "keyword-research",
+        "--diff",
+        "--json",
+      ],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(status.exitCode).toBe(0);
+    expect(status.stdout.toString()).not.toContain("pyvenv.cfg");
+    const statusJson = JSON.parse(status.stdout.toString());
+    expect(statusJson.items[0].state).toBe("ok");
+    expect(statusJson.diffs).toEqual([]);
+  });
+
+  test("status --diff respects installed skill gitignore with .venv in non-git projects", async () => {
+    const project = await tempDir("capshelf-status-installed-gitignore-");
+    const dataRepo = await tempRepo("capshelf-status-data-gitignore-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+    const skill = join(dataRepo, "skills", "keyword-research");
+
+    await mkdir(join(skill, "scripts"), { recursive: true });
+    await writeFile(join(skill, "SKILL.md"), "keyword research\n");
+    await writeFile(join(skill, "scripts", ".gitignore"), ".venv\n");
+    await writeFile(join(skill, "scripts", "run.sh"), "#!/bin/sh\n");
+    await commitAll(dataRepo, "keyword research skill");
+
+    const init = Bun.spawnSync({
+      cmd: [process.execPath, cli, "init", "--data", dataRepo],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(init.exitCode).toBe(0);
+
+    const add = Bun.spawnSync({
+      cmd: [process.execPath, cli, "add", "keyword-research"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(add.exitCode).toBe(0);
+
+    const installed = join(project, ".agents", "skills", "keyword-research");
+    expect(await file(join(installed, "scripts", ".gitignore")).text()).toBe(
+      ".venv\n",
+    );
+
+    await mkdir(
+      join(installed, "scripts", ".venv", "lib", "python3.14", "site-packages"),
+      { recursive: true },
+    );
+    await writeFile(
+      join(
+        installed,
+        "scripts",
+        ".venv",
+        "lib",
+        "python3.14",
+        "site-packages",
+        "_virtualenv.py",
+      ),
+      "generated venv\n",
+    );
+
+    const status = Bun.spawnSync({
+      cmd: [process.execPath, cli, "status", "keyword-research", "--diff"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(status.exitCode).toBe(0);
+    expect(status.stdout.toString()).not.toContain(".venv");
+    expect(status.stdout.toString()).not.toContain("_virtualenv.py");
+    expect(status.stdout.toString()).toContain("data/skills/keyword-research");
+    expect(status.stdout.toString()).toContain("(no local drift diff)");
   });
 
   test("migration commands are absent and legacy dataRepo fails manually", async () => {

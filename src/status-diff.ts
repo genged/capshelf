@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, posix, relative } from "node:path";
+import { join, posix } from "node:path";
 import { $ } from "bun";
 import type { Lock } from "./lock";
 import type { Manifest } from "./manifest";
@@ -10,9 +10,9 @@ import type { ItemSource } from "./installed";
 import { installedPath } from "./installed";
 import { findSystemItem } from "./bundled";
 import { assertGitAvailable, lsTreeAtCommit, showAtCommit } from "./git";
-import { gitVisibleFilesUnderPath, isGitRepo } from "./git";
-import { hasIgnoredDotSegment, isIgnoredDotDirent } from "./dotfiles";
+import { hasIgnoredDotSegment } from "./dotfiles";
 import { missingSourceCommitMessage } from "./upstream-check";
+import { gitignoreVisibleFiles } from "./gitignore";
 import {
   allCanonicalFragmentRelPaths,
   isFragmentKind,
@@ -46,11 +46,23 @@ interface StatusDiffOptions {
   row: DiffableStatusRow;
 }
 
+interface CopyItemFilesOptions {
+  project: string;
+  dataRepo: string | null;
+  manifest: Manifest;
+  source: ItemSource;
+  kind: ItemKind;
+  name: string;
+  sourceCommit?: string;
+}
+
 export interface StatusDiff {
   item: string;
   path: string;
   text: string;
 }
+
+type FileMap = Map<string, Buffer>;
 
 export function shouldShowLocalDiff(state: string): state is LocalDiffState {
   return (
@@ -124,11 +136,12 @@ export async function buildStatusDiff(
   }
 
   const item = `${row.source}/${row.kind}/${row.name}`;
-  const currentFiles = await readInstalledFiles(
-    opts.project,
-    installedPath(opts.project, row.kind, row.name),
-  );
   const expectedFiles = await expectedFilesForRow(opts);
+  if (!expectedFiles) return null;
+  const currentFiles = await readInstalledFiles(
+    installedPath(opts.project, row.kind, row.name),
+    expectedFiles,
+  );
   const text = await diffFileMaps(currentFiles, expectedFiles, item);
   return text
     ? {
@@ -137,6 +150,20 @@ export async function buildStatusDiff(
         text,
       }
     : null;
+}
+
+export async function currentCopyItemSha(
+  opts: CopyItemFilesOptions,
+): Promise<string | null> {
+  const root = installedPath(opts.project, opts.kind, opts.name);
+  if (!existsSync(root)) return null;
+
+  const expectedFiles = await expectedFilesForCopyItem(opts);
+  const currentFiles = await readInstalledFiles(
+    root,
+    expectedFiles ?? new Map(),
+  );
+  return shaOfFileMap(currentFiles);
 }
 
 async function dataRepoDiff(
@@ -185,44 +212,61 @@ async function untrackedDataRepoFiles(
 
 async function expectedFilesForRow(
   opts: StatusDiffOptions,
-): Promise<Map<string, string>> {
-  const { row } = opts;
-  if (row.source === "system") {
-    const item = findSystemItem(row.name);
-    if (!item || item.kind !== row.kind) return new Map();
-    return new Map(item.files.map((file) => [file.relPath, file.content]));
+): Promise<FileMap | null> {
+  return await expectedFilesForCopyItem({
+    project: opts.project,
+    dataRepo: opts.dataRepo,
+    manifest: opts.manifest,
+    source: opts.row.source,
+    kind: opts.row.kind,
+    name: opts.row.name,
+    sourceCommit: opts.row.sourceCommit,
+  });
+}
+
+async function expectedFilesForCopyItem(
+  opts: CopyItemFilesOptions,
+): Promise<FileMap | null> {
+  if (opts.source === "system") {
+    const item = findSystemItem(opts.name);
+    if (!item || item.kind !== opts.kind) return null;
+    return new Map(
+      item.files.map((file) => [
+        file.relPath,
+        Buffer.from(file.content, "utf-8"),
+      ]),
+    );
   }
 
-  if (!opts.dataRepo) return new Map();
-  if (!row.sourceCommit) return new Map();
+  if (!opts.dataRepo) return null;
+  if (!opts.sourceCommit) return null;
 
-  const repoRelPath = `${row.kind}/${row.name}`;
+  const repoRelPath = `${opts.kind}/${opts.name}`;
   let files: string[];
   try {
-    files = await lsTreeAtCommit(opts.dataRepo, row.sourceCommit, repoRelPath);
+    files = await lsTreeAtCommit(opts.dataRepo, opts.sourceCommit, repoRelPath);
   } catch {
     throw new Error(
       missingSourceCommitMessage(
         opts.dataRepo,
-        row.sourceCommit,
+        opts.sourceCommit,
         opts.manifest,
       ),
     );
   }
-  const out = new Map<string, string>();
+  const out: FileMap = new Map();
   for (const file of files) {
     const rel = posix.relative(repoRelPath, file);
-    if (!rel || rel.startsWith("..") || hasIgnoredDotSegment(rel)) continue;
-    out.set(
-      rel,
-      (await showExpectedFile(opts, row.sourceCommit, file)).toString("utf-8"),
-    );
+    if (!rel || rel.startsWith("..") || hasIgnoredDotSegment(rel)) {
+      continue;
+    }
+    out.set(rel, await showExpectedFile(opts, opts.sourceCommit, file));
   }
   return out;
 }
 
 async function showExpectedFile(
-  opts: StatusDiffOptions,
+  opts: { dataRepo: string | null; manifest: Manifest },
   commit: string,
   file: string,
 ): Promise<Buffer> {
@@ -237,47 +281,31 @@ async function showExpectedFile(
 }
 
 async function readInstalledFiles(
-  project: string,
   root: string,
-): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
+  expectedFiles: FileMap,
+): Promise<FileMap> {
+  const out: FileMap = new Map();
   if (!existsSync(root)) return out;
-  if (await isGitRepo(project)) {
-    const relRoot = relative(project, root);
-    if (relRoot && !relRoot.startsWith("..")) {
-      for (const rel of await gitVisibleFilesUnderPath(project, relRoot)) {
-        out.set(rel, await readFile(join(root, ...rel.split("/")), "utf-8"));
-      }
-      return out;
-    }
-  }
 
-  async function walk(relDir: string): Promise<void> {
-    const abs = relDir ? join(root, ...relDir.split("/")) : root;
-    const entries = await readdir(abs, { withFileTypes: true });
-    for (const entry of entries) {
-      if (isIgnoredDotDirent(entry)) continue;
-      const rel = relDir ? `${relDir}/${entry.name}` : entry.name;
-      const child = join(root, ...rel.split("/"));
-      if (entry.isDirectory()) await walk(rel);
-      else if (entry.isFile()) out.set(rel, await readFile(child, "utf-8"));
-    }
+  const files = new Set(await gitignoreVisibleFiles(root));
+  for (const rel of expectedFiles.keys()) files.add(rel);
+  for (const rel of [...files].sort()) {
+    const file = join(root, ...rel.split("/"));
+    if (existsSync(file)) out.set(rel, await readFile(file));
   }
-
-  await walk("");
   return out;
 }
 
 async function diffFileMaps(
-  current: Map<string, string>,
-  expected: Map<string, string>,
+  current: FileMap,
+  expected: FileMap,
   item: string,
 ): Promise<string> {
   const files = [...new Set([...current.keys(), ...expected.keys()])].sort();
   const parts: string[] = [];
   for (const file of files) {
-    const currentText = current.get(file) ?? "";
-    const expectedText = expected.get(file) ?? "";
+    const currentText = current.get(file)?.toString("utf-8") ?? "";
+    const expectedText = expected.get(file)?.toString("utf-8") ?? "";
     const text = await unifiedDiff(
       `${file} (current)`,
       `${file} (locked ${item})`,
@@ -287,6 +315,17 @@ async function diffFileMaps(
     if (text) parts.push(text);
   }
   return parts.join("\n");
+}
+
+function shaOfFileMap(files: FileMap): string {
+  const hasher = new Bun.CryptoHasher("sha256");
+  for (const rel of [...files.keys()].sort()) {
+    hasher.update(rel);
+    hasher.update("\0");
+    hasher.update(files.get(rel)!);
+    hasher.update("\0");
+  }
+  return hasher.digest("hex").slice(0, 12);
 }
 
 export async function unifiedDiff(

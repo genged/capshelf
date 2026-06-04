@@ -28,7 +28,7 @@ import { isSystemItemName } from "../bundled";
 import { globalOpts } from "../cli";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import { assertLocalScopeSupported } from "../local-config";
-import { replaceDirFromDir, replaceDirFromGitVisibleFiles } from "../sync";
+import { replaceDirFromFiles, replaceDirFromGitVisibleFiles } from "../sync";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import {
   printRuntimeWarnings,
@@ -441,7 +441,11 @@ export async function syncTrackedIntoDataRepo(
   const localRelPath = relative(project, localPath);
   const privateDotenvWarnings = privateDotenvFiles(snapshot.files);
   if (snapshot.source === "filesystem") {
-    await replaceDirFromDir(localPath, join(dataRepo, repoRelPath));
+    await replaceDirFromFiles(
+      localPath,
+      snapshot.files,
+      join(dataRepo, repoRelPath),
+    );
   } else {
     await replaceDirFromGitVisibleFiles(
       project,

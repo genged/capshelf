@@ -132,6 +132,7 @@ async function verifyResolvedUpstream(
 export function projectRoot(cwd: string = process.cwd()): string {
   let d = resolve(cwd);
   while (d !== "/" && d.length > 1) {
+    if (manifestReadPath(d)) return d;
     if (existsSync(join(d, ".git"))) return d;
     const parent = resolve(d, "..");
     if (parent === d) break;

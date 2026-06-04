@@ -163,6 +163,10 @@ A real user creates their own data repos (`~/code/work-skills/`, `~/code/persona
 
 `capshelf init --claude-only` stores real skill directories directly under `.claude/skills/<name>/` and does not create `.agents` compatibility symlinks.
 
+Commands discover the project root by walking upward to the nearest capshelf
+manifest before considering a parent Git checkout. That lets initialized
+non-Git projects work normally, even when they live inside a larger repository.
+
 Manifest:
 ```json
 {
@@ -188,6 +192,9 @@ Local manifest:
 Local scope is skills-only in current behavior. Fragment kinds preserve
 project-local values inside generated outputs instead of using clone-local
 manifest entries.
+In Git projects, local-scope skills add their install paths to
+`.git/info/exclude`; non-Git projects skip that step because local ownership is
+already recorded in `.capshelf/local.json` and `.capshelf/local.lock.json`.
 
 `dataRepo` resolution order:
 1. `--data <path>` CLI flag (one-shot override)
