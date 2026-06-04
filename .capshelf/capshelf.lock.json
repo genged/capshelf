@@ -6,6 +6,12 @@
       "sha": "4648d6df683e",
       "cliVersion": "0.2.0",
       "appliedAt": "2026-06-04T09:39:30.443Z"
+    },
+    "data/settings/generic": {
+      "source": "data",
+      "sha": "309d3a528d58",
+      "sourceCommit": "a1aaddd6a5bef2ed1968ef2882c0bb29c21859a3",
+      "appliedAt": "2026-06-04T15:40:02.347Z"
     }
   }
 }

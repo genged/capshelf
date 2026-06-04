@@ -1,7 +1,9 @@
 {
   "installMode": "codex-compatible",
   "skills": [],
-  "settings": [],
+  "settings": [
+    "generic"
+  ],
   "mcp": [],
   "codexConfig": []
 }
