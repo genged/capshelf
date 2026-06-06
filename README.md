@@ -47,6 +47,15 @@ make install     # builds dist/capshelf and copies it to ~/.local/bin/capshelf
 
 Make sure `~/.local/bin` is on your `PATH` when using the source install.
 
+Homebrew installs can check or apply binary updates with:
+
+```bash
+capshelf self-update --check
+capshelf self-update
+```
+
+Source installs update manually with `git pull && make install`.
+
 ### 2. Create a data repo
 
 A data repo is a normal Git repo that stores shared agent config.
@@ -203,11 +212,15 @@ reported as external state instead of overwritten.
 | `keep-local` | mark drift as intentional |
 | `revert` | restore one item to its locked version |
 | `get-path` | print the editable path; skills return their directory, fragments return source files, and `--output` returns generated fragment outputs |
+| `self-update` | check for and install a Homebrew update for the capshelf binary |
 
 Commands support `--json` where useful for agent consumption. Exit codes are
 stable: `0` success, `2` not found, `3` conflict, `4` drift or upstream
 mismatch, `5` reserved for future unmet-requires checks, `7` missing `git`. Full reference:
 [`docs/cli.md`](docs/cli.md).
+
+Startup self-update prompts are best-effort, cached, and only shown for
+interactive Homebrew installs. Set `CAPSHELF_NO_SELF_UPDATE=1` to disable them.
 
 ## Development
 

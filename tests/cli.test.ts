@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { $, file } from "bun";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  mkdir,
+  readFile,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -121,6 +128,49 @@ describe("cli integration", () => {
     expect(fromMetadata.stderr.toString()).toContain(
       "not a capshelf project root",
     );
+  });
+
+  test("self-update --check reports through the CLI with Homebrew metadata", async () => {
+    const home = await tempDir("capshelf-self-update-home-");
+    const bin = await tempDir("capshelf-self-update-bin-");
+    const prefix = await tempDir("capshelf-self-update-prefix-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+    await mkdir(join(prefix, "bin"), { recursive: true });
+    await symlink(cli, join(prefix, "bin", "capshelf"));
+    const brew = join(bin, "brew");
+    await writeFile(
+      brew,
+      [
+        "#!/bin/sh",
+        `formula='genged/tap/capshelf'`,
+        `if [ "$1 $2 $3" = "list --formula $formula" ]; then exit 0; fi`,
+        `if [ "$1 $2" = "--prefix $formula" ]; then printf '%s\\n' "$FAKE_CAPSHELF_PREFIX"; exit 0; fi`,
+        `if [ "$1 $2 $3 $4" = "outdated --json=v2 --formula $formula" ]; then`,
+        `  printf '%s\\n' '{"formulae":[{"name":"capshelf","full_name":"genged/tap/capshelf","current_version":"0.3.1"}]}'`,
+        "  exit 0",
+        "fi",
+        "printf 'unexpected brew command: %s\\n' \"$*\" >&2",
+        "exit 2",
+        "",
+      ].join("\n"),
+    );
+    await chmod(brew, 0o755);
+
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, cli, "self-update", "--check"],
+      cwd: home,
+      env: {
+        ...process.env,
+        FAKE_CAPSHELF_PREFIX: prefix,
+        PATH: `${bin}:${process.env.PATH ?? ""}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toContain("latest: 0.3.1");
+    expect(result.stdout.toString()).toContain("installer: homebrew");
   });
 
   test("init honors --no-upstream for repos with origin", async () => {

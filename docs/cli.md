@@ -48,6 +48,7 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
 | `promote <item>` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects local-scope skills | implemented |
 | `keep-local <item>` | mark drifted copy-item content as intentional project-local divergence; supports `--local` for skills and rejects fragments | implemented |
 | `revert <item>` | discard local edits, restore locked version; supports `--local` | implemented |
+| `self-update` | check for and install a Homebrew update for the capshelf binary; supports `--check` and `--yes` | implemented |
 | `validate <name>` | lint an item (frontmatter, structure, broken refs) | roadmap |
 | `diff <name> [<ref>]` | show what would change on apply/update/promote | roadmap |
 | `doctor` | audit integrity (requires/conflicts, lockfile drift, uniqueness, system/data namespace collisions) | roadmap |
@@ -64,6 +65,36 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
   content without changing files. For copy items, extra current files are
   filtered through `.gitignore` files inside the installed item.
 - `--target claude|codex` — used by multi-target MCP fragment commands such as `show`, `get-path`, and `share`
+
+## Binary self-update
+
+`capshelf update` updates project item pins and managed config. Binary updates
+use the separate `self-update` command.
+
+```bash
+capshelf self-update --check
+capshelf self-update
+capshelf self-update --yes
+```
+
+For Homebrew installs, `self-update --check` reports the current CLI version,
+latest Homebrew formula version, update availability, and installer. `self-update`
+prompts before running `brew upgrade --formula genged/tap/capshelf`; `--yes`
+runs the same upgrade non-interactively when an update exists. After a successful
+binary update, restart capshelf.
+
+Startup checks are best-effort and cached for 24 hours. They prompt only when
+stdin and stderr are TTYs, `CI` is unset, `NODE_ENV` is not `test`,
+`CAPSHELF_NO_SELF_UPDATE` is unset, the command is not help/version,
+`self-update`, or a `--json` invocation, and the running executable resolves to
+the Homebrew-managed `capshelf` binary.
+
+Source installs are not upgraded automatically. Update them manually:
+
+```bash
+git pull
+make install
+```
 
 ## Init Layout
 

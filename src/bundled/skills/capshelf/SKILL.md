@@ -60,6 +60,7 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
 - `capshelf promote <item> [--local] [-m <msg>]` — push edits for an already-tracked data item up to the data repo and update only this project's lock. Fragment promotion commits canonical source files, not generated outputs. Rejected for system items.
 - `capshelf keep-local <item> [--local] [--reason <text>]` — mark intentional project-local divergence for copy items. `--unset` clears it. Fragment kinds reject this because local values are preserved in generated outputs.
 - `capshelf revert <item> [--local]` — discard local edits, restore from `sourceCommit` or bundled content.
+- `capshelf self-update [--check] [--yes]` — check for and optionally install a Homebrew update for the capshelf binary. This does not update project pins or managed files.
 
 ## Config fragments
 
@@ -145,6 +146,7 @@ skill is removed or renamed.
 - **Never run `capshelf promote`** while the user has open PRs on other projects that use that item, unless those projects are OK picking up the change on their next `update`.
 - **Run `capshelf status` at session start** to see drift and available updates before making changes.
 - **If `capshelf` command is missing or fails**, the CLI may not be installed. Point the user at `~/code/capshelf-cli/` and suggest `make install`.
+- **Use `capshelf self-update` only for Homebrew-installed binaries.** Source installs update with `git pull && make install`. Set `CAPSHELF_NO_SELF_UPDATE=1` to suppress startup update prompts.
 - **The lock is the source of truth** about which item files and generated config contributions are managed. Files or values in `.agents/`, `.claude/`, `.mcp.json`, or `.codex/config.toml` that are not locked contributions are project-local and capshelf preserves or ignores them.
 
 ## Troubleshooting

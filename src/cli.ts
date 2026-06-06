@@ -17,8 +17,10 @@ import { registerShare } from "./commands/share";
 import { registerMove } from "./commands/move";
 import { registerSetData } from "./commands/set-data";
 import { registerSetUpstream } from "./commands/set-upstream";
+import { registerSelfUpdate } from "./commands/self-update";
 import { CliError } from "./errors";
 import { HOME_ENV, PRODUCT_NAME } from "./identity";
+import { runStartupSelfUpdate } from "./self-update";
 
 const program = new Command();
 
@@ -47,6 +49,7 @@ registerShare(program);
 registerMove(program);
 registerSetData(program);
 registerSetUpstream(program);
+registerSelfUpdate(program);
 
 /**
  * Parse argv and run the matched command, returning the process exit code.
@@ -58,6 +61,8 @@ registerSetUpstream(program);
  */
 export async function main(argv: string[] = process.argv): Promise<number> {
   try {
+    const selfUpdateExit = await runStartupSelfUpdate(argv);
+    if (selfUpdateExit !== null) return selfUpdateExit;
     await program.parseAsync(argv);
     return 0;
   } catch (err) {
