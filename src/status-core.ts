@@ -9,6 +9,7 @@ import type { FragmentContributionState } from "./fragments";
 
 export type State =
   | "ok"
+  | "missing_source_commit"
   | "update_available"
   | "drifted_local"
   | "drifted_and_update"
@@ -63,6 +64,13 @@ export interface StateFacts {
   upstreamSha: string | null;
   upstreamDirty: boolean;
   fragmentOutputState: FragmentContributionState | null;
+  /**
+   * Whether the data entry's locked `sourceCommit` is reachable in the data
+   * repo. `null` (or omitted) means "not applicable or not checkable" (system
+   * items, no data repo resolved) and is treated as present, which keeps
+   * existing callers backwards compatible.
+   */
+  sourceCommitPresent?: boolean | null;
 }
 
 /**
@@ -73,6 +81,12 @@ export interface StateFacts {
 export function deriveState(f: StateFacts): State {
   if (f.source === "data" && f.local && f.currentSha !== null) {
     return "kept-local";
+  }
+  // After kept-local (an explicit user pin keeps its strict exemption),
+  // before all upstream/drift comparisons — those are unreliable when the
+  // pinned provenance is gone (e.g. squash-orphaned or unpushed elsewhere).
+  if (f.source === "data" && f.sourceCommitPresent === false) {
+    return "missing_source_commit";
   }
   if (isFragmentItemKind(f.kind) && f.upstreamDirty) {
     return f.fragmentOutputState === "drifted" ||

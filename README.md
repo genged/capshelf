@@ -220,6 +220,7 @@ reported as external state instead of overwritten.
 | `set-data` | bind this machine's clone of the data repo |
 | `set-upstream` | write the committed upstream URL |
 | `data-path` | print the resolved local data repo path |
+| `sync-data` | fetch the data repo's `origin` and fast-forward when safe; the only network command besides the `init` bootstrap clone and `self-update` |
 | `ls` / `show` | inspect data repo items or installed items, with descriptions and tags from item metadata |
 | `search` | find items by name, tags, description, or content |
 | `add` / `rm` | add or remove an item in this project |
@@ -268,4 +269,5 @@ roadmap.
 - [`docs/project-brief.md`](docs/project-brief.md) - one-page overview
 - [`docs/architecture.md`](docs/architecture.md) - data model and rationale
 - [`docs/cli.md`](docs/cli.md) - full command reference, flags, exit codes
+- [`docs/team-workflow.md`](docs/team-workflow.md) - team loop: sync-data, propose-upstream recipe, CI drift gate
 - [`AGENTS.md`](AGENTS.md) - guidance for coding agents working in this repo

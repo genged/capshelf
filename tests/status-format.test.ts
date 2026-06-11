@@ -24,6 +24,7 @@ describe("glyph", () => {
   test("maps every state to a stable glyph", () => {
     const cases: Array<[State, string]> = [
       ["ok", "✓"],
+      ["missing_source_commit", "!"],
       ["update_available", "⚠"],
       ["drifted_local", "✎"],
       ["drifted_and_update", "✎⚠"],
@@ -79,6 +80,42 @@ describe("describe", () => {
     expect(
       describeRow(row({ state: "drifted_local", currentSha: "ff00" })),
     ).toBe("drifted (current ff00)");
+  });
+
+  test("missing_source_commit names the unreachable pin", () => {
+    expect(
+      describeRow(
+        row({
+          state: "missing_source_commit",
+          sourceCommit: "abc1234def5678",
+        }),
+      ),
+    ).toBe("locked sourceCommit abc1234 is not present in the data repo");
+  });
+});
+
+describe("missing_source_commit guidance", () => {
+  test("the row carries the re-pin fix", () => {
+    const lines = formatStatusHuman({
+      project: "/p",
+      dataRepo: "/data",
+      rows: [
+        row({
+          state: "missing_source_commit",
+          name: "security-review",
+          sourceCommit: "abc1234def5678",
+        }),
+      ],
+      external: [],
+      externalClaudePlugins: [],
+      personalClaudeExternal: [],
+    }).join("\n");
+    expect(lines).toContain(
+      "capshelf sync-data && capshelf update skills/security-review",
+    );
+    expect(lines).toContain(
+      "if it only exists in another clone, fetch or push that clone first.",
+    );
   });
 });
 

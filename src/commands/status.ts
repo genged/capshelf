@@ -7,13 +7,14 @@ import type { Lock, LockEntry } from "../lock";
 import { loadManifest } from "../manifest";
 import type { Manifest } from "../manifest";
 import type { ItemKind } from "../master";
-import { isFragmentItemKind, shaOfGitVisibleItem, shaOfItem } from "../master";
+import { isFragmentItemKind, shaOfItem } from "../master";
 import { installedPath, shaOfInstalled, parseLockKey } from "../installed";
 import { ResultExitError } from "../errors";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
 import { globalOpts } from "../cli";
-import { findMasterItemByRef, parseItemRef } from "../item-ref";
-import { isPathClean } from "../git";
+import { parseItemRef } from "../item-ref";
+import { commitExists, isGitRepo } from "../git";
+import { upstreamFactsForItem } from "../upstream-facts";
 import { listClaudePlugins, listSkillsShSkills } from "../external";
 import { buildStatusDiff, currentCopyItemSha } from "../status-diff";
 import type { StatusDiff } from "../status-diff";
@@ -24,10 +25,8 @@ import {
 } from "../runtime-warnings";
 import type { RuntimeWarning } from "../runtime-warnings";
 import {
-  allCanonicalFragmentRelPaths,
   fragmentContributionState,
   lockedFragmentTargetsForItem,
-  shaOfFragmentItem,
   type FragmentContributionState,
 } from "../fragments";
 import {
@@ -85,8 +84,13 @@ export function registerStatus(program: Command): void {
           manifest,
           project,
         });
+        // A bound path that is not a git repo degrades like a missing one
+        // (rows report missing_upstream) instead of crashing on raw git
+        // errors during per-item upstream checks.
         const dataRepo =
-          resolvedDataRepo && existsSync(resolvedDataRepo)
+          resolvedDataRepo &&
+          existsSync(resolvedDataRepo) &&
+          (await isGitRepo(resolvedDataRepo))
             ? resolvedDataRepo
             : null;
 
@@ -115,6 +119,15 @@ export function registerStatus(program: Command): void {
           if (kind === "skills" && externalSkillNames.has(itemName)) continue;
 
           const entry = lock.items[key]!;
+          // Reachability must be gathered before computing currentSha: the
+          // sourceCommit-dependent computations below (`git show` /
+          // `ls-tree` at the pinned commit) would error out on an
+          // unreachable pin. When the commit is missing they are skipped and
+          // the row degrades to missing_source_commit instead of crashing.
+          const sourceCommitPresent: boolean | null =
+            entry.source === "data" && dataRepo
+              ? await commitExists(dataRepo, entry.sourceCommit)
+              : null;
           let currentSha = isFragmentItemKind(kind)
             ? await currentInstalledSha(project, kind, itemName, scope)
             : await currentCopyItemSha({
@@ -125,11 +138,15 @@ export function registerStatus(program: Command): void {
                 kind,
                 name: itemName,
                 sourceCommit:
-                  entry.source === "data" ? entry.sourceCommit : undefined,
+                  entry.source === "data" && sourceCommitPresent !== false
+                    ? entry.sourceCommit
+                    : undefined,
               });
           let fragmentOutputState: FragmentContributionState | null = null;
           if (source === "data" && isFragmentItemKind(kind)) {
-            if (dataRepo) {
+            if (sourceCommitPresent === false) {
+              currentSha = entry.sha;
+            } else if (dataRepo) {
               const stateKey = `${scope}/${key}`;
               if (!fragmentStates.has(stateKey)) {
                 fragmentStates.set(
@@ -161,23 +178,13 @@ export function registerStatus(program: Command): void {
           let upstreamDirty = false;
           if (source === "data") {
             if (dataRepo) {
-              const masterItem = await findMasterItemByRef(dataRepo, {
+              const upstream = await upstreamFactsForItem(
+                dataRepo,
                 kind,
-                name: itemName,
-              });
-              if (masterItem) {
-                upstreamDirty = isFragmentItemKind(kind)
-                  ? await fragmentSourceDirty(dataRepo, kind, itemName)
-                  : !(await isPathClean(dataRepo, masterItem.repoRelPath));
-                upstreamSha = upstreamDirty
-                  ? null
-                  : isFragmentItemKind(kind)
-                    ? await shaOfFragmentItem(dataRepo, kind, itemName)
-                    : await shaOfGitVisibleItem(
-                        dataRepo,
-                        masterItem.repoRelPath,
-                      );
-              }
+                itemName,
+              );
+              upstreamSha = upstream.upstreamSha;
+              upstreamDirty = upstream.upstreamDirty;
             }
           } else {
             const sys = findSystemItem(itemName);
@@ -194,6 +201,7 @@ export function registerStatus(program: Command): void {
             upstreamSha,
             upstreamDirty,
             fragmentOutputState,
+            sourceCommitPresent,
           });
 
           rows.push(
@@ -345,15 +353,4 @@ async function itemFragmentContributionState(
     if (targetState === "drifted") state = "drifted";
   }
   return state;
-}
-
-async function fragmentSourceDirty(
-  dataRepo: string,
-  kind: Extract<ItemKind, "settings" | "mcp" | "codex-config">,
-  name: string,
-): Promise<boolean> {
-  for (const relPath of allCanonicalFragmentRelPaths(kind, name)) {
-    if (!(await isPathClean(dataRepo, relPath))) return true;
-  }
-  return false;
 }

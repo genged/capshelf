@@ -44,8 +44,10 @@ import {
   isFragmentKind,
   parseFragmentSourceText,
   shaOfFragmentItem,
+  shaOfFragmentItemAtCommit,
   touchedFragmentTargetsForItem,
 } from "../fragments";
+import { upstreamFactsForItem } from "../upstream-facts";
 import {
   addToManifest,
   dataEntryOrThrow,
@@ -59,11 +61,13 @@ interface PromoteOptions {
   message?: string;
   json?: boolean;
   local?: boolean;
+  staleOk?: boolean;
 }
 
 interface SyncOptions {
   message?: string;
   scope?: Scope;
+  staleOk?: boolean;
 }
 
 export function registerPromote(program: Command): void {
@@ -73,6 +77,10 @@ export function registerPromote(program: Command): void {
       "push edits for an already-tracked data item into the data repo and bump the lock",
     )
     .option("--local", "promote a local-scope item")
+    .option(
+      "--stale-ok",
+      "intentionally overwrite data-repo content newer than this project's lock",
+    )
     .option("-m, --message <msg>", "git commit message")
     .option("--json", "output JSON")
     .action(async (itemRef: string, opts: PromoteOptions, cmd: Command) => {
@@ -269,7 +277,7 @@ async function rejectUntrackedPromote(
   );
 }
 
-async function promoteFragmentSource(
+export async function promoteFragmentSource(
   project: string,
   dataRepo: string,
   manifest: Manifest,
@@ -314,9 +322,38 @@ async function promoteFragmentSource(
         committed: false,
       };
     }
+    // Unchanged and not bypassable by --stale-ok: in this branch there is
+    // nothing local to promote, the only correct action is update.
     throw new PreconditionError(
       `${kind}/${name} has committed source changes not in this project lock; run capshelf update ${kind}/${name}`,
     );
+  }
+
+  // Stale gate for the dirty-commit path: compare the canonical sources as
+  // committed at HEAD (ignoring the dirty worktree edits about to be
+  // committed) against the lock. A difference means upstream advanced past
+  // the lock; committing would silently fold that advance into a lock bump
+  // the user never reviewed.
+  const headCommittedSha = await shaOfFragmentItemAtCommit(
+    dataRepo,
+    kind,
+    name,
+    "HEAD",
+  );
+  let staleOverride = false;
+  if (headCommittedSha !== entry.sha) {
+    if (!opts.staleOk) {
+      throw stalePromoteError({
+        dataRepo,
+        kind,
+        name,
+        lockedSha: entry.sha,
+        sourceCommit: entry.sourceCommit,
+        upstreamSha: headCommittedSha,
+        logPathspec: canonicalPaths.join(" "),
+      });
+    }
+    staleOverride = true;
   }
 
   for (const source of existingSources) {
@@ -367,6 +404,7 @@ async function promoteFragmentSource(
     sha,
     sourceCommit,
     committed: true,
+    ...(staleOverride && { staleOverride: true as const }),
   };
 }
 
@@ -416,6 +454,9 @@ export async function syncTrackedIntoDataRepo(
   }
   const { localPath, sha } = snapshot;
   if (sha === entry.sha) {
+    // Guard-free no-op by design: local content matches the lock, there is
+    // nothing to write. If upstream has advanced past the lock here, that is
+    // update_available territory and surfacing it is status's job.
     const runtimeWarnings = runtimeWarningsForItem(project, kind, name);
     return {
       source: "data",
@@ -427,6 +468,67 @@ export async function syncTrackedIntoDataRepo(
       committed: false,
       ...(runtimeWarnings.length > 0 && { runtimeWarnings }),
     };
+  }
+
+  // Stale guard: protects data-repo writes. Runs before anything is written
+  // or committed, covering both the dirty-commit path and the
+  // not-dirty-but-changed repin path below. Shares the upstream-facts
+  // computation with status so the state machine and this gate can never
+  // disagree.
+  const upstream = await upstreamFactsForItem(dataRepo, kind, name);
+  if (upstream.upstreamDirty) {
+    // Not bypassable by --stale-ok: uncommitted upstream edits have no
+    // commit provenance; promoting over them would either destroy them or
+    // fold unknown content into the promote commit.
+    throw new PreconditionError(
+      `not promoting ${kind}/${name} — the data repo copy has uncommitted changes.\n\n` +
+        "  inspect them first:\n" +
+        `    git -C ${homeRelative(dataRepo)} status --short -- ${repoRelPath}\n` +
+        "  then commit or discard them in the data repo and retry.",
+    );
+  }
+  let staleOverride = false;
+  if (upstream.upstreamSha !== null && upstream.upstreamSha !== entry.sha) {
+    if (upstream.upstreamSha === sha) {
+      // Convergence short-circuit: the project's edited content is
+      // byte-identical to what upstream already has (e.g. a teammate
+      // promoted the same fix first). Metadata-only lock repin; commit
+      // nothing, touch nothing in the data repo.
+      const sourceCommit = await lastTouchingContentCommit(
+        dataRepo,
+        repoRelPath,
+      );
+      lock.items[key] = {
+        source: "data",
+        sha,
+        sourceCommit,
+        appliedAt: new Date().toISOString(),
+        ...(entry.label !== undefined && { label: entry.label }),
+      };
+      const runtimeWarnings = runtimeWarningsForItem(project, kind, name);
+      return {
+        source: "data",
+        kind,
+        name,
+        action: "already-upstream",
+        sha,
+        sourceCommit,
+        committed: false,
+        ...(runtimeWarnings.length > 0 && { runtimeWarnings }),
+      };
+    }
+    if (!opts.staleOk) {
+      throw stalePromoteError({
+        dataRepo,
+        kind,
+        name,
+        lockedSha: entry.sha,
+        sourceCommit: entry.sourceCommit,
+        upstreamSha: upstream.upstreamSha,
+        logPathspec: repoRelPath,
+      });
+    }
+    staleOverride = true;
   }
 
   await assertRepoCleanOutsidePath(dataRepo, repoRelPath);
@@ -482,7 +584,35 @@ export async function syncTrackedIntoDataRepo(
     sha,
     sourceCommit,
     committed: dirty,
+    ...(staleOverride && { staleOverride: true as const }),
     ...(runtimeWarnings.length > 0 && { runtimeWarnings }),
     ...(privateDotenvWarnings.length > 0 && { privateDotenvWarnings }),
   };
+}
+
+function stalePromoteError(input: {
+  dataRepo: string;
+  kind: ItemKind;
+  name: string;
+  lockedSha: string;
+  sourceCommit: string;
+  upstreamSha: string;
+  logPathspec: string;
+}): PreconditionError {
+  const item = `${input.kind}/${input.name}`;
+  const shortCommit = input.sourceCommit.slice(0, 7);
+  const repo = homeRelative(input.dataRepo);
+  return new PreconditionError(
+    `${item} changed in the data repo since this project last updated; promoting would overwrite the newer upstream version.\n\n` +
+      `  locked:   ${input.lockedSha}  (sourceCommit ${shortCommit})\n` +
+      `  upstream: ${input.upstreamSha}  (data repo HEAD)\n\n` +
+      "  inspect before deciding:\n" +
+      `    capshelf status ${item} --diff\n` +
+      `    git -C ${repo} log --oneline ${shortCommit}..HEAD -- ${input.logPathspec}\n\n` +
+      "  to take the upstream version and redo your edit on top of it\n" +
+      "  (your current edits stay recoverable in this project's own git diff):\n" +
+      `    capshelf update ${item}\n\n` +
+      "  to overwrite upstream with this project's version on purpose:\n" +
+      `    capshelf promote ${item} --stale-ok -m "..."`,
+  );
 }

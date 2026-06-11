@@ -19,6 +19,7 @@ import { registerMove } from "./commands/move";
 import { registerSetData } from "./commands/set-data";
 import { registerSetUpstream } from "./commands/set-upstream";
 import { registerDataPath } from "./commands/data-path";
+import { registerSyncData } from "./commands/sync-data";
 import { registerSelfUpdate } from "./commands/self-update";
 import { CliError } from "./errors";
 import { HOME_ENV, PRODUCT_NAME } from "./identity";
@@ -53,6 +54,7 @@ registerMove(program);
 registerSetData(program);
 registerSetUpstream(program);
 registerDataPath(program);
+registerSyncData(program);
 registerSelfUpdate(program);
 
 /**

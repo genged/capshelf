@@ -358,6 +358,98 @@ function dirtyPathsFromPorcelain(out: string): string[] {
     });
 }
 
+export interface FetchResult {
+  ok: boolean;
+  /** git's stderr, trimmed; empty on success */
+  stderr: string;
+}
+
+/**
+ * `git fetch origin`. Fetch is always safe: it only updates remote-tracking
+ * refs and never touches the worktree or local branches. Failures (network,
+ * auth, missing remote repo) are reported, not thrown, so `sync-data` can
+ * include git's stderr in its `fetch_failed` state.
+ */
+export async function fetchOrigin(repo: string): Promise<FetchResult> {
+  await assertGitAvailable();
+  const result = await $`git -C ${repo} fetch origin`.quiet().nothrow();
+  return {
+    ok: result.exitCode === 0,
+    stderr: result.stderr.toString().trim(),
+  };
+}
+
+/** Current branch name, or null when HEAD is detached. */
+export async function currentBranch(repo: string): Promise<string | null> {
+  await assertGitAvailable();
+  const result = await $`git -C ${repo} symbolic-ref --short -q HEAD`
+    .quiet()
+    .nothrow();
+  if (result.exitCode !== 0) return null;
+  const branch = result.stdout.toString().trim();
+  return branch || null;
+}
+
+/**
+ * The integration target for `branch`: its configured `@{upstream}` when set,
+ * else `origin/<branch>` when that remote-tracking ref exists, else null.
+ * The fallback is transient — this never writes branch config.
+ */
+export async function trackingRef(
+  repo: string,
+  branch: string,
+): Promise<string | null> {
+  await assertGitAvailable();
+  const upstream =
+    await $`git -C ${repo} rev-parse --abbrev-ref ${`${branch}@{upstream}`}`
+      .quiet()
+      .nothrow();
+  if (upstream.exitCode === 0) {
+    const ref = upstream.stdout.toString().trim();
+    if (ref) return ref;
+  }
+  const fallback = `origin/${branch}`;
+  const exists =
+    await $`git -C ${repo} rev-parse --verify --quiet ${`refs/remotes/${fallback}`}`
+      .quiet()
+      .nothrow();
+  return exists.exitCode === 0 ? fallback : null;
+}
+
+/** Commit counts on each side of HEAD...<ref> (left = ahead, right = behind). */
+export async function aheadBehind(
+  repo: string,
+  ref: string,
+): Promise<{ ahead: number; behind: number }> {
+  await assertGitAvailable();
+  const out =
+    await $`git -C ${repo} rev-list --left-right --count ${`HEAD...${ref}`}`
+      .quiet()
+      .text();
+  const [ahead, behind] = out.trim().split(/\s+/).map(Number);
+  if (
+    ahead === undefined ||
+    behind === undefined ||
+    Number.isNaN(ahead) ||
+    Number.isNaN(behind)
+  ) {
+    throw new Error(`unexpected git rev-list output: ${out.trim()}`);
+  }
+  return { ahead, behind };
+}
+
+/** Fast-forward the current branch to `ref`; throws when not a fast-forward. */
+export async function fastForwardTo(repo: string, ref: string): Promise<void> {
+  await assertGitAvailable();
+  await $`git -C ${repo} merge --ff-only ${ref}`.quiet();
+}
+
+export async function headSha(repo: string): Promise<string> {
+  await assertGitAvailable();
+  const out = await $`git -C ${repo} rev-parse HEAD`.quiet().text();
+  return out.trim();
+}
+
 export async function commitInRepo(
   repo: string,
   relPaths: string[],

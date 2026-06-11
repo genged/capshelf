@@ -13,10 +13,18 @@ export interface PromoteResult {
   source: "data";
   kind: ItemKind;
   name: string;
-  action: "promoted" | "created" | "already-current";
+  /**
+   * "already-upstream": the content being promoted is byte-identical to what
+   * upstream already has (e.g. a teammate promoted the same fix first); the
+   * lock was re-pinned without a commit. Consumers must tolerate new action
+   * values (append-only enum).
+   */
+  action: "promoted" | "created" | "already-current" | "already-upstream";
   sha: string;
   sourceCommit: string;
   committed: boolean;
+  /** present only when --stale-ok actually bypassed a stale check */
+  staleOverride?: true;
   runtimeWarnings?: RuntimeWarning[];
   privateDotenvWarnings?: string[];
 }

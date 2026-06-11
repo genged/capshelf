@@ -261,6 +261,41 @@ export async function shaOfFragmentItem(
   return hasher.digest("hex").slice(0, 12);
 }
 
+/**
+ * Hash a fragment item's canonical sources *as committed at `commit`*,
+ * ignoring the worktree entirely. Iterates the static
+ * `allCanonicalItemRelPaths` list and treats a failed `git show` as "file
+ * absent at that commit" — deliberately not `canonicalItemRelPaths`, which
+ * filters by worktree `existsSync` and would silently miss canonical files
+ * that exist at the commit but were deleted (dirty-deleted) in the worktree.
+ * Matches `shaOfFragmentItem`'s hashing scheme so the results are comparable
+ * to locked shas.
+ */
+export async function shaOfFragmentItemAtCommit(
+  dataRepo: string,
+  kind: FragmentItemKind,
+  name: string,
+  commit: string,
+): Promise<string> {
+  const present: Array<[string, Buffer]> = [];
+  for (const relPath of allCanonicalItemRelPaths(kind, name)) {
+    try {
+      present.push([relPath, await showAtCommit(dataRepo, commit, relPath)]);
+    } catch {
+      // Absent at that commit; participates as absent in the file map.
+    }
+  }
+  const hasher = new Bun.CryptoHasher("sha256");
+  present.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  for (const [relPath, content] of present) {
+    hasher.update(relPath);
+    hasher.update("\0");
+    hasher.update(content);
+    hasher.update("\0");
+  }
+  return hasher.digest("hex").slice(0, 12);
+}
+
 export async function lastTouchingFragmentCommit(
   dataRepo: string,
   kind: FragmentItemKind,

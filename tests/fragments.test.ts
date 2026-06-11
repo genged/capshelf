@@ -1,7 +1,7 @@
 import { $, file } from "bun";
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { dataKey, emptyLock } from "../src/lock";
@@ -12,6 +12,7 @@ import {
   lastTouchingFragmentCommit,
   lockedFragmentTargetsForItem,
   shaOfFragmentItem,
+  shaOfFragmentItemAtCommit,
 } from "../src/fragments";
 
 async function tempDir(prefix: string): Promise<string> {
@@ -309,5 +310,92 @@ describe("fragment output planning", () => {
         "codex-config",
       ),
     ).toBe("ok");
+  });
+});
+
+describe("shaOfFragmentItemAtCommit", () => {
+  test("matches shaOfFragmentItem on a clean tree and diverges after dirty edits", async () => {
+    const dataRepo = await tempRepo();
+    await mkdir(join(dataRepo, "settings", "theme"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "settings", "theme", "settings.json"),
+      JSON.stringify({ theme: "dark" }),
+    );
+    await commitAll(dataRepo, "theme v1");
+
+    const worktreeSha = await shaOfFragmentItem(dataRepo, "settings", "theme");
+    const headSha = await shaOfFragmentItemAtCommit(
+      dataRepo,
+      "settings",
+      "theme",
+      "HEAD",
+    );
+    expect(headSha).toBe(worktreeSha);
+
+    // Dirty worktree edit: the worktree sha moves, the HEAD sha does not.
+    await writeFile(
+      join(dataRepo, "settings", "theme", "settings.json"),
+      JSON.stringify({ theme: "light" }),
+    );
+    expect(await shaOfFragmentItem(dataRepo, "settings", "theme")).not.toBe(
+      worktreeSha,
+    );
+    expect(
+      await shaOfFragmentItemAtCommit(dataRepo, "settings", "theme", "HEAD"),
+    ).toBe(worktreeSha);
+  });
+
+  test("still sees a canonical file that exists at HEAD but was deleted in the worktree", async () => {
+    const dataRepo = await tempRepo();
+    await mkdir(join(dataRepo, "mcp", "github"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "mcp", "github", "claude.json"),
+      JSON.stringify({ mcpServers: { github: { command: "github-mcp" } } }),
+    );
+    await writeFile(
+      join(dataRepo, "mcp", "github", "codex.toml"),
+      '[mcp_servers.github]\ncommand = "github-mcp"\n',
+    );
+    await commitAll(dataRepo, "github mcp");
+    const committedSha = await shaOfFragmentItem(dataRepo, "mcp", "github");
+
+    // Dirty-delete one canonical file: the worktree-existsSync trap would
+    // drop it from the hash; the HEAD-committed hash must keep it.
+    await rm(join(dataRepo, "mcp", "github", "codex.toml"));
+    expect(
+      await shaOfFragmentItemAtCommit(dataRepo, "mcp", "github", "HEAD"),
+    ).toBe(committedSha);
+    expect(await shaOfFragmentItem(dataRepo, "mcp", "github")).not.toBe(
+      committedSha,
+    );
+  });
+
+  test("files absent at the commit participate as absent", async () => {
+    const dataRepo = await tempRepo();
+    await mkdir(join(dataRepo, "mcp", "github"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "mcp", "github", "claude.json"),
+      JSON.stringify({ mcpServers: { github: { command: "github-mcp" } } }),
+    );
+    await commitAll(dataRepo, "claude target only");
+    const claudeOnly = await shaOfFragmentItemAtCommit(
+      dataRepo,
+      "mcp",
+      "github",
+      "HEAD",
+    );
+    expect(claudeOnly).toBe(await shaOfFragmentItem(dataRepo, "mcp", "github"));
+
+    await writeFile(
+      join(dataRepo, "mcp", "github", "codex.toml"),
+      '[mcp_servers.github]\ncommand = "github-mcp"\n',
+    );
+    await commitAll(dataRepo, "add codex target");
+    expect(
+      await shaOfFragmentItemAtCommit(dataRepo, "mcp", "github", "HEAD"),
+    ).not.toBe(claudeOnly);
+    expect(
+      await shaOfFragmentItemAtCommit(dataRepo, "mcp", "github", "HEAD~1"),
+    ).toBe(claudeOnly);
   });
 });

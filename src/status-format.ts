@@ -12,6 +12,8 @@ export function glyph(s: State): string {
   switch (s) {
     case "ok":
       return "✓";
+    case "missing_source_commit":
+      return "!";
     case "update_available":
       return "⚠";
     case "drifted_local":
@@ -45,6 +47,8 @@ export function describe(r: StatusRow): string {
   switch (r.state) {
     case "ok":
       return "up-to-date";
+    case "missing_source_commit":
+      return `locked sourceCommit ${shortCommit(r.sourceCommit)} is not present in the data repo`;
     case "update_available":
       return r.source === "system"
         ? `update available → ${r.upstreamSha} (cli upgraded)`
@@ -176,6 +180,20 @@ function formatRow(r: StatusRow): string[] {
   const label = r.label ? ` ${r.label}` : "";
   return [
     `  ${g} ${id} ${r.lockedSha}${label}  ${describe(r)}`,
+    ...missingSourceCommitGuidance(r),
     ...formatRuntimeWarnings(r.runtimeWarnings, "    "),
   ];
+}
+
+function missingSourceCommitGuidance(r: StatusRow): string[] {
+  if (r.state !== "missing_source_commit") return [];
+  return [
+    "      if it was merged upstream (e.g. squash-merged), re-pin the lock:",
+    `        capshelf sync-data && capshelf update ${r.kind}/${r.name}`,
+    "      if it only exists in another clone, fetch or push that clone first.",
+  ];
+}
+
+function shortCommit(commit: string | undefined): string {
+  return commit ? commit.slice(0, 7) : "(unknown)";
 }

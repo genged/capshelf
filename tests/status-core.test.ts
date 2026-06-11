@@ -139,6 +139,96 @@ describe("deriveState", () => {
       "missing_installed",
     );
   });
+
+  test("missing_source_commit when the pinned commit is unreachable", () => {
+    expect(deriveState(facts({ sourceCommitPresent: false }))).toBe(
+      "missing_source_commit",
+    );
+  });
+
+  test("missing_source_commit wins over every drift/update comparison", () => {
+    expect(
+      deriveState(
+        facts({
+          sourceCommitPresent: false,
+          currentSha: "C",
+          upstreamSha: "U",
+          upstreamDirty: true,
+        }),
+      ),
+    ).toBe("missing_source_commit");
+    expect(
+      deriveState(
+        facts({
+          kind: "settings",
+          sourceCommitPresent: false,
+          upstreamDirty: true,
+          fragmentOutputState: "drifted",
+        }),
+      ),
+    ).toBe("missing_source_commit");
+    expect(
+      deriveState(facts({ sourceCommitPresent: false, currentSha: null })),
+    ).toBe("missing_source_commit");
+  });
+
+  test("kept-local still wins over a missing source commit", () => {
+    expect(
+      deriveState(facts({ local: true, sourceCommitPresent: false })),
+    ).toBe("kept-local");
+  });
+
+  test("system entries never report missing_source_commit", () => {
+    expect(
+      deriveState(facts({ source: "system", sourceCommitPresent: false })),
+    ).toBe("ok");
+  });
+
+  test("present and unknown reachability leave every existing case unchanged", () => {
+    const cases: Array<[Partial<StateFacts>, string]> = [
+      [{}, "ok"],
+      [{ upstreamSha: "U" }, "update_available"],
+      [{ currentSha: "C" }, "drifted_local"],
+      [{ currentSha: "C", upstreamSha: "U" }, "drifted_and_update"],
+      [{ currentSha: null }, "missing_installed"],
+      [{ upstreamSha: null }, "missing_upstream"],
+      [{ upstreamDirty: true }, "upstream_dirty"],
+      [{ upstreamDirty: true, currentSha: "C" }, "drifted_and_upstream_dirty"],
+      [{ local: true }, "kept-local"],
+      [
+        { kind: "settings", upstreamDirty: true, fragmentOutputState: "ok" },
+        "source_dirty",
+      ],
+      [
+        {
+          kind: "settings",
+          upstreamDirty: true,
+          fragmentOutputState: "drifted",
+        },
+        "source_dirty_and_output_drift",
+      ],
+      [{ kind: "settings", fragmentOutputState: "missing" }, "missing_output"],
+      [
+        { kind: "settings", fragmentOutputState: "drifted", upstreamSha: "L" },
+        "output_drift",
+      ],
+      [
+        { kind: "settings", fragmentOutputState: "drifted", upstreamSha: "U" },
+        "drifted_and_update",
+      ],
+    ];
+    for (const [overrides, expected] of cases) {
+      expect(
+        deriveState(facts({ ...overrides, sourceCommitPresent: true })),
+      ).toBe(expected as ReturnType<typeof deriveState>);
+      expect(
+        deriveState(facts({ ...overrides, sourceCommitPresent: null })),
+      ).toBe(expected as ReturnType<typeof deriveState>);
+      expect(deriveState(facts(overrides))).toBe(
+        expected as ReturnType<typeof deriveState>,
+      );
+    }
+  });
 });
 
 function lock(items: Record<string, LockEntry>): Lock {

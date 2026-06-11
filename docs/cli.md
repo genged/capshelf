@@ -36,10 +36,11 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
 | `set-data <path>` | bind this machine to the project's data repo clone via `.capshelf/local.json` | implemented |
 | `set-upstream <url>` | write the committed `dataRepoUpstream` URL in `.capshelf/capshelf.json` | implemented |
 | `data-path` | print the resolved local data repo path; `--json` includes the path and the normalized upstream (`null` when absent) | implemented |
+| `sync-data` | explicitly fetch the bound data repo's `origin` and fast-forward the current branch when provably safe; the only capshelf command that performs network I/O besides the `init --data <url>` bootstrap clone and `self-update` | implemented |
 | `ls` | list items in master (default) or in this project (`--here`); shows descriptions and `#tags` from item metadata; `--tag` filters | implemented |
 | `show <item>` | print metadata + content for one item, including `requires`/`conflicts-with` install state; `--json` always carries a `metadata` object | implemented |
 | `search <query...>` | search available items (data repo + system) by name, tags, description, and content; supports `--kind` and `--json`; zero matches exit 0 | implemented |
-| `status [<item>]` | drift / update report for this project; `--project` and `--local` filter scopes; `--diff` explains local drift | implemented |
+| `status [<item>]` | drift / update report for this project; `--project` and `--local` filter scopes; `--diff` explains local drift; reports `missing_source_commit` when a locked `sourceCommit` is unreachable in the data repo | implemented |
 | `add <item>` | install an item from the bound data repo; `--local` installs a clone-local skill; warns on unmet `requires`, refuses on `conflicts-with` (exit 3) | implemented |
 | `rm <item>` | remove from this project; `--local` removes clone-local skills | implemented |
 | `get-path <item>` | print the editable path; skills return their managed directory, fragments support `--output` for generated output paths, and MCP supports `--target` | implemented |
@@ -47,7 +48,7 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
 | `update [<item>...]` | bump project pins by default; `--local` or an explicit local-only skill ref updates local pins; supports `--dry-run` | implemented |
 | `share <item>` | adopt a not-yet-shared on-disk item into the data repo; fragments require `--from` and project scope | implemented |
 | `move <item> --to <scope>` | move an already-tracked data item between local and project scope without changing data-repo content | implemented |
-| `promote <item>` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects local-scope skills | implemented |
+| `promote <item>` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects local-scope skills; refuses stale promotes unless `--stale-ok` | implemented |
 | `keep-local <item>` | mark drifted copy-item content as intentional project-local divergence; supports `--local` for skills and rejects fragments | implemented |
 | `revert <item>` | discard local edits, restore locked version; supports `--local` | implemented |
 | `self-update` | check for and install a Homebrew update for the capshelf binary; supports `--check` and `--yes` | implemented |
@@ -264,6 +265,49 @@ Legacy projects with `dataRepo` in `.capshelf/capshelf.json` or root
 `capshelf migrate` and `capshelf migrate-data-repo-config` are no longer
 registered.
 
+## Syncing the data repo
+
+```bash
+capshelf sync-data [--json]
+```
+
+A project command, run from the project root. `sync-data` is the only capshelf
+command that touches the network, and only when you run it. It resolves the
+data repo through the standard chain, runs the usual upstream verification
+when the manifest declares `dataRepoUpstream` (a declared upstream is *not*
+required — it syncs whatever `origin` is), fetches `origin`, and fast-forwards
+the current branch only when that is provably safe: clean worktree, attached
+HEAD, not ahead of the integration target. The integration target is the
+branch's configured `@{upstream}`, falling back to `origin/<branch>` for this
+run only (capshelf never writes branch config). Everything else stops with
+copy-pasteable git guidance — capshelf never rebases, merges (non-ff), resets,
+stashes, or pushes the user-owned clone.
+
+Exactly one outcome state per run (fetch has already happened in all states
+except `no_origin` and `fetch_failed`):
+
+| state | condition | branch moved? | exit |
+|---|---|---|---|
+| `up_to_date` | `behind == 0`, `ahead == 0` (clean or dirty) | no | 0 |
+| `fast_forwarded` | clean, attached, `ahead == 0`, `behind > 0` | ff only | 0 |
+| `local_ahead` | `ahead > 0`, `behind == 0` (clean or dirty) | no | 0 |
+| `diverged` | `ahead > 0`, `behind > 0` (clean or dirty) | no | 4 |
+| `dirty_worktree` | dirty, `ahead == 0`, `behind > 0` | no | 4 |
+| `detached_head` | HEAD detached | no | 3 |
+| `no_tracking_ref` | no `@{upstream}` and no `origin/<branch>` | no | 3 |
+| `no_origin` | no `origin` remote | — | 3 |
+| `fetch_failed` | `git fetch origin` failed | — | 1 |
+
+`local_ahead` is exit 0 with `git push` guidance: unpushed promote commits are
+a designed, intentional state, not an error. Worktree dirtiness selects a
+state only when it blocks an otherwise-possible fast-forward
+(`behind > 0 && ahead == 0`); otherwise it is reported via the `dirty` JSON
+field without affecting state or exit code. `--json` prints the full report
+(`dataRepo`, `origin`, `branch`, `trackingRef`, `fetched`, `state`, `before`,
+`after`, `ahead`, `behind`, `dirty`, `guidance`) before any non-zero exit, so
+scripts always get the report. See `docs/team-workflow.md` for the team loop
+this command closes.
+
 ## Exit codes
 
 | code | meaning |
@@ -271,8 +315,8 @@ registered.
 | 0 | success |
 | 1 | generic error (missing args, bad config, I/O) |
 | 2 | item not found in data repo |
-| 3 | conflict (promote would clobber, operation rejected on a system item, untracked target would be overwritten, path is managed by skills.sh, or `add` refused by a `conflicts-with` declaration) |
-| 4 | drift detected (for `status --strict`) or upstream verification failed |
+| 3 | conflict (promote would clobber, operation rejected on a system item, untracked target would be overwritten, path is managed by skills.sh, `add` refused by a `conflicts-with` declaration, or `sync-data` cannot run in the current configuration: detached HEAD, no tracking ref, no origin) |
+| 4 | drift detected (for `status --strict`), upstream verification failed, or `sync-data` needs human action (diverged history, or upstream commits blocked by a dirty worktree) |
 | 5 | reserved for future unmet-requires checks (`add` with unmet `requires` warns and exits 0) |
 | 6 | reserved for data repo not configured |
 | 7 | required dependency missing (`git` not found on `PATH`) |
@@ -356,6 +400,38 @@ to share upstream:
 
 Capshelf never pushes implicitly. `promote --json` includes the resolved
 `dataRepo` path and a `dataRepoHasOrigin` boolean.
+
+### Stale-promote protection
+
+`promote` refuses to overwrite data-repo content that is newer than this
+project's lock (exit 3): if the item changed upstream since the project last
+updated, the error shows the locked vs upstream shas, a scoped `git log` of
+the upstream advance, and the two ways out — `capshelf update <item>` to take
+the upstream version first, or `capshelf promote <item> --stale-ok` to
+overwrite on purpose. Two related behaviors:
+
+- **Uncommitted data-repo edits inside the item's path always block** (exit
+  3) and are *not* bypassable by `--stale-ok`: they have no commit
+  provenance, so commit or discard them in the data repo first.
+- **Convergence**: when the content being promoted is byte-identical to what
+  upstream already has, promote succeeds without a commit, re-pins the lock
+  to the upstream commit, and reports the action `"already-upstream"`.
+
+`promote --json` notes: `action` may be `"already-upstream"` (consumers must
+tolerate new action values), and `staleOverride: true` appears only when
+`--stale-ok` actually bypassed a stale check (absent otherwise, including
+when the flag was passed but nothing was stale).
+
+### missing_source_commit
+
+`status` checks that each data item's locked `sourceCommit` is reachable in
+the data repo. When it is not (squash/rebase-merged proposal branch, or a
+promote commit that only exists in another clone), the row reports
+`missing_source_commit` and `status --strict` exits 4. Fix by re-pinning:
+`capshelf sync-data && capshelf update <item>` (metadata-only when the
+content sha is unchanged), or push/fetch the clone that has the commit. See
+[`docs/team-workflow.md`](team-workflow.md) for the team loop, the
+propose-upstream recipe, and the CI gate built on this state.
 
 ## Adopting a local skill
 

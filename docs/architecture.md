@@ -283,6 +283,15 @@ Three rules together guarantee that an edit in one project never disturbs anothe
 2. **Data-repo writes only touch the calling project's metadata.** When A promotes, only A's lock bumps to the new `sourceCommit`; when A shares, only A records the new item.
 3. **`update` is opt-in per-project.** Other projects remain pinned to their old sha; their `status` reports "update available" but files don't change.
 
+Network sync is equally explicit: only `sync-data` fetches the data repo's
+`origin`, and the only branch mutation it ever performs is a provably safe
+fast-forward (diverged, dirty, and detached states stop with git guidance).
+In the other direction, `promote` refuses to overwrite data-repo content
+newer than the calling project's lock — a stale promote is a conflict (exit
+3) bypassed only by an explicit `--stale-ok`, and uncommitted data-repo edits
+under the item's path always block. See `docs/team-workflow.md` for the team
+loop built on these guarantees.
+
 ## Local overrides: two escape hatches
 
 1. **Project-local settings values** — values already present in `.claude/settings.json` and not contributed by a locked settings fragment are preserved when a fragment is added, applied, removed, or updated.

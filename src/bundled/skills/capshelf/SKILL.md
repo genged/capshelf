@@ -52,6 +52,8 @@ When the user asks you to improve a shared (data) item:
    - `capshelf keep-local <item> --reason "why"` — intentional project-specific divergence (copy items only).
    - `capshelf revert <item>` — discard the edit, restore from the recorded `sourceCommit`.
 
+If `promote` fails with "changed in the data repo since this project last updated" (exit 3), a teammate's newer version is upstream. **Do not retry with `--stale-ok` on your own** — show the user the upstream diff (`capshelf status <item> --diff` plus the scoped `git log` from the error message) and let them choose between `capshelf update <item>`-then-redo-the-edit and an intentional `capshelf promote <item> --stale-ok` overwrite. A promote that reports `already-upstream` means someone already promoted identical content; the lock was re-pinned and nothing more is needed.
+
 To change **metadata** (tags, description, `requires`/`conflicts-with`), edit `<data-repo>/<kind>/<name>/.capshelf.yml` and commit it in the data repo — no project `update` is needed afterwards; metadata is catalog data, never hashed into item content. **Commit the sidecar before returning to project work**: an uncommitted sidecar edit blocks `capshelf update` entirely (dirty data repo) and blocks `add` of that item.
 
 For system items (e.g. this `capshelf` skill), the edit loop doesn't apply — to change them, edit the CLI source under `src/bundled/` and rebuild.
@@ -80,8 +82,34 @@ Always check the current surface with `capshelf --help` and `capshelf <verb> --h
 | `ls` / `show` / `search` / `status` | inspect and discover (all support `--json`) |
 | `add` / `rm` / `apply` / `update` / `revert` | converge the project on its locks |
 | `share` / `move` / `promote` / `keep-local` | flow content and intent between project and data repo |
+| `sync-data [--json]` | explicitly fetch the bound data repo's origin and fast-forward when safe; the **only** capshelf command that touches the network besides the `init` bootstrap clone and `self-update`. Run it when the user asks to pick up teammates' changes, then `capshelf status` to see `update_available` |
 | `get-path` | print the editable path for an item |
 | `self-update` | update the Homebrew-installed binary (not project pins) |
+
+## Proposing changes upstream (review required, or no direct push access)
+
+Capshelf never pushes and never creates branches — branch in the data repo with ordinary git, let `promote` commit on the branch, then push and open a PR with `gh`:
+
+```bash
+DATA=$(capshelf data-path)            # fallback: jq -r .dataRepo .capshelf/local.json
+BRANCH=$(git -C "$DATA" symbolic-ref --short refs/remotes/origin/HEAD | sed 's|^origin/||')   # the repo's default branch
+capshelf sync-data
+git -C "$DATA" switch -c propose/<topic> "origin/$BRANCH"
+# edit the installed item in the project, then:
+capshelf promote <item> -m "why"
+git -C "$DATA" push -u origin propose/<topic>
+gh pr create --repo <owner/data-repo> --head propose/<topic> --title "..." --body "..."
+```
+
+After the PR merges, re-pin the lock to the merged history (until then the lock pins the proposal-branch commit, which squash/rebase merges orphan):
+
+```bash
+git -C "$DATA" switch "$BRANCH"
+capshelf sync-data
+capshelf update <item>
+```
+
+Fork variant (read-only consumers): `gh repo fork <owner/data-repo> --clone=false`, `git -C "$DATA" remote add fork <fork-url>`, branch and promote as above, then `git -C "$DATA" push -u fork propose/<topic>` and `gh pr create --repo <owner/data-repo> --head <user>:propose/<topic>`. Capshelf's upstream verification only checks `origin`, so the extra `fork` remote is safe and `sync-data` keeps pulling from `origin`.
 
 ## Config fragments
 
@@ -100,6 +128,7 @@ Edit canonical source paths (from `get-path`), never the generated outputs, then
 
 - **Never run `capshelf promote`** while the user has open PRs on other projects using that item, unless those projects are OK picking up the change on their next `update`.
 - **Treat `add` conflict refusals (exit 3) as decisions for the user**, not obstacles. There is no force flag by design.
+- **Never pass `promote --stale-ok` without explicit user direction** — it intentionally overwrites a teammate's newer upstream version.
 - **The lock is the source of truth** for what capshelf owns.
 - **Use `capshelf self-update` only for Homebrew installs**; source installs update with `git pull && make install`. Set `CAPSHELF_NO_SELF_UPDATE=1` to suppress startup prompts.
 
@@ -108,6 +137,7 @@ Edit canonical source paths (from `get-path`), never the generated outputs, then
 - `no data repo configured` — clone the declared `dataRepoUpstream` if one exists, then `capshelf set-data <path>`, or pass `--data <path>`, or set `$CAPSHELF_HOME`.
 - `data repo at <path> is bound to the wrong upstream` — `capshelf set-data <correct-clone>` or intentionally change committed state with `capshelf set-upstream <url>`.
 - `data repo has uncommitted metadata changes: <item>/.capshelf.yml` — commit the sidecar in the data repo; no item content is at risk.
+- `missing_source_commit` in `status` — the locked `sourceCommit` is unreachable in the data repo (unpushed in another clone, or squash-orphaned after a merged proposal). Fix with `capshelf sync-data && capshelf update <item>`; if the commit only exists in another clone, push or fetch that clone first.
 - `git is required but was not found on PATH` — install Git or fix `PATH`.
 - `not a git repository: <path>` — data repos must be git repos (`sourceCommit` provenance); `git init` it first.
 - `⚠ <item>: invalid .capshelf.yml … — metadata ignored` — the item still works; fix the sidecar in the data repo when convenient.

@@ -5,12 +5,17 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   GitUnavailableError,
+  aheadBehind,
   assertIsGitRepo,
   assertPathClean,
   assertRepoClean,
   assertRepoCleanOutsidePath,
   commitInRepo,
+  currentBranch,
+  fastForwardTo,
+  fetchOrigin,
   gitVisibleFilesUnderPath,
+  headSha,
   isPathClean,
   isRepoClean,
   lastTouchingCommit,
@@ -19,6 +24,7 @@ import {
   normalizeRemoteUrl,
   showAtCommit,
   statusPorcelainOutsidePath,
+  trackingRef,
 } from "../src/git";
 
 async function tempRepo(): Promise<string> {
@@ -288,6 +294,119 @@ describe("git historical content helpers", () => {
     await expect(lastTouchingCommit(repo, "skills/hello")).rejects.toThrow(
       /no commit touches/,
     );
+  });
+});
+
+describe("git sync helpers", () => {
+  async function bareOrigin(): Promise<string> {
+    const origin = await mkdtemp(join(tmpdir(), "capshelf-origin-"));
+    await $`git init -q --initial-branch=main --bare ${origin}`.quiet();
+    return origin;
+  }
+
+  async function cloneOf(origin: string): Promise<string> {
+    const parent = await mkdtemp(join(tmpdir(), "capshelf-clone-"));
+    const repo = join(parent, "clone");
+    await $`git clone -q ${origin} ${repo}`.quiet();
+    await $`git -C ${repo} config user.email capshelf@example.invalid`.quiet();
+    await $`git -C ${repo} config user.name capshelf`.quiet();
+    return repo;
+  }
+
+  async function seededOrigin(): Promise<{ origin: string; seed: string }> {
+    const origin = await bareOrigin();
+    const seed = await cloneOf(origin);
+    await writeFile(join(seed, "README.md"), "v1\n");
+    await commitAll(seed, "baseline");
+    await $`git -C ${seed} push -q origin main`.quiet();
+    return { origin, seed };
+  }
+
+  test("currentBranch returns the branch and null on detached HEAD", async () => {
+    const { seed } = await seededOrigin();
+    expect(await currentBranch(seed)).toBe("main");
+    await $`git -C ${seed} checkout -q --detach`.quiet();
+    expect(await currentBranch(seed)).toBe(null);
+  });
+
+  test("trackingRef prefers @{upstream}, falls back to origin/<branch>, else null", async () => {
+    const { origin, seed } = await seededOrigin();
+    const repo = await cloneOf(origin);
+    // Configured upstream wins (clone sets it up).
+    expect(await trackingRef(repo, "main")).toBe("origin/main");
+
+    // A branch without upstream config falls back to origin/<branch> when the
+    // remote-tracking ref exists — transiently, without writing config.
+    await $`git -C ${seed} switch -q -c topic`.quiet();
+    await writeFile(join(seed, "topic.md"), "t\n");
+    await commitAll(seed, "topic");
+    await $`git -C ${seed} push -q origin topic`.quiet();
+    await $`git -C ${repo} fetch -q origin`.quiet();
+    await $`git -C ${repo} switch -q -c topic origin/topic --no-track`.quiet();
+    expect(await trackingRef(repo, "topic")).toBe("origin/topic");
+    const config = await $`git -C ${repo} config --list`.quiet().text();
+    expect(config).not.toContain("branch.topic.remote");
+
+    // No upstream config and no origin branch of that name.
+    await $`git -C ${repo} switch -q -c propose/foo`.quiet();
+    expect(await trackingRef(repo, "propose/foo")).toBe(null);
+  });
+
+  test("aheadBehind counts each side of HEAD...ref", async () => {
+    const { origin, seed } = await seededOrigin();
+    const repo = await cloneOf(origin);
+    expect(await aheadBehind(repo, "origin/main")).toEqual({
+      ahead: 0,
+      behind: 0,
+    });
+
+    await writeFile(join(repo, "local.md"), "local\n");
+    await commitAll(repo, "local 1");
+    await writeFile(join(repo, "local.md"), "local 2\n");
+    await commitAll(repo, "local 2");
+    await writeFile(join(seed, "README.md"), "v2\n");
+    await commitAll(seed, "upstream");
+    await $`git -C ${seed} push -q origin main`.quiet();
+    await $`git -C ${repo} fetch -q origin`.quiet();
+
+    expect(await aheadBehind(repo, "origin/main")).toEqual({
+      ahead: 2,
+      behind: 1,
+    });
+  });
+
+  test("fastForwardTo fast-forwards a behind branch and fails on diverged history", async () => {
+    const { origin, seed } = await seededOrigin();
+    const repo = await cloneOf(origin);
+    await writeFile(join(seed, "README.md"), "v2\n");
+    await commitAll(seed, "upstream v2");
+    await $`git -C ${seed} push -q origin main`.quiet();
+    await $`git -C ${repo} fetch -q origin`.quiet();
+
+    await fastForwardTo(repo, "origin/main");
+    expect(await headSha(repo)).toBe(await headSha(seed));
+
+    // Diverge and assert ff-only refuses without moving HEAD.
+    await writeFile(join(repo, "local.md"), "local\n");
+    await commitAll(repo, "local");
+    await writeFile(join(seed, "README.md"), "v3\n");
+    await commitAll(seed, "upstream v3");
+    await $`git -C ${seed} push -q origin main`.quiet();
+    await $`git -C ${repo} fetch -q origin`.quiet();
+    const before = await headSha(repo);
+    await expect(fastForwardTo(repo, "origin/main")).rejects.toThrow();
+    expect(await headSha(repo)).toBe(before);
+  });
+
+  test("fetchOrigin succeeds against a local bare remote and reports failures", async () => {
+    const { origin } = await seededOrigin();
+    const repo = await cloneOf(origin);
+    expect((await fetchOrigin(repo)).ok).toBe(true);
+
+    await $`git -C ${repo} remote set-url origin /nonexistent/capshelf-bogus`.quiet();
+    const failed = await fetchOrigin(repo);
+    expect(failed.ok).toBe(false);
+    expect(failed.stderr.length).toBeGreaterThan(0);
   });
 });
 

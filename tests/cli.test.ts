@@ -2922,4 +2922,44 @@ describe("cli integration", () => {
     expect(update.stdout.toString()).toContain('"action": "already-current"');
     expect(await readFile(lockPath, "utf-8")).toBe(lockBefore);
   });
+
+  test("status degrades a non-git data repo path to missing_upstream", async () => {
+    const project = await tempRepo("capshelf-status-nongit-project-");
+    const dataRepo = await tempRepo("capshelf-status-nongit-data-");
+    const notARepo = await tempDir("capshelf-status-nongit-dir-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+    await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
+    await writeFile(join(dataRepo, "skills", "hello", "SKILL.md"), "hello\n");
+    await commitAll(dataRepo, "baseline");
+
+    const run = (args: string[]) =>
+      Bun.spawnSync({
+        cmd: [process.execPath, cli, ...args],
+        cwd: project,
+        env: process.env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    expect(run(["add", "hello"]).exitCode).toBe(0);
+
+    const localPath = join(project, ".capshelf", "local.json");
+    const local = await file(localPath).json();
+    await writeFile(
+      localPath,
+      JSON.stringify({ ...local, dataRepo: notARepo }, null, 2),
+    );
+
+    const status = run(["status", "--json"]);
+    expect(status.exitCode).toBe(0);
+    const rows = JSON.parse(status.stdout.toString()).items;
+    const hello = rows.find(
+      (row: { name: string; kind: string }) =>
+        row.kind === "skills" && row.name === "hello",
+    );
+    expect(hello.state).toBe("missing_upstream");
+
+    expect(run(["status", "--strict"]).exitCode).toBe(4);
+  });
 });
