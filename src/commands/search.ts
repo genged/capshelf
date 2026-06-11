@@ -33,6 +33,9 @@ import {
   splitTerms,
 } from "../search-core";
 import type { SearchContentFile, SearchMatch } from "../search-core";
+import { listBundles, memberCountSummary, memberRef } from "../bundles";
+import type { Bundle } from "../bundles";
+import { truncatedDescription } from "../metadata";
 
 interface SearchOptions {
   json?: boolean;
@@ -46,6 +49,12 @@ interface SearchResult {
   sha: string;
   score: number;
   meta: ItemMetadata;
+  matches: SearchMatch[];
+}
+
+interface BundleSearchResult {
+  bundle: Bundle;
+  score: number;
   matches: SearchMatch[];
 }
 
@@ -131,6 +140,44 @@ export function registerSearch(program: Command): void {
         ),
       );
 
+      // Bundles score with the same weights: name 8 / tags 4 / description 2,
+      // and member refs as the content field (weight 1) via a synthetic
+      // SearchableItem — `search postgres` surfaces the bundle delivering
+      // mcp/postgres-local. Suppressed under --kind (bundles are not a kind);
+      // malformed bundles are excluded (read path warns).
+      const bundleResults: BundleSearchResult[] = [];
+      if (!kind) {
+        const listing = await listBundles(dataRepo);
+        for (const warning of listing.warnings) console.error(`⚠ ${warning}`);
+        for (const bundle of listing.bundles) {
+          for (const warning of new Set(bundle.warnings)) {
+            console.error(`⚠ ${warning}`);
+          }
+          if (bundle.malformed) continue;
+          const score = matchItem(terms, {
+            name: `bundles/${bundle.name}`,
+            tags: bundle.tags,
+            ...(bundle.description !== undefined && {
+              description: bundle.description,
+            }),
+            files: [
+              {
+                relPath: "members",
+                content: bundle.members.map(memberRef).join(" "),
+              },
+            ],
+          });
+          if (!score) continue;
+          bundleResults.push({ bundle, ...score });
+        }
+        bundleResults.sort((a, b) =>
+          compareResults(
+            { score: a.score, name: `bundles/${a.bundle.name}` },
+            { score: b.score, name: `bundles/${b.bundle.name}` },
+          ),
+        );
+      }
+
       if (opts.json) {
         console.log(
           JSON.stringify(
@@ -153,6 +200,25 @@ export function registerSearch(program: Command): void {
                   ...(match.file !== undefined && { file: match.file }),
                 })),
               })),
+              // Append-only: `results` stays items-only (no new `source`
+              // enum value); bundles ride a sibling top-level key.
+              ...(bundleResults.length > 0 && {
+                bundles: bundleResults.map((result) => ({
+                  name: result.bundle.name,
+                  score: result.score,
+                  ...(result.bundle.description !== undefined && {
+                    description: result.bundle.description,
+                  }),
+                  ...(result.bundle.tags.length > 0 && {
+                    tags: result.bundle.tags,
+                  }),
+                  members: result.bundle.members.map(memberRef),
+                  matches: result.matches.map((match) => ({
+                    term: match.term,
+                    field: match.field,
+                  })),
+                })),
+              }),
             },
             null,
             2,
@@ -163,22 +229,59 @@ export function registerSearch(program: Command): void {
 
       // Zero matches exit 0: search is a query, not a lookup — an empty
       // shelf-section is a valid answer.
-      if (results.length === 0) {
+      const total = results.length + bundleResults.length;
+      if (total === 0) {
         console.log("(no matches)");
         return;
       }
-      const plural = results.length === 1 ? "match" : "matches";
-      console.log(
-        `${results.length} ${plural} in ${homeRelative(dataRepo)} (+ system)`,
-      );
+      const plural = total === 1 ? "match" : "matches";
+      console.log(`${total} ${plural} in ${homeRelative(dataRepo)} (+ system)`);
       console.log("");
-      for (const result of results) {
-        const ref = `${result.kind}/${result.name}`;
+      // One ranked list: bundles interleave with items by score, name as the
+      // deterministic tie-break.
+      const rows: Array<
+        | { type: "item"; score: number; name: string; item: SearchResult }
+        | {
+            type: "bundle";
+            score: number;
+            name: string;
+            result: BundleSearchResult;
+          }
+      > = [
+        ...results.map((item) => ({
+          type: "item" as const,
+          score: item.score,
+          name: `${item.kind}/${item.name}`,
+          item,
+        })),
+        ...bundleResults.map((result) => ({
+          type: "bundle" as const,
+          score: result.score,
+          name: `bundles/${result.bundle.name}`,
+          result,
+        })),
+      ].sort(compareResults);
+      for (const row of rows) {
+        if (row.type === "item") {
+          const result = row.item;
+          console.log(
+            `  ${row.name.padEnd(33)} ${result.source.padEnd(6)}  matched: ${matchAnnotations(result.matches).join(", ")}`,
+          );
+          const suffix = metadataLineSuffix(result.meta);
+          if (suffix) console.log(`    ${suffix.trimStart()}`);
+          continue;
+        }
+        const { bundle, matches } = row.result;
         console.log(
-          `  ${ref.padEnd(33)} ${result.source.padEnd(6)}  matched: ${matchAnnotations(result.matches).join(", ")}`,
+          `  ${row.name.padEnd(33)} bundle  matched: ${matchAnnotations(matches).join(", ")}`,
         );
-        const suffix = metadataLineSuffix(result.meta);
-        if (suffix) console.log(`    ${suffix.trimStart()}`);
+        const detail = [
+          ...(bundle.description !== undefined
+            ? [truncatedDescription(bundle.description)]
+            : []),
+          ...(bundle.members.length > 0 ? [memberCountSummary(bundle)] : []),
+        ].join("  ");
+        if (detail) console.log(`    ${detail}`);
       }
     });
 }

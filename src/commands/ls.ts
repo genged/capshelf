@@ -32,6 +32,8 @@ import {
 } from "../metadata";
 import type { ItemMetadata } from "../metadata";
 import { assertNoScopeCollisions } from "../status-core";
+import { listBundles, memberCountSummary, memberRef } from "../bundles";
+import type { Bundle } from "../bundles";
 
 interface LsOptions {
   here?: boolean;
@@ -108,6 +110,22 @@ async function lsAvailable(
     printMetadataWarnings(meta);
   }
 
+  // Bundles are not a kind, so the section is suppressed under --kind;
+  // reads warn-and-degrade (a malformed bundle stays visible, name-only).
+  let bundleRows: Bundle[] = [];
+  if (!kind) {
+    const listing = await listBundles(dataRepo);
+    for (const warning of listing.warnings) console.error(`⚠ ${warning}`);
+    for (const bundle of listing.bundles) {
+      for (const warning of new Set(bundle.warnings)) {
+        console.error(`⚠ ${warning}`);
+      }
+    }
+    bundleRows = listing.bundles.filter((bundle) =>
+      matchesTagFilter(bundleMeta(bundle), tags),
+    );
+  }
+
   if (json) {
     const sysRows = await Promise.all(
       systemRows.map(async ({ item, meta }) => ({
@@ -130,7 +148,23 @@ async function lsAvailable(
     );
     console.log(
       JSON.stringify(
-        { dataRepo, system: sysRows, data: dataJsonRows },
+        {
+          dataRepo,
+          system: sysRows,
+          data: dataJsonRows,
+          // Append-only: a sibling top-level key; system/data rows unchanged.
+          ...(bundleRows.length > 0 && {
+            bundles: bundleRows.map((bundle) => ({
+              name: bundle.name,
+              path: bundle.path,
+              ...metadataJsonFields(bundleMeta(bundle)),
+              members: bundle.members.map(memberRef),
+              ...(bundle.malformed !== undefined && {
+                malformed: bundle.malformed,
+              }),
+            })),
+          }),
+        },
         null,
         2,
       ),
@@ -152,7 +186,6 @@ async function lsAvailable(
   console.log(`data/  (from ${homeRelative(dataRepo)})`);
   if (dataRows.length === 0) {
     console.log("  (none)");
-    return;
   }
 
   const byKind = new Map<ItemKind, typeof dataRows>();
@@ -170,6 +203,29 @@ async function lsAvailable(
       );
     }
   }
+
+  if (bundleRows.length === 0) return;
+  console.log("");
+  console.log(`bundles/  (from ${homeRelative(dataRepo)})`);
+  for (const bundle of bundleRows) {
+    // Malformed bundles list name-only so someone fixes them.
+    const counts = bundle.malformed ? "" : memberCountSummary(bundle);
+    const line = `  ${bundle.name.padEnd(33)}${counts ? ` ${counts}` : ""}${metadataLineSuffix(bundleMeta(bundle))}`;
+    console.log(line.trimEnd());
+  }
+}
+
+/** Bundle description/tags shaped as item metadata for shared helpers. */
+function bundleMeta(bundle: Bundle): ItemMetadata {
+  return {
+    ...(bundle.description !== undefined && {
+      description: bundle.description,
+    }),
+    tags: bundle.tags,
+    requires: [],
+    conflictsWith: [],
+    warnings: [],
+  };
 }
 
 function metadataJsonFields(meta: ItemMetadata): {

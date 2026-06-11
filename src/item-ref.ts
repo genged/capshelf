@@ -12,6 +12,14 @@ export interface ItemRef {
 export function parseItemRef(input: string): ItemRef {
   const raw = input.trim();
   if (!raw) throw new Error("empty item ref");
+  // ":" is reserved for future shelf-qualified refs (<shelf>:<kind>/<name>).
+  // See local/specs/multi-shelf-federation-spec.md, Compatibility
+  // Reservations, Group 2(a) — do not "fix" this restriction away.
+  if (raw.includes(":")) {
+    throw new Error(
+      `invalid item ref "${input}" (":" is reserved for future shelf-qualified refs)`,
+    );
+  }
 
   const parts = raw.split("/");
   if (parts.length === 1) {
@@ -20,9 +28,16 @@ export function parseItemRef(input: string): ItemRef {
   if (parts.length === 2) {
     const [kind, name] = parts;
     if (!kind || !isItemKind(kind)) {
-      throw new Error(
-        `invalid item kind "${kind ?? ""}" in "${input}" (supported: ${ITEM_KINDS.join(", ")})`,
-      );
+      const base = `invalid item kind "${kind ?? ""}" in "${input}" (supported: ${ITEM_KINDS.join(", ")})`;
+      // Bundles are not items (no lock entry, no sha); only add/show accept
+      // bundle refs, intercepted before this parser runs. Point agents there
+      // instead of dead-ending them.
+      if (kind === "bundles") {
+        throw new Error(
+          `${base}\n  bundles are not items — they expand at install time; use: capshelf add ${raw}, capshelf show ${raw}`,
+        );
+      }
+      throw new Error(base);
     }
     return { kind, name: requireName(name!, input) };
   }
@@ -92,6 +107,14 @@ function requireName(name: string, input: string): string {
   if (!name) throw new Error(`invalid item ref "${input}" (missing name)`);
   if (name === "." || name === "..") {
     throw new Error(`invalid item name "${name}"`);
+  }
+  // Same reservation as the parseItemRef guard: ":" in an item name would
+  // collide with the shelf-qualified ref grammar reserved by
+  // local/specs/multi-shelf-federation-spec.md (Group 2a).
+  if (name.includes(":")) {
+    throw new Error(
+      `invalid item name "${name}" (":" is reserved for future shelf-qualified refs)`,
+    );
   }
   return name;
 }

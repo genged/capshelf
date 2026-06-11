@@ -53,6 +53,44 @@ describe("parseItemRef", () => {
     expect(() => parseItemRef(".")).toThrow(/invalid item name/);
     expect(() => parseItemRef("skills/..")).toThrow(/invalid item name/);
   });
+
+  test("bundles refs are rejected with an add/show pointer", () => {
+    let message = "";
+    try {
+      parseItemRef("bundles/go-backend");
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    expect(message).toContain('invalid item kind "bundles"');
+    expect(message).toContain("capshelf add bundles/go-backend");
+    expect(message).toContain("capshelf show bundles/go-backend");
+  });
+
+  // ":" is reserved for future shelf-qualified refs; see
+  // local/specs/multi-shelf-federation-spec.md (Group 2a).
+  test("rejects refs containing the reserved colon", () => {
+    for (const ref of [
+      "team:security-review",
+      "skills/foo:bar",
+      "foo:bar",
+      ":security-review",
+      "security-review:",
+    ]) {
+      expect(() => parseItemRef(ref)).toThrow(
+        /":" is reserved for future shelf-qualified refs/,
+      );
+    }
+  });
+
+  test("plain and kind-qualified refs are unchanged by the colon guard", () => {
+    expect(parseItemRef("security-review")).toEqual({
+      name: "security-review",
+    });
+    expect(parseItemRef("skills/security-review")).toEqual({
+      kind: "skills",
+      name: "security-review",
+    });
+  });
 });
 
 describe("findMasterItemByRef", () => {

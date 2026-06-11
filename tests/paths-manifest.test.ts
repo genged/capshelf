@@ -329,6 +329,73 @@ describe("manifest commands migration", () => {
     });
   });
 
+  // "shelves" is reserved for multi-shelf federation; see
+  // local/specs/multi-shelf-federation-spec.md (Group 2b).
+  test("loadManifest fails loudly on a reserved shelves key", async () => {
+    for (const shelves of [[], null, "team"]) {
+      const project = await tempDir();
+      await mkdir(join(project, ".capshelf"), { recursive: true });
+      const raw = JSON.stringify({
+        shelves,
+        skills: [],
+        settings: [],
+        mcp: [],
+        codexConfig: [],
+      });
+      await writeFile(manifestPath(project), raw);
+
+      await expect(loadManifest(project)).rejects.toThrow(
+        /multi-shelf federation, which this capshelf version does not support; upgrade capshelf/,
+      );
+      // The error names the manifest path and is distinct from the legacy
+      // dataRepo message.
+      const err = await loadManifest(project).then(
+        () => null,
+        (e: unknown) => e as Error,
+      );
+      expect(err?.message).toContain(manifestPath(project));
+      expect(err?.message).not.toMatch(/legacy dataRepo/);
+      // Nothing was written: the file is byte-identical.
+      expect(await readFile(manifestPath(project), "utf-8")).toBe(raw);
+    }
+  });
+
+  test("loadLocalConfig fails loudly on a reserved shelves key", async () => {
+    const project = await tempDir();
+    await mkdir(join(project, ".capshelf"), { recursive: true });
+    const raw = JSON.stringify({ dataRepo: "/tmp/data", shelves: [] });
+    await writeFile(localConfigPath(project), raw);
+
+    await expect(loadLocalConfig(project)).rejects.toThrow(
+      /multi-shelf federation, which this capshelf version does not support; upgrade capshelf/,
+    );
+    await expect(loadLocalConfig(project)).rejects.toThrow(
+      localConfigPath(project),
+    );
+    expect(await readFile(localConfigPath(project), "utf-8")).toBe(raw);
+  });
+
+  test("manifests and local configs without shelves round-trip unchanged", async () => {
+    const project = await tempDir();
+    const manifest = emptyManifest();
+    manifest.skills.push("hello");
+    await saveManifest(project, manifest);
+    expect(await loadManifest(project)).toEqual(manifest);
+
+    await saveLocalConfig(project, {
+      dataRepo: "/tmp/data",
+      skills: ["hello"],
+      settings: [],
+      mcp: [],
+    });
+    expect(await loadLocalConfig(project)).toEqual({
+      dataRepo: "/tmp/data",
+      skills: ["hello"],
+      settings: [],
+      mcp: [],
+    });
+  });
+
   test("loadManifest rejects legacy dataRepo with manual fix guidance", async () => {
     const project = await tempDir();
     await mkdir(join(project, ".capshelf"), { recursive: true });

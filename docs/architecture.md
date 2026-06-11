@@ -98,13 +98,15 @@ A data repo is any directory matching this layout, with its own git history:
 │   └── config/
 │       └── <name>/
 │           └── config.toml     (→ <project>/.codex/config.toml)
+├── bundles/                    optional named item sets (manifest macros)
+│   └── <name>.yml
 └── .git/                       required: a data repo MUST be a git repo
 ```
 
 Items may carry an optional `.capshelf.yml` metadata sidecar at their
-directory root (see Item Metadata below). Bundles are a planned extension.
-The CLI discovers installable items only from `skills/`, `settings/`,
-`mcp/`, and `codex/config/`.
+directory root (see Item Metadata below). The CLI discovers installable
+items only from `skills/`, `settings/`, `mcp/`, and `codex/config/`;
+`bundles/*.yml` files are catalog data, not items (see Bundles below).
 
 Multiple data repos can coexist on a single machine. Projects pick one in their manifest.
 
@@ -371,20 +373,50 @@ canonical source paths only. `ls`/`show`/`search` read metadata from the
 data repo **working tree** — a catalog view of the shelf as it is now, not a
 pinned view per `sourceCommit`.
 
-## Roadmap Bundles
+## Bundles
 
-Bundles are not implemented in the current CLI. The intended model is a
-manifest macro: a future bundle command would expand a named bundle into the
-project manifest, and after that each item would be locked independently.
-Bundles would not be a versioning unit.
+A bundle is a **manifest macro, not a versioning unit**: `capshelf add
+bundles/<name>` expands a named set into the project manifest, and after
+expansion every member is locked independently — exactly as if it had been
+added one `capshelf add` at a time.
 
 ```yaml
 # bundles/go-backend.yml
+description: Everything a Go backend service needs.
+tags: [go, backend]
 includes:
   skills:   [security-review, go-test-writer]
   settings: [permissions-base, permissions-go]
   mcp:      [github, postgres-local]
 ```
+
+Properties of the implemented model:
+
+- **Traceless.** A bundle has no lock entry, no sha, no project-side state.
+  `status`, `update`, `rm`, and `promote` see only items; the bundle name is
+  echoed only in `add` output (human and `--json`) for the agent's commit
+  message. The bundle file itself is never hashed, pinned, or materialized —
+  it is read fresh from the data repo working tree (and may be uncommitted),
+  while member items still go through the standard clean-path checks.
+- **All-or-nothing preflight.** Every deterministic refusal — missing
+  members, symmetric `conflicts-with` (vs installed items and vs sibling
+  members), cross-scope ownership, untracked targets, dirty data-repo paths,
+  and fragment unmanaged collisions (via a dry-run merge plan against the
+  full post-bundle fragment set) — is caught read-only before any write. A
+  failure yields a per-member report, zero writes, exit 3. Manifest and lock
+  are persisted after each member during install, so the one failure
+  preflight cannot rule out (mid-install I/O) leaves a consistent prefix
+  that a re-run converges past.
+- **Skip already-installed members.** Re-running a bundle add never
+  re-applies or pin-bumps installed members (standalone `add` keeps its
+  implicit re-apply; the skip is the bundle executor's). Re-run is both the
+  recovery path and the upgrade path after the team grows the bundle.
+- **Flat composition.** Bundles cannot include bundles; `show
+  bundles/<name>` always displays the complete literal member list with
+  per-member availability and install state.
+- **Discovery.** `ls` appends a `bundles/` section, `search` ranks bundles
+  alongside items (member refs score as content), and all bundle JSON
+  surfaces are append-only sibling keys.
 
 ## Codex parity
 
@@ -393,6 +425,6 @@ Same model, different output paths. Codex items live under `codex/` in a data re
 ## What the human does (and doesn't)
 
 Humans approve data-repo writes and glance at `status` when starting a project.
-Agents handle the current CLI workflow — discover (`search`, `ls --tag`),
-inspect, edit, share, move, promote, and reconcile — via the CLI surface in
-`cli.md`. Validation and bundle composition are roadmap workflows.
+Agents handle the current CLI workflow — discover (`search`, `ls --tag`,
+`show bundles/<name>`), inspect, edit, share, move, promote, and reconcile —
+via the CLI surface in `cli.md`. Validation is a roadmap workflow.

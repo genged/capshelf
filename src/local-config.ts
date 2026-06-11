@@ -32,9 +32,17 @@ export async function loadLocalConfig(
 ): Promise<LocalConfig | null> {
   const path = localConfigPath(project);
   if (!existsSync(path)) return null;
-  const parsed = LocalConfigSchema.parse(
-    JSON.parse(await readFile(path, "utf-8")),
-  );
+  const raw = JSON.parse(await readFile(path, "utf-8"));
+  // "shelves" is reserved for multi-shelf federation. Fail loudly before zod
+  // strips it and a later saveLocalConfig silently deletes it. See
+  // local/specs/multi-shelf-federation-spec.md, Compatibility Reservations,
+  // Group 2(b).
+  if (hasShelvesKey(raw)) {
+    throw new Error(
+      `${path} declares "shelves": this project uses multi-shelf federation, which this capshelf version does not support; upgrade capshelf`,
+    );
+  }
+  const parsed = LocalConfigSchema.parse(raw);
   return {
     dataRepo: expandTilde(parsed.dataRepo),
     skills: parsed.skills,
@@ -131,6 +139,12 @@ export async function assertLocalInstallPathsUntracked(
       );
     }
   }
+}
+
+// Duplicated from manifest.ts (importing it would create a module cycle via
+// paths.ts): a `shelves` key with any value, including `null`, is reserved.
+function hasShelvesKey(value: unknown): boolean {
+  return typeof value === "object" && value !== null && "shelves" in value;
 }
 
 export function assertLocalScopeSupported(

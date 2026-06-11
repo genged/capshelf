@@ -28,13 +28,15 @@ capshelf search security --json
 
 Zero matches exit 0 — an empty answer is a valid answer, not an error. To browse instead, use `capshelf ls --tag <tag>` (repeatable, AND) or `ls --kind <kind>`. Descriptions and tags are the selection signal.
 
+Results with a `bundles/` prefix are **bundles** — curated item sets. Prefer them when setting up a project: `capshelf show bundles/<name>` to preview members and install state, then `capshelf add bundles/<name>` to expand. Expansion is traceless (members become ordinary independent items); the `bundle` field in `add --json` is the only echo and is what belongs in a commit message.
+
 ### 3. Evaluate before installing
 
 `capshelf show <item>` prints the full description, `requires`, `conflicts-with`, and whether each relation is already installed. Use it before committing to an `add`.
 
 ### 4. Install
 
-`capshelf add <item>`. If the output lists missing required items, install them with the exact `capshelf add <ref>` commands it prints. If `add` refuses with exit 3 because of a `conflicts-with` declaration, that is a curated incompatibility — surface the decision to the user (remove the conflicting item, or fix a stale declaration in the data repo); never work around it.
+`capshelf add <item>`. If the output lists missing required items, install them with the exact `capshelf add <ref>` commands it prints. If `add` refuses with exit 3 because of a `conflicts-with` declaration, that is a curated incompatibility — surface the decision to the user (remove the conflicting item, or fix a stale declaration in the data repo); never work around it. A bundle preflight refusal (exit 3) is the same kind of decision: nothing was installed and the per-member report says why — surface it, don't install members one by one to route around it.
 
 ### 5. Verify
 

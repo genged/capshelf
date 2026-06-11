@@ -148,6 +148,15 @@ capshelf get-path mcp/github --target codex
 capshelf get-path mcp/github --target codex --output
 ```
 
+Set up a whole service from a curated bundle (`bundles/<name>.yml` in the
+data repo) — members install as independent items, all-or-nothing:
+
+```bash
+capshelf search "go backend"
+capshelf show bundles/go-backend     # preview members + install state
+capshelf add bundles/go-backend
+```
+
 Bootstrap a new project straight from a shared data repo URL (capshelf clones
 it once under `~/.local/share/capshelf/data/...`, or to `--data-dir <path>`,
 and binds the local clone):
@@ -221,9 +230,9 @@ reported as external state instead of overwritten.
 | `set-upstream` | write the committed upstream URL |
 | `data-path` | print the resolved local data repo path |
 | `sync-data` | fetch the data repo's `origin` and fast-forward when safe; the only network command besides the `init` bootstrap clone and `self-update` |
-| `ls` / `show` | inspect data repo items or installed items, with descriptions and tags from item metadata |
-| `search` | find items by name, tags, description, or content |
-| `add` / `rm` | add or remove an item in this project |
+| `ls` / `show` | inspect data repo items, installed items, and bundles, with descriptions and tags from item metadata |
+| `search` | find items and bundles by name, tags, description, or content |
+| `add` / `rm` | add or remove an item in this project; `add bundles/<name>` expands a bundle |
 | `status` | report drift, missing files, and update availability |
 | `apply` | reconcile project files to the current locks |
 | `update` | bump pins to data repo HEAD, then apply |
@@ -260,9 +269,10 @@ Skills, settings fragments, MCP fragments, and project-scoped Codex config
 fragments are implemented. Fragment outputs preserve project-local values and
 fragment promotion commits canonical data repo source files, not generated
 outputs. Item metadata (`.capshelf.yml` sidecars) drives `ls --tag`, `search`,
-and `add`-time `requires`/`conflicts-with` checks. `validate`, `diff`,
-`doctor`, `journal`, `bundle`, and Codex custom agent copy items are on the
-roadmap.
+and `add`-time `requires`/`conflicts-with` checks. Bundles
+(`capshelf add bundles/<name>`) expand curated item sets all-or-nothing with
+no project-side bundle state. `validate`, `diff`, `doctor`, `journal`, and
+Codex custom agent copy items are on the roadmap.
 
 ## Further Reading
 
@@ -270,4 +280,5 @@ roadmap.
 - [`docs/architecture.md`](docs/architecture.md) - data model and rationale
 - [`docs/cli.md`](docs/cli.md) - full command reference, flags, exit codes
 - [`docs/team-workflow.md`](docs/team-workflow.md) - team loop: sync-data, propose-upstream recipe, CI drift gate
+- [`docs/security.md`](docs/security.md) - trust model, threat model per item kind, guidance for teams
 - [`AGENTS.md`](AGENTS.md) - guidance for coding agents working in this repo

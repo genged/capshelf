@@ -37,11 +37,11 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
 | `set-upstream <url>` | write the committed `dataRepoUpstream` URL in `.capshelf/capshelf.json` | implemented |
 | `data-path` | print the resolved local data repo path; `--json` includes the path and the normalized upstream (`null` when absent) | implemented |
 | `sync-data` | explicitly fetch the bound data repo's `origin` and fast-forward the current branch when provably safe; the only capshelf command that performs network I/O besides the `init --data <url>` bootstrap clone and `self-update` | implemented |
-| `ls` | list items in master (default) or in this project (`--here`); shows descriptions and `#tags` from item metadata; `--tag` filters | implemented |
-| `show <item>` | print metadata + content for one item, including `requires`/`conflicts-with` install state; `--json` always carries a `metadata` object | implemented |
-| `search <query...>` | search available items (data repo + system) by name, tags, description, and content; supports `--kind` and `--json`; zero matches exit 0 | implemented |
+| `ls` | list items in master (default) or in this project (`--here`); shows descriptions and `#tags` from item metadata; `--tag` filters; appends a `bundles/` section for data-repo bundles | implemented |
+| `show <item>` | print metadata + content for one item, including `requires`/`conflicts-with` install state; `--json` always carries a `metadata` object; `show bundles/<name>` previews bundle membership with per-member install state | implemented |
+| `search <query...>` | search available items (data repo + system) and bundles by name, tags, description, and content; supports `--kind` and `--json`; zero matches exit 0 | implemented |
 | `status [<item>]` | drift / update report for this project; `--project` and `--local` filter scopes; `--diff` explains local drift; reports `missing_source_commit` when a locked `sourceCommit` is unreachable in the data repo | implemented |
-| `add <item>` | install an item from the bound data repo; `--local` installs a clone-local skill; warns on unmet `requires`, refuses on `conflicts-with` (exit 3) | implemented |
+| `add <item>` | install an item from the bound data repo; `--local` installs a clone-local skill; warns on unmet `requires`, refuses on `conflicts-with` (exit 3); `add bundles/<name>` expands a bundle (see Bundles) | implemented |
 | `rm <item>` | remove from this project; `--local` removes clone-local skills | implemented |
 | `get-path <item>` | print the editable path; skills return their managed directory, fragments support `--output` for generated output paths, and MCP supports `--target` | implemented |
 | `apply [<item>]` | reconcile project and local files with lockfiles (data items via `git show <sourceCommit>`; system items from bundled content; fragments via merged outputs); supports `--local` and `--dry-run` | implemented |
@@ -56,7 +56,9 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
 | `diff <name> [<ref>]` | show what would change on apply/update/promote | roadmap |
 | `doctor` | audit integrity (requires/conflicts, lockfile drift, uniqueness, system/data namespace collisions) | roadmap |
 | `journal` | recent activity (who/when/what) | roadmap |
-| `bundle` | apply / save / list bundles | roadmap |
+
+Bundles ride the existing `add`/`show` verbs with a `bundles/<name>` ref —
+there is no separate `bundle` verb family. See Bundles below.
 
 ## Common Flags
 
@@ -140,6 +142,80 @@ and exit 0 — an empty answer is a valid answer. Tag filtering belongs to
 capshelf search "sql injection"
 capshelf search security --kind skills --json
 ```
+
+Bundles are searched too (when no `--kind` filter is set): a bundle scores
+its name, tags, and description with the same weights, and its member refs
+score as the content field — `search postgres` surfaces the bundle that
+includes `mcp/postgres-local`. Bundles interleave into the human ranked
+list with a `bundles/` prefix; `search --json` keeps `results` items-only
+and appends a sibling top-level `bundles` key.
+
+## Bundles
+
+A bundle is a named set of items defined as a single YAML file at the data
+repo root, so "set up a new Go service" is one command:
+
+```yaml
+# bundles/go-backend.yml
+description: Everything a Go backend service needs.
+tags: [go, backend]
+includes:
+  skills:   [security-review, go-test-writer]
+  settings: [permissions-base, permissions-go]
+  mcp:      [github, postgres-local]
+  codex-config: [defaults]
+```
+
+```bash
+capshelf ls                          # bundles/ section appended
+capshelf search "go backend"         # bundles rank alongside items
+capshelf show bundles/go-backend     # preview members + install state
+capshelf add bundles/go-backend      # expand
+```
+
+Semantics:
+
+- **A bundle is a macro, not a versioning unit.** Expansion installs each
+  member through the same pipeline as `capshelf add <kind>/<name>` — same
+  checks, same `requires` warnings, same `conflicts-with` refusals, same
+  independent lock entries. The bundle leaves **no trace** in the manifest
+  or lock; the `bundle` field in `add --json` output is the only echo.
+- **All-or-nothing.** Every deterministic refusal (missing member,
+  conflict, cross-scope ownership, untracked target, dirty data-repo path,
+  fragment unmanaged collision) is caught in a read-only preflight. Any
+  failure prints a per-member report, makes no writes, and exits 3.
+- **Converge on re-run.** Already-installed members are skipped with a
+  note — never re-applied or pin-bumped (pin movement is `update`'s job).
+  Re-running after the team grows the bundle adds only the new members.
+- **Bundle names**: item-name rules plus `:` is rejected. Member names are
+  bare (the kind is structural); member order within a kind flows into the
+  manifest, so bundle authors control fragment merge precedence. Only
+  `.yml` is recognized; `.yaml` warns and is ignored. Bundles cannot
+  include bundles.
+- **Scope**: `add bundles/<name> --local` works for skills-only bundles;
+  any fragment member fails preflight with one aggregated error naming all
+  fragment members.
+- **Freshness**: the bundle file is read from the data repo working tree
+  and may be uncommitted (nothing pins it); member items still require
+  clean, committed paths individually.
+- **Reads degrade, installs refuse.** A malformed bundle stays visible in
+  `ls` (name-only, stderr warning) but `add` refuses it — same for an
+  `includes` kind this capshelf version does not know.
+- `rm`, `status`, `update`, `promote`, and every other item command keep
+  rejecting `bundles/<name>` — after expansion the members are ordinary
+  items, and a traceless macro has nothing for them to operate on.
+
+Bundle exit codes:
+
+| situation | code |
+|---|---|
+| `add bundles/<x>`: bundle file not found | 2 |
+| `add bundles/<x>`: any preflight failure, malformed/unsupported bundle file, or `--local` with fragment members | 3 (per-member report printed first) |
+| `add bundles/<x>`: all members already installed, or empty bundle | 0 |
+| `add bundles/<x>`: unmet `requires` across the expanded set | 0 + stderr warning + JSON `missingRequires` |
+| `show bundles/<x>`: bundle not found | 2 |
+| `show bundles/<x>` with `--target`/`--no-content` | 3 |
+| `bundles/<name>` passed to any other item command | 1 (invalid-kind error pointing at `add`/`show`) |
 
 ## Binary self-update
 
@@ -314,8 +390,8 @@ this command closes.
 |---|---|
 | 0 | success |
 | 1 | generic error (missing args, bad config, I/O) |
-| 2 | item not found in data repo |
-| 3 | conflict (promote would clobber, operation rejected on a system item, untracked target would be overwritten, path is managed by skills.sh, `add` refused by a `conflicts-with` declaration, or `sync-data` cannot run in the current configuration: detached HEAD, no tracking ref, no origin) |
+| 2 | item or bundle not found in data repo |
+| 3 | conflict (promote would clobber, operation rejected on a system item, untracked target would be overwritten, path is managed by skills.sh, `add` refused by a `conflicts-with` declaration, a bundle failed preflight or its file is malformed/unsupported, or `sync-data` cannot run in the current configuration: detached HEAD, no tracking ref, no origin) |
 | 4 | drift detected (for `status --strict`), upstream verification failed, or `sync-data` needs human action (diverged history, or upstream commits blocked by a dirty worktree) |
 | 5 | reserved for future unmet-requires checks (`add` with unmet `requires` warns and exits 0) |
 | 6 | reserved for data repo not configured |
@@ -517,8 +593,8 @@ An MCP server would let agents call `capshelf_add`, `capshelf_status`, etc. as f
 
 Everything else in the current CLI surface — inspect, edit, share, move,
 promote, and reconcile — is the agent's job, and `search` plus item metadata
-give it the discovery loop. Validation and bundles are roadmap workflow
-extensions.
+and bundles give it the discovery loop. Validation is a roadmap workflow
+extension.
 
 ## Config Fragments
 

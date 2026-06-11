@@ -1,8 +1,13 @@
 import type { Command } from "commander";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { isFragmentItemKind, shaOfGitVisibleItem } from "../master";
-import { projectRoot, resolveDataRepo } from "../paths";
+import {
+  isFragmentItemKind,
+  listMasterItems,
+  shaOfGitVisibleItem,
+} from "../master";
+import { homeRelative, projectRoot, resolveDataRepo } from "../paths";
+import { isBundleRef, loadBundle, memberRef } from "../bundles";
 import { loadLocalLock, loadLock, dataKey, systemKey } from "../lock";
 import type { Lock } from "../lock";
 import { loadManifest } from "../manifest";
@@ -43,6 +48,15 @@ export function registerShow(program: Command): void {
     .option("--json", "output JSON (no content dump)")
     .option("--no-content", "skip content dump")
     .action(async (itemRef: string, opts: ShowOptions, cmd: Command) => {
+      // Bundle refs branch BEFORE parseItemRef: the parser rejects "bundles"
+      // as an item kind, so testing afterwards would be dead code behind an
+      // exit-1 throw (local/specs/bundles-spec.md).
+      const bundleName = isBundleRef(itemRef);
+      if (bundleName !== null) {
+        await showBundle(bundleName, opts, cmd);
+        return;
+      }
+
       const ref = parseItemRef(itemRef);
       const project = projectRoot();
       const manifest = await loadManifest(project);
@@ -179,6 +193,117 @@ export function registerShow(program: Command): void {
 
 function relativeProjectPath(project: string, path: string): string {
   return path.startsWith(`${project}/`) ? path.slice(project.length + 1) : path;
+}
+
+/**
+ * Preview a bundle: the literal member list with per-member availability and
+ * install state ("installed" reads both locks, same definition as items).
+ * Bundles have no content to dump and no fragment target to pick, so
+ * `--target` and `--no-content` are rejected (exit 3). Malformed bundles
+ * degrade: the warning and path stay visible (read path).
+ */
+async function showBundle(
+  name: string,
+  opts: ShowOptions,
+  cmd: Command,
+): Promise<void> {
+  if (opts.target !== undefined) {
+    throw new PreconditionError(
+      `--target is not valid for bundles/${name} — bundles have no fragment target`,
+    );
+  }
+  if (opts.content === false) {
+    throw new PreconditionError(
+      `--no-content is not valid for bundles/${name} — bundles have no content to dump`,
+    );
+  }
+
+  const project = projectRoot();
+  const manifest = await loadManifest(project);
+  const lock = await loadLock(project);
+  const localLock = await loadLocalLock(project);
+  const dataRepo = await resolveDataRepo({
+    override: globalOpts(cmd).data,
+    manifest,
+    project,
+  });
+  await assertIsGitRepo(dataRepo);
+
+  const bundle = await loadBundle(dataRepo, name);
+  if (!bundle) {
+    throw new NotFoundError(
+      `bundle not found in data repo (${dataRepo}): bundles/${name}`,
+    );
+  }
+  for (const warning of new Set(bundle.warnings)) {
+    console.error(`⚠ ${warning}`);
+  }
+
+  const available = new Set(
+    (await listMasterItems(dataRepo)).map((i) => `${i.kind}/${i.name}`),
+  );
+  const rows = bundle.members.map((member) => {
+    const ref = memberRef(member);
+    const key = dataKey(member.kind, member.name);
+    const projectEntry = lock.items[key];
+    const entry = projectEntry ?? localLock.items[key];
+    return {
+      ref,
+      available: available.has(ref),
+      installed: entry !== undefined,
+      ...(entry && {
+        scope: projectEntry ? ("project" as const) : ("local" as const),
+        lockedSha: entry.sha,
+      }),
+    };
+  });
+
+  if (opts.json) {
+    console.log(
+      JSON.stringify(
+        {
+          bundle: bundle.name,
+          path: bundle.path,
+          ...(bundle.description !== undefined && {
+            description: bundle.description,
+          }),
+          tags: bundle.tags,
+          members: rows,
+          ...(bundle.malformed !== undefined && {
+            malformed: bundle.malformed,
+          }),
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+
+  console.log(`bundles/${bundle.name}  (${homeRelative(bundle.path)})`);
+  if (bundle.description !== undefined) {
+    console.log(`  description: ${bundle.description}`);
+  }
+  if (bundle.tags.length > 0) {
+    console.log(`  tags:        ${bundle.tags.join(", ")}`);
+  }
+  if (bundle.malformed !== undefined) {
+    console.log(`  (bundle file is malformed — members unknown)`);
+    return;
+  }
+  console.log("  members:");
+  if (rows.length === 0) {
+    console.log("    (none)");
+  }
+  for (const row of rows) {
+    const state = !row.available
+      ? "MISSING from data repo"
+      : row.installed
+        ? `installed (${row.scope}) @ ${row.lockedSha}`
+        : "not installed";
+    console.log(`    ${row.ref.padEnd(31)} ${state}`);
+  }
+  console.log(`  install:     capshelf add bundles/${bundle.name}`);
 }
 
 async function showSystem(

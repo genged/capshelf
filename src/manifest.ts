@@ -58,6 +58,16 @@ export async function loadManifest(project: string): Promise<Manifest> {
   if (!p) return emptyManifest();
   const raw = await readFile(p, "utf-8");
   const parsed = JSON.parse(raw);
+  // "shelves" is reserved for multi-shelf federation. Detect it before zod
+  // parsing: the non-strict schema would silently strip it and the next
+  // saveManifest would delete the federation config with no error. See
+  // local/specs/multi-shelf-federation-spec.md, Compatibility Reservations,
+  // Group 2(b).
+  if (hasShelvesKey(parsed)) {
+    throw new Error(
+      `${p} declares "shelves": this project uses multi-shelf federation, which this capshelf version does not support; upgrade capshelf`,
+    );
+  }
   if (hasLegacyDataRepo(parsed)) {
     const legacyDataRepo = (parsed as { dataRepo: string }).dataRepo;
     throw new Error(
@@ -115,6 +125,15 @@ export function removeManifestName(
   const list = manifestNamesForKind(manifest, kind);
   const index = list.indexOf(name);
   if (index !== -1) list.splice(index, 1);
+}
+
+/**
+ * True when a parsed JSON document carries a `shelves` key with any value
+ * (including `null`). Reserved by the federation spec; see `loadManifest`.
+ * (Duplicated in local-config.ts to avoid a module cycle via paths.ts.)
+ */
+function hasShelvesKey(value: unknown): boolean {
+  return typeof value === "object" && value !== null && "shelves" in value;
 }
 
 function hasLegacyDataRepo(value: unknown): boolean {
