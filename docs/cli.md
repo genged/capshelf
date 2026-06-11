@@ -46,7 +46,7 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
 | `get-path <item>` | print the editable path; skills return their managed directory, fragments support `--output` for generated output paths, and MCP supports `--target` | implemented |
 | `apply [<item>]` | reconcile project and local files with lockfiles (data items via `git show <sourceCommit>`; system items from bundled content; fragments via merged outputs); supports `--local` and `--dry-run` | implemented |
 | `update [<item>...]` | bump project pins by default; `--local` or an explicit local-only skill ref updates local pins; supports `--dry-run` | implemented |
-| `share <item>` | adopt a not-yet-shared on-disk item into the data repo; fragments require `--from` and project scope | implemented |
+| `share <item>` | adopt a not-yet-shared on-disk item into the data repo; fragments require project scope plus `--from <file>` or `--pick <path>` | implemented |
 | `move <item> --to <scope>` | move an already-tracked data item between local and project scope without changing data-repo content | implemented |
 | `promote <item>` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects local-scope skills; refuses stale promotes unless `--stale-ok` | implemented |
 | `keep-local <item>` | mark drifted copy-item content as intentional project-local divergence; supports `--local` for skills and rejects fragments | implemented |
@@ -645,7 +645,8 @@ fragment sources: capshelf's merge and hash pipeline round-trips values through
 JSON, which cannot preserve TOML date types (a local date would silently become
 a string or an offset date-time on re-emit).
 
-`share` for fragments requires an explicit source file and project scope:
+`share` for fragments requires project scope and either an explicit source
+file (`--from`) or extraction from the generated output (`--pick`):
 
 ```bash
 capshelf share settings/security --from ./settings.json --to project
@@ -653,6 +654,29 @@ capshelf share mcp/github --target claude --from ./claude-mcp.json --to project
 capshelf share mcp/github --target codex --from ./codex-mcp.toml --to project
 capshelf share codex-config/defaults --from ./config.toml --to project
 ```
+
+`--pick <path>` (repeatable) extracts values that already live in the
+generated output instead of requiring a separate source file. Only the
+*unmanaged remainder* is eligible — the current output minus every locked
+fragment's contribution — so picking a value that another fragment manages
+fails and names the owning fragment. Extraction is deterministic because
+unmanaged values have exactly one owner: the project. The output file is
+unchanged by the share; the picked values simply become managed by the new
+fragment. Settings and codex-config picks are dot-separated paths into the
+output; for mcp fragments a bare pick is sugar for a server name
+(`mcpServers.<name>` for `--target claude`, `mcp_servers.<name>` for
+`--target codex`):
+
+```bash
+capshelf share settings/permissions --pick permissions.allow --to project
+capshelf share settings/security --pick permissions.deny --pick sandbox --to project
+capshelf share mcp/github --pick github --target claude --to project
+capshelf share mcp/github --pick github --target codex --to project
+capshelf share codex-config/defaults --pick model --to project
+```
+
+`--pick` and `--from` are mutually exclusive, and `--pick` is rejected for
+non-fragment items.
 
 `promote` commits canonical source files, not generated outputs. For example,
 edit the path from `capshelf get-path mcp/github --target codex`, then run

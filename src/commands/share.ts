@@ -1,9 +1,9 @@
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { projectRoot, resolveDataRepo } from "../paths";
-import { loadManifest, saveManifest } from "../manifest";
+import { loadManifest, saveManifest, type Manifest } from "../manifest";
 import { addManifestName } from "../manifest";
 import {
   dataKey,
@@ -34,19 +34,25 @@ import {
   applyFragmentOutput,
   currentFragmentSourcesForItem,
   fragmentOutputPath,
+  fragmentOutputSpec,
   fragmentSourceCandidates,
+  fragmentValuesForTarget,
   isFragmentKind,
   parseFragmentSourceText,
   shaOfFragmentItem,
   sourceMatchesCliTarget,
   sourceTargetForCli,
+  type FragmentSource,
 } from "../fragments";
+import { extractPickedFragment } from "../fragment-pick";
+import { mergeConfigObjects } from "../config-values";
 
 type ShareScope = "project" | "local";
 
 interface ShareOptions {
   to?: string;
   from?: string;
+  pick?: string[];
   target?: string;
   message?: string;
   json?: boolean;
@@ -61,6 +67,11 @@ export function registerShare(program: Command): void {
       "resulting scope: local or project (default: local)",
     )
     .option("--from <path>", "source file for fragment items")
+    .option(
+      "--pick <path>",
+      "extract an unmanaged value from the generated output instead of --from; repeatable (fragment items; mcp picks accept bare server names)",
+      collectPick,
+    )
     .option(
       "--target <target>",
       "fragment target for mcp items: claude or codex",
@@ -85,6 +96,11 @@ export function registerShare(program: Command): void {
       if (isFragmentKind(kind)) {
         await shareFragment(kind, name, scope, opts, cmd);
         return;
+      }
+      if (opts.pick !== undefined) {
+        throw new PreconditionError(
+          "--pick is only valid for fragment items (settings, mcp, codex-config)",
+        );
       }
 
       const project = projectRoot();
@@ -207,9 +223,15 @@ async function shareFragment(
   if (scope !== "project") {
     assertLocalScopeSupported(kind, name, "share");
   }
-  if (!opts.from) {
+  const picks = opts.pick ?? [];
+  if (opts.from && picks.length > 0) {
     throw new PreconditionError(
-      `share ${kind}/${name} requires --from <path>; generated outputs cannot be converted back to one fragment safely`,
+      `share ${kind}/${name} accepts either --from or --pick, not both`,
+    );
+  }
+  if (!opts.from && picks.length === 0) {
+    throw new PreconditionError(
+      `share ${kind}/${name} requires --from <path> or --pick <path>; managed values in generated outputs cannot be converted back to one fragment safely`,
     );
   }
   const cliTarget = sourceTargetForCli(opts.target);
@@ -249,7 +271,16 @@ async function shareFragment(
       `fragment source already exists: ${source.relPath}`,
     );
   }
-  const raw = await readFile(opts.from, "utf-8");
+  const raw = opts.from
+    ? await readFile(opts.from, "utf-8")
+    : await extractPickedSource({
+        project,
+        dataRepo,
+        manifest,
+        lock: projectLock,
+        source,
+        picks,
+      });
   parseFragmentSourceText(source, raw);
   await mkdir(dirname(canonicalPath), { recursive: true });
   await writeFile(canonicalPath, raw);
@@ -302,6 +333,7 @@ async function shareFragment(
           sha,
           sourceCommit,
           committed: true,
+          ...(picks.length > 0 && { picks }),
           sources: sources.map((fragmentSource) => ({
             target: fragmentSource.sourceTarget ?? fragmentSource.target,
             sourcePath: fragmentSource.relPath,
@@ -324,6 +356,48 @@ async function shareFragment(
   for (const fragmentSource of sources) {
     console.log(`  ${fragmentSource.relPath}`);
   }
+}
+
+function collectPick(value: string, previous?: string[]): string[] {
+  return [...(previous ?? []), value];
+}
+
+async function extractPickedSource(opts: {
+  project: string;
+  dataRepo: string;
+  manifest: Manifest;
+  lock: Lock;
+  source: FragmentSource;
+  picks: string[];
+}): Promise<string> {
+  const spec = fragmentOutputSpec(opts.source.target);
+  const outputPath = spec.outputPath(opts.project);
+  const outputLabel = relative(opts.project, outputPath);
+  if (!existsSync(outputPath)) {
+    throw new PreconditionError(
+      `--pick requires ${outputLabel} to exist; nothing to extract from`,
+    );
+  }
+  const current = spec.parse(await readFile(outputPath, "utf-8"), outputLabel);
+  const managedFragments = await fragmentValuesForTarget({
+    dataRepo: opts.dataRepo,
+    manifest: opts.manifest,
+    lock: opts.lock,
+    target: opts.source.target,
+  });
+  const managed = spec.normalizeOutput(
+    mergeConfigObjects(managedFragments.map((fragment) => fragment.value)),
+  );
+  return spec.stringify(
+    extractPickedFragment({
+      source: opts.source,
+      picks: opts.picks,
+      current,
+      managed,
+      managedFragments,
+      outputLabel,
+    }),
+  );
 }
 
 function parseShareScope(value: string | undefined): ShareScope {

@@ -3,8 +3,9 @@
 Capshelf 0.4 is about working with other people — and other agents. You can
 now hand a teammate a single URL to get them productive, your coding agent
 can discover what's on the shelf instead of guessing from names, a team can
-flow changes through the data repo safely in both directions, and curated
-bundles set up a whole project in one command.
+flow changes through the data repo safely in both directions, settings and
+MCP servers you've already configured can be shared without hand-crafting
+fragment files, and curated bundles set up a whole project in one command.
 
 Everything below is additive: existing projects, lockfiles, and data repos
 keep working unchanged. The one removal is the long-deprecated
@@ -150,6 +151,35 @@ their pins, so re-running a bundle after it grows installs just the new
 members. After expansion the members are ordinary independent items — the
 bundle is a macro, not a versioning unit, so one project updating an item
 never drags other bundle members along.
+
+## Share config straight from your project
+
+Sharing a settings or MCP fragment used to require a separate source file
+(`--from ./settings.json`) — awkward, because nobody has fragment files
+lying around. The values you want to share already live in
+`.claude/settings.json`, `.mcp.json`, or `.codex/config.toml`. Now `share`
+can extract them in place:
+
+```bash
+# share the permission allowlist you built up in this project
+capshelf share settings/permissions --pick permissions.allow --to project
+
+# share an MCP server you configured by hand — picks accept bare server names
+capshelf share mcp/github --pick github --target claude --to project
+```
+
+`--pick <path>` is repeatable, and only the *unmanaged remainder* of the
+output is eligible: the current file minus every locked fragment's
+contribution. That's what keeps extraction deterministic — unmanaged values
+have exactly one owner, the project. Picking a value another fragment
+already manages refuses and names the owning fragment, so the right move
+(edit that fragment and `promote`) is always in the error message. The
+output file itself doesn't change; the picked values simply become managed
+by the new fragment, and other projects pick them up with a plain
+`capshelf add`.
+
+`--from` still works for prepared source files, and the two are mutually
+exclusive.
 
 ## Keep a team in sync
 

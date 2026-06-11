@@ -106,7 +106,7 @@ export interface FragmentApplyResult {
   dryRun?: true;
 }
 
-interface FragmentValue {
+export interface FragmentValue {
   source: FragmentSource;
   value: ConfigObject;
 }
@@ -593,7 +593,7 @@ async function mergeFragmentContributions(opts: {
   );
 }
 
-async function fragmentValuesForTarget(opts: {
+export async function fragmentValuesForTarget(opts: {
   dataRepo: string;
   manifest: Manifest;
   lock: Lock;

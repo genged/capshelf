@@ -119,7 +119,17 @@ Fork variant (read-only consumers): `gh repo fork <owner/data-repo> --clone=fals
 
 Shared fragments merge into project config outputs: `settings/<name>/settings.json` → `.claude/settings.json`; `mcp/<name>/claude.json` → `.mcp.json`; `mcp/<name>/codex.toml` and `codex/config/<name>/config.toml` → `.codex/config.toml`. Outputs preserve unmanaged project-local values; capshelf refuses unmanaged scalar or shape collisions and names the paths involved.
 
-Edit canonical source paths (from `get-path`), never the generated outputs, then `capshelf promote <fragment> -m "message"`. `share` for fragments requires `--from <file>` and `--to project` (plus `--target claude|codex` for MCP). Codex only loads `.codex/config.toml` in trusted projects; `status` warns non-fatally when the project appears untrusted.
+Edit canonical source paths (from `get-path`), never the generated outputs, then `capshelf promote <fragment> -m "message"`. `share` for fragments requires `--to project` (plus `--target claude|codex` for MCP) and one of:
+
+- `--from <file>` — an explicit fragment source file.
+- `--pick <path>` (repeatable) — extract unmanaged values straight from the generated output, no separate file needed. **Prefer this when the values already live in `.claude/settings.json`, `.mcp.json`, or `.codex/config.toml`.** Settings/codex-config picks are dot paths (`--pick permissions.allow`); mcp picks accept bare server names (`--pick github`). Picking a value managed by another fragment fails and names the owner; the output file is unchanged — picked values just become managed by the new fragment.
+
+```bash
+capshelf share settings/permissions --pick permissions.allow --to project
+capshelf share mcp/github --pick github --target claude --to project
+```
+
+Codex only loads `.codex/config.toml` in trusted projects; `status` warns non-fatally when the project appears untrusted.
 
 ## Coexistence
 

@@ -2046,6 +2046,279 @@ describe("cli integration", () => {
     expect(output.mcpServers.server.command).toBe("server-mcp");
   });
 
+  test("share --pick extracts unmanaged settings values into a new fragment", async () => {
+    const project = await tempRepo("capshelf-share-pick-project-");
+    const dataRepo = await tempRepo("capshelf-share-pick-data-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+
+    await mkdir(join(dataRepo, "settings", "security"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "settings", "security", "settings.json"),
+      `${JSON.stringify({ permissions: { deny: ["Bash(rm *)"] } })}\n`,
+    );
+    await commitAll(dataRepo, "security fragment");
+
+    const init = Bun.spawnSync({
+      cmd: [process.execPath, cli, "init", "--data", dataRepo],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(init.exitCode).toBe(0);
+    const add = Bun.spawnSync({
+      cmd: [process.execPath, cli, "add", "settings/security"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(add.exitCode).toBe(0);
+
+    const outputPath = join(project, ".claude", "settings.json");
+    const current = await file(outputPath).json();
+    current.permissions.allow = ["Bash(git status *)"];
+    current.model = "opus";
+    const outputText = `${JSON.stringify(current)}\n`;
+    await writeFile(outputPath, outputText);
+
+    const managedPick = Bun.spawnSync({
+      cmd: [
+        process.execPath,
+        cli,
+        "share",
+        "settings/dup",
+        "--pick",
+        "permissions.deny",
+        "--to",
+        "project",
+      ],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(managedPick.exitCode).toBe(3);
+    expect(managedPick.stderr.toString()).toContain(
+      "already managed by settings/security",
+    );
+    expect(
+      await file(join(dataRepo, "settings", "dup", "settings.json")).exists(),
+    ).toBe(false);
+
+    const share = Bun.spawnSync({
+      cmd: [
+        process.execPath,
+        cli,
+        "share",
+        "settings/permissions",
+        "--pick",
+        "permissions.allow",
+        "--pick",
+        "model",
+        "--to",
+        "project",
+        "-m",
+        "shared allowlist",
+      ],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(share.exitCode).toBe(0);
+
+    const fragment = await file(
+      join(dataRepo, "settings", "permissions", "settings.json"),
+    ).json();
+    expect(fragment).toEqual({
+      model: "opus",
+      permissions: { allow: ["Bash(git status *)"] },
+    });
+    const manifest = await file(
+      join(project, ".capshelf", "capshelf.json"),
+    ).json();
+    expect(manifest.settings).toEqual(["security", "permissions"]);
+
+    expect(await readFile(outputPath, "utf-8")).toBe(outputText);
+
+    const status = Bun.spawnSync({
+      cmd: [process.execPath, cli, "status", "settings/permissions", "--json"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(status.exitCode).toBe(0);
+    expect(JSON.parse(status.stdout.toString()).items[0].state).toBe("ok");
+  });
+
+  test("share --pick adopts mcp servers by bare name", async () => {
+    const project = await tempRepo("capshelf-share-pick-mcp-project-");
+    const dataRepo = await tempRepo("capshelf-share-pick-mcp-data-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+
+    const init = Bun.spawnSync({
+      cmd: [process.execPath, cli, "init", "--data", dataRepo],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(init.exitCode).toBe(0);
+
+    await writeFile(
+      join(project, ".mcp.json"),
+      `${JSON.stringify({
+        mcpServers: {
+          github: { command: "github-mcp" },
+          slack: { command: "slack-mcp" },
+        },
+      })}\n`,
+    );
+    await mkdir(join(project, ".codex"), { recursive: true });
+    await writeFile(
+      join(project, ".codex", "config.toml"),
+      '[mcp_servers.linear]\ncommand = "linear-mcp"\n',
+    );
+
+    const shareClaude = Bun.spawnSync({
+      cmd: [
+        process.execPath,
+        cli,
+        "share",
+        "mcp/github",
+        "--pick",
+        "github",
+        "--target",
+        "claude",
+        "--to",
+        "project",
+      ],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(shareClaude.exitCode).toBe(0);
+    const claudeFragment = await file(
+      join(dataRepo, "mcp", "github", "claude.json"),
+    ).json();
+    expect(claudeFragment).toEqual({
+      mcpServers: { github: { command: "github-mcp" } },
+    });
+    const mcpOutput = await file(join(project, ".mcp.json")).json();
+    expect(Object.keys(mcpOutput.mcpServers).sort()).toEqual([
+      "github",
+      "slack",
+    ]);
+
+    const shareCodex = Bun.spawnSync({
+      cmd: [
+        process.execPath,
+        cli,
+        "share",
+        "mcp/linear",
+        "--pick",
+        "linear",
+        "--target",
+        "codex",
+        "--to",
+        "project",
+      ],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(shareCodex.exitCode).toBe(0);
+    expect(
+      await file(join(dataRepo, "mcp", "linear", "codex.toml")).text(),
+    ).toContain("[mcp_servers.linear]");
+
+    const missingPick = Bun.spawnSync({
+      cmd: [
+        process.execPath,
+        cli,
+        "share",
+        "mcp/missing",
+        "--pick",
+        "missing",
+        "--target",
+        "claude",
+        "--to",
+        "project",
+      ],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(missingPick.exitCode).toBe(3);
+    expect(missingPick.stderr.toString()).toContain(
+      "no unmanaged value at mcpServers.missing",
+    );
+  });
+
+  test("share rejects --pick combined with --from or non-fragment items", async () => {
+    const project = await tempRepo("capshelf-share-pick-reject-project-");
+    const dataRepo = await tempRepo("capshelf-share-pick-reject-data-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+
+    const init = Bun.spawnSync({
+      cmd: [process.execPath, cli, "init", "--data", dataRepo],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(init.exitCode).toBe(0);
+
+    const both = Bun.spawnSync({
+      cmd: [
+        process.execPath,
+        cli,
+        "share",
+        "settings/security",
+        "--from",
+        "settings.json",
+        "--pick",
+        "permissions",
+        "--to",
+        "project",
+      ],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(both.exitCode).toBe(3);
+    expect(both.stderr.toString()).toContain(
+      "accepts either --from or --pick, not both",
+    );
+
+    const skillPick = Bun.spawnSync({
+      cmd: [
+        process.execPath,
+        cli,
+        "share",
+        "skills/draft",
+        "--pick",
+        "anything",
+        "--to",
+        "project",
+      ],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(skillPick.exitCode).toBe(3);
+    expect(skillPick.stderr.toString()).toContain(
+      "--pick is only valid for fragment items",
+    );
+  });
+
   test("status preserves fragment update availability when output drifted", async () => {
     const project = await tempRepo("capshelf-status-fragment-update-project-");
     const dataRepo = await tempRepo("capshelf-status-fragment-update-data-");
