@@ -13,6 +13,11 @@ import {
 } from "../src/self-update";
 
 const FORMULA = "genged/tap/capshelf";
+// A fixture "latest" strictly newer than the running CLI, derived so a
+// version bump can never silently turn these into no-update scenarios.
+const FIXTURE_LATEST = CLI_VERSION.replace(/(\d+)$/, (n) =>
+  String(Number(n) + 1),
+);
 const PREFIX = "/opt/homebrew/opt/capshelf";
 const ACTIVE_EXECUTABLE = "/usr/local/bin/capshelf";
 const MANAGED_EXECUTABLE = `${PREFIX}/bin/capshelf`;
@@ -100,7 +105,8 @@ async function makeContext(
       [ACTIVE_EXECUTABLE, REAL_EXECUTABLE],
       [MANAGED_EXECUTABLE, REAL_EXECUTABLE],
     ]);
-  const runner = options.runner ?? new MockRunner(homebrewResults("0.3.1"));
+  const runner =
+    options.runner ?? new MockRunner(homebrewResults(FIXTURE_LATEST));
 
   return {
     context: {
@@ -174,7 +180,7 @@ describe("explicit self-update command", () => {
     expect(stdout.text).toBe(
       [
         `current: ${CLI_VERSION}`,
-        "latest: 0.3.1",
+        `latest: ${FIXTURE_LATEST}`,
         "update available: yes",
         "installer: homebrew",
         "",
@@ -398,7 +404,7 @@ describe("startup self-update prompt", () => {
       JSON.stringify({
         checkedAt: "2026-06-05T11:00:00.000Z",
         currentVersion: CLI_VERSION,
-        latestVersion: "0.3.1",
+        latestVersion: FIXTURE_LATEST,
         updateAvailable: true,
         installer: "homebrew",
       }),

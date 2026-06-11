@@ -81,6 +81,18 @@ kinds) and SKILL.md YAML frontmatter (skills only). The sidecar declares
 `description`, `tags`, `requires`, and `conflicts-with` (kind-qualified
 `<kind>/<name>` refs); frontmatter contributes only a fallback `description`.
 
+For skills, the sidecar `description` is optional and usually unnecessary —
+frontmatter fills it in. It exists because (a) fragment kinds have no
+frontmatter, so the sidecar is their only source and one schema covers all
+kinds; (b) the costs differ: frontmatter is shipped to Claude and hashed, so
+editing it is content drift that every consuming project must `update`
+through, while a sidecar edit causes no drift at all; and (c) the audiences
+differ: frontmatter is the runtime invocation trigger Claude reads ("Use
+when…"), while the sidecar is catalog copy for whoever browses the shelf.
+Use a sidecar `description` on a skill only when the catalog blurb should
+differ from the trigger phrasing, or to tune copy without shipping a
+content change. When both exist, the sidecar wins.
+
 `ls` appends a description (truncated to 60 characters) and `#tags` to each
 row; `ls --json` rows gain optional `description` and `tags` fields
 (append-only, omitted when absent). `ls --here` enriches installed rows

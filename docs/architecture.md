@@ -348,6 +348,14 @@ Items carry catalog metadata from two sources:
    `description`. The merge is per-field with the sidecar winning;
    `tags`/`requires`/`conflicts-with` are sidecar-only.
 
+   The sidecar keeps its own `description` field despite the overlap:
+   fragment kinds have no frontmatter (one schema covers all kinds), the
+   two surfaces have different change costs (frontmatter is delivered and
+   hashed, so editing it is content drift; a sidecar edit is drift-free),
+   and they address different readers (frontmatter is Claude's runtime
+   invocation trigger, the sidecar is catalog copy for shelf browsers).
+   Skills with good frontmatter need no sidecar `description` at all.
+
 This metadata feeds `ls` (descriptions, `#tags`, `--tag` filtering),
 `show` (relations with install state), `search`, and `add` enforcement
 (`requires` warns and exits 0; `conflicts-with` refuses symmetrically with
