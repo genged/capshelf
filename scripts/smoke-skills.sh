@@ -14,6 +14,7 @@ mkdir -p "$HOME" "$DATA/skills/hello" "$A/sub" "$B/sub"
 printf '%s\n' '---' 'name: hello' '---' '' 'hello v1' > "$DATA/skills/hello/SKILL.md"
 init_git_repo "$DATA"
 configure_git_user "$DATA"
+set_portable_origin "$DATA" smoke-skills-data
 git -C "$DATA" add -A
 git -C "$DATA" commit -qm baseline
 init_git_repo "$A"

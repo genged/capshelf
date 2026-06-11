@@ -16,6 +16,7 @@ sandbox = "workspace-write"
 TOML
 init_git_repo "$DATA"
 configure_git_user "$DATA"
+set_portable_origin "$DATA" smoke-codex-config-data
 git -C "$DATA" add -A
 git -C "$DATA" commit -qm baseline
 init_git_repo "$A"

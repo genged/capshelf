@@ -4,6 +4,7 @@ import {
   homeRelative,
   initProjectRoot,
   resolveDataRepo,
+  resolveDataRepoOptional,
 } from "../paths";
 import type { InstallMode } from "../paths";
 import { ensureClone, resolveDataInput } from "../data-bootstrap";
@@ -70,9 +71,10 @@ export function registerInit(program: Command): void {
       const installMode = resolveInstallMode(manifest.installMode, opts);
       const lock = await loadLock(project);
 
-      // CLI-local --data wins, else global --data, else env, else default
+      // CLI-local --data wins, else global --data, else existing local/env
+      // binding, else the committed upstream can bootstrap a cloned project.
       const input = opts.data ?? globalOpts(cmd).data;
-      let override = input;
+      let dataRepo: string;
       let bootstrap: BootstrapInfo | undefined;
       if (input !== undefined) {
         const resolved = resolveDataInput(input, { dataDir: opts.dataDir });
@@ -91,17 +93,62 @@ export function registerInit(program: Command): void {
             clonePath: resolved.clonePath,
             cloned,
           };
-          override = resolved.clonePath;
+          dataRepo = await resolveDataRepo({
+            override: resolved.clonePath,
+            manifest,
+            project,
+          });
         } else {
-          override = resolved.path;
+          if (opts.dataDir !== undefined) {
+            throw new PreconditionError(
+              "--data-dir requires --data <remote-data-repo-url>",
+            );
+          }
+          dataRepo = await resolveDataRepo({
+            override: resolved.path,
+            manifest,
+            project,
+          });
+        }
+      } else {
+        const resolved = await resolveDataRepoOptional({ manifest, project });
+        if (resolved !== null) {
+          if (opts.dataDir !== undefined) {
+            throw new PreconditionError(
+              "--data-dir requires --data <remote-data-repo-url>",
+            );
+          }
+          dataRepo = resolved;
+        } else if (manifest.dataRepoUpstream) {
+          const resolved = resolveDataInput(manifest.dataRepoUpstream, {
+            dataDir: opts.dataDir,
+          });
+          if (resolved.kind !== "remote-bootstrap") {
+            throw new Error(
+              `dataRepoUpstream must be a supported git remote URL: ${manifest.dataRepoUpstream}`,
+            );
+          }
+          const { cloned } = await ensureClone(
+            resolved.url,
+            resolved.clonePath,
+            resolved.upstream,
+          );
+          bootstrap = {
+            url: resolved.url,
+            upstream: resolved.upstream,
+            clonePath: resolved.clonePath,
+            cloned,
+          };
+          dataRepo = resolved.clonePath;
+        } else {
+          if (opts.dataDir !== undefined) {
+            throw new PreconditionError(
+              "--data-dir requires --data <remote-data-repo-url>",
+            );
+          }
+          dataRepo = await resolveDataRepo({ manifest, project });
         }
       }
-      if (opts.dataDir !== undefined && bootstrap === undefined) {
-        throw new PreconditionError(
-          "--data-dir requires --data <remote-data-repo-url>",
-        );
-      }
-      const dataRepo = await resolveDataRepo({ override, manifest, project });
 
       // Fail BEFORE writing any state if the data repo isn't a usable git repo.
       // Otherwise we'd silently bind the project to a bad path that ls/add can't use.
@@ -263,11 +310,43 @@ async function initUpstream(
     const normalized = normalizeRemoteUrl(opts.upstream);
     if (!normalized)
       throw new Error(`unsupported git remote URL: ${opts.upstream}`);
+    await assertDataRepoOriginMatchesUpstream(dataRepo, normalized);
     return normalized;
   }
 
   const origin = await originRemoteUrl(dataRepo);
-  return origin ? normalizeRemoteUrl(origin) : null;
+  const normalized = origin ? normalizeRemoteUrl(origin) : null;
+  if (normalized) return normalized;
+
+  throw new PreconditionError(
+    "could not determine a portable data repo upstream.\n\n" +
+      `  data repo: ${homeRelative(dataRepo)}\n` +
+      (origin ? `  origin: ${origin.trim()}\n\n` : "\n") +
+      "capshelf records dataRepoUpstream so fresh clones know where shared items come from.\n\n" +
+      "fix by one of:\n" +
+      "  - configure the data repo's origin, then retry:\n" +
+      `      git -C ${homeRelative(dataRepo)} remote ${origin ? "set-url" : "add"} origin <data-repo-url>\n` +
+      "  - mark this project intentionally non-portable:\n" +
+      "      capshelf init --data <path-or-url> --no-upstream",
+  );
+}
+
+async function assertDataRepoOriginMatchesUpstream(
+  dataRepo: string,
+  upstream: string,
+): Promise<void> {
+  const origin = await originRemoteUrl(dataRepo);
+  const normalizedOrigin = origin ? normalizeRemoteUrl(origin) : null;
+  if (normalizedOrigin === upstream) return;
+
+  throw new UpstreamVerificationError(
+    "data repo origin does not match --upstream.\n\n" +
+      `  data repo: ${homeRelative(dataRepo)}\n` +
+      `  --upstream: ${upstream}\n` +
+      `  origin:     ${origin ? (normalizedOrigin ?? origin.trim()) : "(no origin remote)"}\n\n` +
+      "configure the clone's origin first, then retry:\n" +
+      `  git -C ${homeRelative(dataRepo)} remote ${origin ? "set-url" : "add"} origin ${upstream}`,
+  );
 }
 
 function hasUpstreamFlag(argv: string[] = process.argv): boolean {

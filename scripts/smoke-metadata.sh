@@ -35,6 +35,7 @@ printf '%s\n' 'description: Baseline permission allowlist.' 'tags: [security]' \
   > "$DATA/settings/permissions-base/.capshelf.yml"
 git -C "$DATA" init -q --initial-branch=main
 configure_git_user "$DATA"
+set_portable_origin "$DATA" smoke-metadata-data
 git -C "$DATA" add -A
 git -C "$DATA" commit -qm baseline
 git -C "$A" init -q --initial-branch=main

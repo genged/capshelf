@@ -262,16 +262,27 @@ make install
 ## Init Layout
 
 ```
-capshelf init --data ../capshelf-data                # default: real .agents/ skills + .claude/ symlinks
+capshelf init --data ../capshelf-data                # requires a portable origin remote
 capshelf init --claude-only --data ../capshelf-data  # real .claude/ skills only
 capshelf init --data ../capshelf-data --upstream https://github.com/acme/capshelf-data
-capshelf init --data ../capshelf-data --no-upstream  # omit dataRepoUpstream even if origin exists
+capshelf init --data ../capshelf-data --no-upstream  # intentionally local/non-portable
 ```
 
 The selected layout is stored in `.capshelf/capshelf.json` as `installMode`. The data
 repo path is stored in gitignored `.capshelf/local.json`. If the data repo has an
 `origin` remote, `init` writes its normalized URL to `dataRepoUpstream` unless
-`--no-upstream` is used; `--upstream <url>` overrides auto-detection.
+`--no-upstream` is used; `--upstream <url>` overrides auto-detection only when
+the local clone's `origin` already matches that URL. If capshelf cannot
+determine a portable upstream, `init` fails before writing project state and
+asks you to configure the data repo's `origin` or pass `--no-upstream`
+explicitly.
+
+In an already-initialized project cloned from Git, plain `capshelf init` also
+acts as the onboarding command: when `.capshelf/capshelf.json` declares
+`dataRepoUpstream` and no local data repo binding exists yet, capshelf clones or
+reuses that upstream at the default clone path, writes `.capshelf/local.json`,
+and installs bundled system items. Run `capshelf apply` afterwards to
+materialize the project's locked data items.
 
 ## Remote data repo bootstrap
 
@@ -293,9 +304,10 @@ clone had been passed to `--data`:
 - `--data-dir <path>` overrides the clone destination.
 - The clone path is written to gitignored `.capshelf/local.json` and the
   normalized remote identity to `dataRepoUpstream` in `.capshelf/capshelf.json`.
-- `file://` URLs are accepted as bootstrap input (useful for local mirrors and
-  testing) but are never recorded as `dataRepoUpstream`: a machine-local path
-  is not a portable upstream, and `set-upstream` rejects `file://` URLs.
+- `file://` URLs are accepted as bootstrap input only with `--no-upstream`
+  (useful for local mirrors and testing). They are never recorded as
+  `dataRepoUpstream`: a machine-local path is not a portable upstream, and
+  `set-upstream` rejects `file://` URLs.
 - Passing `--upstream` alongside a remote `--data` URL requires both to
   normalize to the same identity; a mismatch fails with exit 4 before
   anything is cloned or written.
@@ -313,6 +325,17 @@ local-path binding command; pass remote URLs only to `init --data`.
 ## Data repo binding
 
 For a cloned project whose committed manifest declares an upstream:
+
+```bash
+capshelf init
+capshelf apply
+```
+
+That uses the committed `dataRepoUpstream` and the same default clone location
+as `capshelf init --data <remote-url>`.
+
+If you already cloned the data repo somewhere else, bind that local clone
+explicitly:
 
 ```bash
 git clone https://github.com/acme/capshelf-data ~/code/capshelf-data
@@ -409,6 +432,22 @@ this command closes.
 | 6 | reserved for data repo not configured |
 | 7 | required dependency missing (`git` not found on `PATH`) |
 
+Initializing with no portable data repo origin:
+
+```text
+could not determine a portable data repo upstream.
+
+  data repo: ../capshelf-data
+
+capshelf records dataRepoUpstream so fresh clones know where shared items come from.
+
+fix by one of:
+  - configure the data repo's origin, then retry:
+      git -C ../capshelf-data remote add origin <data-repo-url>
+  - mark this project intentionally non-portable:
+      capshelf init --data <path-or-url> --no-upstream
+```
+
 Missing binding with an upstream declared:
 
 ```text
@@ -421,6 +460,23 @@ upstream (per .capshelf/capshelf.json): https://github.com/acme/capshelf-data
        capshelf set-data <path>
   3. retry:
        capshelf apply
+```
+
+Missing binding without a declared upstream:
+
+```text
+no data repo configured for this project.
+
+  pass --data <path>, or create .capshelf/local.json:
+    mkdir -p .capshelf
+    echo '{"dataRepo": "/path/to/clone"}' > .capshelf/local.json
+  or set the env var for machine-wide default:
+    export CAPSHELF_HOME=/path/to/clone
+
+  if this is a cloned project, .capshelf/capshelf.json does not declare dataRepoUpstream,
+  so capshelf cannot tell you which data repo to clone. Ask a maintainer
+  for the data repo URL, then make it discoverable with:
+    capshelf set-upstream <data-repo-url>
 ```
 
 Upstream mismatch:

@@ -149,6 +149,7 @@ Codex only loads `.codex/config.toml` in trusted projects; `status` warns non-fa
 ## Troubleshooting
 
 - `no data repo configured` — clone the declared `dataRepoUpstream` if one exists, then `capshelf set-data <path>`, or pass `--data <path>`, or set `$CAPSHELF_HOME`.
+- `could not determine a portable data repo upstream` — configure the data repo's `origin` before `capshelf init`, or pass `--no-upstream` only for an intentionally non-portable local project.
 - `data repo at <path> is bound to the wrong upstream` — `capshelf set-data <correct-clone>` or intentionally change committed state with `capshelf set-upstream <url>`.
 - `data repo has uncommitted metadata changes: <item>/.capshelf.yml` — commit the sidecar in the data repo; no item content is at risk.
 - `missing_source_commit` in `status` — the locked `sourceCommit` is unreachable in the data repo (unpushed in another clone, or squash-orphaned after a merged proposal). Fix with `capshelf sync-data && capshelf update <item>`; if the commit only exists in another clone, push or fetch that clone first.

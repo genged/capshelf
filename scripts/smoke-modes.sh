@@ -18,6 +18,7 @@ printf '%s\n' '---' 'name: foreign-x' '---' '' 'foreign skill' > "$DATA/skills/f
 printf '%s\n' '---' 'name: co-owned' '---' '' 'co-owned skill' > "$DATA/skills/co-owned/SKILL.md"
 init_git_repo "$DATA"
 configure_git_user "$DATA"
+set_portable_origin "$DATA" smoke-modes-data
 git -C "$DATA" add -A
 git -C "$DATA" commit -qm baseline
 

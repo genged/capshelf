@@ -22,7 +22,7 @@ settings overlays, the same MCP servers. Keeping them in sync by hand, or by
 whole-directory symlinks, is fragile.
 
 ```bash
-capshelf init --data ~/code/my-agent-data
+capshelf init --data https://github.com/acme/agent-config
 capshelf add security-review
 capshelf status
 capshelf promote security-review -m "tighten SQLi check"
@@ -83,6 +83,7 @@ printf '%s\n' \
 
 git add skills/security-review/SKILL.md
 git commit -m "add security-review skill"
+git remote add origin https://github.com/acme/agent-config
 ```
 
 ### 3. Use it in a project
@@ -93,6 +94,10 @@ capshelf init --data ~/code/agent-config
 capshelf add security-review
 capshelf status
 ```
+
+`init` records the data repo's `origin` as `dataRepoUpstream` so future clones
+can discover the same source. For a machine-local sandbox, use
+`capshelf init --data ~/code/agent-config --no-upstream` instead.
 
 By default, skills are installed under `.agents/skills/<name>/` and exposed to
 Claude through `.claude/skills/<name>` symlinks. Use `capshelf init
@@ -170,11 +175,14 @@ capshelf add security-review
 Connect a freshly cloned project to its data repo:
 
 ```bash
-git clone https://github.com/acme/agent-config ~/code/agent-config
 cd ~/code/my-app
-capshelf set-data ~/code/agent-config
+capshelf init
 capshelf apply
 ```
+
+That works when the project committed `.capshelf/capshelf.json` with a
+`dataRepoUpstream`. If you already cloned the data repo somewhere custom, use
+`capshelf set-data <path-to-data-repo>` instead of `capshelf init`.
 
 ## What Capshelf Manages
 

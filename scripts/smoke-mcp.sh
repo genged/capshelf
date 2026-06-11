@@ -21,6 +21,7 @@ enabled = true
 TOML
 init_git_repo "$DATA"
 configure_git_user "$DATA"
+set_portable_origin "$DATA" smoke-mcp-data
 git -C "$DATA" add -A
 git -C "$DATA" commit -qm baseline
 init_git_repo "$A"

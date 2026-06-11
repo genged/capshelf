@@ -90,7 +90,11 @@ function noConfigMessage(manifest: Manifest | null | undefined): string {
     `    mkdir -p ${METADATA_DIR}\n` +
     `    echo '{"dataRepo": "/path/to/clone"}' > ${METADATA_DIR}/${LOCAL_CONFIG_FILE}\n` +
     "  or set the env var for machine-wide default:\n" +
-    `    export ${HOME_ENV}=/path/to/clone`
+    `    export ${HOME_ENV}=/path/to/clone\n\n` +
+    `  if this is a cloned project, ${METADATA_DIR}/${MANIFEST_FILE} does not declare dataRepoUpstream,\n` +
+    "  so capshelf cannot tell you which data repo to clone. Ask a maintainer\n" +
+    "  for the data repo URL, then make it discoverable with:\n" +
+    `    ${PRODUCT_NAME} set-upstream <data-repo-url>`
   );
 }
 

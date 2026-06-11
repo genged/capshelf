@@ -13,6 +13,7 @@ mkdir -p "$HOME" "$DATA/settings/security" "$A/sub"
 printf '%s\n' '{"permissions":{"deny":["Read(./.env)","Bash(curl *)"]}}' > "$DATA/settings/security/settings.json"
 init_git_repo "$DATA"
 configure_git_user "$DATA"
+set_portable_origin "$DATA" smoke-settings-data
 git -C "$DATA" add -A
 git -C "$DATA" commit -qm baseline
 init_git_repo "$A"

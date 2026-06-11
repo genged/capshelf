@@ -21,7 +21,7 @@ git -C "$DATA" commit -qm baseline
 init_git_repo "$A"
 
 # --- init from a remote data repo URL clones into the managed location ---
-(cd "$A" && "${CLI[@]}" init --data "$URL" > "$TMP/init.txt")
+(cd "$A" && "${CLI[@]}" init --data "$URL" --no-upstream > "$TMP/init.txt")
 assert_fixed_contains 'cloned data repo:' "$TMP/init.txt"
 assert_fixed_contains "$URL" "$TMP/init.txt"
 assert_fixed_contains 'bound project data repo:' "$TMP/init.txt"

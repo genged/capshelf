@@ -15,6 +15,12 @@ configure_git_user() {
   git -C "$repo" config user.name capshelf
 }
 
+set_portable_origin() {
+  local repo="$1"
+  local name="${2:-$(basename "$repo")}"
+  git -C "$repo" remote add origin "https://example.invalid/$name.git"
+}
+
 canonical_path() {
   local path="$1"
   local dir
