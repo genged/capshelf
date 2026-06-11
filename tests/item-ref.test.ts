@@ -140,6 +140,12 @@ describe("lockKeysForRef", () => {
         sourceCommit: "def",
         appliedAt: "2026-04-30T00:00:00.000Z",
       },
+      "system/skills/hello": {
+        source: "system",
+        sha: "456",
+        cliVersion: "0.3.0",
+        appliedAt: "2026-04-30T00:00:00.000Z",
+      },
       "system/skills/capshelf": {
         source: "system",
         sha: "123",
@@ -150,8 +156,9 @@ describe("lockKeysForRef", () => {
   };
 
   test("matches bare names across sources", () => {
-    expect(lockKeysForRef(lock, { name: "hello" })).toEqual([
+    expect(lockKeysForRef(lock, { name: "hello" }).sort()).toEqual([
       "data/skills/hello",
+      "system/skills/hello",
     ]);
   });
 

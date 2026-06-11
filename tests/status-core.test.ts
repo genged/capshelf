@@ -4,7 +4,6 @@ import {
   buildStatusRow,
   deriveState,
   personalClaudeExternals,
-  runtimeWarningFields,
   statusTargets,
   type StateFacts,
   type StatusRow,
@@ -378,23 +377,6 @@ describe("buildStatusRow", () => {
       currentSha: "S",
       upstreamSha: "S",
       cliVersion: "1.2.3",
-      runtimeWarnings: [warning],
-    });
-  });
-});
-
-describe("runtimeWarningFields", () => {
-  test("omits the key when there are no warnings", () => {
-    expect(runtimeWarningFields([])).toEqual({});
-  });
-
-  test("includes the warnings when present", () => {
-    const warning: RuntimeWarning = {
-      type: "codex_project_untrusted",
-      path: "/p",
-      message: "m",
-    };
-    expect(runtimeWarningFields([warning])).toEqual({
       runtimeWarnings: [warning],
     });
   });

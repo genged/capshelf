@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  findClaudePlugin,
   findSkillsShSkill,
   listClaudePlugins,
   listSkillsShSkills,
@@ -153,5 +154,72 @@ describe("Claude plugin settings reader", () => {
         settingsPath: localSettings,
       },
     ]);
+  });
+
+  test("treats ids without a usable marketplace separator as bare names", async () => {
+    const project = await tempDir();
+    const home = await tempDir();
+    const user = join(home, "settings.json");
+    await writeFile(
+      user,
+      JSON.stringify({
+        enabledPlugins: ["plain", "@scoped", "trailing@", "@scope/tool@market"],
+      }),
+    );
+
+    const plugins = await listClaudePlugins(project, { managed: [], user });
+    // Keyed by id so the assertion does not depend on sort order.
+    expect(
+      Object.fromEntries(
+        plugins.map((p) => [
+          p.id,
+          { name: p.name, marketplace: p.marketplace },
+        ]),
+      ),
+    ).toEqual({
+      // No '@' at all: the whole id is the name.
+      plain: { name: "plain", marketplace: undefined },
+      // Leading '@' is part of the name, not a marketplace separator.
+      "@scoped": { name: "@scoped", marketplace: undefined },
+      // Trailing '@' would leave an empty marketplace; keep the full id.
+      "trailing@": { name: "trailing@", marketplace: undefined },
+      // The last '@' splits, even when the name itself starts with '@'.
+      "@scope/tool@market": { name: "@scope/tool", marketplace: "market" },
+    });
+  });
+
+  // findClaudePlugin offers no settings-path injection, so it also scans the
+  // real user/managed settings. Unique names keep this isolated in practice.
+  test("findClaudePlugin matches by short name or full id", async () => {
+    const project = await tempDir();
+    const projectSettings = join(project, ".claude", "settings.json");
+    await mkdir(join(project, ".claude"), { recursive: true });
+    await writeFile(
+      projectSettings,
+      JSON.stringify({
+        enabledPlugins: { "capshelf-test-finder@capshelf-test-market": true },
+      }),
+    );
+
+    const byName = await findClaudePlugin(project, "capshelf-test-finder");
+    expect(byName).toEqual({
+      id: "capshelf-test-finder@capshelf-test-market",
+      name: "capshelf-test-finder",
+      marketplace: "capshelf-test-market",
+      scope: "project",
+      enabled: true,
+      settingsPath: projectSettings,
+    });
+
+    expect(
+      await findClaudePlugin(
+        project,
+        "capshelf-test-finder@capshelf-test-market",
+      ),
+    ).toEqual(byName);
+
+    expect(
+      await findClaudePlugin(project, "capshelf-test-no-such-plugin"),
+    ).toBeNull();
   });
 });

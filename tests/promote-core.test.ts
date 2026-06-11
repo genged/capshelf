@@ -8,7 +8,6 @@ import {
   dataEntriesMatch,
   dataEntryOrThrow,
   expectedAdoptionPath,
-  refDisplay,
 } from "../src/promote-core";
 import { dataKey } from "../src/lock";
 import type { DataLockEntry, Lock, LockEntry } from "../src/lock";
@@ -81,15 +80,15 @@ describe("dataEntryOrThrow", () => {
 
 describe("expectedAdoptionPath", () => {
   test("skills under codex-compatible offers both the codex and claude paths", () => {
-    const path = expectedAdoptionPath("/p", "skills", "x", "codex-compatible");
-    expect(path).toContain(" or ");
-    expect(path).toContain("x");
+    expect(expectedAdoptionPath("/p", "skills", "x", "codex-compatible")).toBe(
+      "/p/.agents/skills/x or /p/.claude/skills/x",
+    );
   });
 
   test("skills under claude-only points at a single install path", () => {
-    const path = expectedAdoptionPath("/p", "skills", "x", "claude-only");
-    expect(path).not.toContain(" or ");
-    expect(path).toContain("x");
+    expect(expectedAdoptionPath("/p", "skills", "x", "claude-only")).toBe(
+      "/p/.claude/skills/x",
+    );
   });
 
   test("non-skill kinds point at the fixed install path (no item name)", () => {
@@ -412,16 +411,6 @@ describe("adoptIntoDataRepo sidecar handling", () => {
     } finally {
       errorSpy.mockRestore();
     }
-  });
-});
-
-describe("refDisplay", () => {
-  test("includes the kind when present", () => {
-    expect(refDisplay({ kind: "skills", name: "x" })).toBe("skills/x");
-  });
-
-  test("omits the kind when absent", () => {
-    expect(refDisplay({ name: "x" })).toBe("x");
   });
 });
 

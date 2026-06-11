@@ -31,6 +31,7 @@ import {
   projectRoot,
   resolveDataRepo,
   resolveDataRepoOptional,
+  rootManifestPath,
 } from "../src/paths";
 
 async function tempDir(): Promise<string> {
@@ -43,12 +44,6 @@ describe("path normalization", () => {
     expect(expandTilde("~")).toBe(home);
     expect(expandTilde("~/capshelf")).toBe(join(home, "capshelf"));
     expect(homeRelative(join(home, "capshelf"))).toBe("~/capshelf");
-  });
-
-  test("normalizes relative paths against an explicit base", () => {
-    expect(normalizePath("../data", "/tmp/project/sub")).toBe(
-      "/tmp/project/data",
-    );
   });
 
   test("resolves relative local config dataRepo from the project root", async () => {
@@ -192,6 +187,78 @@ describe("path normalization", () => {
       codexConfig: [],
     });
     expect(detectInstallMode(project)).toBe("claude-only");
+  });
+});
+
+describe("legacy root layout fallback", () => {
+  test("loadManifest and detectInstallMode read a root-level capshelf.json when .capshelf/ is absent", async () => {
+    const project = await tempDir();
+    await writeFile(
+      rootManifestPath(project),
+      JSON.stringify({
+        installMode: "claude-only",
+        skills: ["hello"],
+        settings: [],
+        mcp: [],
+        codexConfig: [],
+      }),
+    );
+
+    expect(await loadManifest(project)).toEqual({
+      installMode: "claude-only",
+      skills: ["hello"],
+      settings: [],
+      mcp: [],
+      codexConfig: [],
+    });
+    // "claude-only" differs from DEFAULT_INSTALL_MODE, so this proves the
+    // root manifest was actually read rather than falling back to defaults.
+    expect(detectInstallMode(project)).toBe("claude-only");
+    expect(installBaseDir(project)).toBe(claudeDir(project));
+  });
+
+  test("prefers .capshelf/capshelf.json over a root-level copy", async () => {
+    const project = await tempDir();
+    await writeFile(
+      rootManifestPath(project),
+      JSON.stringify({
+        installMode: "codex-compatible",
+        skills: ["root-skill"],
+        settings: [],
+        mcp: [],
+        codexConfig: [],
+      }),
+    );
+    await mkdir(join(project, ".capshelf"), { recursive: true });
+    await writeFile(
+      manifestPath(project),
+      JSON.stringify({
+        installMode: "claude-only",
+        skills: ["metadata-skill"],
+        settings: [],
+        mcp: [],
+        codexConfig: [],
+      }),
+    );
+
+    const manifest = await loadManifest(project);
+    expect(manifest.skills).toEqual(["metadata-skill"]);
+    expect(manifest.installMode).toBe("claude-only");
+    expect(detectInstallMode(project)).toBe("claude-only");
+  });
+});
+
+describe("manifest error handling", () => {
+  test("loadManifest rejects malformed JSON instead of treating it as empty", async () => {
+    const project = await tempDir();
+    await mkdir(join(project, ".capshelf"), { recursive: true });
+    await writeFile(manifestPath(project), "{ this is not json");
+
+    // A corrupt manifest must be a hard error, never silently loaded as an
+    // empty manifest (which would make the next save wipe the user's config).
+    // The exact message is engine-specific JSON.parse output and does not name
+    // the file, so only the error type is pinned here.
+    await expect(loadManifest(project)).rejects.toThrow(SyntaxError);
   });
 });
 

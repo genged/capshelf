@@ -276,7 +276,7 @@ describe("ensureClone", () => {
     await $`git -C ${clonePath} init -q`.quiet();
     await $`git -C ${clonePath} remote add origin ${url}`.quiet();
 
-    expect(ensureClone(url, clonePath, upstream)).rejects.toThrow(
+    await expect(ensureClone(url, clonePath, upstream)).rejects.toThrow(
       "data repo cache path already exists but has no usable HEAD commit.",
     );
   });
@@ -318,7 +318,7 @@ describe("ensureClone", () => {
     await mkdir(clonePath, { recursive: true });
     await writeFile(join(clonePath, "unrelated.txt"), "not a repo\n");
 
-    expect(ensureClone(url, clonePath, upstream)).rejects.toThrow(
+    await expect(ensureClone(url, clonePath, upstream)).rejects.toThrow(
       "data repo cache path already exists but is not a git working tree.",
     );
   });

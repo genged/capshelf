@@ -281,7 +281,14 @@ describe("system item registry", () => {
     expect(SYSTEM_ITEMS.map((i) => `${i.kind}/${i.name}`)).toContain(
       "skills/capshelf",
     );
-    expect(await shaOfSystemItem(item!)).toMatch(/^[0-9a-f]{12}$/);
+
+    // The bundled hash must equal the hash of a fresh install, or status
+    // would report drift for untouched system items.
+    const project = await tempDir();
+    await installSystemItem(project, item!);
+    expect(await shaOfInstalled(project, item!.kind, item!.name)).toBe(
+      await shaOfSystemItem(item!),
+    );
   });
 });
 

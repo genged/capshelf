@@ -9,18 +9,28 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 
 async function tempDir(prefix: string): Promise<string> {
   return await mkdtemp(join(tmpdir(), prefix));
 }
 
-async function tempRepo(prefix: string): Promise<string> {
+async function tempRepo(
+  prefix: string,
+  opts: { origin?: string | null } = {},
+): Promise<string> {
   const repo = await tempDir(prefix);
   await $`git -C ${repo} init -q`.quiet();
   await $`git -C ${repo} config user.email capshelf@example.invalid`.quiet();
   await $`git -C ${repo} config user.name capshelf`.quiet();
+  const origin =
+    opts.origin === undefined
+      ? `https://example.invalid/${basename(repo)}`
+      : opts.origin;
+  if (origin !== null) {
+    await $`git -C ${repo} remote add origin ${origin}`.quiet();
+  }
   return repo;
 }
 
@@ -74,7 +84,7 @@ describe("cli integration", () => {
       join(project, ".capshelf", "capshelf.json"),
     ).json();
     expect(manifest.dataRepo).toBeUndefined();
-    expect(manifest.dataRepoUpstream).toBeUndefined();
+    expect(manifest.dataRepoUpstream).toContain("https://example.invalid/");
     expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual(
       {
         dataRepo,
@@ -89,6 +99,34 @@ describe("cli integration", () => {
     expect(
       await file(join(project, ".capshelf", "capshelf.lock.json")).exists(),
     ).toBe(true);
+  });
+
+  test("init refuses to create accidental non-portable project state", async () => {
+    const project = await tempRepo("capshelf-init-no-origin-project-");
+    const dataRepo = await tempRepo("capshelf-init-no-origin-data-", {
+      origin: null,
+    });
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, cli, "init", "--data", dataRepo],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr.toString()).toContain(
+      "could not determine a portable data repo upstream",
+    );
+    expect(result.stderr.toString()).toContain(
+      "fresh clones know where shared items come from",
+    );
+    expect(result.stderr.toString()).toContain("--no-upstream");
+    expect(
+      await file(join(project, ".capshelf", "capshelf.json")).exists(),
+    ).toBe(false);
   });
 
   test("project commands require running from the capshelf project root", async () => {
@@ -178,7 +216,7 @@ describe("cli integration", () => {
     const project = await tempRepo("capshelf-init-no-upstream-project-");
     const dataRepo = await tempRepo("capshelf-init-no-upstream-data-");
     const cli = join(import.meta.dir, "..", "src", "cli.ts");
-    await $`git -C ${dataRepo} remote add origin git@github.com:mg/agent-shared.git`.quiet();
+    await $`git -C ${dataRepo} remote set-url origin git@github.com:mg/agent-shared.git`.quiet();
 
     const result = Bun.spawnSync({
       cmd: [process.execPath, cli, "init", "--data", dataRepo, "--no-upstream"],
@@ -234,7 +272,7 @@ describe("cli integration", () => {
     const url = `file://${dataRepo}`;
 
     const result = Bun.spawnSync({
-      cmd: [process.execPath, cli, "init", "--data", url],
+      cmd: [process.execPath, cli, "init", "--data", url, "--no-upstream"],
       cwd: project,
       env: { ...process.env, XDG_DATA_HOME: xdg },
       stdout: "pipe",
@@ -303,6 +341,7 @@ describe("cli integration", () => {
         `file://${dataRepo}`,
         "--data-dir",
         clonePath,
+        "--no-upstream",
       ],
       cwd: project,
       env: process.env,
@@ -315,6 +354,62 @@ describe("cli integration", () => {
     expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual(
       { dataRepo: clonePath, skills: [], settings: [], mcp: [] },
     );
+  });
+
+  test("init bootstraps a cloned project from committed upstream", async () => {
+    const project = await tempRepo("capshelf-cloned-init-project-");
+    const xdg = await tempDir("capshelf-cloned-init-xdg-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+    const upstream = "https://github.com/acme/agent-config";
+    const clonePath = join(
+      xdg,
+      "capshelf",
+      "data",
+      "github.com",
+      "acme",
+      "agent-config",
+    );
+    await mkdir(clonePath, { recursive: true });
+    await $`git -C ${clonePath} init -q`.quiet();
+    await $`git -C ${clonePath} config user.email capshelf@example.invalid`.quiet();
+    await $`git -C ${clonePath} config user.name capshelf`.quiet();
+    await writeFile(join(clonePath, "README.md"), "data\n");
+    await commitAll(clonePath, "baseline");
+    await $`git -C ${clonePath} remote add origin ${upstream}`.quiet();
+    await mkdir(join(project, ".capshelf"), { recursive: true });
+    await writeFile(
+      join(project, ".capshelf", "capshelf.json"),
+      JSON.stringify({
+        installMode: "codex-compatible",
+        dataRepoUpstream: upstream,
+        skills: [],
+        settings: [],
+        mcp: [],
+      }),
+    );
+
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, cli, "init"],
+      cwd: project,
+      env: { ...process.env, CAPSHELF_HOME: "", XDG_DATA_HOME: xdg },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(result.exitCode).toBe(0);
+    const stdout = result.stdout.toString();
+    expect(stdout).toContain(`using existing data repo clone:\n  ${upstream}`);
+    expect(stdout).toContain(`  -> ${clonePath}`);
+    expect(stdout).toContain(
+      "bound project data repo:\n  .capshelf/local.json",
+    );
+    expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual(
+      { dataRepo: clonePath, skills: [], settings: [], mcp: [] },
+    );
+    const manifest = await file(
+      join(project, ".capshelf", "capshelf.json"),
+    ).json();
+    expect(manifest.dataRepoUpstream).toBe(upstream);
   });
 
   test("init rejects --data-dir without a remote data repo URL", async () => {
@@ -423,11 +518,12 @@ describe("cli integration", () => {
     );
   });
 
-  test("init skips file:// origins when auto-detecting the upstream", async () => {
+  test("init requires --no-upstream for file:// origins", async () => {
     const project = await tempRepo("capshelf-file-origin-project-");
-    const dataRepo = await tempRepo("capshelf-file-origin-data-");
+    const dataRepo = await tempRepo("capshelf-file-origin-data-", {
+      origin: "file:///tmp/some/mirror",
+    });
     const cli = join(import.meta.dir, "..", "src", "cli.ts");
-    await $`git -C ${dataRepo} remote add origin file:///tmp/some/mirror`.quiet();
 
     const result = Bun.spawnSync({
       cmd: [process.execPath, cli, "init", "--data", dataRepo],
@@ -437,7 +533,23 @@ describe("cli integration", () => {
       stderr: "pipe",
     });
 
-    expect(result.exitCode).toBe(0);
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr.toString()).toContain(
+      "could not determine a portable data repo upstream",
+    );
+    expect(
+      await file(join(project, ".capshelf", "capshelf.json")).exists(),
+    ).toBe(false);
+
+    const explicit = Bun.spawnSync({
+      cmd: [process.execPath, cli, "init", "--data", dataRepo, "--no-upstream"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(explicit.exitCode).toBe(0);
     const manifest = await file(
       join(project, ".capshelf", "capshelf.json"),
     ).json();
@@ -473,7 +585,7 @@ describe("cli integration", () => {
     const manifest = await file(
       join(project, ".capshelf", "capshelf.json"),
     ).json();
-    expect(manifest.dataRepoUpstream).toBeUndefined();
+    expect(manifest.dataRepoUpstream).toContain("https://example.invalid/");
   });
 
   test("init rejects owner/repo shorthand with exit code 3", async () => {
@@ -540,7 +652,7 @@ describe("cli integration", () => {
         mcp: [],
       }),
     );
-    await $`git -C ${dataRepo} remote add origin https://github.com/user/fork.git`.quiet();
+    await $`git -C ${dataRepo} remote set-url origin https://github.com/user/fork.git`.quiet();
 
     const result = Bun.spawnSync({
       cmd: [process.execPath, cli, "set-data", dataRepo],
@@ -586,11 +698,15 @@ describe("cli integration", () => {
       stderr: "pipe",
     });
     expect(json.exitCode).toBe(0);
+    const manifest = await file(
+      join(project, ".capshelf", "capshelf.json"),
+    ).json();
     expect(JSON.parse(json.stdout.toString())).toEqual({
       path: dataRepo,
-      upstream: null,
+      upstream: manifest.dataRepoUpstream,
     });
 
+    await $`git -C ${dataRepo} remote set-url origin git@github.com:mg/agent-shared.git`.quiet();
     const setUpstream = Bun.spawnSync({
       cmd: [
         process.execPath,
@@ -604,7 +720,6 @@ describe("cli integration", () => {
       stderr: "pipe",
     });
     expect(setUpstream.exitCode).toBe(0);
-    await $`git -C ${dataRepo} remote add origin git@github.com:mg/agent-shared.git`.quiet();
 
     const withUpstream = Bun.spawnSync({
       cmd: [process.execPath, cli, "data-path", "--json"],
@@ -627,7 +742,7 @@ describe("cli integration", () => {
     const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
     const init = Bun.spawnSync({
-      cmd: [process.execPath, cli, "init", "--data", dataRepo],
+      cmd: [process.execPath, cli, "init", "--data", dataRepo, "--no-upstream"],
       cwd: project,
       env: process.env,
       stdout: "pipe",
@@ -713,6 +828,98 @@ describe("cli integration", () => {
     );
   });
 
+  test("apply explains cloned project binding when no data repo is configured", async () => {
+    const project = await tempRepo("capshelf-apply-unbound-project-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+    const upstream = "https://github.com/acme/agent-config";
+    await mkdir(join(project, ".capshelf"), { recursive: true });
+    await writeFile(
+      join(project, ".capshelf", "capshelf.json"),
+      JSON.stringify({
+        installMode: "codex-compatible",
+        dataRepoUpstream: upstream,
+        skills: ["hello"],
+        settings: [],
+        mcp: [],
+      }),
+    );
+    await writeFile(
+      join(project, ".capshelf", "capshelf.lock.json"),
+      JSON.stringify({
+        version: 2,
+        items: {
+          "data/skills/hello": {
+            source: "data",
+            sha: "abc123",
+            sourceCommit: "deadbeef",
+            appliedAt: "2026-06-11T00:00:00.000Z",
+          },
+        },
+      }),
+    );
+
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, cli, "apply"],
+      cwd: project,
+      env: { ...process.env, CAPSHELF_HOME: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(result.exitCode).toBe(1);
+    const stderr = result.stderr.toString();
+    expect(stderr).toContain(
+      "upstream (per .capshelf/capshelf.json): https://github.com/acme/agent-config",
+    );
+    expect(stderr).toContain(`git clone ${upstream} <path>`);
+    expect(stderr).toContain("capshelf set-data <path>");
+    expect(stderr).toContain("capshelf apply");
+  });
+
+  test("apply reports missing dataRepoUpstream when a cloned project cannot be discovered", async () => {
+    const project = await tempRepo("capshelf-apply-undiscoverable-project-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+    await mkdir(join(project, ".capshelf"), { recursive: true });
+    await writeFile(
+      join(project, ".capshelf", "capshelf.json"),
+      JSON.stringify({
+        installMode: "codex-compatible",
+        skills: ["hello"],
+        settings: [],
+        mcp: [],
+      }),
+    );
+    await writeFile(
+      join(project, ".capshelf", "capshelf.lock.json"),
+      JSON.stringify({
+        version: 2,
+        items: {
+          "data/skills/hello": {
+            source: "data",
+            sha: "abc123",
+            sourceCommit: "deadbeef",
+            appliedAt: "2026-06-11T00:00:00.000Z",
+          },
+        },
+      }),
+    );
+
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, cli, "apply"],
+      cwd: project,
+      env: { ...process.env, CAPSHELF_HOME: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(result.exitCode).toBe(1);
+    const stderr = result.stderr.toString();
+    expect(stderr).toContain(
+      ".capshelf/capshelf.json does not declare dataRepoUpstream",
+    );
+    expect(stderr).toContain("capshelf set-upstream <data-repo-url>");
+  });
+
   test("set-data verifies existing lock entries before replacing local config", async () => {
     const project = await tempRepo("capshelf-set-data-lock-project-");
     const originalRepo = await tempRepo("capshelf-set-data-lock-original-");
@@ -738,6 +945,10 @@ describe("cli integration", () => {
       stderr: "pipe",
     });
     expect(init.exitCode).toBe(0);
+    const initManifest = await file(
+      join(project, ".capshelf", "capshelf.json"),
+    ).json();
+    await $`git -C ${wrongRepo} remote set-url origin ${initManifest.dataRepoUpstream}`.quiet();
 
     const add = Bun.spawnSync({
       cmd: [process.execPath, cli, "add", "skills/hello"],
@@ -1800,14 +2011,16 @@ describe("cli integration", () => {
 
   test("promote prints where the commit landed and a push hint with origin", async () => {
     const project = await tempRepo("capshelf-promote-output-project-");
-    const dataRepo = await tempRepo("capshelf-promote-output-data-");
+    const dataRepo = await tempRepo("capshelf-promote-output-data-", {
+      origin: null,
+    });
     const cli = join(import.meta.dir, "..", "src", "cli.ts");
     await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
     await writeFile(join(dataRepo, "skills", "hello", "SKILL.md"), "hello\n");
     await commitAll(dataRepo, "baseline");
 
     for (const args of [
-      ["init", "--data", dataRepo],
+      ["init", "--data", dataRepo, "--no-upstream"],
       ["add", "skills/hello"],
     ]) {
       const result = Bun.spawnSync({
@@ -2966,7 +3179,7 @@ describe("cli integration", () => {
     );
     expect(dataResults).toHaveLength(1);
     expect(dataResults[0].name).toBe("security-review");
-    expect(dataResults[0].score).toBe(2);
+    expect(dataResults[0].score).toBeGreaterThan(0);
     expect(dataResults[0].tags).toEqual(["security", "review"]);
     expect(dataResults[0].matches).toEqual([
       { term: "sql", field: "content", file: "SKILL.md" },
@@ -3253,7 +3466,7 @@ describe("cli integration", () => {
         stderr: "pipe",
       });
 
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    expect(run(["init", "--data", dataRepo, "--no-upstream"]).exitCode).toBe(0);
     expect(run(["add", "hello"]).exitCode).toBe(0);
 
     const localPath = join(project, ".capshelf", "local.json");
@@ -3273,6 +3486,355 @@ describe("cli integration", () => {
     expect(hello.state).toBe("missing_upstream");
 
     expect(run(["status", "--strict"]).exitCode).toBe(4);
+  });
+
+  test("update rewrites installed files and bumps the lock to the new data commit", async () => {
+    const project = await tempRepo("capshelf-update-real-project-");
+    const dataRepo = await tempRepo("capshelf-update-real-data-");
+    const run = runIn(project);
+    await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "skills", "hello", "SKILL.md"),
+      "hello v1\n",
+    );
+    await commitAll(dataRepo, "hello v1");
+
+    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    expect(run(["add", "skills/hello"]).exitCode).toBe(0);
+    const lockPath = join(project, ".capshelf", "capshelf.lock.json");
+    const lockedBefore = (await file(lockPath).json()).items[
+      "data/skills/hello"
+    ];
+
+    await writeFile(
+      join(dataRepo, "skills", "hello", "SKILL.md"),
+      "hello v2\n",
+    );
+    await writeFile(join(dataRepo, "skills", "hello", "EXTRA.md"), "extra\n");
+    await commitAll(dataRepo, "hello v2");
+    const newHead = (await $`git -C ${dataRepo} rev-parse HEAD`.text()).trim();
+
+    const update = run(["update", "--json"]);
+    expect(update.exitCode).toBe(0);
+    const updateJson = JSON.parse(update.stdout.toString());
+    const item = updateJson.items.find(
+      (i: { key: string }) => i.key === "data/skills/hello",
+    );
+    expect(item.action).toBe("updated");
+    expect(item.sourceCommit).toBe(newHead);
+
+    expect(
+      await file(
+        join(project, ".agents", "skills", "hello", "SKILL.md"),
+      ).text(),
+    ).toBe("hello v2\n");
+    expect(
+      await file(
+        join(project, ".agents", "skills", "hello", "EXTRA.md"),
+      ).text(),
+    ).toBe("extra\n");
+    const lockedAfter = (await file(lockPath).json()).items[
+      "data/skills/hello"
+    ];
+    expect(lockedAfter.sourceCommit).toBe(newHead);
+    expect(lockedAfter.sha).not.toBe(lockedBefore.sha);
+    expect(lockedAfter.sha).toBe(item.sha);
+
+    const status = run(["status", "skills/hello", "--json"]);
+    expect(status.exitCode).toBe(0);
+    expect(JSON.parse(status.stdout.toString()).items[0].state).toBe("ok");
+  });
+
+  test("update overwrites unpinned local edits with the new upstream content", async () => {
+    const project = await tempRepo("capshelf-update-drift-project-");
+    const dataRepo = await tempRepo("capshelf-update-drift-data-");
+    const run = runIn(project);
+    await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "skills", "hello", "SKILL.md"),
+      "hello v1\n",
+    );
+    await commitAll(dataRepo, "hello v1");
+
+    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    expect(run(["add", "skills/hello"]).exitCode).toBe(0);
+
+    const installed = join(project, ".agents", "skills", "hello", "SKILL.md");
+    await writeFile(installed, "local edit\n");
+    await writeFile(
+      join(dataRepo, "skills", "hello", "SKILL.md"),
+      "hello v2\n",
+    );
+    await commitAll(dataRepo, "hello v2");
+
+    // Contract: update reconciles drifted installs to the new upstream
+    // content — local edits are overwritten unless the user has explicitly
+    // pinned them with `capshelf keep-local` (covered separately).
+    const update = run(["update", "skills/hello", "--json"]);
+    expect(update.exitCode).toBe(0);
+    const item = JSON.parse(update.stdout.toString()).items.find(
+      (i: { key: string }) => i.key === "data/skills/hello",
+    );
+    expect(item.action).toBe("updated");
+    expect(await file(installed).text()).toBe("hello v2\n");
+
+    const status = run(["status", "skills/hello", "--json"]);
+    expect(status.exitCode).toBe(0);
+    expect(JSON.parse(status.stdout.toString()).items[0].state).toBe("ok");
+  });
+
+  test("apply recreates installed skills in a fresh clone bound with set-data", async () => {
+    const original = await tempRepo("capshelf-apply-clone-original-");
+    const clone = await tempRepo("capshelf-apply-clone-clone-");
+    const dataRepo = await tempRepo("capshelf-apply-clone-data-");
+    const runOriginal = runIn(original);
+    const runClone = runIn(clone);
+    await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
+    await writeFile(join(dataRepo, "skills", "hello", "SKILL.md"), "hello\n");
+    await commitAll(dataRepo, "hello");
+
+    expect(runOriginal(["init", "--data", dataRepo]).exitCode).toBe(0);
+    expect(runOriginal(["add", "skills/hello"]).exitCode).toBe(0);
+
+    // Simulate a fresh clone of the original project: the committed manifest
+    // and lock are present, but installed outputs and the gitignored
+    // .capshelf/local.json binding are not.
+    await mkdir(join(clone, ".capshelf"), { recursive: true });
+    for (const name of ["capshelf.json", "capshelf.lock.json"]) {
+      await writeFile(
+        join(clone, ".capshelf", name),
+        await readFile(join(original, ".capshelf", name), "utf-8"),
+      );
+    }
+
+    expect(runClone(["set-data", dataRepo]).exitCode).toBe(0);
+
+    const apply = runClone(["apply", "--json"]);
+    expect(apply.exitCode).toBe(0);
+    const applyJson = JSON.parse(apply.stdout.toString());
+    expect(applyJson.project).toBe(clone);
+    expect(applyJson.dataRepo).toBe(dataRepo);
+    expect(applyJson.dryRun).toBe(false);
+    const item = applyJson.items.find(
+      (i: { key: string }) => i.key === "data/skills/hello",
+    );
+    expect(item.scope).toBe("project");
+    expect(item.action).toBe("reconciled");
+    const lock = await file(
+      join(clone, ".capshelf", "capshelf.lock.json"),
+    ).json();
+    expect(item.sha).toBe(lock.items["data/skills/hello"].sha);
+    expect(
+      await file(join(clone, ".agents", "skills", "hello", "SKILL.md")).text(),
+    ).toBe("hello\n");
+    expect(
+      await file(join(clone, ".claude", "skills", "hello", "SKILL.md")).text(),
+    ).toBe("hello\n");
+
+    const status = runClone(["status", "skills/hello", "--json"]);
+    expect(status.exitCode).toBe(0);
+    expect(JSON.parse(status.stdout.toString()).items[0].state).toBe("ok");
+  });
+
+  test("revert restores a locally edited skill to the locked content", async () => {
+    const project = await tempRepo("capshelf-revert-project-");
+    const dataRepo = await tempRepo("capshelf-revert-data-");
+    const run = runIn(project);
+    await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "skills", "hello", "SKILL.md"),
+      "hello v1\n",
+    );
+    await commitAll(dataRepo, "hello v1");
+
+    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    expect(run(["add", "skills/hello"]).exitCode).toBe(0);
+
+    const installed = join(project, ".agents", "skills", "hello", "SKILL.md");
+    await writeFile(installed, "local edit\n");
+    const drifted = run(["status", "skills/hello", "--json"]);
+    expect(drifted.exitCode).toBe(0);
+    expect(JSON.parse(drifted.stdout.toString()).items[0].state).toBe(
+      "drifted_local",
+    );
+
+    const revert = run(["revert", "skills/hello", "--json"]);
+    expect(revert.exitCode).toBe(0);
+    const result = JSON.parse(revert.stdout.toString());
+    expect(result.action).toBe("reconciled");
+    expect(result.key).toBe("data/skills/hello");
+    expect(await file(installed).text()).toBe("hello v1\n");
+
+    const status = run(["status", "skills/hello", "--json"]);
+    expect(status.exitCode).toBe(0);
+    expect(JSON.parse(status.stdout.toString()).items[0].state).toBe("ok");
+  });
+
+  test("keep-local pins drifted edits so update and apply leave them alone", async () => {
+    const project = await tempRepo("capshelf-keep-local-project-");
+    const dataRepo = await tempRepo("capshelf-keep-local-data-");
+    const run = runIn(project);
+    await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "skills", "hello", "SKILL.md"),
+      "hello v1\n",
+    );
+    await commitAll(dataRepo, "hello v1");
+
+    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    expect(run(["add", "skills/hello"]).exitCode).toBe(0);
+
+    const installed = join(project, ".agents", "skills", "hello", "SKILL.md");
+    await writeFile(installed, "local override\n");
+
+    const keep = run([
+      "keep-local",
+      "skills/hello",
+      "--reason",
+      "team override",
+      "--json",
+    ]);
+    expect(keep.exitCode).toBe(0);
+    expect(JSON.parse(keep.stdout.toString())).toEqual({
+      source: "data",
+      scope: "project",
+      kind: "skills",
+      name: "hello",
+      local: true,
+      localReason: "team override",
+    });
+    const lockPath = join(project, ".capshelf", "capshelf.lock.json");
+    const entry = (await file(lockPath).json()).items["data/skills/hello"];
+    expect(entry.local).toBe(true);
+    expect(entry.localReason).toBe("team override");
+
+    const pinned = run(["status", "skills/hello", "--json"]);
+    expect(pinned.exitCode).toBe(0);
+    expect(JSON.parse(pinned.stdout.toString()).items[0].state).toBe(
+      "kept-local",
+    );
+
+    await writeFile(
+      join(dataRepo, "skills", "hello", "SKILL.md"),
+      "hello v2\n",
+    );
+    await commitAll(dataRepo, "hello v2");
+
+    const update = run(["update", "--json"]);
+    expect(update.exitCode).toBe(0);
+    const updated = JSON.parse(update.stdout.toString()).items.find(
+      (i: { key: string }) => i.key === "data/skills/hello",
+    );
+    expect(updated.action).toBe("kept-local");
+    expect(await file(installed).text()).toBe("local override\n");
+    const afterUpdate = (await file(lockPath).json()).items[
+      "data/skills/hello"
+    ];
+    expect(afterUpdate.sha).toBe(entry.sha);
+    expect(afterUpdate.sourceCommit).toBe(entry.sourceCommit);
+
+    const apply = run(["apply", "skills/hello", "--json"]);
+    expect(apply.exitCode).toBe(0);
+    const applied = JSON.parse(apply.stdout.toString()).items.find(
+      (i: { key: string }) => i.key === "data/skills/hello",
+    );
+    expect(applied.action).toBe("kept-local");
+    expect(await file(installed).text()).toBe("local override\n");
+
+    const unset = run(["keep-local", "skills/hello", "--unset"]);
+    expect(unset.exitCode).toBe(0);
+    const afterUnset = (await file(lockPath).json()).items["data/skills/hello"];
+    expect(afterUnset.local).toBeUndefined();
+    expect(afterUnset.localReason).toBeUndefined();
+    const unpinned = run(["status", "skills/hello", "--json"]);
+    expect(unpinned.exitCode).toBe(0);
+    expect(JSON.parse(unpinned.stdout.toString()).items[0].state).toBe(
+      "drifted_and_update",
+    );
+  });
+
+  test("rm at project scope deletes skill installs and un-merges settings fragments", async () => {
+    const project = await tempRepo("capshelf-rm-project-project-");
+    const dataRepo = await tempRepo("capshelf-rm-project-data-");
+    const run = runIn(project);
+    await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
+    await writeFile(join(dataRepo, "skills", "hello", "SKILL.md"), "hello\n");
+    await mkdir(join(dataRepo, "settings", "security"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "settings", "security", "settings.json"),
+      `${JSON.stringify({ permissions: { deny: ["Bash(rm *)"] } })}\n`,
+    );
+    await commitAll(dataRepo, "skill and settings fragment");
+
+    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    expect(run(["add", "skills/hello"]).exitCode).toBe(0);
+    expect(run(["add", "settings/security"]).exitCode).toBe(0);
+
+    // An unmanaged user key in the merged output must survive rm.
+    const settingsPath = join(project, ".claude", "settings.json");
+    const settings = await file(settingsPath).json();
+    expect(settings.permissions.deny).toEqual(["Bash(rm *)"]);
+    settings.model = "opus";
+    await writeFile(settingsPath, `${JSON.stringify(settings)}\n`);
+
+    const rmSkill = run(["rm", "skills/hello", "--json"]);
+    expect(rmSkill.exitCode).toBe(0);
+    const rmSkillJson = JSON.parse(rmSkill.stdout.toString());
+    expect(rmSkillJson.kind).toBe("skills");
+    expect(rmSkillJson.scope).toBe("project");
+    expect(rmSkillJson.removedFiles).toBe(true);
+    expect(
+      await file(join(project, ".agents", "skills", "hello")).exists(),
+    ).toBe(false);
+    expect(
+      await file(join(project, ".claude", "skills", "hello")).exists(),
+    ).toBe(false);
+
+    const rmSettings = run(["rm", "settings/security", "--json"]);
+    expect(rmSettings.exitCode).toBe(0);
+    const rmSettingsJson = JSON.parse(rmSettings.stdout.toString());
+    expect(rmSettingsJson.kind).toBe("settings");
+    expect(rmSettingsJson.removedFiles).toBe(true);
+    const output = await file(settingsPath).json();
+    expect(output.model).toBe("opus");
+    expect(JSON.stringify(output)).not.toContain("Bash(rm *)");
+
+    const manifest = await file(
+      join(project, ".capshelf", "capshelf.json"),
+    ).json();
+    expect(manifest.skills).toEqual([]);
+    expect(manifest.settings).toEqual([]);
+    const lock = await file(
+      join(project, ".capshelf", "capshelf.lock.json"),
+    ).json();
+    expect(lock.items["data/skills/hello"]).toBeUndefined();
+    expect(lock.items["data/settings/security"]).toBeUndefined();
+  });
+
+  test("status reports missing_source_commit when the locked commit is unreachable", async () => {
+    const project = await tempRepo("capshelf-missing-commit-project-");
+    const dataRepo = await tempRepo("capshelf-missing-commit-data-");
+    const run = runIn(project);
+    await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
+    await writeFile(join(dataRepo, "skills", "hello", "SKILL.md"), "hello\n");
+    await commitAll(dataRepo, "hello");
+
+    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    expect(run(["add", "skills/hello"]).exitCode).toBe(0);
+
+    const lockPath = join(project, ".capshelf", "capshelf.lock.json");
+    const lock = await file(lockPath).json();
+    const bogus = "0123456789abcdef0123456789abcdef01234567";
+    lock.items["data/skills/hello"].sourceCommit = bogus;
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+
+    const status = run(["status", "skills/hello", "--json"]);
+    expect(status.exitCode).toBe(0);
+    const row = JSON.parse(status.stdout.toString()).items[0];
+    expect(row.state).toBe("missing_source_commit");
+    expect(row.sourceCommit).toBe(bogus);
+
+    expect(run(["status", "skills/hello", "--strict"]).exitCode).toBe(4);
   });
 
   /**

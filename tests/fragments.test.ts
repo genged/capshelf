@@ -313,6 +313,139 @@ describe("fragment output planning", () => {
   });
 });
 
+describe("fragmentContributionState", () => {
+  interface StateFixture {
+    dataRepo: string;
+    project: string;
+    manifest: ReturnType<typeof emptyManifest>;
+    lock: ReturnType<typeof emptyLock>;
+    outputPath: string;
+  }
+
+  // A claude-mcp fragment exercising nested objects (env) and arrays (args).
+  const managedFragment = {
+    mcpServers: {
+      github: {
+        command: "github-mcp",
+        args: ["--scope", "repo"],
+        env: { GITHUB_HOST: "github.com" },
+      },
+    },
+  };
+
+  async function appliedMcpFixture(): Promise<StateFixture> {
+    const dataRepo = await tempRepo();
+    const project = await tempDir("capshelf-fragments-project-");
+    await mkdir(join(dataRepo, "mcp", "github"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "mcp", "github", "claude.json"),
+      JSON.stringify(managedFragment),
+    );
+    await commitAll(dataRepo, "github mcp");
+    const sourceCommit = await lastTouchingFragmentCommit(
+      dataRepo,
+      "mcp",
+      "github",
+    );
+    const sha = await shaOfFragmentItem(dataRepo, "mcp", "github");
+    const manifest = { ...emptyManifest(), mcp: ["github"] };
+    const lock = emptyLock();
+    lock.items[dataKey("mcp", "github")] = {
+      source: "data",
+      sha,
+      sourceCommit,
+      appliedAt: new Date().toISOString(),
+    };
+    await applyFragmentOutput({
+      project,
+      dataRepo,
+      manifest,
+      oldLock: emptyLock(),
+      nextLock: lock,
+      target: "claude-mcp",
+    });
+    return {
+      dataRepo,
+      project,
+      manifest,
+      lock,
+      outputPath: join(project, ".mcp.json"),
+    };
+  }
+
+  function state(fixture: StateFixture) {
+    return fragmentContributionState(
+      fixture.project,
+      fixture.dataRepo,
+      fixture.manifest,
+      fixture.lock,
+      "claude-mcp",
+    );
+  }
+
+  test("reports ok right after apply and missing once the output is deleted", async () => {
+    const fixture = await appliedMcpFixture();
+    expect(await state(fixture)).toBe("ok");
+
+    await rm(fixture.outputPath);
+    expect(await state(fixture)).toBe("missing");
+  });
+
+  test("reports drifted when a managed scalar is altered", async () => {
+    const fixture = await appliedMcpFixture();
+    const current = JSON.parse(await file(fixture.outputPath).text());
+    current.mcpServers.github.command = "evil-mcp";
+    await writeFile(fixture.outputPath, JSON.stringify(current));
+
+    expect(await state(fixture)).toBe("drifted");
+  });
+
+  test("reports drifted when a managed nested key is removed", async () => {
+    const fixture = await appliedMcpFixture();
+    const current = JSON.parse(await file(fixture.outputPath).text());
+    delete current.mcpServers.github.env.GITHUB_HOST;
+    await writeFile(fixture.outputPath, JSON.stringify(current));
+
+    expect(await state(fixture)).toBe("drifted");
+  });
+
+  test("reports drifted when a managed array entry is removed", async () => {
+    const fixture = await appliedMcpFixture();
+    const current = JSON.parse(await file(fixture.outputPath).text());
+    current.mcpServers.github.args = ["--scope"];
+    await writeFile(fixture.outputPath, JSON.stringify(current));
+
+    expect(await state(fixture)).toBe("drifted");
+  });
+
+  test("stays ok with extra unmanaged keys alongside intact managed keys", async () => {
+    const fixture = await appliedMcpFixture();
+    const current = JSON.parse(await file(fixture.outputPath).text());
+    current.localOnly = { note: "user-owned" };
+    current.mcpServers.linear = { command: "linear-mcp" };
+    current.mcpServers.github.env.USER_EXTRA = "1";
+    await writeFile(fixture.outputPath, JSON.stringify(current));
+
+    expect(await state(fixture)).toBe("ok");
+  });
+
+  test("stays ok when managed array entries sit among extra user entries", async () => {
+    const fixture = await appliedMcpFixture();
+    const current = JSON.parse(await file(fixture.outputPath).text());
+    // Reordered and interleaved with user-added flags: managed entries are
+    // matched as a subset, not positionally.
+    current.mcpServers.github.args = [
+      "--verbose",
+      "repo",
+      "--user-flag",
+      "--scope",
+    ];
+    await writeFile(fixture.outputPath, JSON.stringify(current));
+
+    expect(await state(fixture)).toBe("ok");
+  });
+});
+
 describe("shaOfFragmentItemAtCommit", () => {
   test("matches shaOfFragmentItem on a clean tree and diverges after dirty edits", async () => {
     const dataRepo = await tempRepo();

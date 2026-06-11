@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   parseTomlConfigObject,
   stringifyTomlConfig,
+  validateCodexMcpFragment,
 } from "../src/toml-fragments";
 
 describe("parseTomlConfigObject", () => {
@@ -31,5 +32,60 @@ describe("parseTomlConfigObject", () => {
         "config.toml",
       ),
     ).toThrow("config.toml.meta.updated contains a TOML date");
+  });
+});
+
+describe("validateCodexMcpFragment", () => {
+  test("accepts a valid mcp_servers fragment unchanged", () => {
+    const parsed = parseTomlConfigObject(
+      [
+        "[mcp_servers.github]",
+        'command = "github-mcp"',
+        'args = ["--scope", "repo"]',
+        "enabled = true",
+        "",
+      ].join("\n"),
+      "mcp/github/codex.toml",
+    );
+
+    expect(validateCodexMcpFragment(parsed, "mcp/github/codex.toml")).toEqual({
+      mcp_servers: {
+        github: {
+          command: "github-mcp",
+          args: ["--scope", "repo"],
+          enabled: true,
+        },
+      },
+    });
+  });
+
+  test("accepts a fragment without mcp_servers", () => {
+    const parsed = parseTomlConfigObject(
+      'model = "gpt-5"\n',
+      "mcp/github/codex.toml",
+    );
+    expect(validateCodexMcpFragment(parsed, "mcp/github/codex.toml")).toEqual({
+      model: "gpt-5",
+    });
+  });
+
+  test("rejects a non-table mcp_servers value with a labeled error", () => {
+    const parsed = parseTomlConfigObject(
+      'mcp_servers = "github-mcp"\n',
+      "mcp/github/codex.toml",
+    );
+    expect(() =>
+      validateCodexMcpFragment(parsed, "mcp/github/codex.toml"),
+    ).toThrow("mcp/github/codex.toml.mcp_servers must be a TOML table");
+  });
+
+  test("rejects a non-table server entry with a labeled error", () => {
+    const parsed = parseTomlConfigObject(
+      '[mcp_servers]\ngithub = "github-mcp"\n',
+      "mcp/github/codex.toml",
+    );
+    expect(() =>
+      validateCodexMcpFragment(parsed, "mcp/github/codex.toml"),
+    ).toThrow("mcp/github/codex.toml.mcp_servers.github must be a TOML table");
   });
 });

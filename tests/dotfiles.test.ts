@@ -22,4 +22,17 @@ describe("dotenv safety policy", () => {
       "nested/.env.test.local",
     ]);
   });
+
+  test("flags uncommon .env.*.local names via the generic fallback", () => {
+    expect(
+      privateDotenvFiles([
+        ".env.custom.local",
+        "nested/.env.ci.local",
+        // Near misses: a template for a local file is shareable, and a
+        // non-".env."-prefixed name is not a dotenv file at all.
+        ".env.local.example",
+        ".envx.local",
+      ]),
+    ).toEqual([".env.custom.local", "nested/.env.ci.local"]);
+  });
 });

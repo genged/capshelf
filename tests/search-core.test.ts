@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-  FIELD_WEIGHTS,
   MAX_SEARCHABLE_CONTENT_BYTES,
   compareResults,
   isSearchableContent,
@@ -44,12 +43,6 @@ describe("matchItem", () => {
   });
 
   test("each term scores its best field: name 8, tag 4, description 2, content 1", () => {
-    expect(FIELD_WEIGHTS).toEqual({
-      name: 8,
-      tags: 4,
-      description: 2,
-      content: 1,
-    });
     // "review" hits the name (best), even though it is also a tag.
     expect(matchItem(["review"], item)?.score).toBe(8);
     // tag-only hit.

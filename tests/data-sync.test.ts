@@ -1,7 +1,12 @@
+import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
+import { mkdtemp } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import {
   decideSync,
   formatSyncHuman,
+  syncData,
   syncGuidance,
   type SyncFacts,
   type SyncReport,
@@ -136,23 +141,13 @@ describe("decideSync state table", () => {
     ).toEqual({ state: "fetch_failed", integrate: false, exitCode: 1 });
   });
 
-  test("exhaustive: every fact combination maps to exactly the documented state", () => {
-    // Enumerate the full cross product of the discrete fact dimensions and
-    // assert the normative precedence order resolves each one.
-    const expected = (f: SyncFacts): SyncState => {
-      if (!f.hasOrigin) return "no_origin";
-      if (!f.fetchOk) return "fetch_failed";
-      if (f.detached) return "detached_head";
-      if (f.trackingRef === null) return "no_tracking_ref";
-      const ahead = f.ahead ?? 0;
-      const behind = f.behind ?? 0;
-      if (ahead > 0 && behind > 0) return "diverged";
-      if (f.dirty && behind > 0) return "dirty_worktree";
-      if (ahead > 0) return "local_ahead";
-      if (behind > 0) return "fast_forwarded";
-      return "up_to_date";
-    };
-    const exits: Record<SyncState, number> = {
+  test("exhaustive: every fact combination yields a documented state with consistent outputs", () => {
+    // Enumerate the full cross product of the discrete fact dimensions.
+    // The precedence order itself is pinned by the point tests above; here we
+    // assert the invariants that hold across the whole input space: decideSync
+    // is total, each state carries its documented exit code, and only
+    // fast_forwarded integrates.
+    const exits: Record<SyncState, 0 | 1 | 3 | 4> = {
       up_to_date: 0,
       fast_forwarded: 0,
       local_ahead: 0,
@@ -181,10 +176,11 @@ describe("decideSync state table", () => {
                     dirty,
                   });
                   const decision = decideSync(f);
-                  const state = expected(f);
-                  expect(decision.state).toBe(state);
-                  expect(decision.exitCode).toBe(exits[state] as 0 | 1 | 3 | 4);
-                  expect(decision.integrate).toBe(state === "fast_forwarded");
+                  expect(Object.keys(exits)).toContain(decision.state);
+                  expect(decision.exitCode).toBe(exits[decision.state]);
+                  expect(decision.integrate).toBe(
+                    decision.state === "fast_forwarded",
+                  );
                   combos++;
                 }
               }
@@ -319,21 +315,120 @@ describe("formatSyncHuman", () => {
   });
 });
 
+async function configUser(repo: string): Promise<void> {
+  await $`git -C ${repo} config user.email capshelf@example.invalid`.quiet();
+  await $`git -C ${repo} config user.name capshelf`.quiet();
+}
+
+/**
+ * A local bare origin plus two clones: `seed` (used to advance origin) and
+ * `clone` (the bound data repo syncData operates on). Both start at the same
+ * single commit on main, with `clone` tracking origin/main.
+ */
+async function syncFixture(prefix: string): Promise<{
+  seed: string;
+  clone: string;
+}> {
+  const base = await mkdtemp(join(tmpdir(), prefix));
+  const origin = join(base, "origin.git");
+  const seed = join(base, "seed");
+  const clone = join(base, "clone");
+
+  await $`git init -q --bare -b main ${origin}`.quiet();
+
+  await $`git init -q -b main ${seed}`.quiet();
+  await configUser(seed);
+  await Bun.write(join(seed, "skills.md"), "v1\n");
+  await $`git -C ${seed} add skills.md`.quiet();
+  await $`git -C ${seed} commit -qm initial`.quiet();
+  await $`git -C ${seed} remote add origin ${origin}`.quiet();
+  await $`git -C ${seed} push -q -u origin main`.quiet();
+
+  await $`git clone -q ${origin} ${clone}`.quiet();
+  await configUser(clone);
+  return { seed, clone };
+}
+
+/** Commit `file` in the seed clone and push, advancing origin/main. */
+async function advanceOrigin(
+  seed: string,
+  file: string,
+  content: string,
+): Promise<string> {
+  await Bun.write(join(seed, file), content);
+  await $`git -C ${seed} add ${file}`.quiet();
+  await $`git -C ${seed} commit -qm advance`.quiet();
+  await $`git -C ${seed} push -q origin main`.quiet();
+  return (await $`git -C ${seed} rev-parse HEAD`.quiet().text()).trim();
+}
+
+async function headOf(repo: string): Promise<string> {
+  return (await $`git -C ${repo} rev-parse HEAD`.quiet().text()).trim();
+}
+
+describe("syncData I/O orchestration", () => {
+  test("fast-forwards a clean clone that is behind origin and moves HEAD", async () => {
+    const { seed, clone } = await syncFixture("capshelf-sync-ff-");
+    const before = await headOf(clone);
+    const upstreamSha = await advanceOrigin(seed, "new-skill.md", "v2\n");
+    expect(upstreamSha).not.toBe(before);
+
+    const report = await syncData(clone);
+
+    expect(report.state).toBe("fast_forwarded");
+    expect(report.exitCode).toBe(0);
+    expect(report.fetched).toBe(true);
+    expect(report.branch).toBe("main");
+    expect(report.trackingRef).toBe("origin/main");
+    expect(report.before).toBe(before);
+    expect(report.after).toBe(upstreamSha);
+    expect(report.ahead).toBe(0);
+    expect(report.behind).toBe(1);
+    expect(report.dirty).toBe(false);
+
+    // HEAD actually moved and the new commit's content landed in the worktree.
+    expect(await headOf(clone)).toBe(upstreamSha);
+    expect(await Bun.file(join(clone, "new-skill.md")).text()).toBe("v2\n");
+  });
+
+  test("dirty worktree behind origin: reports dirty_worktree and moves nothing", async () => {
+    const { seed, clone } = await syncFixture("capshelf-sync-dirty-");
+    const before = await headOf(clone);
+    await advanceOrigin(seed, "new-skill.md", "v2\n");
+    await Bun.write(join(clone, "skills.md"), "local edit\n");
+
+    const report = await syncData(clone);
+
+    expect(report.state).toBe("dirty_worktree");
+    expect(report.exitCode).toBe(4);
+    expect(report.dirty).toBe(true);
+    expect(report.behind).toBe(1);
+    expect(report.before).toBe(before);
+    expect(report.after).toBe(before);
+
+    // HEAD did not move, the dirty file is untouched, and the upstream
+    // commit's file was not materialized in the worktree.
+    expect(await headOf(clone)).toBe(before);
+    expect(await Bun.file(join(clone, "skills.md")).text()).toBe(
+      "local edit\n",
+    );
+    expect(await Bun.file(join(clone, "new-skill.md")).exists()).toBe(false);
+  });
+});
+
 describe("syncGuidance", () => {
-  test("covers every state with a one-liner", () => {
-    const states: SyncState[] = [
-      "up_to_date",
-      "fast_forwarded",
-      "local_ahead",
-      "diverged",
-      "dirty_worktree",
-      "detached_head",
-      "no_tracking_ref",
-      "no_origin",
-      "fetch_failed",
-    ];
-    for (const state of states) {
-      expect(syncGuidance(state, "/data").length).toBeGreaterThan(0);
-    }
+  test("names the remedial action for each state", () => {
+    // guidance ships verbatim in the --json report, so each state must point
+    // the user at its actual remedy.
+    const g = (state: SyncState) => syncGuidance(state, "/data");
+    expect(g("up_to_date")).toContain("up to date");
+    expect(g("fast_forwarded")).toContain("capshelf status");
+    expect(g("local_ahead")).toContain("git -C /data push");
+    expect(g("diverged")).toContain("rebase or merge");
+    expect(g("dirty_worktree")).toContain("stash");
+    expect(g("detached_head")).toContain("check out a branch");
+    expect(g("no_tracking_ref")).toContain("push the branch");
+    expect(g("no_origin")).toContain("git -C /data remote add origin");
+    expect(g("fetch_failed")).toContain("authentication");
   });
 });

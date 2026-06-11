@@ -35,4 +35,24 @@ describe("gitignoreVisibleFiles", () => {
       "scripts/run.sh",
     ]);
   });
+
+  test("child gitignore can re-include a file ignored by a parent scope", async () => {
+    const root = await tempDir("capshelf-gitignore-");
+
+    await writeFile(join(root, ".gitignore"), "*.log\n");
+    await writeFile(join(root, "main.ts"), "export {};\n");
+    await writeFile(join(root, "root.log"), "root\n");
+
+    await mkdir(join(root, "logs"), { recursive: true });
+    await writeFile(join(root, "logs", ".gitignore"), "!important.log\n");
+    await writeFile(join(root, "logs", "important.log"), "keep\n");
+    await writeFile(join(root, "logs", "debug.log"), "drop\n");
+
+    expect(await gitignoreVisibleFiles(root)).toEqual([
+      ".gitignore",
+      "logs/.gitignore",
+      "logs/important.log",
+      "main.ts",
+    ]);
+  });
 });
