@@ -223,6 +223,13 @@ export function registerInit(program: Command): void {
           console.log(`  ${manifest.dataRepoUpstream}`);
         }
       }
+      console.log("");
+      console.log("next:");
+      console.log(
+        "  capshelf search <task>       # find matching items and bundles",
+      );
+      console.log("  capshelf ls                  # browse the shelf");
+      console.log("  capshelf add bundles/<name>  # install a curated bundle");
     });
 }
 

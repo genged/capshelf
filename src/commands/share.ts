@@ -2,7 +2,7 @@ import type { Command } from "commander";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
-import { projectRoot, resolveDataRepo } from "../paths";
+import { homeRelative, projectRoot, resolveDataRepo } from "../paths";
 import { loadManifest, saveManifest, type Manifest } from "../manifest";
 import { addManifestName } from "../manifest";
 import {
@@ -14,7 +14,12 @@ import {
 } from "../lock";
 import type { DataLockEntry, Lock } from "../lock";
 import { isSystemItemName } from "../bundled";
-import { assertIsGitRepo, assertRepoClean, commitInRepo } from "../git";
+import {
+  assertIsGitRepo,
+  assertRepoClean,
+  commitInRepo,
+  originRemoteUrl,
+} from "../git";
 import { globalOpts } from "../cli";
 import { PreconditionError } from "../errors";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
@@ -210,6 +215,7 @@ export function registerShare(program: Command): void {
       console.log(`  source commit: ${adopted.sourceCommit}`);
       printRuntimeWarnings(adopted.runtimeWarnings);
       printPrivateDotenvWarnings(adopted.privateDotenvWarnings);
+      await printShareUpstreamGuidance(dataRepo);
     });
 }
 
@@ -355,6 +361,20 @@ async function shareFragment(
   console.log(`  source commit: ${sourceCommit}`);
   for (const fragmentSource of sources) {
     console.log(`  ${fragmentSource.relPath}`);
+  }
+  await printShareUpstreamGuidance(dataRepo);
+}
+
+async function printShareUpstreamGuidance(dataRepo: string): Promise<void> {
+  const origin = await originRemoteUrl(dataRepo);
+  console.log("");
+  console.log("committed to local data repo:");
+  console.log(`  ${homeRelative(dataRepo)}`);
+  if (origin !== null) {
+    console.log("");
+    console.log("to share upstream:");
+    console.log(`  cd ${homeRelative(dataRepo)}`);
+    console.log("  git push");
   }
 }
 
