@@ -2,7 +2,7 @@ import type { Command } from "commander";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
-import { projectRoot, resolveDataRepo } from "../paths";
+import { homeRelative, projectRoot, resolveDataRepo } from "../paths";
 import { loadManifest, saveManifest } from "../manifest";
 import type { Manifest } from "../manifest";
 import {
@@ -22,6 +22,7 @@ import {
   assertRepoCleanOutsidePaths,
   commitInRepo,
   lastTouchingCommit,
+  originRemoteUrl,
   statusPorcelain,
 } from "../git";
 import { isSystemItemName } from "../bundled";
@@ -51,11 +52,9 @@ import {
   type PromoteResult,
   type Scope,
 } from "../promote-core";
-import { adoptIntoDataRepo } from "../data-repo-adopt";
 import { installedSnapshot } from "../item-snapshot";
 
 interface PromoteOptions {
-  create?: boolean;
   message?: string;
   json?: boolean;
   local?: boolean;
@@ -72,7 +71,6 @@ export function registerPromote(program: Command): void {
     .description(
       "push edits for an already-tracked data item into the data repo and bump the lock",
     )
-    .option("--create", "deprecated: use share <item> --to project")
     .option("--local", "promote a local-scope item")
     .option("-m, --message <msg>", "git commit message")
     .option("--json", "output JSON")
@@ -95,27 +93,10 @@ export function registerPromote(program: Command): void {
       });
       await assertIsGitRepo(dataRepo);
 
-      printDeprecationHint(itemRef, opts);
-
       let result: PromoteResult;
       let saveProject = false;
       let saveLocal = false;
-      if (opts.create) {
-        if (opts.local) {
-          throw new PreconditionError(
-            `promote ${itemRef} --local --create is no longer supported; use: capshelf share ${itemRef}`,
-          );
-        }
-        result = await promoteCreate(
-          project,
-          dataRepo,
-          manifest,
-          lock,
-          ref,
-          opts,
-        );
-        saveProject = true;
-      } else if (opts.local) {
+      if (opts.local) {
         result = await promoteLocalTracked(
           project,
           dataRepo,
@@ -145,8 +126,15 @@ export function registerPromote(program: Command): void {
         await saveLocalLock(project, localLock);
       }
 
+      const origin = await originRemoteUrl(dataRepo);
       if (opts.json) {
-        console.log(JSON.stringify(result, null, 2));
+        console.log(
+          JSON.stringify(
+            { ...result, dataRepo, dataRepoHasOrigin: origin !== null },
+            null,
+            2,
+          ),
+        );
         return;
       }
       console.log(
@@ -155,15 +143,18 @@ export function registerPromote(program: Command): void {
       console.log(`  source commit: ${result.sourceCommit}`);
       printRuntimeWarnings(result.runtimeWarnings);
       printPrivateDotenvWarnings(result.privateDotenvWarnings);
+      if (result.committed) {
+        console.log("");
+        console.log("committed to local data repo:");
+        console.log(`  ${homeRelative(dataRepo)}`);
+        if (origin !== null) {
+          console.log("");
+          console.log("to share upstream:");
+          console.log(`  cd ${homeRelative(dataRepo)}`);
+          console.log("  git push");
+        }
+      }
     });
-}
-
-function printDeprecationHint(itemRef: string, opts: PromoteOptions): void {
-  if (opts.create) {
-    console.error(
-      `⚠ promote --create is deprecated; use: capshelf share ${itemRef} --to project`,
-    );
-  }
 }
 
 async function promoteProjectTracked(
@@ -485,40 +476,4 @@ export async function syncTrackedIntoDataRepo(
     ...(runtimeWarnings.length > 0 && { runtimeWarnings }),
     ...(privateDotenvWarnings.length > 0 && { privateDotenvWarnings }),
   };
-}
-
-async function promoteCreate(
-  project: string,
-  dataRepo: string,
-  manifest: Manifest,
-  lock: Lock,
-  ref: ReturnType<typeof parseItemRef>,
-  opts: PromoteOptions,
-): Promise<PromoteResult> {
-  const kind = ref.kind ?? "skills";
-  if (kind !== "skills") {
-    throw new PreconditionError(
-      "promote --create can only adopt local skills; use capshelf share for new mcp items",
-    );
-  }
-  if (lockKeyForRef(lock, { kind, name: ref.name })) {
-    throw new PreconditionError(
-      `already tracked in this project: ${kind}/${ref.name}`,
-    );
-  }
-
-  const adopted = await adoptIntoDataRepo(project, dataRepo, kind, ref.name, {
-    installMode: manifest.installMode,
-    message: opts.message,
-  });
-
-  addToManifest(manifest, kind, ref.name);
-  lock.items[dataKey(kind, ref.name)] = {
-    source: "data",
-    sha: adopted.sha,
-    sourceCommit: adopted.sourceCommit,
-    appliedAt: new Date().toISOString(),
-  };
-
-  return adopted;
 }

@@ -17,6 +17,7 @@ import { registerShare } from "./commands/share";
 import { registerMove } from "./commands/move";
 import { registerSetData } from "./commands/set-data";
 import { registerSetUpstream } from "./commands/set-upstream";
+import { registerDataPath } from "./commands/data-path";
 import { registerSelfUpdate } from "./commands/self-update";
 import { CliError } from "./errors";
 import { HOME_ENV, PRODUCT_NAME } from "./identity";
@@ -30,7 +31,7 @@ program
   .version(CLI_VERSION)
   .option(
     "-d, --data <path>",
-    `override data repo (resolution: --data > .capshelf/local.json > $${HOME_ENV}, no implicit default)`,
+    `override data repo with a local path (resolution: --data > .capshelf/local.json > $${HOME_ENV}, no implicit default); remote data repo URLs are accepted by init only`,
   );
 
 registerInit(program);
@@ -49,6 +50,7 @@ registerShare(program);
 registerMove(program);
 registerSetData(program);
 registerSetUpstream(program);
+registerDataPath(program);
 registerSelfUpdate(program);
 
 /**

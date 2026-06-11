@@ -35,6 +35,7 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
 | `init` | scaffold a new project (manifest + lock, install bundled system items, bind data repo) | implemented |
 | `set-data <path>` | bind this machine to the project's data repo clone via `.capshelf/local.json` | implemented |
 | `set-upstream <url>` | write the committed `dataRepoUpstream` URL in `.capshelf/capshelf.json` | implemented |
+| `data-path` | print the resolved local data repo path; `--json` includes the path and the normalized upstream (`null` when absent) | implemented |
 | `ls` | list items in master (default) or in this project (`--here`) | implemented |
 | `show <item>` | print metadata + content for one item | implemented |
 | `status [<item>]` | drift / update report for this project; `--project` and `--local` filter scopes; `--diff` explains local drift | implemented |
@@ -110,6 +111,43 @@ repo path is stored in gitignored `.capshelf/local.json`. If the data repo has a
 `origin` remote, `init` writes its normalized URL to `dataRepoUpstream` unless
 `--no-upstream` is used; `--upstream <url>` overrides auto-detection.
 
+## Remote data repo bootstrap
+
+`init --data` also accepts a remote data repo URL:
+
+```
+capshelf init --data https://github.com/genged/agent-shared
+capshelf init --data git@github.com:genged/agent-shared.git
+capshelf init --data https://github.com/genged/agent-shared --data-dir ~/code/agent-shared
+```
+
+A remote URL is bootstrap input, not the runtime data repo. Capshelf clones it
+once into a predictable local path, then continues exactly as if that local
+clone had been passed to `--data`:
+
+- Default clone path: `$XDG_DATA_HOME/capshelf/data/<host>/<owner-path>/<repo>`
+  (falling back to `~/.local/share`), derived from the normalized remote
+  identity with credentials and one trailing `.git` stripped.
+- `--data-dir <path>` overrides the clone destination.
+- The clone path is written to gitignored `.capshelf/local.json` and the
+  normalized remote identity to `dataRepoUpstream` in `.capshelf/capshelf.json`.
+- `file://` URLs are accepted as bootstrap input (useful for local mirrors and
+  testing) but are never recorded as `dataRepoUpstream`: a machine-local path
+  is not a portable upstream, and `set-upstream` rejects `file://` URLs.
+- Passing `--upstream` alongside a remote `--data` URL requires both to
+  normalize to the same identity; a mismatch fails with exit 4 before
+  anything is cloned or written.
+- If the clone path already exists, it must be a git working tree whose
+  `origin` matches the URL; otherwise `init` fails and asks for an explicit
+  local path.
+- Capshelf never fetches or pulls the clone during later commands, and
+  `promote` still commits locally only.
+
+Supported forms are full remote URLs: `https://host/owner/repo[.git]`,
+`git@host:owner/repo[.git]`, and `ssh://git@host/path/repo[.git]`. Shorthand
+such as `owner/repo` or `github:owner/repo` is rejected. `set-data` stays a
+local-path binding command; pass remote URLs only to `init --data`.
+
 ## Data repo binding
 
 For a cloned project whose committed manifest declares an upstream:
@@ -125,8 +163,17 @@ capshelf apply
 from the clone, writes `.capshelf/local.json`, and ensures
 `.capshelf/.gitignore` contains that file.
 
+`set-data` accepts only local paths. Passing a remote data repo URL fails with
+exit 3 and points at `capshelf init --data <remote-data-repo-url>` for new
+projects, or a manual `git clone` plus `set-data <path>` for existing ones.
+
 Use `capshelf set-upstream <url>` to add or change the committed upstream URL.
 The URL is normalized before writing. Unsupported URL shapes are rejected.
+
+Both `set-data` and `set-upstream` support `--json`: `set-data --json` prints
+`{ project, dataRepo }` with the resolved absolute path, and
+`set-upstream --json` prints `{ project, dataRepoUpstream }` with the
+normalized URL.
 
 Legacy projects with `dataRepo` in `.capshelf/capshelf.json` or root
 `capshelf.json` fail normal commands with:
@@ -219,6 +266,24 @@ The core agent-driven flow. Works on data items only — system items are read-o
    capshelf revert security-review     # uses sourceCommit + git show to restore
 ```
 
+After a promoted commit, `promote` prints where the commit landed:
+
+```text
+committed to local data repo:
+  ~/.local/share/capshelf/data/github.com/genged/agent-shared
+```
+
+and, when the data repo has an `origin` remote, how to share it:
+
+```text
+to share upstream:
+  cd ~/.local/share/capshelf/data/github.com/genged/agent-shared
+  git push
+```
+
+Capshelf never pushes implicitly. `promote --json` includes the resolved
+`dataRepo` path and a `dataRepoHasOrigin` boolean.
+
 ## Adopting a local skill
 
 ```
@@ -244,9 +309,8 @@ the skill directory's own `.gitignore` files. In Git projects, local-scope
 skills also add their install paths to `.git/info/exclude`; non-Git projects
 skip Git excludes and rely on `.capshelf/local.json` plus `.capshelf/local.lock.json`.
 
-`promote --create` still works for one minor release, but prints a deprecation
-hint. `promote --local --to-project` has been removed; use `share` for adoption
-and `move --to <scope>` for scope changes.
+`promote --create` and `promote --local --to-project` have been removed; use
+`share` for adoption and `move --to <scope>` for scope changes.
 
 ## Coexisting with skills.sh
 
@@ -267,6 +331,13 @@ Homebrew:
 
 ```
 brew install genged/tap/capshelf
+```
+
+Release binary without Homebrew (verifies the published SHA-256 manifest,
+installs to `~/.local/bin/capshelf`):
+
+```
+curl -fsSL https://raw.githubusercontent.com/genged/capshelf/main/scripts/install.sh | sh
 ```
 
 Source install:
@@ -331,7 +402,10 @@ capshelf removes the old managed contribution, keeps local values, detects
 unmanaged scalar or shape collisions, and then merges the newly locked fragments.
 Arrays concatenate with deterministic dedupe; objects and TOML tables merge
 recursively; scalars are last-fragment-wins. TOML comments in rewritten
-`.codex/config.toml` are not preserved.
+`.codex/config.toml` are not preserved. TOML date/time values are rejected in
+fragment sources: capshelf's merge and hash pipeline round-trips values through
+JSON, which cannot preserve TOML date types (a local date would silently become
+a string or an offset date-time on re-emit).
 
 `share` for fragments requires an explicit source file and project scope:
 

@@ -1,6 +1,8 @@
 import type { Command } from "commander";
 import { isAbsolute, resolve } from "node:path";
+import { isRemoteDataUrl } from "../data-bootstrap";
 import { assertIsGitRepo } from "../git";
+import { PRODUCT_NAME } from "../identity";
 import { loadManifest } from "../manifest";
 import { loadLock } from "../lock";
 import { loadLocalConfig, saveLocalConfig } from "../local-config";
@@ -9,11 +11,26 @@ import { verifyDataLockEntries } from "../lock-verify";
 import { verifyDataRepoUpstream } from "../upstream-check";
 import { PreconditionError } from "../errors";
 
+interface SetDataOptions {
+  json?: boolean;
+}
+
 export function registerSetData(program: Command): void {
   program
     .command("set-data <path>")
     .description("bind this project to a local clone of its data repo")
-    .action(async (path: string) => {
+    .option("--json", "output JSON")
+    .action(async (path: string, opts: SetDataOptions) => {
+      if (isRemoteDataUrl(path)) {
+        throw new PreconditionError(
+          "set-data expects a local data repo path, not a remote data repo URL.\n\n" +
+            "for a new project, bootstrap from the remote URL with:\n" +
+            `  ${PRODUCT_NAME} init --data ${path}\n\n` +
+            "for an existing project, clone it yourself and bind the local clone:\n" +
+            `  git clone ${path} <path>\n` +
+            `  ${PRODUCT_NAME} set-data <path>`,
+        );
+      }
       const project = projectRoot();
       const manifest = await loadManifest(project);
       const lock = await loadLock(project);
@@ -40,6 +57,10 @@ export function registerSetData(program: Command): void {
         settings: existing?.settings ?? [],
         mcp: existing?.mcp ?? [],
       });
+      if (opts.json) {
+        console.log(JSON.stringify({ project, dataRepo }, null, 2));
+        return;
+      }
       console.log(`✓ data repo: ${storedPath}`);
     });
 }

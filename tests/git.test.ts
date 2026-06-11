@@ -230,9 +230,85 @@ describe("remote URL normalization", () => {
     ).toBe("https://example.com/team/repo");
   });
 
+  test("keeps non-default ports in the identity", () => {
+    expect(normalizeRemoteUrl("https://github.com:8443/mg/agent-shared")).toBe(
+      "https://github.com:8443/mg/agent-shared",
+    );
+    expect(
+      normalizeRemoteUrl("ssh://git@gitlab.com:2222/mg/agent-shared.git"),
+    ).toBe("https://gitlab.com:2222/mg/agent-shared");
+    expect(
+      normalizeRemoteUrl("https://github.com:8443/mg/agent-shared"),
+    ).not.toBe(normalizeRemoteUrl("https://github.com/mg/agent-shared"));
+    // Default ports collapse into the plain host.
+    expect(normalizeRemoteUrl("https://github.com:443/mg/agent-shared")).toBe(
+      "https://github.com/mg/agent-shared",
+    );
+  });
+
+  test("strips trailing .git and slashes until stable", () => {
+    expect(normalizeRemoteUrl("https://github.com/mg/agent-shared/.git")).toBe(
+      "https://github.com/mg/agent-shared",
+    );
+    expect(normalizeRemoteUrl("https://github.com/mg/agent-shared.git/")).toBe(
+      "https://github.com/mg/agent-shared",
+    );
+  });
+
+  test("normalization is idempotent over all supported forms", () => {
+    const corpus = [
+      "https://github.com/mg/agent-shared",
+      "https://github.com/mg/agent-shared.git",
+      "https://github.com/mg/agent-shared/",
+      "https://github.com/mg/agent-shared/.git",
+      "https://github.com/mg/agent-shared.git/",
+      "git@github.com:mg/agent-shared.git",
+      "ssh://git@github.com/mg/agent-shared",
+      "ssh://git@gitlab.com:2222/mg/agent-shared.git",
+      "https://token@github.com/mg/agent-shared.git",
+      "https://github.com:8443/mg/agent-shared",
+      "github:mg/agent-shared",
+      "HTTPS://GitHub.com/mg/agent-shared",
+    ];
+    for (const url of corpus) {
+      const once = normalizeRemoteUrl(url);
+      expect(once).not.toBeNull();
+      expect(normalizeRemoteUrl(once!)).toBe(once!);
+    }
+    for (const url of ["file:///tmp/repo", "file:///tmp/repo.git/"]) {
+      const once = normalizeRemoteUrl(url, { allowFileUrls: true });
+      expect(once).not.toBeNull();
+      expect(normalizeRemoteUrl(once!, { allowFileUrls: true })).toBe(once!);
+    }
+  });
+
+  test("normalizes local file remotes only when opted in", () => {
+    const allow = { allowFileUrls: true };
+    expect(normalizeRemoteUrl("file:///tmp/repo", allow)).toBe(
+      "file:///tmp/repo",
+    );
+    // A file path names a real directory; trailing .git is preserved.
+    expect(normalizeRemoteUrl("file:///tmp/repo.git", allow)).toBe(
+      "file:///tmp/repo.git",
+    );
+    expect(normalizeRemoteUrl("file:///tmp/repo/", allow)).toBe(
+      "file:///tmp/repo",
+    );
+    expect(normalizeRemoteUrl("file://localhost/tmp/repo", allow)).toBe(
+      "file:///tmp/repo",
+    );
+    // Default behavior rejects file:// — machine-local paths are not
+    // portable upstreams.
+    expect(normalizeRemoteUrl("file:///tmp/repo")).toBeNull();
+  });
+
   test("returns null for unsupported values", () => {
     expect(normalizeRemoteUrl("not a url")).toBeNull();
     expect(normalizeRemoteUrl("file:///tmp/repo")).toBeNull();
+    expect(
+      normalizeRemoteUrl("file://server/share/repo", { allowFileUrls: true }),
+    ).toBeNull();
+    expect(normalizeRemoteUrl("file:///", { allowFileUrls: true })).toBeNull();
     expect(normalizeRemoteUrl("git@example.com")).toBeNull();
   });
 });

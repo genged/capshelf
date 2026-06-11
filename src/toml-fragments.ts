@@ -71,9 +71,16 @@ function validateTomlValue(value: ConfigValue, label: string): void {
   if (value === null) {
     throw new Error(`${label} contains null, which is not valid TOML`);
   }
+  // TOML date/time values are rejected rather than supported: the shared
+  // ConfigValue pipeline hashes and merges via JSON, where a date collapses
+  // into its ISO string (silently changing the TOML type on re-emit), and
+  // structuredClone strips the TomlDate subclass that smol-toml needs to
+  // distinguish local dates/times from offset date-times. Until the value
+  // model carries dates first-class, rejecting is the only round-trip-safe
+  // behavior.
   if (value instanceof TomlDate) {
     throw new Error(
-      `${label} contains a TOML date, which capshelf does not round-trip in M5`,
+      `${label} contains a TOML date, which capshelf does not support in TOML fragments`,
     );
   }
   if (Array.isArray(value)) {

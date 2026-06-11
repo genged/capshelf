@@ -193,6 +193,22 @@ describe("assertNoScopeCollisions", () => {
         lock({ "data:skills:a": dataEntry }),
       ),
     ).toThrow(/owned by both project and local scope: data:skills:a/);
+    expect(() =>
+      assertNoScopeCollisions(
+        lock({ "data:skills:a": dataEntry }),
+        lock({ "data:skills:a": dataEntry }),
+      ),
+    ).toThrow(/remove one owner before checking status/);
+  });
+
+  test("names the caller's action in the message", () => {
+    expect(() =>
+      assertNoScopeCollisions(
+        lock({ "data:skills:a": dataEntry }),
+        lock({ "data:skills:a": dataEntry }),
+        "applying",
+      ),
+    ).toThrow(/remove one owner before applying/);
   });
 });
 

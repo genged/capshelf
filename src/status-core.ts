@@ -177,6 +177,7 @@ export function statusTargets(
 export function assertNoScopeCollisions(
   projectLock: Lock,
   localLock: Lock,
+  action = "checking status",
 ): void {
   const projectKeys = new Set(Object.keys(projectLock.items));
   const collisions = Object.keys(localLock.items).filter((key) =>
@@ -185,7 +186,7 @@ export function assertNoScopeCollisions(
   if (collisions.length === 0) return;
   throw new Error(
     `item is owned by both project and local scope: ${collisions.join(", ")}\n` +
-      "  remove one owner before checking status; local scope does not shadow project scope",
+      `  remove one owner before ${action}; local scope does not shadow project scope`,
   );
 }
 

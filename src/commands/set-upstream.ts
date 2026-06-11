@@ -3,13 +3,18 @@ import { normalizeRemoteUrl } from "../git";
 import { loadManifest, saveManifest } from "../manifest";
 import { projectRoot } from "../paths";
 
+interface SetUpstreamOptions {
+  json?: boolean;
+}
+
 export function registerSetUpstream(program: Command): void {
   program
     .command("set-upstream <url>")
     .description(
       "set the committed dataRepoUpstream URL in .capshelf/capshelf.json",
     )
-    .action(async (url: string) => {
+    .option("--json", "output JSON")
+    .action(async (url: string, opts: SetUpstreamOptions) => {
       const normalized = normalizeRemoteUrl(url);
       if (!normalized) throw new Error(`unsupported git remote URL: ${url}`);
 
@@ -17,6 +22,12 @@ export function registerSetUpstream(program: Command): void {
       const manifest = await loadManifest(project);
       manifest.dataRepoUpstream = normalized;
       await saveManifest(project, manifest);
+      if (opts.json) {
+        console.log(
+          JSON.stringify({ project, dataRepoUpstream: normalized }, null, 2),
+        );
+        return;
+      }
       console.log(`✓ data repo upstream: ${normalized}`);
     });
 }

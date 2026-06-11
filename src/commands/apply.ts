@@ -2,9 +2,9 @@ import type { Command } from "commander";
 import { projectRoot, resolveDataRepo } from "../paths";
 import { loadManifest } from "../manifest";
 import { loadLocalLock, loadLock } from "../lock";
-import type { Lock } from "../lock";
 import { parseLockKey } from "../installed";
 import { assertIsGitRepo } from "../git";
+import { assertNoScopeCollisions } from "../status-core";
 import { globalOpts } from "../cli";
 import { NotFoundError, PreconditionError, ResultExitError } from "../errors";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
@@ -66,7 +66,7 @@ export function registerApply(program: Command): void {
         const manifest = await loadManifest(project);
         const projectLock = await loadLock(project);
         const localLock = await loadLocalLock(project);
-        assertNoScopeCollisions(projectLock, localLock);
+        assertNoScopeCollisions(projectLock, localLock, "applying");
 
         let targets: Array<{ scope: "project" | "local"; key: string }>;
         if (itemRef) {
@@ -324,16 +324,4 @@ function addScope<T extends MaterializeResult>(
   result: T,
 ): T & { scope: "project" | "local" } {
   return { ...result, scope };
-}
-
-function assertNoScopeCollisions(projectLock: Lock, localLock: Lock): void {
-  const projectKeys = new Set(Object.keys(projectLock.items));
-  const collisions = Object.keys(localLock.items).filter((key) =>
-    projectKeys.has(key),
-  );
-  if (collisions.length === 0) return;
-  throw new Error(
-    `item is owned by both project and local scope: ${collisions.join(", ")}\n` +
-      "  remove one owner before applying; local scope does not shadow project scope",
-  );
 }

@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { constants } from "node:fs";
-import { access } from "node:fs/promises";
+import { access, realpath } from "node:fs/promises";
 import { basename, delimiter, join, resolve } from "node:path";
 import { CliError, ExitCode } from "./errors";
 
@@ -65,7 +65,15 @@ export async function gitWorkTreeRoot(path: string): Promise<string | null> {
 
 export async function isGitWorkTreeRoot(path: string): Promise<boolean> {
   const root = await gitWorkTreeRoot(path);
-  return root !== null && root === resolve(path);
+  if (root === null) return false;
+  if (root === resolve(path)) return true;
+  // git prints the physical top-level path; compare against the realpath so a
+  // worktree reached through a symlinked parent still counts as its root.
+  try {
+    return root === (await realpath(path));
+  } catch {
+    return false;
+  }
 }
 
 export async function gitInfoExcludePath(repo: string): Promise<string | null> {
@@ -308,34 +316,66 @@ export async function commitInRepo(
   return out.trim();
 }
 
-export function normalizeRemoteUrl(url: string): string | null {
+export interface NormalizeRemoteUrlOptions {
+  /**
+   * Accept file:// URLs. Only the remote bootstrap path opts in, for clone
+   * identity and origin comparison; everywhere else (committed manifest
+   * upstreams, set-upstream, init origin auto-detection) a machine-local
+   * file:// path is not a portable upstream and stays rejected.
+   */
+  allowFileUrls?: boolean;
+}
+
+export function normalizeRemoteUrl(
+  url: string,
+  options: NormalizeRemoteUrlOptions = {},
+): string | null {
   const input = url.replace(/\r?\n$/, "").trim();
   if (input.length === 0) return null;
 
   const githubMatch = /^github:([^/]+\/.+)$/i.exec(input);
   if (githubMatch) {
-    return normalizeUrlLike(`https://github.com/${githubMatch[1]!}`);
+    return normalizeUrlLike(`https://github.com/${githubMatch[1]!}`, options);
   }
 
   const scpLikeMatch = /^git@([^:]+):(.+)$/.exec(input);
   if (scpLikeMatch) {
-    return normalizeUrlLike(`https://${scpLikeMatch[1]!}/${scpLikeMatch[2]!}`);
+    return normalizeUrlLike(
+      `https://${scpLikeMatch[1]!}/${scpLikeMatch[2]!}`,
+      options,
+    );
   }
 
   const sshMatch = /^ssh:\/\/(?:[^@/]+@)?([^/]+)\/(.+)$/i.exec(input);
   if (sshMatch) {
-    return normalizeUrlLike(`https://${sshMatch[1]!}/${sshMatch[2]!}`);
+    return normalizeUrlLike(`https://${sshMatch[1]!}/${sshMatch[2]!}`, options);
   }
 
-  return normalizeUrlLike(input);
+  return normalizeUrlLike(input, options);
 }
 
-function normalizeUrlLike(input: string): string | null {
+function normalizeUrlLike(
+  input: string,
+  options: NormalizeRemoteUrlOptions,
+): string | null {
   let parsed: URL;
   try {
     parsed = new URL(input);
   } catch {
     return null;
+  }
+
+  if (parsed.protocol === "file:") {
+    if (!options.allowFileUrls) return null;
+    // file:// remotes only make sense for the local machine; a non-localhost
+    // host would not be resolvable as a git remote here. The path names a
+    // real directory, so a trailing .git is kept: /tmp/repo.git and
+    // /tmp/repo are distinct directories.
+    const host = parsed.hostname.toLowerCase();
+    if (host && host !== "localhost") return null;
+    const path = normalizeRemotePath(parsed.pathname, { stripDotGit: false });
+    if (!path) return null;
+    return `file:///${path}`;
   }
 
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
@@ -344,14 +384,29 @@ function normalizeUrlLike(input: string): string | null {
   }
 
   const scheme = parsed.protocol.slice(0, -1).toLowerCase();
-  const host = parsed.hostname.toLowerCase();
-  let path = parsed.pathname;
-  path = path.replace(/\/+$/, "");
-  path = path.replace(/\.git$/, "");
-  path = path.replace(/^\/+/, "");
-  if (path.length === 0) return null;
+  // host (not hostname) keeps a non-default port: github.com:8443 and
+  // github.com are different upstream identities.
+  const host = parsed.host.toLowerCase();
+  const path = normalizeRemotePath(parsed.pathname, { stripDotGit: true });
+  if (!path) return null;
 
   return `${scheme}://${host}/${path}`;
+}
+
+function normalizeRemotePath(
+  pathname: string,
+  opts: { stripDotGit: boolean },
+): string {
+  // Strip until stable so normalization is idempotent: a path like
+  // "owner/repo/.git" first loses ".git", then the exposed trailing slash.
+  let path = pathname;
+  let previous: string;
+  do {
+    previous = path;
+    path = path.replace(/\/+$/, "");
+    if (opts.stripDotGit) path = path.replace(/\.git$/, "");
+  } while (path !== previous);
+  return path.replace(/^\/+/, "");
 }
 
 function normalizeGitPath(path: string): string {

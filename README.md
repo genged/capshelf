@@ -38,6 +38,14 @@ brew install genged/tap/capshelf
 
 Capshelf also needs `git` on your `PATH`.
 
+Without Homebrew, use the install script. It downloads the latest GitHub
+release for your platform, verifies its SHA-256 checksum, and installs to
+`~/.local/bin/capshelf`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/genged/capshelf/main/scripts/install.sh | sh
+```
+
 To build from this repo instead:
 
 ```bash
@@ -140,6 +148,16 @@ capshelf get-path mcp/github --target codex
 capshelf get-path mcp/github --target codex --output
 ```
 
+Bootstrap a new project straight from a shared data repo URL (capshelf clones
+it once under `~/.local/share/capshelf/data/...`, or to `--data-dir <path>`,
+and binds the local clone):
+
+```bash
+cd ~/code/my-app
+capshelf init --data https://github.com/acme/agent-config
+capshelf add security-review
+```
+
 Connect a freshly cloned project to its data repo:
 
 ```bash
@@ -201,6 +219,7 @@ reported as external state instead of overwritten.
 | `init` | scaffold `.capshelf/`, install bundled system items, bind a data repo |
 | `set-data` | bind this machine's clone of the data repo |
 | `set-upstream` | write the committed upstream URL |
+| `data-path` | print the resolved local data repo path |
 | `ls` / `show` | inspect data repo items or installed items |
 | `add` / `rm` | add or remove an item in this project |
 | `status` | report drift, missing files, and update availability |

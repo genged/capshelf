@@ -1,10 +1,13 @@
 import type { Command } from "commander";
 import {
   DEFAULT_INSTALL_MODE,
+  homeRelative,
   initProjectRoot,
   resolveDataRepo,
 } from "../paths";
 import type { InstallMode } from "../paths";
+import { ensureClone, resolveDataInput } from "../data-bootstrap";
+import { LOCAL_CONFIG_FILE, METADATA_DIR } from "../identity";
 import { loadManifest, saveManifest } from "../manifest";
 import { loadLock, saveLock, systemKey } from "../lock";
 import {
@@ -18,6 +21,7 @@ import { assertIsGitRepo, normalizeRemoteUrl, originRemoteUrl } from "../git";
 import { globalOpts } from "../cli";
 import { PreconditionError } from "../errors";
 import { saveLocalConfig } from "../local-config";
+import { UpstreamVerificationError } from "../upstream-check";
 import {
   printRuntimeWarnings,
   runtimeWarningsForItem,
@@ -26,9 +30,17 @@ import type { RuntimeWarning } from "../runtime-warnings";
 
 interface InitOptions {
   data?: string;
+  dataDir?: string;
   claudeOnly?: boolean;
   json?: boolean;
   upstream?: string | false;
+}
+
+interface BootstrapInfo {
+  url: string;
+  upstream: string;
+  clonePath: string;
+  cloned: boolean;
 }
 
 export function registerInit(program: Command): void {
@@ -37,7 +49,14 @@ export function registerInit(program: Command): void {
     .description(
       "initialize capshelf for the current project (binds a data repo and installs system items without overwriting untracked targets)",
     )
-    .option("--data <path>", "data repo to bind this project to")
+    .option(
+      "--data <path|url>",
+      "local data repo path or remote data repo URL to bind this project to",
+    )
+    .option(
+      "--data-dir <path>",
+      "clone destination when --data is a remote data repo URL",
+    )
     .option("--upstream <url>", "declared upstream URL for the data repo")
     .option("--no-upstream", "omit dataRepoUpstream even when origin exists")
     .option(
@@ -52,7 +71,36 @@ export function registerInit(program: Command): void {
       const lock = await loadLock(project);
 
       // CLI-local --data wins, else global --data, else env, else default
-      const override = opts.data ?? globalOpts(cmd).data;
+      const input = opts.data ?? globalOpts(cmd).data;
+      let override = input;
+      let bootstrap: BootstrapInfo | undefined;
+      if (input !== undefined) {
+        const resolved = resolveDataInput(input, { dataDir: opts.dataDir });
+        if (resolved.kind === "remote-bootstrap") {
+          // A mismatched --upstream would bind the project to an upstream its
+          // own clone can never satisfy; fail before cloning or writing state.
+          assertUpstreamFlagMatchesBootstrap(opts, resolved.upstream);
+          const { cloned } = await ensureClone(
+            resolved.url,
+            resolved.clonePath,
+            resolved.upstream,
+          );
+          bootstrap = {
+            url: resolved.url,
+            upstream: resolved.upstream,
+            clonePath: resolved.clonePath,
+            cloned,
+          };
+          override = resolved.clonePath;
+        } else {
+          override = resolved.path;
+        }
+      }
+      if (opts.dataDir !== undefined && bootstrap === undefined) {
+        throw new PreconditionError(
+          "--data-dir requires --data <remote-data-repo-url>",
+        );
+      }
       const dataRepo = await resolveDataRepo({ override, manifest, project });
 
       // Fail BEFORE writing any state if the data repo isn't a usable git repo.
@@ -128,6 +176,14 @@ export function registerInit(program: Command): void {
               installMode,
               dataRepo,
               dataRepoUpstream: manifest.dataRepoUpstream ?? null,
+              ...(bootstrap && {
+                bootstrap: {
+                  url: bootstrap.url,
+                  upstream: bootstrap.upstream,
+                  clonePath: bootstrap.clonePath,
+                  cloned: bootstrap.cloned,
+                },
+              }),
               installed,
             },
             null,
@@ -135,6 +191,16 @@ export function registerInit(program: Command): void {
           ),
         );
         return;
+      }
+      if (bootstrap) {
+        console.log(
+          bootstrap.cloned
+            ? "cloned data repo:"
+            : "using existing data repo clone:",
+        );
+        console.log(`  ${bootstrap.url}`);
+        console.log(`  -> ${homeRelative(bootstrap.clonePath)}`);
+        console.log("");
       }
       console.log(`✓ initialized at ${project}`);
       console.log(`  install mode: ${installMode}`);
@@ -147,7 +213,35 @@ export function registerInit(program: Command): void {
         console.log(`  ${i.dst}`);
         printRuntimeWarnings(i.runtimeWarnings);
       }
+      if (bootstrap) {
+        console.log("");
+        console.log("bound project data repo:");
+        console.log(`  ${METADATA_DIR}/${LOCAL_CONFIG_FILE}`);
+        if (manifest.dataRepoUpstream) {
+          console.log("");
+          console.log("upstream:");
+          console.log(`  ${manifest.dataRepoUpstream}`);
+        }
+      }
     });
+}
+
+function assertUpstreamFlagMatchesBootstrap(
+  opts: InitOptions,
+  bootstrapUpstream: string,
+): void {
+  if (typeof opts.upstream !== "string") return;
+  const normalized = normalizeRemoteUrl(opts.upstream);
+  if (!normalized) {
+    throw new Error(`unsupported git remote URL: ${opts.upstream}`);
+  }
+  if (normalized === bootstrapUpstream) return;
+  throw new UpstreamVerificationError(
+    "--upstream conflicts with the remote data repo URL passed to --data.\n\n" +
+      `  --data normalizes to:     ${bootstrapUpstream}\n` +
+      `  --upstream normalizes to: ${normalized}\n\n` +
+      "  pass matching URLs, or omit --upstream to record the --data identity",
+  );
 }
 
 async function initUpstream(
