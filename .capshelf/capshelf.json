@@ -1,5 +1,6 @@
 {
   "installMode": "codex-compatible",
+  "dataRepoUpstream": "https://github.com/genged/capshelf",
   "skills": [],
   "settings": [
     "generic"

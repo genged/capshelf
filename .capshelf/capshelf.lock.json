@@ -3,9 +3,9 @@
   "items": {
     "system/skills/capshelf": {
       "source": "system",
-      "sha": "4648d6df683e",
-      "cliVersion": "0.2.0",
-      "appliedAt": "2026-06-04T09:39:30.443Z"
+      "sha": "11a27f2bc7fd",
+      "cliVersion": "0.4.0",
+      "appliedAt": "2026-06-11T14:05:27.060Z"
     },
     "data/settings/generic": {
       "source": "data",
