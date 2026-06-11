@@ -36,10 +36,11 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
 | `set-data <path>` | bind this machine to the project's data repo clone via `.capshelf/local.json` | implemented |
 | `set-upstream <url>` | write the committed `dataRepoUpstream` URL in `.capshelf/capshelf.json` | implemented |
 | `data-path` | print the resolved local data repo path; `--json` includes the path and the normalized upstream (`null` when absent) | implemented |
-| `ls` | list items in master (default) or in this project (`--here`) | implemented |
-| `show <item>` | print metadata + content for one item | implemented |
+| `ls` | list items in master (default) or in this project (`--here`); shows descriptions and `#tags` from item metadata; `--tag` filters | implemented |
+| `show <item>` | print metadata + content for one item, including `requires`/`conflicts-with` install state; `--json` always carries a `metadata` object | implemented |
+| `search <query...>` | search available items (data repo + system) by name, tags, description, and content; supports `--kind` and `--json`; zero matches exit 0 | implemented |
 | `status [<item>]` | drift / update report for this project; `--project` and `--local` filter scopes; `--diff` explains local drift | implemented |
-| `add <item>` | install an item from the bound data repo; `--local` installs a clone-local skill | implemented |
+| `add <item>` | install an item from the bound data repo; `--local` installs a clone-local skill; warns on unmet `requires`, refuses on `conflicts-with` (exit 3) | implemented |
 | `rm <item>` | remove from this project; `--local` removes clone-local skills | implemented |
 | `get-path <item>` | print the editable path; skills return their managed directory, fragments support `--output` for generated output paths, and MCP supports `--target` | implemented |
 | `apply [<item>]` | reconcile project and local files with lockfiles (data items via `git show <sourceCommit>`; system items from bundled content; fragments via merged outputs); supports `--local` and `--dry-run` | implemented |
@@ -54,7 +55,6 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
 | `diff <name> [<ref>]` | show what would change on apply/update/promote | roadmap |
 | `doctor` | audit integrity (requires/conflicts, lockfile drift, uniqueness, system/data namespace collisions) | roadmap |
 | `journal` | recent activity (who/when/what) | roadmap |
-| `search` | fuzzy-find by name/tag across the data repo | roadmap |
 | `bundle` | apply / save / list bundles | roadmap |
 
 ## Common Flags
@@ -66,6 +66,79 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
   content without changing files. For copy items, extra current files are
   filtered through `.gitignore` files inside the installed item.
 - `--target claude|codex` — used by multi-target MCP fragment commands such as `show`, `get-path`, and `share`
+- `--tag <tag>` — supported by `ls` (including `--here`); repeatable, and
+  repeated tags narrow with AND. Comparison is case-insensitive; combine with
+  `--kind` to narrow further. Use `search` or two invocations for OR.
+
+## Item metadata
+
+Items can carry catalog metadata from two sources: an optional
+`.capshelf.yml` sidecar at the item directory root in the data repo (all
+kinds) and SKILL.md YAML frontmatter (skills only). The sidecar declares
+`description`, `tags`, `requires`, and `conflicts-with` (kind-qualified
+`<kind>/<name>` refs); frontmatter contributes only a fallback `description`.
+
+`ls` appends a description (truncated to 60 characters) and `#tags` to each
+row; `ls --json` rows gain optional `description` and `tags` fields
+(append-only, omitted when absent). `ls --here` enriches installed rows
+best-effort from the bound data repo's working tree — when no data repo is
+bound or the item no longer exists upstream, the fields are omitted and
+nothing fails.
+
+`show <item>` prints the full metadata between the lock info and the content
+dump — description, tags, and each `requires`/`conflicts-with` ref with its
+install state (`installed` means present in either `capshelf.lock.json` or
+`local.lock.json`). `show --json` always includes a `metadata` object with
+`tags`, `requires`, and `conflictsWith` (possibly empty) so consumers can
+rely on the key; `description` is included when present.
+
+The sidecar is catalog data, not item content: it is never hashed, never
+materialized into projects, and a metadata-only data-repo commit never makes
+`status` report drift or `update` rewrite a lock. Edit it in the data repo
+and commit — no project `update` is needed afterwards. Malformed metadata
+warns on stderr and degrades to no-metadata; it never fails a read command.
+
+### add enforcement
+
+`add` enforces sidecar relations before any writes, on both scopes:
+
+- **`requires` — warn, exit 0.** Each required ref missing from both locks is
+  printed to stderr with the exact fix command
+  (`<ref> — install with: capshelf add <ref>`); `add --json` appends a
+  `missingRequires` array (omitted when empty). The install still succeeds —
+  exit 5 stays reserved for a future `doctor`/strict audit.
+- **`conflicts-with` — refuse, exit 3, no override flag.** The check is
+  symmetric: it refuses when the new item declares a conflict with an
+  installed item, or when any installed data item declares a conflict with
+  the new item. The error names the declaring sidecar and the two escape
+  hatches: remove the conflicting item (`capshelf rm <ref>`), or fix a stale
+  declaration in the data repo and commit.
+
+Refs pointing at items deleted upstream are reported as missing requires and
+skipped for conflicts — `add` never fails because a referenced item is gone.
+Only `add` enforces relations; `update`, `apply`, and `rm` do not re-check.
+
+## search
+
+`capshelf search <query...> [--kind <kind>] [--json]` searches data items in
+the bound data repo plus bundled system items across four fields: the
+`<kind>/<name>` ref, tags, the resolved description, and item content
+(git-visible files for skills; canonical source files for fragments — the
+installed merged outputs are never read, so one fragment's text is never
+attributed to another).
+
+The query is split on whitespace into terms; every term must match (AND) as a
+case-insensitive substring of some field. Results are ranked by summed field
+weights (name 8, tag 4, description 2, content 1), tie-broken by `kind/name`.
+Content scanning skips files over 256 KiB, files containing a NUL byte, and
+`.capshelf.yml` itself. Zero matches print `(no matches)` (or `"results": []`)
+and exit 0 — an empty answer is a valid answer. Tag filtering belongs to
+`ls --tag`; putting tags in the query already matches them.
+
+```bash
+capshelf search "sql injection"
+capshelf search security --kind skills --json
+```
 
 ## Binary self-update
 
@@ -198,9 +271,9 @@ registered.
 | 0 | success |
 | 1 | generic error (missing args, bad config, I/O) |
 | 2 | item not found in data repo |
-| 3 | conflict (promote would clobber, operation rejected on a system item, untracked target would be overwritten, or path is managed by skills.sh) |
+| 3 | conflict (promote would clobber, operation rejected on a system item, untracked target would be overwritten, path is managed by skills.sh, or `add` refused by a `conflicts-with` declaration) |
 | 4 | drift detected (for `status --strict`) or upstream verification failed |
-| 5 | reserved for future unmet-requires checks |
+| 5 | reserved for future unmet-requires checks (`add` with unmet `requires` warns and exits 0) |
 | 6 | reserved for data repo not configured |
 | 7 | required dependency missing (`git` not found on `PATH`) |
 
@@ -367,8 +440,9 @@ An MCP server would let agents call `capshelf_add`, `capshelf_status`, etc. as f
 3. Make project-specific policy decisions for new projects.
 
 Everything else in the current CLI surface — inspect, edit, share, move,
-promote, and reconcile — is the agent's job. Search, validation, and bundles
-are roadmap workflow extensions.
+promote, and reconcile — is the agent's job, and `search` plus item metadata
+give it the discovery loop. Validation and bundles are roadmap workflow
+extensions.
 
 ## Config Fragments
 

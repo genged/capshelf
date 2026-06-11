@@ -11,6 +11,13 @@ import {
   installedPath,
 } from "./installed";
 import { assertRepoClean, commitInRepo } from "./git";
+import {
+  METADATA_SIDECAR,
+  parseSidecar,
+  printMetadataWarnings,
+  readSidecarBytes,
+  restoreSidecarBytes,
+} from "./metadata";
 import { replaceDirFromFiles, replaceDirFromGitVisibleFiles } from "./sync";
 import { findSkillsShSkill, skillsShConflictMessage } from "./external";
 import { runtimeWarningsForItem } from "./runtime-warnings";
@@ -78,6 +85,10 @@ export async function adoptIntoDataRepo(
     opts.sourceScope ?? "project",
   );
   const privateDotenvWarnings = privateDotenvFiles(snapshot.files);
+  // Defensive cache-and-restore: share refuses an existing upstream item
+  // above, but recovery flows can encounter a pre-existing target directory
+  // whose metadata sidecar must survive the replace.
+  const upstreamSidecar = await readSidecarBytes(dataPath);
   if (snapshot.source === "filesystem") {
     await replaceDirFromFiles(adoption.path, snapshot.files, dataPath);
   } else {
@@ -87,6 +98,9 @@ export async function adoptIntoDataRepo(
       adoption.path,
       dataPath,
     );
+  }
+  if (!(await restoreSidecarBytes(dataPath, upstreamSidecar))) {
+    await warnAboutAdoptedSidecar(dataPath, kind, name);
   }
   const sourceCommit = await commitInRepo(
     dataRepo,
@@ -116,6 +130,27 @@ export async function adoptIntoDataRepo(
     ...(runtimeWarnings.length > 0 && { runtimeWarnings }),
     ...(privateDotenvWarnings.length > 0 && { privateDotenvWarnings }),
   };
+}
+
+/**
+ * The sidecar is invisible in normal project listings (capshelf never
+ * materializes it), so committing one silently would surprise data-repo
+ * owners. A malformed adopted sidecar warns and adoption continues — it gets
+ * fixed upstream like any other file.
+ */
+async function warnAboutAdoptedSidecar(
+  dataPath: string,
+  kind: ItemKind,
+  name: string,
+): Promise<void> {
+  const bytes = await readSidecarBytes(dataPath);
+  if (bytes === null) return;
+  console.error(
+    `⚠ project copy contains ${METADATA_SIDECAR} — committed to data repo`,
+  );
+  printMetadataWarnings(
+    parseSidecar(bytes.toString("utf-8"), `${kind}/${name}`, name),
+  );
 }
 
 function assertCanNormalizeAdoptedSkill(

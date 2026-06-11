@@ -220,7 +220,8 @@ reported as external state instead of overwritten.
 | `set-data` | bind this machine's clone of the data repo |
 | `set-upstream` | write the committed upstream URL |
 | `data-path` | print the resolved local data repo path |
-| `ls` / `show` | inspect data repo items or installed items |
+| `ls` / `show` | inspect data repo items or installed items, with descriptions and tags from item metadata |
+| `search` | find items by name, tags, description, or content |
 | `add` / `rm` | add or remove an item in this project |
 | `status` | report drift, missing files, and update availability |
 | `apply` | reconcile project files to the current locks |
@@ -257,8 +258,10 @@ make build                          # compile dist/capshelf
 Skills, settings fragments, MCP fragments, and project-scoped Codex config
 fragments are implemented. Fragment outputs preserve project-local values and
 fragment promotion commits canonical data repo source files, not generated
-outputs. `validate`, `diff`, `doctor`, `journal`, `search`, `bundle`, and Codex
-custom agent copy items are on the roadmap.
+outputs. Item metadata (`.capshelf.yml` sidecars) drives `ls --tag`, `search`,
+and `add`-time `requires`/`conflicts-with` checks. `validate`, `diff`,
+`doctor`, `journal`, `bundle`, and Codex custom agent copy items are on the
+roadmap.
 
 ## Further Reading
 

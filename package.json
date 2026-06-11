@@ -22,6 +22,7 @@
     "commander": "^12.1.0",
     "ignore": "^7.0.5",
     "smol-toml": "^1.6.1",
+    "yaml": "^2.9.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {

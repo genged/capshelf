@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isIgnoredDotDirent } from "./dotfiles";
 import { gitVisibleFilesUnderPath, isGitRepo } from "./git";
+import { isMetadataSidecarPath } from "./master";
 import type { MasterItem } from "./master";
 import {
   assertCanMaterializeInstalled,
@@ -24,33 +25,54 @@ export function targetDir(
   return installedPath(project, item.kind, item.name, mode);
 }
 
-export async function copyRecursive(src: string, dst: string): Promise<void> {
-  await mkdir(dst, { recursive: true });
-  const entries = await readdir(src, { withFileTypes: true });
-  for (const e of entries) {
-    if (isIgnoredDotDirent(e)) continue;
-    const s = join(src, e.name);
-    const d = join(dst, e.name);
-    if (e.isDirectory()) await copyRecursive(s, d);
-    else if (e.isFile()) await copyFile(s, d);
+/**
+ * Skips paths (relative to the copied root) during a copy. Copy-down callers
+ * pass `isMetadataSidecarPath` so the catalog sidecar never lands in a
+ * project; copy-up callers (promote/share) pass nothing — a project-authored
+ * sidecar must travel up to the data repo.
+ */
+type SkipPredicate = (rel: string) => boolean;
+
+export async function copyRecursive(
+  src: string,
+  dst: string,
+  skip?: SkipPredicate,
+): Promise<void> {
+  await go(src, dst, "");
+
+  async function go(from: string, to: string, rel: string): Promise<void> {
+    await mkdir(to, { recursive: true });
+    const entries = await readdir(from, { withFileTypes: true });
+    for (const e of entries) {
+      if (isIgnoredDotDirent(e)) continue;
+      const childRel = rel ? `${rel}/${e.name}` : e.name;
+      if (skip?.(childRel)) continue;
+      const s = join(from, e.name);
+      const d = join(to, e.name);
+      if (e.isDirectory()) await go(s, d, childRel);
+      else if (e.isFile()) await copyFile(s, d);
+    }
   }
 }
 
 export async function replaceDirFromDir(
   src: string,
   dst: string,
+  skip?: SkipPredicate,
 ): Promise<void> {
   if (existsSync(dst)) await rm(dst, { recursive: true, force: true });
-  await copyRecursive(src, dst);
+  await copyRecursive(src, dst, skip);
 }
 
 export async function replaceDirFromFiles(
   src: string,
   files: string[],
   dst: string,
+  skip?: SkipPredicate,
 ): Promise<void> {
   if (existsSync(dst)) await rm(dst, { recursive: true, force: true });
   for (const rel of files) {
+    if (skip?.(rel)) continue;
     const from = join(src, ...rel.split("/"));
     const to = join(dst, ...rel.split("/"));
     await mkdir(dirname(to), { recursive: true });
@@ -63,10 +85,12 @@ export async function replaceDirFromGitVisibleFiles(
   relPath: string,
   src: string,
   dst: string,
+  skip?: SkipPredicate,
 ): Promise<void> {
   if (existsSync(dst)) await rm(dst, { recursive: true, force: true });
   const files = await gitVisibleFilesUnderPath(repo, relPath);
   for (const rel of files) {
+    if (skip?.(rel)) continue;
     const from = join(src, ...rel.split("/"));
     const to = join(dst, ...rel.split("/"));
     await mkdir(dirname(to), { recursive: true });
@@ -93,9 +117,10 @@ export async function copyItemIntoProject(
       item.repoRelPath,
       item.path,
       dst,
+      isMetadataSidecarPath,
     );
   } else {
-    await replaceDirFromDir(item.path, dst);
+    await replaceDirFromDir(item.path, dst, isMetadataSidecarPath);
   }
   await ensureInstallAliases(project, item.kind, item.name, mode);
   return dst;

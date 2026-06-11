@@ -4,6 +4,7 @@ import { CLI_VERSION } from "./bundled";
 import { registerInit } from "./commands/init";
 import { registerLs } from "./commands/ls";
 import { registerShow } from "./commands/show";
+import { registerSearch } from "./commands/search";
 import { registerStatus } from "./commands/status";
 import { registerAdd } from "./commands/add";
 import { registerRm } from "./commands/rm";
@@ -37,6 +38,7 @@ program
 registerInit(program);
 registerLs(program);
 registerShow(program);
+registerSearch(program);
 registerStatus(program);
 registerAdd(program);
 registerRm(program);

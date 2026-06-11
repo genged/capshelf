@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join, basename } from "node:path";
 import { isIgnoredDotDirent } from "./dotfiles";
 import { gitVisibleFilesUnderPath } from "./git";
+import { METADATA_SIDECAR } from "./metadata";
 
 export const ITEM_KINDS = [
   "skills",
@@ -88,6 +89,18 @@ export async function findMasterItem(
   return matches[0] ?? null;
 }
 
+/**
+ * True when an item-root-relative path is the item's metadata sidecar.
+ * `rel` must be relative to the item root: the check is exactly
+ * `rel === ".capshelf.yml"`, never a basename match — nested
+ * `sub/.capshelf.yml` files are item content and stay hashed/materialized.
+ * The sidecar is catalog data only; it is excluded from every hashing path
+ * and from materialization so metadata edits never look like content drift.
+ */
+export function isMetadataSidecarPath(rel: string): boolean {
+  return rel === METADATA_SIDECAR;
+}
+
 async function walkFiles(root: string): Promise<string[]> {
   const out: string[] = [];
   async function go(rel: string): Promise<void> {
@@ -114,7 +127,10 @@ export async function shaOfItem(itemPath: string): Promise<string> {
   if (info.isFile()) {
     return shaOfItemFiles(itemPath, []);
   }
-  return shaOfItemFiles(itemPath, await walkFiles(itemPath));
+  return shaOfItemFiles(
+    itemPath,
+    (await walkFiles(itemPath)).filter((rel) => !isMetadataSidecarPath(rel)),
+  );
 }
 
 export async function shaOfGitVisibleItem(
@@ -123,7 +139,9 @@ export async function shaOfGitVisibleItem(
 ): Promise<string> {
   return shaOfItemFiles(
     join(repo, ...relPath.split("/")),
-    await gitVisibleFilesUnderPath(repo, relPath),
+    (await gitVisibleFilesUnderPath(repo, relPath)).filter(
+      (rel) => !isMetadataSidecarPath(rel),
+    ),
   );
 }
 

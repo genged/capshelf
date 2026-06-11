@@ -5,6 +5,7 @@ import { join, posix } from "node:path";
 import { $ } from "bun";
 import type { Lock } from "./lock";
 import type { Manifest } from "./manifest";
+import { isMetadataSidecarPath } from "./master";
 import type { ItemKind } from "./master";
 import type { ItemSource } from "./installed";
 import { installedPath } from "./installed";
@@ -257,7 +258,14 @@ async function expectedFilesForCopyItem(
   const out: FileMap = new Map();
   for (const file of files) {
     const rel = posix.relative(repoRelPath, file);
-    if (!rel || rel.startsWith("..") || hasIgnoredDotSegment(rel)) {
+    if (
+      !rel ||
+      rel.startsWith("..") ||
+      hasIgnoredDotSegment(rel) ||
+      // A committed metadata sidecar is catalog data, not locked content; it
+      // must not appear as a "missing" file in status --diff.
+      isMetadataSidecarPath(rel)
+    ) {
       continue;
     }
     out.set(rel, await showExpectedFile(opts, opts.sourceCommit, file));
@@ -287,7 +295,13 @@ async function readInstalledFiles(
   const out: FileMap = new Map();
   if (!existsSync(root)) return out;
 
-  const files = new Set(await gitignoreVisibleFiles(root));
+  // A project-side root .capshelf.yml is never managed content: keep it out
+  // of the file-map hash (currentCopyItemSha) and of status --diff output.
+  const files = new Set(
+    (await gitignoreVisibleFiles(root)).filter(
+      (rel) => !isMetadataSidecarPath(rel),
+    ),
+  );
   for (const rel of expectedFiles.keys()) files.add(rel);
   for (const rel of [...files].sort()) {
     const file = join(root, ...rel.split("/"));

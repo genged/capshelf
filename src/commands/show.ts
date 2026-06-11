@@ -3,8 +3,15 @@ import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { isFragmentItemKind, shaOfGitVisibleItem } from "../master";
 import { projectRoot, resolveDataRepo } from "../paths";
-import { loadLock, dataKey, systemKey } from "../lock";
+import { loadLocalLock, loadLock, dataKey, systemKey } from "../lock";
+import type { Lock } from "../lock";
 import { loadManifest } from "../manifest";
+import {
+  loadDataItemMetadata,
+  loadSystemItemMetadata,
+  printMetadataWarnings,
+} from "../metadata";
+import type { ItemMetadata } from "../metadata";
 import { findSystemItem, shaOfSystemItem } from "../bundled";
 import { assertIsGitRepo, gitVisibleFilesUnderPath } from "../git";
 import { globalOpts } from "../cli";
@@ -40,13 +47,14 @@ export function registerShow(program: Command): void {
       const project = projectRoot();
       const manifest = await loadManifest(project);
       const lock = await loadLock(project);
+      const localLock = await loadLocalLock(project);
 
       const systemItem = findSystemItem(ref.name);
       if (
         systemItem &&
         (ref.kind === undefined || systemItem.kind === ref.kind)
       ) {
-        await showSystem(ref.name, lock, opts);
+        await showSystem(ref.name, lock, localLock, opts);
         return;
       }
 
@@ -81,6 +89,9 @@ export function registerShow(program: Command): void {
         ? await shaOfFragmentItem(dataRepo, item.kind, item.name)
         : await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
       const lockEntry = lock.items[dataKey(item.kind, item.name)] ?? null;
+      const meta = await loadDataItemMetadata(item);
+      printMetadataWarnings(meta);
+      const locks = [lock, localLock];
 
       if (opts.json) {
         console.log(
@@ -107,6 +118,7 @@ export function registerShow(program: Command): void {
               label:
                 lockEntry?.source === "data" ? (lockEntry.label ?? null) : null,
               appliedAt: lockEntry?.appliedAt ?? null,
+              metadata: metadataJson(meta, locks),
             },
             null,
             2,
@@ -128,6 +140,7 @@ export function registerShow(program: Command): void {
       } else {
         console.log(`  not installed in this project`);
       }
+      printMetadataBlock(meta, locks);
       console.log(`  path:       ${item.path}`);
 
       if (opts.content === false) return;
@@ -170,7 +183,8 @@ function relativeProjectPath(project: string, path: string): string {
 
 async function showSystem(
   name: string,
-  lock: Awaited<ReturnType<typeof loadLock>>,
+  lock: Lock,
+  localLock: Lock,
   opts: ShowOptions,
 ): Promise<void> {
   const item = findSystemItem(name);
@@ -179,6 +193,9 @@ async function showSystem(
   }
   const bundledSha = await shaOfSystemItem(item);
   const lockEntry = lock.items[systemKey(item.kind, item.name)] ?? null;
+  const meta = loadSystemItemMetadata(item);
+  printMetadataWarnings(meta);
+  const locks = [lock, localLock];
 
   if (opts.json) {
     console.log(
@@ -192,6 +209,7 @@ async function showSystem(
           cliVersion:
             lockEntry?.source === "system" ? lockEntry.cliVersion : null,
           appliedAt: lockEntry?.appliedAt ?? null,
+          metadata: metadataJson(meta, locks),
         },
         null,
         2,
@@ -213,10 +231,71 @@ async function showSystem(
   } else {
     console.log(`  not installed in this project`);
   }
+  printMetadataBlock(meta, locks);
 
   if (opts.content === false) return;
   for (const f of item.files) {
     console.log(`─── ${f.relPath} ─────────────────────`);
     console.log(f.content);
+  }
+}
+
+interface RelationState {
+  ref: string;
+  installed: boolean;
+}
+
+/**
+ * "Installed" means present in either capshelf.lock.json or local.lock.json,
+ * under either the data or system source prefix.
+ */
+function relationStates(refs: string[], locks: Lock[]): RelationState[] {
+  return refs.map((ref) => ({
+    ref,
+    installed: locks.some(
+      (lock) =>
+        lock.items[`data/${ref}`] !== undefined ||
+        lock.items[`system/${ref}`] !== undefined,
+    ),
+  }));
+}
+
+/** The always-present `metadata` JSON object appended to show --json. */
+function metadataJson(
+  meta: ItemMetadata,
+  locks: Lock[],
+): {
+  description?: string;
+  tags: string[];
+  requires: RelationState[];
+  conflictsWith: RelationState[];
+} {
+  return {
+    ...(meta.description !== undefined && { description: meta.description }),
+    tags: meta.tags,
+    requires: relationStates(meta.requires, locks),
+    conflictsWith: relationStates(meta.conflictsWith, locks),
+  };
+}
+
+function printMetadataBlock(meta: ItemMetadata, locks: Lock[]): void {
+  if (meta.description !== undefined) {
+    console.log(`  description: ${meta.description}`);
+  }
+  if (meta.tags.length > 0) {
+    console.log(`  tags:        ${meta.tags.join(", ")}`);
+  }
+  for (const [label, refs] of [
+    ["requires:   ", meta.requires],
+    ["conflicts:  ", meta.conflictsWith],
+  ] as const) {
+    if (refs.length === 0) continue;
+    const states = relationStates(refs, locks)
+      .map(
+        (rel) =>
+          `${rel.ref} (${rel.installed ? "installed" : "not installed"})`,
+      )
+      .join(", ");
+    console.log(`  ${label} ${states}`);
   }
 }

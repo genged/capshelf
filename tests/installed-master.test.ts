@@ -16,7 +16,9 @@ import {
 import {
   assertDataRepoExists,
   findMasterItem,
+  isMetadataSidecarPath,
   listMasterItems,
+  shaOfGitVisibleItem,
   shaOfItem,
 } from "../src/master";
 import type { MasterItem } from "../src/master";
@@ -398,6 +400,133 @@ describe("master item discovery and hashing", () => {
     expect(await shaOfItem(join(root, "one.md"))).not.toBe(
       await shaOfItem(join(root, "two.md")),
     );
+  });
+
+  test("isMetadataSidecarPath matches only the item-root sidecar", () => {
+    expect(isMetadataSidecarPath(".capshelf.yml")).toBe(true);
+    expect(isMetadataSidecarPath("sub/.capshelf.yml")).toBe(false);
+    expect(isMetadataSidecarPath("SKILL.md")).toBe(false);
+  });
+
+  test("shaOfGitVisibleItem ignores the root sidecar but hashes nested ones", async () => {
+    const dataRepo = await tempRepo("capshelf-sidecar-git-");
+    const item = join(dataRepo, "skills", "hello");
+    await mkdir(item, { recursive: true });
+    await writeFile(join(item, "SKILL.md"), "hello\n");
+    await $`git -C ${dataRepo} add .`.quiet();
+    await $`git -C ${dataRepo} commit -qm baseline`.quiet();
+    const before = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+
+    // Adding and editing a root sidecar (untracked, then committed) is
+    // metadata-only and must not change the content sha.
+    await writeFile(join(item, ".capshelf.yml"), "tags: [a]\n");
+    expect(await shaOfGitVisibleItem(dataRepo, "skills/hello")).toBe(before);
+    await $`git -C ${dataRepo} add .`.quiet();
+    await $`git -C ${dataRepo} commit -qm sidecar`.quiet();
+    await writeFile(join(item, ".capshelf.yml"), "tags: [a, b]\n");
+    expect(await shaOfGitVisibleItem(dataRepo, "skills/hello")).toBe(before);
+
+    // A nested sub/.capshelf.yml is item content (no basename matching).
+    await mkdir(join(item, "sub"), { recursive: true });
+    await writeFile(join(item, "sub", ".capshelf.yml"), "content\n");
+    expect(await shaOfGitVisibleItem(dataRepo, "skills/hello")).not.toBe(
+      before,
+    );
+  });
+
+  test("shaOfItem (directory walk) ignores the root sidecar but hashes nested ones", async () => {
+    const item = await tempDir("capshelf-sidecar-walk-");
+    await writeFile(join(item, "SKILL.md"), "hello\n");
+    const before = await shaOfItem(item);
+
+    await writeFile(join(item, ".capshelf.yml"), "tags: [a]\n");
+    expect(await shaOfItem(item)).toBe(before);
+
+    await mkdir(join(item, "sub"), { recursive: true });
+    await writeFile(join(item, "sub", ".capshelf.yml"), "content\n");
+    expect(await shaOfItem(item)).not.toBe(before);
+  });
+
+  test("shaOfInstalled in a git worktree agrees with the locked sha despite a sidecar", async () => {
+    const dataRepo = await tempRepo("capshelf-sidecar-data-");
+    const project = await tempRepo("capshelf-sidecar-project-");
+    const dataItem = join(dataRepo, "skills", "hello");
+    await mkdir(dataItem, { recursive: true });
+    await writeFile(join(dataItem, "SKILL.md"), "hello\n");
+    await $`git -C ${dataRepo} add .`.quiet();
+    await $`git -C ${dataRepo} commit -qm baseline`.quiet();
+    const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+
+    const installed = join(project, ".agents", "skills", "hello");
+    await mkdir(installed, { recursive: true });
+    await writeFile(join(installed, "SKILL.md"), "hello\n");
+    await writeFile(join(installed, ".capshelf.yml"), "tags: [a]\n");
+
+    expect(await shaOfInstalled(project, "skills", "hello")).toBe(lockedSha);
+  });
+
+  test("shaOfInstalled outside a git worktree agrees with the locked sha despite a sidecar", async () => {
+    const dataRepo = await tempRepo("capshelf-sidecar-data-");
+    const project = await tempDir("capshelf-sidecar-nogit-project-");
+    const dataItem = join(dataRepo, "skills", "hello");
+    await mkdir(dataItem, { recursive: true });
+    await writeFile(join(dataItem, "SKILL.md"), "hello\n");
+    await $`git -C ${dataRepo} add .`.quiet();
+    await $`git -C ${dataRepo} commit -qm baseline`.quiet();
+    const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+
+    const installed = join(project, ".agents", "skills", "hello");
+    await mkdir(installed, { recursive: true });
+    await writeFile(join(installed, "SKILL.md"), "hello\n");
+    await writeFile(join(installed, ".capshelf.yml"), "tags: [a]\n");
+
+    expect(await shaOfInstalled(project, "skills", "hello")).toBe(lockedSha);
+  });
+
+  test("copyItemIntoProject never materializes the root sidecar but keeps nested ones", async () => {
+    const project = await tempDir();
+    const dataRepo = await tempRepo();
+    const source = join(dataRepo, "skills", "hello");
+    const item: MasterItem = {
+      kind: "skills",
+      name: "hello",
+      path: source,
+      repoRelPath: "skills/hello",
+    };
+
+    await mkdir(join(source, "sub"), { recursive: true });
+    await writeFile(join(source, "SKILL.md"), "hello\n");
+    await writeFile(join(source, ".capshelf.yml"), "tags: [a]\n");
+    await writeFile(join(source, "sub", ".capshelf.yml"), "content\n");
+    await $`git -C ${dataRepo} add .`.quiet();
+    await $`git -C ${dataRepo} commit -qm baseline`.quiet();
+
+    await copyItemIntoProject(project, item);
+
+    const dst = targetDir(project, item);
+    expect(existsSync(join(dst, "SKILL.md"))).toBe(true);
+    expect(existsSync(join(dst, ".capshelf.yml"))).toBe(false);
+    expect(existsSync(join(dst, "sub", ".capshelf.yml"))).toBe(true);
+  });
+
+  test("copyItemIntoProject skips the root sidecar from non-git sources too", async () => {
+    const project = await tempDir();
+    const source = await tempDir("capshelf-sync-src-");
+    const item: MasterItem = {
+      kind: "skills",
+      name: "hello",
+      path: source,
+      repoRelPath: "skills/hello",
+    };
+
+    await writeFile(join(source, "SKILL.md"), "hello\n");
+    await writeFile(join(source, ".capshelf.yml"), "tags: [a]\n");
+
+    await copyItemIntoProject(project, item);
+
+    const dst = targetDir(project, item);
+    expect(existsSync(join(dst, "SKILL.md"))).toBe(true);
+    expect(existsSync(join(dst, ".capshelf.yml"))).toBe(false);
   });
 
   test("assertDataRepoExists returns existing paths and rejects missing paths", async () => {

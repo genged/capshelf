@@ -12,7 +12,7 @@ import {
 } from "./installed";
 import type { ItemSource } from "./installed";
 import type { ItemKind } from "./master";
-import { isFragmentItemKind } from "./master";
+import { isFragmentItemKind, isMetadataSidecarPath } from "./master";
 import { findSystemItem, installSystemItem, shaOfSystemItem } from "./bundled";
 import { lsTreeEntriesAtCommit, showAtCommit } from "./git";
 import type { GitTreeEntry } from "./git";
@@ -261,7 +261,11 @@ async function materializableFilesAtCommit(
         file.type === "blob" &&
         rel &&
         !rel.startsWith("..") &&
-        !hasIgnoredDotSegment(rel)
+        !hasIgnoredDotSegment(rel) &&
+        // The metadata sidecar is catalog data: apply/revert never copy it
+        // into the project and the at-commit sha never includes it, keeping
+        // both consistent with the working-tree sha.
+        !isMetadataSidecarPath(rel)
       );
     })
     .sort((a, b) => a.path.localeCompare(b.path));

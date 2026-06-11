@@ -21,7 +21,7 @@ import {
   assertRepoCleanOutsidePath,
   assertRepoCleanOutsidePaths,
   commitInRepo,
-  lastTouchingCommit,
+  lastTouchingContentCommit,
   originRemoteUrl,
   statusPorcelain,
 } from "../git";
@@ -29,6 +29,7 @@ import { isSystemItemName } from "../bundled";
 import { globalOpts } from "../cli";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import { assertLocalScopeSupported } from "../local-config";
+import { readSidecarBytes, restoreSidecarBytes } from "../metadata";
 import { replaceDirFromFiles, replaceDirFromGitVisibleFiles } from "../sync";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import {
@@ -431,20 +432,22 @@ export async function syncTrackedIntoDataRepo(
   await assertRepoCleanOutsidePath(dataRepo, repoRelPath);
   const localRelPath = relative(project, localPath);
   const privateDotenvWarnings = privateDotenvFiles(snapshot.files);
+  // The directory replace removes the data-repo .capshelf.yml wholesale, but
+  // projects never receive the sidecar: cache it and restore it afterwards
+  // unless the project copy supplied its own (the project's wins).
+  const dataDir = join(dataRepo, repoRelPath);
+  const upstreamSidecar = await readSidecarBytes(dataDir);
   if (snapshot.source === "filesystem") {
-    await replaceDirFromFiles(
-      localPath,
-      snapshot.files,
-      join(dataRepo, repoRelPath),
-    );
+    await replaceDirFromFiles(localPath, snapshot.files, dataDir);
   } else {
     await replaceDirFromGitVisibleFiles(
       project,
       localRelPath,
       localPath,
-      join(dataRepo, repoRelPath),
+      dataDir,
     );
   }
+  await restoreSidecarBytes(dataDir, upstreamSidecar);
 
   const dirty =
     (await statusPorcelain(dataRepo, repoRelPath)).trim().length > 0;
@@ -454,7 +457,13 @@ export async function syncTrackedIntoDataRepo(
         [repoRelPath],
         opts.message ?? `capshelf: ${kind}/${name}`,
       )
-    : await lastTouchingCommit(dataRepo, repoRelPath);
+    : // The not-dirty re-pin must stay sidecar-blind: re-pinning after a
+      // metadata-only upstream commit keeps the old sourceCommit. The dirty
+      // branch usually commits content, but with a stale lock sha plus a
+      // sidecar-only difference the promote commit can be sidecar-only; the
+      // recorded sourceCommit then names that commit, which is harmless —
+      // `git show` at it still yields the locked content.
+      await lastTouchingContentCommit(dataRepo, repoRelPath);
 
   lock.items[key] = {
     source: "data",

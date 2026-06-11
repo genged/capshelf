@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import { join } from "node:path";
 import { projectRoot, resolveDataRepo } from "../paths";
 import { loadManifest, saveManifest } from "../manifest";
 import type { Manifest } from "../manifest";
@@ -10,13 +11,26 @@ import {
   saveLock,
   dataKey,
 } from "../lock";
-import { isFragmentItemKind, shaOfGitVisibleItem } from "../master";
+import {
+  isFragmentItemKind,
+  listMasterItems,
+  shaOfGitVisibleItem,
+} from "../master";
 import type { MasterItem } from "../master";
+import {
+  METADATA_SIDECAR,
+  loadDataItemMetadata,
+  printMetadataWarnings,
+} from "../metadata";
 import { NotFoundError, PreconditionError } from "../errors";
 import { copyItemIntoProject, targetDir } from "../sync";
 import { findInstallConflict } from "../installed";
 import { isSystemItemName } from "../bundled";
-import { assertIsGitRepo, assertPathClean, lastTouchingCommit } from "../git";
+import {
+  assertIsGitRepo,
+  assertPathClean,
+  lastTouchingContentCommit,
+} from "../git";
 import { globalOpts } from "../cli";
 import { findMasterItemByRef, parseItemRef } from "../item-ref";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
@@ -149,12 +163,19 @@ export function registerAdd(program: Command): void {
         await assertLocalInstallPathsUntracked(project, item.name);
       }
 
+      const missingRequires = await enforceItemRelations(
+        dataRepo,
+        item,
+        projectLock,
+        localLock,
+      );
+
       const sha = isFragmentItemKind(item.kind)
         ? await shaOfFragmentItem(dataRepo, item.kind, item.name)
         : await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
       const sourceCommit = isFragmentItemKind(item.kind)
         ? await lastTouchingFragmentCommit(dataRepo, item.kind, item.name)
-        : await lastTouchingCommit(dataRepo, item.repoRelPath);
+        : await lastTouchingContentCommit(dataRepo, item.repoRelPath);
 
       if (opts.local) {
         if (!localConfig) {
@@ -239,11 +260,13 @@ export function registerAdd(program: Command): void {
                 })),
               }),
               ...(runtimeWarnings.length > 0 && { runtimeWarnings }),
+              ...(missingRequires.length > 0 && { missingRequires }),
             },
             null,
             2,
           ),
         );
+        printMissingRequires(item, missingRequires);
         return;
       }
       const verb = alreadyInManifest && alreadyInLock ? "re-applied" : "added";
@@ -252,7 +275,101 @@ export function registerAdd(program: Command): void {
       console.log(`  source commit: ${sourceCommit}`);
       console.log(`  ${dst}`);
       printRuntimeWarnings(runtimeWarnings);
+      printMissingRequires(item, missingRequires);
     });
+}
+
+/**
+ * Enforce sidecar-declared relations before any writes.
+ *
+ * `conflicts-with` refuses (exit 3) and the check is symmetric: the new item
+ * declaring a conflict with an installed item, or any installed data item
+ * declaring a conflict with the new item, both refuse. There is no --force —
+ * the two legitimate escape hatches (remove the other item, or fix a stale
+ * declaration upstream) are printed in the error.
+ *
+ * `requires` only warns: the returned refs are missing from both locks and
+ * are reported with exact fix commands (exit stays 0; exit 5 is reserved for
+ * a future doctor/strict audit). Refs pointing at items deleted upstream are
+ * reported as missing requires / skipped for conflicts — add never fails
+ * because someone deleted a referenced item.
+ */
+async function enforceItemRelations(
+  dataRepo: string,
+  item: MasterItem,
+  projectLock: Awaited<ReturnType<typeof loadLock>>,
+  localLock: Awaited<ReturnType<typeof loadLocalLock>>,
+): Promise<string[]> {
+  const meta = await loadDataItemMetadata(item);
+  printMetadataWarnings(meta);
+  const itemRef = `${item.kind}/${item.name}`;
+  const installedKeys = new Set([
+    ...Object.keys(projectLock.items),
+    ...Object.keys(localLock.items),
+  ]);
+  // Re-adding an item must not conflict with (or require) itself.
+  installedKeys.delete(dataKey(item.kind, item.name));
+  const refInstalled = (ref: string): boolean =>
+    installedKeys.has(`data/${ref}`) || installedKeys.has(`system/${ref}`);
+
+  const declared = meta.conflictsWith.find(
+    (ref) => ref !== itemRef && refInstalled(ref),
+  );
+  if (declared) {
+    throw conflictRefusal(dataRepo, itemRef, declared, item.repoRelPath);
+  }
+
+  // Reverse direction: conflict relations are symmetric, so an installed
+  // item's declaration against the new item refuses too.
+  const masterByRef = new Map(
+    (await listMasterItems(dataRepo)).map((m) => [`${m.kind}/${m.name}`, m]),
+  );
+  for (const installedKey of installedKeys) {
+    if (!installedKey.startsWith("data/")) continue;
+    const installedRef = installedKey.slice("data/".length);
+    const installedItem = masterByRef.get(installedRef);
+    // Deleted upstream: its declarations cannot be read — skip, never fail.
+    if (!installedItem) continue;
+    const installedMeta = await loadDataItemMetadata(installedItem);
+    printMetadataWarnings(installedMeta);
+    if (installedMeta.conflictsWith.includes(itemRef)) {
+      throw conflictRefusal(
+        dataRepo,
+        itemRef,
+        installedRef,
+        installedItem.repoRelPath,
+      );
+    }
+  }
+
+  return meta.requires.filter((ref) => ref !== itemRef && !refInstalled(ref));
+}
+
+function conflictRefusal(
+  dataRepo: string,
+  newRef: string,
+  installedRef: string,
+  declaringRepoRelPath: string,
+): PreconditionError {
+  const declaringSidecar = `${declaringRepoRelPath}/${METADATA_SIDECAR}`;
+  return new PreconditionError(
+    `not installing ${newRef} — conflicts with installed ${installedRef}\n` +
+      `  declared by: ${declaringSidecar}\n` +
+      "  fix by one of:\n" +
+      `    - remove the conflicting item first: capshelf rm ${installedRef}\n` +
+      `    - if the declaration is stale, edit ${join(dataRepo, ...declaringSidecar.split("/"))} and commit`,
+  );
+}
+
+function printMissingRequires(
+  item: MasterItem,
+  missingRequires: string[],
+): void {
+  if (missingRequires.length === 0) return;
+  console.error(`⚠ missing required items for ${item.kind}/${item.name}:`);
+  for (const ref of missingRequires) {
+    console.error(`    ${ref} — install with: capshelf add ${ref}`);
+  }
 }
 
 function addToManifest(m: Manifest, item: MasterItem): void {

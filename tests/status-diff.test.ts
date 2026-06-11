@@ -167,6 +167,72 @@ describe("status diff helpers", () => {
     expect(await file(join(installed, "extra.md")).text()).toBe("local add\n");
   });
 
+  test("readInstalledFiles paths exclude the root sidecar from drift and diff", async () => {
+    const dataRepo = await tempRepo("capshelf-status-sidecar-data-");
+    const project = await tempRepo("capshelf-status-sidecar-project-");
+    const dataItem = join(dataRepo, "skills", "hello");
+    const installed = join(project, ".agents", "skills", "hello");
+
+    await mkdir(dataItem, { recursive: true });
+    await writeFile(join(dataItem, "SKILL.md"), "locked v1\n");
+    // The committed upstream sidecar must not appear in the expected file
+    // map either — it is never materialized into projects.
+    await writeFile(join(dataItem, ".capshelf.yml"), "tags: [a]\n");
+    await commitAll(dataRepo, "hello v1");
+    const sourceCommit = await lastTouchingCommit(dataRepo, "skills/hello");
+    const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+
+    await mkdir(installed, { recursive: true });
+    await writeFile(join(installed, "SKILL.md"), "locked v1\n");
+    // A project-side sidecar is not an extra file.
+    await writeFile(join(installed, ".capshelf.yml"), "tags: [other]\n");
+
+    const manifest = {
+      installMode: "codex-compatible" as const,
+      skills: ["hello"],
+      settings: [],
+      mcp: [],
+      codexConfig: [],
+    };
+    await expect(
+      currentCopyItemSha({
+        project,
+        dataRepo,
+        manifest,
+        source: "data",
+        kind: "skills",
+        name: "hello",
+        sourceCommit,
+      }),
+    ).resolves.toBe(lockedSha);
+
+    const diff = await buildStatusDiff({
+      project,
+      dataRepo,
+      manifest,
+      lock: {
+        version: 2,
+        items: {
+          [dataKey("skills", "hello")]: {
+            source: "data",
+            sha: lockedSha,
+            sourceCommit,
+            appliedAt: "2026-05-08T00:00:00.000Z",
+          },
+        },
+      },
+      row: {
+        source: "data",
+        kind: "skills",
+        name: "hello",
+        state: "drifted_local",
+        sourceCommit,
+      },
+    });
+
+    expect(diff).toBeNull();
+  });
+
   test("copy item status handles a locked file replaced by a directory", async () => {
     const dataRepo = await tempRepo("capshelf-status-file-dir-data-");
     const project = await tempRepo("capshelf-status-file-dir-project-");

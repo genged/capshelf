@@ -14,6 +14,7 @@ import {
   isPathClean,
   isRepoClean,
   lastTouchingCommit,
+  lastTouchingContentCommit,
   lsTreeAtCommit,
   normalizeRemoteUrl,
   showAtCommit,
@@ -178,6 +179,105 @@ describe("git historical content helpers", () => {
     expect(await lsTreeAtCommit(repo, firstCommit, "skills/hello")).toEqual([
       "skills/hello/SKILL.md",
     ]);
+  });
+
+  test("lastTouchingContentCommit ignores sidecar-only commits", async () => {
+    const repo = await tempRepo();
+    await mkdir(join(repo, "skills", "hello"), { recursive: true });
+    await writeFile(join(repo, "skills", "hello", "SKILL.md"), "hello v1\n");
+    await commitAll(repo, "content v1");
+    const contentCommit = await lastTouchingCommit(repo, "skills/hello");
+
+    await writeFile(
+      join(repo, "skills", "hello", ".capshelf.yml"),
+      "tags: [a]\n",
+    );
+    await commitAll(repo, "sidecar only");
+
+    // The naive lastTouchingCommit moves; the content commit does not.
+    expect(await lastTouchingCommit(repo, "skills/hello")).not.toBe(
+      contentCommit,
+    );
+    expect(await lastTouchingContentCommit(repo, "skills/hello")).toBe(
+      contentCommit,
+    );
+
+    await writeFile(join(repo, "skills", "hello", "SKILL.md"), "hello v2\n");
+    await commitAll(repo, "content v2");
+    const v2 = await lastTouchingCommit(repo, "skills/hello");
+    expect(await lastTouchingContentCommit(repo, "skills/hello")).toBe(v2);
+  });
+
+  test("lastTouchingContentCommit hashes nested sidecars as content", async () => {
+    const repo = await tempRepo();
+    await mkdir(join(repo, "skills", "hello", "sub"), { recursive: true });
+    await writeFile(join(repo, "skills", "hello", "SKILL.md"), "hello\n");
+    await commitAll(repo, "content");
+
+    await writeFile(
+      join(repo, "skills", "hello", "sub", ".capshelf.yml"),
+      "content\n",
+    );
+    await commitAll(repo, "nested sidecar is content");
+    const nested = await lastTouchingCommit(repo, "skills/hello");
+
+    expect(await lastTouchingContentCommit(repo, "skills/hello")).toBe(nested);
+  });
+
+  test("lastTouchingContentCommit falls back when only the sidecar was ever committed", async () => {
+    const repo = await tempRepo();
+    await mkdir(join(repo, "skills", "hello"), { recursive: true });
+    await writeFile(
+      join(repo, "skills", "hello", ".capshelf.yml"),
+      "tags: [a]\n",
+    );
+    await commitAll(repo, "sidecar only history");
+    const onlyCommit = await lastTouchingCommit(repo, "skills/hello");
+
+    expect(await lastTouchingContentCommit(repo, "skills/hello")).toBe(
+      onlyCommit,
+    );
+  });
+
+  test("lastTouchingContentCommit handles glob metacharacters in item names", async () => {
+    const repo = await tempRepo();
+    // "[ab]" would be a character class if the exclude pathspec were
+    // glob-interpreted; :(literal,exclude) keeps it a literal path.
+    await mkdir(join(repo, "skills", "x[ab]y"), { recursive: true });
+    await writeFile(join(repo, "skills", "x[ab]y", "SKILL.md"), "hello\n");
+    await commitAll(repo, "content");
+    const contentCommit = await lastTouchingCommit(repo, "skills/x[ab]y");
+
+    await writeFile(
+      join(repo, "skills", "x[ab]y", ".capshelf.yml"),
+      "tags: [a]\n",
+    );
+    await commitAll(repo, "sidecar only");
+
+    expect(await lastTouchingContentCommit(repo, "skills/x[ab]y")).toBe(
+      contentCommit,
+    );
+  });
+
+  test("assertPathClean names the sidecar when it is the only dirty path", async () => {
+    const repo = await tempRepo();
+    await mkdir(join(repo, "skills", "hello"), { recursive: true });
+    await writeFile(join(repo, "skills", "hello", "SKILL.md"), "hello\n");
+    await commitAll(repo, "baseline");
+
+    await writeFile(
+      join(repo, "skills", "hello", ".capshelf.yml"),
+      "tags: [a]\n",
+    );
+    await expect(assertPathClean(repo, "skills/hello")).rejects.toThrow(
+      /uncommitted metadata changes: skills\/hello\/\.capshelf\.yml/,
+    );
+
+    // With content dirty too, the generic message wins.
+    await writeFile(join(repo, "skills", "hello", "SKILL.md"), "dirty\n");
+    await expect(assertPathClean(repo, "skills/hello")).rejects.toThrow(
+      /uncommitted changes under skills\/hello/,
+    );
   });
 
   test("lastTouchingCommit rejects uncommitted paths", async () => {

@@ -4,7 +4,11 @@ import { loadManifest } from "../manifest";
 import { loadLocalLock, loadLock, saveLocalLock, saveLock } from "../lock";
 import { parseLockKey } from "../installed";
 import { isFragmentItemKind, shaOfGitVisibleItem } from "../master";
-import { assertIsGitRepo, assertRepoClean, lastTouchingCommit } from "../git";
+import {
+  assertIsGitRepo,
+  assertRepoClean,
+  lastTouchingContentCommit,
+} from "../git";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
 import { globalOpts } from "../cli";
 import { NotFoundError, PreconditionError, ResultExitError } from "../errors";
@@ -239,7 +243,7 @@ export function registerUpdate(program: Command): void {
                     parsed.kind,
                     parsed.name,
                   )
-                : await lastTouchingCommit(dataRepo, item.repoRelPath);
+                : await lastTouchingContentCommit(dataRepo, item.repoRelPath);
               const newEntry = {
                 ...entry,
                 sha,

@@ -101,8 +101,9 @@ A data repo is any directory matching this layout, with its own git history:
 └── .git/                       required: a data repo MUST be a git repo
 ```
 
-Planned data-repo extensions include bundles and metadata sidecars, but the
-current CLI discovers installable items only from `skills/`, `settings/`,
+Items may carry an optional `.capshelf.yml` metadata sidecar at their
+directory root (see Item Metadata below). Bundles are a planned extension.
+The CLI discovers installable items only from `skills/`, `settings/`,
 `mcp/`, and `codex/config/`.
 
 Multiple data repos can coexist on a single machine. Projects pick one in their manifest.
@@ -313,28 +314,53 @@ JSON output, `status` lists the personal skill under
 `external/  (Personal Claude)`, and `status --strict` exits 4 until the personal
 skill is removed or renamed.
 
-## Roadmap Metadata
+## Item Metadata
 
-The current CLI does not parse item metadata sidecars. A planned extension is an
-optional `.capshelf.yml` (or JSON) sibling to each item:
+Items carry catalog metadata from two sources:
 
-```yaml
-name: security-review
-description: ...
-tags: [security]
-targets: [claude]            # or [codex] or both
-requires: [settings/permissions-base]
-conflicts-with: [skills/quick-review]
-```
+1. An optional `.capshelf.yml` sidecar at the **item directory root** in the
+   data repo (`skills/<name>/.capshelf.yml`,
+   `codex/config/<name>/.capshelf.yml`, …), for all four kinds:
 
-The planned metadata behavior is:
-- warn on `add` if `requires` not present
-- refuse on `add` if `conflicts-with` collides
-- filter `ls --tag security`
+   ```yaml
+   description: Deep multi-pass security audit of changed files.
+   tags: [security, review]
+   requires: [settings/permissions-base]
+   conflicts-with: [skills/quick-review]
+   ```
 
-Today, skill YAML frontmatter in `SKILL.md` is preserved as item content for
-Claude/Codex consumption, but capshelf does not enforce metadata requirements
-or provide tag filtering.
+   Unknown fields (e.g. a future `targets`) are ignored for forward
+   compatibility; malformed metadata warns on stderr and degrades to
+   no-metadata — it never blocks reading or installing content.
+
+2. SKILL.md YAML frontmatter (skills only), read for a fallback
+   `description`. The merge is per-field with the sidecar winning;
+   `tags`/`requires`/`conflicts-with` are sidecar-only.
+
+This metadata feeds `ls` (descriptions, `#tags`, `--tag` filtering),
+`show` (relations with install state), `search`, and `add` enforcement
+(`requires` warns and exits 0; `conflicts-with` refuses symmetrically with
+exit 3 and no force flag).
+
+**The sidecar is not item content.** The lock pins what the agent runtime
+sees, and the sidecar is never delivered: it is excluded from every hashing
+path and from materialization, so a tag or description edit never flashes
+"update available" across consuming projects. The deliberate asymmetry: a
+description edit in SKILL.md frontmatter *does* bump the sha, because
+frontmatter ships to Claude and genuinely changes runtime behavior — hashed
+iff delivered. `promote` and `share` cache and restore the data-repo sidecar
+around their directory replaces so promoting content never deletes upstream
+metadata.
+
+`sourceCommit` is sidecar-blind too: copy-item pins are computed by
+`lastTouchingContentCommit` (`git log -1` with a
+`:(exclude)<item>/.capshelf.yml` pathspec, falling back to the unfiltered
+commit for sidecar-only histories), so a metadata-only data-repo commit
+leaves `update` a true no-op — the lock file is not rewritten. Fragment
+items are immune by construction: their `sourceCommit` is computed from
+canonical source paths only. `ls`/`show`/`search` read metadata from the
+data repo **working tree** — a catalog view of the shelf as it is now, not a
+pinned view per `sourceCommit`.
 
 ## Roadmap Bundles
 
@@ -358,6 +384,6 @@ Same model, different output paths. Codex items live under `codex/` in a data re
 ## What the human does (and doesn't)
 
 Humans approve data-repo writes and glance at `status` when starting a project.
-Agents handle the current CLI workflow — inspect, edit, share, move, promote,
-and reconcile — via the CLI surface in `cli.md`. Search, validation, and bundle
-composition are roadmap workflows.
+Agents handle the current CLI workflow — discover (`search`, `ls --tag`),
+inspect, edit, share, move, promote, and reconcile — via the CLI surface in
+`cli.md`. Validation and bundle composition are roadmap workflows.

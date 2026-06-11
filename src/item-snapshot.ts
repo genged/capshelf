@@ -1,7 +1,12 @@
 import { existsSync } from "node:fs";
 import { relative } from "node:path";
 import type { ItemKind } from "./master";
-import { shaOfGitVisibleItem, shaOfItem, shaOfItemFiles } from "./master";
+import {
+  isMetadataSidecarPath,
+  shaOfGitVisibleItem,
+  shaOfItem,
+  shaOfItemFiles,
+} from "./master";
 import { installedPath, shaOfInstalled } from "./installed";
 import { gitVisibleFilesUnderPath, isGitWorkTreeRoot } from "./git";
 import { gitignoreVisibleFiles } from "./gitignore";
@@ -51,7 +56,15 @@ async function filesystemSnapshot(path: string): Promise<ItemSnapshot> {
   return {
     source: "filesystem",
     localPath: path,
-    sha: await shaOfItemFiles(path, files),
+    // The sha must exclude a project-side root .capshelf.yml like every other
+    // hashing path, or promote/share/move would record a tainted lock sha for
+    // local-scope items and non-git projects (permanent false drift). The
+    // unfiltered `files` list is kept: copy-up callers must carry an authored
+    // sidecar to the data repo.
+    sha: await shaOfItemFiles(
+      path,
+      files.filter((rel) => !isMetadataSidecarPath(rel)),
+    ),
     files,
   };
 }

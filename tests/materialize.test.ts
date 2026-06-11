@@ -94,6 +94,50 @@ describe("materializeLockEntry", () => {
     ).toBe(true);
   });
 
+  test("apply never writes a committed root sidecar and hashes consistently", async () => {
+    const dataRepo = await tempRepo();
+    const project = await tempDir("capshelf-materialize-project-");
+    const dataItem = join(dataRepo, "skills", "hello");
+    const installed = join(project, ".agents", "skills", "hello");
+
+    await mkdir(join(dataItem, "sub"), { recursive: true });
+    await writeFile(join(dataItem, "SKILL.md"), "hello v1\n");
+    await writeFile(join(dataItem, ".capshelf.yml"), "tags: [a]\n");
+    await writeFile(join(dataItem, "sub", ".capshelf.yml"), "content\n");
+    await commitAll(dataRepo, "hello with sidecar");
+    const sourceCommit = await lastTouchingCommit(dataRepo, "skills/hello");
+    // The working-tree sha already excludes the root sidecar.
+    const sha = await shaOfItem(dataItem);
+    const entry = {
+      source: "data" as const,
+      sha,
+      sourceCommit,
+      appliedAt: new Date().toISOString(),
+    };
+
+    const result = await materializeLockEntry({
+      project,
+      dataRepo,
+      key: dataKey("skills", "hello"),
+      entry,
+    });
+
+    expect(result.action).toBe("reconciled");
+    expect(existsSync(join(installed, ".capshelf.yml"))).toBe(false);
+    expect(existsSync(join(installed, "sub", ".capshelf.yml"))).toBe(true);
+
+    // The at-commit sha equals the working-tree sha: a dry-run verification
+    // against the same entry passes and reports already-current.
+    const dryRun = await materializeLockEntry({
+      project,
+      dataRepo,
+      key: dataKey("skills", "hello"),
+      entry,
+      dryRun: true,
+    });
+    expect(dryRun.action).toBe("already-current");
+  });
+
   test("dry-run reports reconciliation without touching installed files", async () => {
     const dataRepo = await tempRepo();
     const project = await tempDir("capshelf-materialize-project-");

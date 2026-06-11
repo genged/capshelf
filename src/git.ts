@@ -99,6 +99,45 @@ export async function lastTouchingCommitForPaths(
   repo: string,
   relPaths: string[],
 ): Promise<string> {
+  const sha = await tryLastTouchingCommitForPaths(repo, relPaths);
+  if (!sha) {
+    const relPathLabel = relPaths.join(", ");
+    throw new Error(
+      `no commit touches ${relPathLabel} in ${repo}\n  commit it first: git -C ${repo} add ${relPaths.join(" ")} && git -C ${repo} commit`,
+    );
+  }
+  return sha;
+}
+
+/**
+ * The `sourceCommit` for a copy item: the last commit touching the item path
+ * with the root metadata sidecar excluded via a git pathspec. A
+ * `.capshelf.yml`-only commit therefore never moves the result, so `update`
+ * after a metadata-only data-repo commit stays a true no-op (no lock rewrite
+ * in any consuming project). Falls back to the unfiltered commit for the
+ * degenerate history where only the sidecar has ever been committed under
+ * the path.
+ */
+export async function lastTouchingContentCommit(
+  repo: string,
+  relPath: string,
+): Promise<string> {
+  // `literal` disables glob interpretation so item names containing pathspec
+  // metacharacters cannot widen the exclusion (git accepts combined magic
+  // words, verified). The non-literal include pathspec shares
+  // lastTouchingCommit's pre-existing exposure and stays consistent with it.
+  const sha = await tryLastTouchingCommitForPaths(repo, [
+    relPath,
+    `:(literal,exclude)${relPath}/.capshelf.yml`,
+  ]);
+  if (sha) return sha;
+  return await lastTouchingCommit(repo, relPath);
+}
+
+async function tryLastTouchingCommitForPaths(
+  repo: string,
+  relPaths: string[],
+): Promise<string | null> {
   await assertGitAvailable();
   if (relPaths.length === 0) {
     throw new Error(
@@ -114,13 +153,7 @@ export async function lastTouchingCommitForPaths(
     out = "";
   }
   const sha = out.trim();
-  if (!sha) {
-    const relPathLabel = relPaths.join(", ");
-    throw new Error(
-      `no commit touches ${relPathLabel} in ${repo}\n  commit it first: git -C ${repo} add ${relPaths.join(" ")} && git -C ${repo} commit`,
-    );
-  }
-  return sha;
+  return sha || null;
 }
 
 export async function showAtCommit(
@@ -298,10 +331,31 @@ export async function assertPathClean(
   repo: string,
   relPath: string,
 ): Promise<void> {
-  if (await isPathClean(repo, relPath)) return;
+  const out = await statusPorcelain(repo, relPath);
+  if (out.trim().length === 0) return;
+  const sidecarPath = `${relPath}/.capshelf.yml`;
+  if (dirtyPathsFromPorcelain(out).every((path) => path === sidecarPath)) {
+    // Metadata-dirty, not content-dirty: the catalog must not be read from
+    // limbo, but no item content is at risk — the fix is a one-line commit.
+    throw new Error(
+      `data repo has uncommitted metadata changes: ${sidecarPath}\n  no item content is at risk — commit the sidecar in the data repo first:\n    git -C ${repo} add ${sidecarPath} && git -C ${repo} commit -m "..."`,
+    );
+  }
   throw new Error(
     `data repo has uncommitted changes under ${relPath}\n  the recorded sha would not match its source commit. Commit first:\n    git -C ${repo} add ${relPath} && git -C ${repo} commit -m "..."`,
   );
+}
+
+function dirtyPathsFromPorcelain(out: string): string[] {
+  return out
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => {
+      const path = line.slice(3);
+      // Renames are reported as "XY old -> new"; the new path is what counts.
+      const arrow = path.lastIndexOf(" -> ");
+      return arrow === -1 ? path : path.slice(arrow + 4);
+    });
 }
 
 export async function commitInRepo(
