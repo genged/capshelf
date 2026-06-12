@@ -12,7 +12,16 @@ export function parseJsonConfigObject(
   raw: string,
   label: string,
 ): ConfigObject {
-  const parsed = JSON.parse(raw) as ConfigValue;
+  // An empty file is equivalent to a missing one, matching TOML where empty
+  // input parses to an empty table.
+  if (raw.trim() === "") return {};
+  let parsed: ConfigValue;
+  try {
+    parsed = JSON.parse(raw) as ConfigValue;
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(`${label}: ${reason}`);
+  }
   if (!isPlainConfigObject(parsed)) {
     throw new Error(`${label} must contain a JSON object`);
   }

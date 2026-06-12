@@ -311,6 +311,45 @@ describe("fragment output planning", () => {
       ),
     ).toBe("ok");
   });
+
+  test("applies mcp fragment over an empty .mcp.json", async () => {
+    const dataRepo = await tempRepo();
+    const project = await tempDir("capshelf-fragments-project-");
+    await mkdir(join(dataRepo, "mcp", "github"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "mcp", "github", "claude.json"),
+      JSON.stringify({ mcpServers: { github: { command: "github-mcp" } } }),
+    );
+    await commitAll(dataRepo, "github mcp");
+    const sourceCommit = await lastTouchingFragmentCommit(
+      dataRepo,
+      "mcp",
+      "github",
+    );
+    const sha = await shaOfFragmentItem(dataRepo, "mcp", "github");
+    const manifest = { ...emptyManifest(), mcp: ["github"] };
+    const nextLock = emptyLock();
+    nextLock.items[dataKey("mcp", "github")] = {
+      source: "data",
+      sha,
+      sourceCommit,
+      appliedAt: new Date().toISOString(),
+    };
+    const mcpPath = join(project, ".mcp.json");
+    await writeFile(mcpPath, "");
+
+    await applyFragmentOutput({
+      project,
+      dataRepo,
+      manifest,
+      oldLock: emptyLock(),
+      nextLock,
+      target: "claude-mcp",
+    });
+
+    const claudeMcp = JSON.parse(await file(mcpPath).text());
+    expect(claudeMcp.mcpServers.github.command).toBe("github-mcp");
+  });
 });
 
 describe("fragmentContributionState", () => {
