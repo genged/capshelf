@@ -5,6 +5,7 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -13,7 +14,9 @@ import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 
 async function tempDir(prefix: string): Promise<string> {
-  return await mkdtemp(join(tmpdir(), prefix));
+  // realpath: on macOS tmpdir() is a symlink (/var -> /private/var); the CLI
+  // reports resolved paths, so tests must compare against the resolved form.
+  return await realpath(await mkdtemp(join(tmpdir(), prefix)));
 }
 
 async function tempRepo(
