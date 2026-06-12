@@ -7,15 +7,16 @@
     "auth.openai.com",
     "chatgpt.com",
     "codeload.github.com",
+    "files.pythonhosted.org",
     "generativelanguage.googleapis.com",
     "github.com",
+    "mcp.posthog.com",
     "objects.githubusercontent.com",
     "platform.claude.com",
     "raw.githubusercontent.com",
     "registry.npmjs.org",
     "sentry.io",
-    "statsig.anthropic.com",
-    "files.pythonhosted.org"
+    "statsig.anthropic.com"
   ],
   "tokens": {
     "github": {

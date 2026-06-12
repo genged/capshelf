@@ -158,15 +158,27 @@ Sharing a settings or MCP fragment used to require a separate source file
 (`--from ./settings.json`) — awkward, because nobody has fragment files
 lying around. The values you want to share already live in
 `.claude/settings.json`, `.mcp.json`, or `.codex/config.toml`. Now `share`
-can extract them in place:
+extracts them in place, and for the most common case — an MCP server you
+configured by hand — it needs no flags at all:
 
 ```bash
-# share the permission allowlist you built up in this project
-capshelf share settings/permissions --pick permissions.allow --to project
+# share an MCP server you configured by hand
+capshelf share mcp/github
 
-# share an MCP server you configured by hand — picks accept bare server names
-capshelf share mcp/github --pick github --target claude --to project
+# share the permission allowlist you built up in this project
+capshelf share settings/permissions --pick permissions.allow
 ```
+
+For mcp items every flag now has the right default: the scope is `project`
+(fragments never supported local scope, so the old `local` default could
+only error), the value to extract defaults to the server matching the item
+name, and the target is wherever that server actually lives — capshelf
+scans both `.mcp.json` and `.codex/config.toml` and adopts every output
+that contains it, as one logical item in a single data-repo commit. If the
+server isn't found anywhere, the error lists the unmanaged server names
+that are available to share. Explicit flags remain for the other cases:
+`--pick <server>` when the item name differs from the server name,
+`--target claude|codex` to restrict the share to one output.
 
 `--pick <path>` is repeatable, and only the *unmanaged remainder* of the
 output is eligible: the current file minus every locked fragment's
@@ -178,8 +190,9 @@ output file itself doesn't change; the picked values simply become managed
 by the new fragment, and other projects pick them up with a plain
 `capshelf add`.
 
-`--from` still works for prepared source files, and the two are mutually
-exclusive.
+`--from` still works for prepared source files (for mcp it requires
+`--target`, since a file's destination can't be inferred), and the two are
+mutually exclusive.
 
 ## Keep a team in sync
 
@@ -244,6 +257,10 @@ reporting on the repo.
   for the same reason.
 - TOML date values in codex fragments remain unsupported, but the rule is
   now documented (docs/cli.md) instead of being an unexplained error.
+- An empty `.mcp.json` or `.claude/settings.json` is now treated like a
+  missing one (matching TOML, where empty input is an empty table) instead
+  of failing with a bare `JSON Parse error: Unexpected EOF`. When one of
+  these files is genuinely malformed, the error now names the file.
 
 ## Breaking changes
 

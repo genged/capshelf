@@ -143,6 +143,15 @@ $EDITOR .agents/skills/write-migration/SKILL.md
 capshelf share skills/write-migration --to project -m "add write-migration skill"
 ```
 
+Share fragment values that already live in this project's generated outputs —
+no separate source file needed; the output file is unchanged and the picked
+values simply become managed:
+
+```bash
+capshelf share mcp/github                                    # adopt the unmanaged `github` server from .mcp.json / .codex/config.toml
+capshelf share settings/permissions --pick permissions.allow # extract a settings value by path
+```
+
 Add shared config fragments:
 
 ```bash
@@ -244,7 +253,7 @@ reported as external state instead of overwritten.
 | `status` | report drift, missing files, and update availability |
 | `apply` | reconcile project files to the current locks |
 | `update` | bump pins to data repo HEAD, then apply |
-| `share` | adopt an on-disk item into the data repo |
+| `share` | adopt an on-disk item into the data repo; fragments can extract unmanaged values straight from generated outputs (`--pick`) |
 | `move` | move an item between local and project scope |
 | `promote` | commit local edits or fragment source edits for a tracked item back to the data repo |
 | `keep-local` | mark drift as intentional |
@@ -274,9 +283,10 @@ make build                          # compile dist/capshelf
 ## Project Status
 
 Skills, settings fragments, MCP fragments, and project-scoped Codex config
-fragments are implemented. Fragment outputs preserve project-local values and
-fragment promotion commits canonical data repo source files, not generated
-outputs. Item metadata (`.capshelf.yml` sidecars) drives `ls --tag`, `search`,
+fragments are implemented. Fragment outputs preserve project-local values, fragment
+promotion commits canonical data repo source files rather than generated
+outputs, and `share` can extract unmanaged fragment values directly from a
+project's generated outputs. Item metadata (`.capshelf.yml` sidecars) drives `ls --tag`, `search`,
 and `add`-time `requires`/`conflicts-with` checks. Bundles
 (`capshelf add bundles/<name>`) expand curated item sets all-or-nothing with
 no project-side bundle state. `validate`, `diff`, `doctor`, `journal`, and

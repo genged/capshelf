@@ -119,14 +119,15 @@ Fork variant (read-only consumers): `gh repo fork <owner/data-repo> --clone=fals
 
 Shared fragments merge into project config outputs: `settings/<name>/settings.json` → `.claude/settings.json`; `mcp/<name>/claude.json` → `.mcp.json`; `mcp/<name>/codex.toml` and `codex/config/<name>/config.toml` → `.codex/config.toml`. Outputs preserve unmanaged project-local values; capshelf refuses unmanaged scalar or shape collisions and names the paths involved.
 
-Edit canonical source paths (from `get-path`), never the generated outputs, then `capshelf promote <fragment> -m "message"`. `share` for fragments requires `--to project` (plus `--target claude|codex` for MCP) and one of:
+Edit canonical source paths (from `get-path`), never the generated outputs, then `capshelf promote <fragment> -m "message"`. `share` for fragments always lands in project scope (`--to project` is the default). To share an existing MCP server, `capshelf share mcp/<server>` with no flags is the common case: the pick defaults to the item name and capshelf adopts the server from every output that contains it unmanaged (`.mcp.json` and/or `.codex/config.toml`), in one commit. Other cases use:
 
-- `--from <file>` — an explicit fragment source file.
-- `--pick <path>` (repeatable) — extract unmanaged values straight from the generated output, no separate file needed. **Prefer this when the values already live in `.claude/settings.json`, `.mcp.json`, or `.codex/config.toml`.** Settings/codex-config picks are dot paths (`--pick permissions.allow`); mcp picks accept bare server names (`--pick github`). Picking a value managed by another fragment fails and names the owner; the output file is unchanged — picked values just become managed by the new fragment.
+- `--from <file>` — an explicit fragment source file (for mcp, requires `--target claude|codex`).
+- `--pick <path>` (repeatable) — extract unmanaged values straight from the generated output, no separate file needed. **Prefer this when the values already live in `.claude/settings.json`, `.mcp.json`, or `.codex/config.toml`.** Settings/codex-config picks are dot paths (`--pick permissions.allow`) and are always required for those kinds; mcp picks accept bare server names (`--pick github`, only needed when the item name differs from the server name). Picking a value managed by another fragment fails and names the owner; the output file is unchanged — picked values just become managed by the new fragment.
+- `--target claude|codex` — restrict an mcp share to one output instead of every matching one.
 
 ```bash
-capshelf share settings/permissions --pick permissions.allow --to project
-capshelf share mcp/github --pick github --target claude --to project
+capshelf share mcp/github
+capshelf share settings/permissions --pick permissions.allow
 ```
 
 Codex only loads `.codex/config.toml` in trusted projects; `status` warns non-fatally when the project appears untrusted.

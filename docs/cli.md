@@ -701,14 +701,31 @@ fragment sources: capshelf's merge and hash pipeline round-trips values through
 JSON, which cannot preserve TOML date types (a local date would silently become
 a string or an offset date-time on re-emit).
 
-`share` for fragments requires project scope and either an explicit source
-file (`--from`) or extraction from the generated output (`--pick`):
+`share` for fragments always lands in project scope (`--to project` is the
+default; `--to local` is rejected). For mcp items the common case needs no
+flags at all:
 
 ```bash
-capshelf share settings/security --from ./settings.json --to project
-capshelf share mcp/github --target claude --from ./claude-mcp.json --to project
-capshelf share mcp/github --target codex --from ./codex-mcp.toml --to project
-capshelf share codex-config/defaults --from ./config.toml --to project
+capshelf share mcp/github
+```
+
+This defaults the pick to the item name (`github`), scans both generated
+outputs (`.mcp.json` and `.codex/config.toml`) for an unmanaged server with
+that name, and adopts every output where it is found — both source files in a
+single data-repo commit when the server exists in both. If neither output has
+the server, the share fails and lists the unmanaged server names that are
+available to pick.
+
+Explicit forms remain for the other cases — an explicit source file
+(`--from`, which for mcp requires `--target`), an item name that differs from
+the server name (`--pick`), or restricting an mcp share to one output
+(`--target`):
+
+```bash
+capshelf share settings/security --from ./settings.json
+capshelf share mcp/github --target claude --from ./claude-mcp.json
+capshelf share mcp/github --target codex --from ./codex-mcp.toml
+capshelf share codex-config/defaults --from ./config.toml
 ```
 
 `--pick <path>` (repeatable) extracts values that already live in the
@@ -719,16 +736,16 @@ fails and names the owning fragment. Extraction is deterministic because
 unmanaged values have exactly one owner: the project. The output file is
 unchanged by the share; the picked values simply become managed by the new
 fragment. Settings and codex-config picks are dot-separated paths into the
-output; for mcp fragments a bare pick is sugar for a server name
-(`mcpServers.<name>` for `--target claude`, `mcp_servers.<name>` for
-`--target codex`):
+output (and have no default, so they always require `--from` or `--pick`);
+for mcp fragments a bare pick is sugar for a server name
+(`mcpServers.<name>` for claude, `mcp_servers.<name>` for codex):
 
 ```bash
-capshelf share settings/permissions --pick permissions.allow --to project
-capshelf share settings/security --pick permissions.deny --pick sandbox --to project
-capshelf share mcp/github --pick github --target claude --to project
-capshelf share mcp/github --pick github --target codex --to project
-capshelf share codex-config/defaults --pick model --to project
+capshelf share settings/permissions --pick permissions.allow
+capshelf share settings/security --pick permissions.deny --pick sandbox
+capshelf share mcp/posthog-item --pick posthog            # item name ≠ server name
+capshelf share mcp/github --pick github --target claude   # claude output only
+capshelf share codex-config/defaults --pick model
 ```
 
 `--pick` and `--from` are mutually exclusive, and `--pick` is rejected for

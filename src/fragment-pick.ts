@@ -26,11 +26,24 @@ export function pickPathSegments(
     throw new PreconditionError(`invalid --pick path "${pick}"`);
   }
   if (source.kind === "mcp") {
-    const container =
-      source.sourceTarget === "codex" ? "mcp_servers" : "mcpServers";
+    const container = mcpServerContainerKey(source);
     if (segments[0] !== container) return [container, ...segments];
   }
   return segments;
+}
+
+/** Output key that holds the server table for an mcp fragment target. */
+export function mcpServerContainerKey(source: FragmentSource): string {
+  return source.sourceTarget === "codex" ? "mcp_servers" : "mcpServers";
+}
+
+/** Current output minus every locked fragment's contribution. */
+export function unmanagedRemainder(
+  current: ConfigObject,
+  managed: ConfigObject,
+): ConfigObject {
+  const baseValue = removeManagedValue(current, managed) ?? {};
+  return isPlainConfigObject(baseValue) ? baseValue : {};
 }
 
 /**
@@ -48,8 +61,7 @@ export function extractPickedFragment(opts: {
   managedFragments: FragmentValue[];
   outputLabel: string;
 }): ConfigObject {
-  const baseValue = removeManagedValue(opts.current, opts.managed) ?? {};
-  const base = isPlainConfigObject(baseValue) ? baseValue : {};
+  const base = unmanagedRemainder(opts.current, opts.managed);
   let extracted: ConfigObject = {};
   for (const pick of opts.picks) {
     const segments = pickPathSegments(opts.source, pick);

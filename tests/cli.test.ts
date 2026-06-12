@@ -2204,7 +2204,10 @@ describe("cli integration", () => {
       stderr: "pipe",
     });
     expect(rejected.exitCode).toBe(3);
-    expect(rejected.stderr.toString()).toContain("requires --from");
+    expect(rejected.stderr.toString()).toContain(
+      "found no unmanaged server to extract",
+    );
+    expect(rejected.stderr.toString()).toContain(".mcp.json does not exist");
 
     const missingTarget = Bun.spawnSync({
       cmd: [
@@ -2470,6 +2473,119 @@ describe("cli integration", () => {
     expect(missingPick.exitCode).toBe(3);
     expect(missingPick.stderr.toString()).toContain(
       "no unmanaged value at mcpServers.missing",
+    );
+  });
+
+  test("share mcp with no flags defaults pick and scope and adopts every matching target", async () => {
+    const project = await tempRepo("capshelf-share-auto-mcp-project-");
+    const dataRepo = await tempRepo("capshelf-share-auto-mcp-data-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+
+    const init = Bun.spawnSync({
+      cmd: [process.execPath, cli, "init", "--data", dataRepo],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(init.exitCode).toBe(0);
+
+    const mcpOutputText = `${JSON.stringify({
+      mcpServers: {
+        posthog: { command: "posthog-mcp" },
+        github: { command: "github-mcp" },
+        slack: { command: "slack-mcp" },
+      },
+    })}\n`;
+    await writeFile(join(project, ".mcp.json"), mcpOutputText);
+    await mkdir(join(project, ".codex"), { recursive: true });
+    const codexOutputText = '[mcp_servers.posthog]\ncommand = "posthog-mcp"\n';
+    await writeFile(join(project, ".codex", "config.toml"), codexOutputText);
+
+    // Present in both outputs: one command, one commit, both source files.
+    const shareBoth = Bun.spawnSync({
+      cmd: [process.execPath, cli, "share", "mcp/posthog"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(shareBoth.exitCode).toBe(0);
+    const claudeFragment = await file(
+      join(dataRepo, "mcp", "posthog", "claude.json"),
+    ).json();
+    expect(claudeFragment).toEqual({
+      mcpServers: { posthog: { command: "posthog-mcp" } },
+    });
+    expect(
+      await file(join(dataRepo, "mcp", "posthog", "codex.toml")).text(),
+    ).toContain("[mcp_servers.posthog]");
+    const commitCount =
+      await $`git -C ${dataRepo} rev-list --count HEAD`.text();
+    expect(commitCount.trim()).toBe("1");
+    const manifest = await file(
+      join(project, ".capshelf", "capshelf.json"),
+    ).json();
+    expect(manifest.mcp).toEqual(["posthog"]);
+    expect(await readFile(join(project, ".mcp.json"), "utf-8")).toBe(
+      mcpOutputText,
+    );
+    expect(
+      await readFile(join(project, ".codex", "config.toml"), "utf-8"),
+    ).toBe(codexOutputText);
+
+    // Present in one output: only that target's source file is created.
+    const shareClaudeOnly = Bun.spawnSync({
+      cmd: [process.execPath, cli, "share", "mcp/github"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(shareClaudeOnly.exitCode).toBe(0);
+    expect(
+      await file(join(dataRepo, "mcp", "github", "claude.json")).exists(),
+    ).toBe(true);
+    expect(
+      await file(join(dataRepo, "mcp", "github", "codex.toml")).exists(),
+    ).toBe(false);
+
+    // Present in no output: fails per target and lists what is available.
+    const missing = Bun.spawnSync({
+      cmd: [process.execPath, cli, "share", "mcp/missing"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(missing.exitCode).toBe(3);
+    const missingStderr = missing.stderr.toString();
+    expect(missingStderr).toContain("found no unmanaged server to extract");
+    expect(missingStderr).toContain(
+      ".mcp.json has no unmanaged value at mcpServers.missing (unmanaged servers: slack)",
+    );
+    expect(missingStderr).toContain(
+      ".codex/config.toml has no unmanaged value at mcp_servers.missing",
+    );
+
+    // Already-managed servers stay protected in auto-target mode.
+    const managed = Bun.spawnSync({
+      cmd: [
+        process.execPath,
+        cli,
+        "share",
+        "mcp/posthog2",
+        "--pick",
+        "posthog",
+      ],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(managed.exitCode).toBe(3);
+    expect(managed.stderr.toString()).toContain(
+      "already managed by mcp/posthog",
     );
   });
 

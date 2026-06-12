@@ -48,9 +48,18 @@ import {
   sourceMatchesCliTarget,
   sourceTargetForCli,
   type FragmentSource,
+  type FragmentValue,
 } from "../fragments";
-import { extractPickedFragment } from "../fragment-pick";
-import { mergeConfigObjects } from "../config-values";
+import {
+  extractPickedFragment,
+  mcpServerContainerKey,
+  unmanagedRemainder,
+} from "../fragment-pick";
+import {
+  isPlainConfigObject,
+  mergeConfigObjects,
+  type ConfigObject,
+} from "../config-values";
 
 type ShareScope = "project" | "local";
 
@@ -69,17 +78,17 @@ export function registerShare(program: Command): void {
     .description("adopt an on-disk item into the data repo and track it here")
     .option(
       "--to <scope>",
-      "resulting scope: local or project (default: local)",
+      "resulting scope: local or project (default: local for skills, project for fragments)",
     )
     .option("--from <path>", "source file for fragment items")
     .option(
       "--pick <path>",
-      "extract an unmanaged value from the generated output instead of --from; repeatable (fragment items; mcp picks accept bare server names)",
+      "extract an unmanaged value from the generated output instead of --from; repeatable (fragment items; mcp picks accept bare server names and default to the item name)",
       collectPick,
     )
     .option(
       "--target <target>",
-      "fragment target for mcp items: claude or codex",
+      "fragment target for mcp items: claude or codex (default: every output containing the pick)",
     )
     .option("-m, --message <msg>", "git commit message")
     .option("--json", "output JSON")
@@ -97,7 +106,10 @@ export function registerShare(program: Command): void {
 
       const kind = ref.kind ?? "skills";
       const name = ref.name;
-      const scope = parseShareScope(opts.to);
+      const scope = parseShareScope(
+        opts.to,
+        isFragmentKind(kind) ? "project" : "local",
+      );
       if (isFragmentKind(kind)) {
         await shareFragment(kind, name, scope, opts, cmd);
         return;
@@ -229,25 +241,28 @@ async function shareFragment(
   if (scope !== "project") {
     assertLocalScopeSupported(kind, name, "share");
   }
-  const picks = opts.pick ?? [];
-  if (opts.from && picks.length > 0) {
+  const explicitPicks = opts.pick ?? [];
+  if (opts.from && explicitPicks.length > 0) {
     throw new PreconditionError(
       `share ${kind}/${name} accepts either --from or --pick, not both`,
     );
   }
-  if (!opts.from && picks.length === 0) {
+  if (!opts.from && explicitPicks.length === 0 && kind !== "mcp") {
     throw new PreconditionError(
       `share ${kind}/${name} requires --from <path> or --pick <path>; managed values in generated outputs cannot be converted back to one fragment safely`,
     );
   }
+  // For mcp items the item name doubles as the default server pick.
+  const picks =
+    !opts.from && explicitPicks.length === 0 ? [name] : explicitPicks;
   const cliTarget = sourceTargetForCli(opts.target);
-  if (kind === "mcp" && cliTarget === null) {
-    throw new PreconditionError(
-      "share mcp fragments requires --target claude or --target codex",
-    );
-  }
   if (kind !== "mcp" && cliTarget !== null) {
     throw new PreconditionError("--target is only valid for mcp fragments");
+  }
+  if (kind === "mcp" && cliTarget === null && opts.from) {
+    throw new PreconditionError(
+      `share mcp/${name} --from requires --target claude or --target codex`,
+    );
   }
 
   const project = projectRoot();
@@ -263,36 +278,47 @@ async function shareFragment(
   await assertIsGitRepo(dataRepo);
   await assertRepoClean(dataRepo);
 
-  const source = fragmentSourceCandidates(kind, name).find((candidate) =>
+  const candidates = fragmentSourceCandidates(kind, name).filter((candidate) =>
     sourceMatchesCliTarget(candidate, cliTarget),
   );
-  if (!source) {
+  const [firstCandidate] = candidates;
+  if (!firstCandidate) {
     throw new PreconditionError(
       `no canonical source target for ${kind}/${name}`,
     );
   }
-  const canonicalPath = join(dataRepo, ...source.relPath.split("/"));
-  if (existsSync(canonicalPath)) {
-    throw new PreconditionError(
-      `fragment source already exists: ${source.relPath}`,
-    );
-  }
-  const raw = opts.from
-    ? await readFile(opts.from, "utf-8")
-    : await extractPickedSource({
+  const pending = opts.from
+    ? [{ source: firstCandidate, raw: await readFile(opts.from, "utf-8") }]
+    : await extractPickedSources({
         project,
         dataRepo,
         manifest,
         lock: projectLock,
-        source,
+        name,
+        candidates,
         picks,
+        autoTarget: kind === "mcp" && cliTarget === null,
       });
-  parseFragmentSourceText(source, raw);
-  await mkdir(dirname(canonicalPath), { recursive: true });
-  await writeFile(canonicalPath, raw);
+
+  // Validate every source before writing any, so a bad target leaves the
+  // data repo untouched.
+  for (const { source, raw } of pending) {
+    const canonicalPath = join(dataRepo, ...source.relPath.split("/"));
+    if (existsSync(canonicalPath)) {
+      throw new PreconditionError(
+        `fragment source already exists: ${source.relPath}`,
+      );
+    }
+    parseFragmentSourceText(source, raw);
+  }
+  for (const { source, raw } of pending) {
+    const canonicalPath = join(dataRepo, ...source.relPath.split("/"));
+    await mkdir(dirname(canonicalPath), { recursive: true });
+    await writeFile(canonicalPath, raw);
+  }
   const sourceCommit = await commitInRepo(
     dataRepo,
-    [source.relPath],
+    pending.map(({ source }) => source.relPath),
     opts.message ?? `capshelf: ${kind}/${name}`,
   );
   const sha = await shaOfFragmentItem(dataRepo, kind, name);
@@ -382,46 +408,138 @@ function collectPick(value: string, previous?: string[]): string[] {
   return [...(previous ?? []), value];
 }
 
-async function extractPickedSource(opts: {
+interface PendingFragmentSource {
+  source: FragmentSource;
+  raw: string;
+}
+
+interface PickExtractionOptions {
   project: string;
   dataRepo: string;
   manifest: Manifest;
   lock: Lock;
-  source: FragmentSource;
+  name: string;
+  candidates: FragmentSource[];
   picks: string[];
-}): Promise<string> {
-  const spec = fragmentOutputSpec(opts.source.target);
-  const outputPath = spec.outputPath(opts.project);
-  const outputLabel = relative(opts.project, outputPath);
-  if (!existsSync(outputPath)) {
+  autoTarget: boolean;
+}
+
+async function extractPickedSources(
+  opts: PickExtractionOptions,
+): Promise<PendingFragmentSource[]> {
+  if (!opts.autoTarget) {
+    const source = opts.candidates[0] as FragmentSource;
+    const remainder = await loadOutputRemainder(opts, source);
+    if (remainder === null) {
+      throw new PreconditionError(
+        `--pick requires ${outputLabelFor(opts.project, source)} to exist; nothing to extract from`,
+      );
+    }
+    return [{ source, raw: extractFromRemainder(remainder, opts.picks) }];
+  }
+
+  // mcp with no --target: share from every output that contains the picks.
+  const pending: PendingFragmentSource[] = [];
+  const failures: string[] = [];
+  for (const source of opts.candidates) {
+    const remainder = await loadOutputRemainder(opts, source);
+    if (remainder === null) {
+      failures.push(`${outputLabelFor(opts.project, source)} does not exist`);
+      continue;
+    }
+    try {
+      pending.push({
+        source,
+        raw: extractFromRemainder(remainder, opts.picks),
+      });
+    } catch (err) {
+      if (!(err instanceof PreconditionError)) throw err;
+      const names = unmanagedServerNames(remainder);
+      failures.push(
+        names.length > 0
+          ? `${err.message} (unmanaged servers: ${names.join(", ")})`
+          : err.message,
+      );
+    }
+  }
+  if (pending.length === 0) {
     throw new PreconditionError(
-      `--pick requires ${outputLabel} to exist; nothing to extract from`,
+      [
+        `share mcp/${opts.name} found no unmanaged server to extract`,
+        ...failures.map((failure) => `  ${failure}`),
+      ].join("\n"),
     );
   }
+  return pending;
+}
+
+interface OutputRemainder {
+  source: FragmentSource;
+  spec: ReturnType<typeof fragmentOutputSpec>;
+  outputLabel: string;
+  current: ConfigObject;
+  managed: ConfigObject;
+  managedFragments: FragmentValue[];
+}
+
+async function loadOutputRemainder(
+  opts: Pick<
+    PickExtractionOptions,
+    "project" | "dataRepo" | "manifest" | "lock"
+  >,
+  source: FragmentSource,
+): Promise<OutputRemainder | null> {
+  const spec = fragmentOutputSpec(source.target);
+  const outputPath = spec.outputPath(opts.project);
+  const outputLabel = relative(opts.project, outputPath);
+  if (!existsSync(outputPath)) return null;
   const current = spec.parse(await readFile(outputPath, "utf-8"), outputLabel);
   const managedFragments = await fragmentValuesForTarget({
     dataRepo: opts.dataRepo,
     manifest: opts.manifest,
     lock: opts.lock,
-    target: opts.source.target,
+    target: source.target,
   });
   const managed = spec.normalizeOutput(
     mergeConfigObjects(managedFragments.map((fragment) => fragment.value)),
   );
-  return spec.stringify(
+  return { source, spec, outputLabel, current, managed, managedFragments };
+}
+
+function extractFromRemainder(
+  remainder: OutputRemainder,
+  picks: string[],
+): string {
+  return remainder.spec.stringify(
     extractPickedFragment({
-      source: opts.source,
-      picks: opts.picks,
-      current,
-      managed,
-      managedFragments,
-      outputLabel,
+      source: remainder.source,
+      picks,
+      current: remainder.current,
+      managed: remainder.managed,
+      managedFragments: remainder.managedFragments,
+      outputLabel: remainder.outputLabel,
     }),
   );
 }
 
-function parseShareScope(value: string | undefined): ShareScope {
-  if (value === undefined) return "local";
+function unmanagedServerNames(remainder: OutputRemainder): string[] {
+  const base = unmanagedRemainder(remainder.current, remainder.managed);
+  const servers = base[mcpServerContainerKey(remainder.source)];
+  return isPlainConfigObject(servers) ? Object.keys(servers) : [];
+}
+
+function outputLabelFor(project: string, source: FragmentSource): string {
+  return relative(
+    project,
+    fragmentOutputSpec(source.target).outputPath(project),
+  );
+}
+
+function parseShareScope(
+  value: string | undefined,
+  fallback: ShareScope,
+): ShareScope {
+  if (value === undefined) return fallback;
   if (value === "local" || value === "project") return value;
   throw new PreconditionError(
     `invalid scope "${value}" (expected local or project)`,
