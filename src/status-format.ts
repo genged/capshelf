@@ -1,7 +1,11 @@
 import { homeRelative } from "./paths";
 import { assertNever } from "./assert";
 import { formatRuntimeWarnings } from "./runtime-warnings";
-import type { ExternalClaudePlugin, ExternalSkill } from "./external";
+import type {
+  ExternalClaudePlugin,
+  ExternalSkill,
+  ExternalUserSkill,
+} from "./external";
 import type {
   ExternalPersonalClaudeSkill,
   State,
@@ -89,6 +93,7 @@ export interface FormatStatusHumanInput {
   external: ExternalSkill[];
   externalClaudePlugins: ExternalClaudePlugin[];
   personalClaudeExternal: ExternalPersonalClaudeSkill[];
+  externalUserSkills?: ExternalUserSkill[];
 }
 
 /**
@@ -105,12 +110,14 @@ export function formatStatusHuman(input: FormatStatusHumanInput): string[] {
     external,
     externalClaudePlugins,
     personalClaudeExternal,
+    externalUserSkills = [],
   } = input;
   if (
     rows.length === 0 &&
     external.length === 0 &&
     externalClaudePlugins.length === 0 &&
-    personalClaudeExternal.length === 0
+    personalClaudeExternal.length === 0 &&
+    externalUserSkills.length === 0
   ) {
     return ["(no items tracked)"];
   }
@@ -171,7 +178,58 @@ export function formatStatusHuman(input: FormatStatusHumanInput): string[] {
       lines.push(`      ${skill.warning.message}`);
     }
   }
+  if (externalUserSkills.length > 0) {
+    if (
+      rows.length > 0 ||
+      external.length > 0 ||
+      externalClaudePlugins.length > 0 ||
+      personalClaudeExternal.length > 0
+    ) {
+      lines.push("");
+    }
+    lines.push(...formatUserSkillsHuman(externalUserSkills));
+  }
   return lines;
+}
+
+export function formatUserSkillsHuman(
+  skills: ExternalUserSkill[],
+  emptyMessage = "(no user-level skills found)",
+): string[] {
+  if (skills.length === 0) return [emptyMessage];
+  const lines: string[] = [];
+  for (const surface of ["claude", "codex"] as const) {
+    const surfaceSkills = skills.filter((skill) => skill.surface === surface);
+    if (surfaceSkills.length === 0) continue;
+    if (lines.length > 0) lines.push("");
+    lines.push(
+      `external/user/${surface}/  (${userSkillSurfaceLabel(surface)} user-level skills)`,
+    );
+    for (const skill of surfaceSkills) {
+      const id = `skills/${skill.name}`.padEnd(34);
+      lines.push(`  •   ${id} ${homeRelative(skill.path)}`);
+      if (skill.shadows.length > 0) {
+        lines.push(
+          `      shadows ${skill.shadows
+            .map(
+              (shadow) =>
+                `${shadow.scope}/${shadow.source}/skills/${skill.name}`,
+            )
+            .join(", ")}`,
+        );
+      }
+    }
+  }
+  return lines;
+}
+
+function userSkillSurfaceLabel(surface: ExternalUserSkill["surface"]): string {
+  switch (surface) {
+    case "claude":
+      return "Claude";
+    case "codex":
+      return "Codex";
+  }
 }
 
 function formatRow(r: StatusRow): string[] {

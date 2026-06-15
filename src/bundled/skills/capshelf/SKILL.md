@@ -83,7 +83,7 @@ Always check the current surface with `capshelf --help` and `capshelf <verb> --h
 | verb | purpose |
 |---|---|
 | `init` / `set-data` / `set-upstream` / `data-path` | bind the project to a data repo |
-| `ls` / `show` / `search` / `status` | inspect and discover (all support `--json`) |
+| `ls` / `show` / `search` / `status` | inspect and discover (all support `--json`; `ls` and `status` include user-level runtime skills by default, `--user` narrows to them only) |
 | `add` / `rm` / `apply` / `update` / `revert` | converge the project on its locks |
 | `share` / `move` / `promote` / `keep-local` | flow content and intent between project and data repo |
 | `sync-data [--json]` | explicitly fetch the bound data repo's origin and fast-forward when safe; the **only** capshelf command that touches the network besides the `init` bootstrap clone and `self-update`. Run it when the user asks to pick up teammates' changes, then `capshelf status` to see `update_available` |
@@ -137,6 +137,7 @@ Codex only loads `.codex/config.toml` in trusted projects; `status` warns non-fa
 - **skills.sh** (`skills-lock.json` present): capshelf refuses or skips those skill paths instead of co-managing them; `status` groups them under `external/`.
 - **Claude plugins**: read-only external state, reported by `status`, never edited.
 - **Personal skills** (`~/.claude/skills/<name>`): shadow same-named project skills at runtime. Capshelf warns as `shadowed_by_personal_claude_skill` and `status --strict` fails until renamed or removed.
+- **User-level runtime skills**: `capshelf ls` and `capshelf status` include these by default; use `--user` to show only them. These scan `~/.claude/skills`, `~/.agents/skills`, and `$CODEX_HOME/skills`/`~/.codex/skills`, split Claude and Codex human output by runtime, report shadowing when run from a project root, and never adopt or mutate those skills.
 - Files or values in agent surfaces that are not locked contributions are project-local; capshelf preserves or ignores them.
 
 ## Safety rules

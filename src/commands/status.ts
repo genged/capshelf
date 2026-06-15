@@ -1,7 +1,12 @@
 import type { Command } from "commander";
 import type { Command as CmdType } from "commander";
 import { existsSync } from "node:fs";
-import { projectRoot, resolveDataRepoOptional } from "../paths";
+import {
+  initProjectRoot,
+  manifestReadPath,
+  projectRoot,
+  resolveDataRepoOptional,
+} from "../paths";
 import { loadLocalLock, loadLock } from "../lock";
 import type { Lock, LockEntry } from "../lock";
 import { loadManifest } from "../manifest";
@@ -15,7 +20,13 @@ import { globalOpts } from "../cli";
 import { parseItemRef } from "../item-ref";
 import { commitExists, isGitRepo } from "../git";
 import { upstreamFactsForItem } from "../upstream-facts";
-import { listClaudePlugins, listSkillsShSkills } from "../external";
+import {
+  listClaudePlugins,
+  listSkillsShSkills,
+  listUserSkills,
+  withUserSkillShadows,
+} from "../external";
+import type { ExternalUserSkill } from "../external";
 import { buildStatusDiff, currentCopyItemSha } from "../status-diff";
 import type { StatusDiff } from "../status-diff";
 import {
@@ -37,7 +48,7 @@ import {
   statusTargets,
   type StatusRow,
 } from "../status-core";
-import { formatStatusHuman } from "../status-format";
+import { formatStatusHuman, formatUserSkillsHuman } from "../status-format";
 
 interface StatusOptions {
   json?: boolean;
@@ -45,6 +56,7 @@ interface StatusOptions {
   diff?: boolean;
   project?: boolean;
   local?: boolean;
+  user?: boolean;
 }
 
 export function registerStatus(program: Command): void {
@@ -59,12 +71,18 @@ export function registerStatus(program: Command): void {
     .option("--diff", "show local drift diff against the locked content")
     .option("--project", "show committed project-scope items only")
     .option("--local", "show clone-local items only")
+    .option("--user", "show user-level runtime skills only")
     .action(
       async (
         itemRef: string | undefined,
         opts: StatusOptions,
         cmd: CmdType,
       ) => {
+        if (opts.user) {
+          await statusUser(itemRef, opts);
+          return;
+        }
+
         const project = projectRoot();
         const manifest = await loadManifest(project);
         if (opts.project && opts.local) {
@@ -108,6 +126,17 @@ export function registerStatus(program: Command): void {
             (ref.kind === undefined &&
               (plugin.id === ref.name || plugin.name === ref.name)),
         );
+        const externalUserSkills =
+          opts.project || opts.local
+            ? []
+            : filterUserSkillsForRef(
+                withUserSkillShadows(
+                  await listUserSkills(),
+                  projectLock,
+                  localLock,
+                ),
+                ref,
+              );
         const externalSkillNames = new Set(external.map((skill) => skill.name));
 
         const rows: StatusRow[] = [];
@@ -254,6 +283,7 @@ export function registerStatus(program: Command): void {
                 ...(opts.diff && { diffs }),
                 external,
                 externalClaudePlugins,
+                externalUserSkills,
                 personalClaudeExternal,
               },
               null,
@@ -268,6 +298,7 @@ export function registerStatus(program: Command): void {
               rows,
               external,
               externalClaudePlugins,
+              externalUserSkills,
               personalClaudeExternal,
             }).join("\n"),
           );
@@ -286,6 +317,67 @@ export function registerStatus(program: Command): void {
         }
       },
     );
+}
+
+async function statusUser(
+  itemRef: string | undefined,
+  opts: StatusOptions,
+): Promise<void> {
+  if (opts.project || opts.local) {
+    throw new Error("--user cannot be combined with --project or --local");
+  }
+  if (opts.diff) {
+    throw new Error("--diff is not supported with --user");
+  }
+
+  const ref = itemRef ? parseItemRef(itemRef) : undefined;
+  const project = currentProjectRootOrNull();
+  const skills = await userSkillsWithProjectShadows(project);
+  const filtered = filterUserSkillsForRef(skills, ref);
+
+  if (opts.json) {
+    console.log(
+      JSON.stringify(
+        {
+          project,
+          dataRepo: null,
+          cliVersion: CLI_VERSION,
+          count: filtered.length,
+          items: [],
+          externalUserSkills: filtered,
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+
+  console.log(formatUserSkillsHuman(filtered).join("\n"));
+}
+
+async function userSkillsWithProjectShadows(
+  project: string | null,
+): Promise<ExternalUserSkill[]> {
+  const skills = await listUserSkills();
+  if (!project) return skills;
+  const projectLock = await loadLock(project);
+  const localLock = await loadLocalLock(project);
+  return withUserSkillShadows(skills, projectLock, localLock);
+}
+
+function currentProjectRootOrNull(): string | null {
+  const project = initProjectRoot();
+  return manifestReadPath(project) ? project : null;
+}
+
+function filterUserSkillsForRef(
+  skills: ExternalUserSkill[],
+  ref: ReturnType<typeof parseItemRef> | undefined,
+): ExternalUserSkill[] {
+  if (!ref) return skills;
+  if (ref.kind !== undefined && ref.kind !== "skills") return [];
+  return skills.filter((skill) => skill.name === ref.name);
 }
 
 async function currentInstalledSha(

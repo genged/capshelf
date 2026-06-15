@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { homedir } from "node:os";
 import {
   describe as describeRow,
   formatStatusHuman,
+  formatUserSkillsHuman,
   glyph,
 } from "../src/status-format";
 import type { State, StatusRow } from "../src/status-core";
@@ -200,5 +202,45 @@ describe("formatStatusHuman", () => {
     expect(
       lines.some((l) => l.includes("plugins/rev@co") && l.includes("enabled")),
     ).toBe(true);
+  });
+
+  test("renders user-level skills and shadow annotations", () => {
+    const claudePath = `${homedir()}/.claude/skills/alpha`;
+    const codexPath = `${homedir()}/.agents/skills/beta`;
+    const lines = formatUserSkillsHuman([
+      {
+        kind: "skills",
+        name: "alpha",
+        surface: "claude",
+        path: claudePath,
+        shadows: [{ scope: "project", source: "data" }],
+      },
+      {
+        kind: "skills",
+        name: "beta",
+        surface: "codex",
+        path: codexPath,
+        shadows: [],
+      },
+    ]);
+
+    expect(lines).toContain(
+      "external/user/claude/  (Claude user-level skills)",
+    );
+    expect(lines).toContain("external/user/codex/  (Codex user-level skills)");
+    expect(
+      lines.indexOf("external/user/claude/  (Claude user-level skills)"),
+    ).toBeLessThan(
+      lines.indexOf("external/user/codex/  (Codex user-level skills)"),
+    );
+    expect(lines.some((line) => line.includes("skills/alpha"))).toBe(true);
+    expect(lines.some((line) => line.includes("skills/beta"))).toBe(true);
+    expect(lines.some((line) => line.includes("~/.claude/skills/alpha"))).toBe(
+      true,
+    );
+    expect(lines.some((line) => line.includes("~/.agents/skills/beta"))).toBe(
+      true,
+    );
+    expect(lines).toContain("      shadows project/data/skills/alpha");
   });
 });

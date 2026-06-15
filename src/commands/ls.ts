@@ -2,6 +2,8 @@ import type { Command } from "commander";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
+  initProjectRoot,
+  manifestReadPath,
   projectRoot,
   resolveDataRepo,
   resolveDataRepoOptional,
@@ -34,9 +36,16 @@ import type { ItemMetadata } from "../metadata";
 import { assertNoScopeCollisions } from "../status-core";
 import { listBundles, memberCountSummary, memberRef } from "../bundles";
 import type { Bundle } from "../bundles";
+import {
+  listUserSkills,
+  withUserSkillShadows,
+  type ExternalUserSkill,
+} from "../external";
+import { formatUserSkillsHuman } from "../status-format";
 
 interface LsOptions {
   here?: boolean;
+  user?: boolean;
   json?: boolean;
   kind?: string;
   tag: string[];
@@ -49,6 +58,7 @@ export function registerLs(program: Command): void {
       "list available items (data repo + system) or installed items with --here",
     )
     .option("--here", "list items installed in the current project")
+    .option("--user", "list user-level runtime skills")
     .option("--json", "output JSON")
     .option(
       "-k, --kind <kind>",
@@ -68,7 +78,13 @@ export function registerLs(program: Command): void {
       }
       const kindFilter = opts.kind as ItemKind | undefined;
 
-      if (opts.here) {
+      if (opts.here && opts.user) {
+        throw new Error("--here and --user cannot be used together");
+      }
+
+      if (opts.user) {
+        await lsUser(kindFilter, opts.tag, opts.json ?? false);
+      } else if (opts.here) {
         await lsHere(kindFilter, opts.tag, opts.json ?? false);
       } else {
         const project = projectRoot();
@@ -78,12 +94,19 @@ export function registerLs(program: Command): void {
           manifest,
           project,
         });
-        await lsAvailable(dataRepo, kindFilter, opts.tag, opts.json ?? false);
+        await lsAvailable(
+          project,
+          dataRepo,
+          kindFilter,
+          opts.tag,
+          opts.json ?? false,
+        );
       }
     });
 }
 
 async function lsAvailable(
+  project: string,
   dataRepo: string,
   kind: ItemKind | undefined,
   tags: string[],
@@ -125,6 +148,10 @@ async function lsAvailable(
       matchesTagFilter(bundleMeta(bundle), tags),
     );
   }
+  const externalUserSkills =
+    tags.length === 0 && (!kind || kind === "skills")
+      ? await userSkillsWithProjectShadows(project)
+      : [];
 
   if (json) {
     const sysRows = await Promise.all(
@@ -152,6 +179,7 @@ async function lsAvailable(
           dataRepo,
           system: sysRows,
           data: dataJsonRows,
+          externalUserSkills,
           // Append-only: a sibling top-level key; system/data rows unchanged.
           ...(bundleRows.length > 0 && {
             bundles: bundleRows.map((bundle) => ({
@@ -204,15 +232,59 @@ async function lsAvailable(
     }
   }
 
-  if (bundleRows.length === 0) return;
-  console.log("");
-  console.log(`bundles/  (from ${homeRelative(dataRepo)})`);
-  for (const bundle of bundleRows) {
-    // Malformed bundles list name-only so someone fixes them.
-    const counts = bundle.malformed ? "" : memberCountSummary(bundle);
-    const line = `  ${bundle.name.padEnd(33)}${counts ? ` ${counts}` : ""}${metadataLineSuffix(bundleMeta(bundle))}`;
-    console.log(line.trimEnd());
+  if (bundleRows.length > 0) {
+    console.log("");
+    console.log(`bundles/  (from ${homeRelative(dataRepo)})`);
+    for (const bundle of bundleRows) {
+      // Malformed bundles list name-only so someone fixes them.
+      const counts = bundle.malformed ? "" : memberCountSummary(bundle);
+      const line = `  ${bundle.name.padEnd(33)}${counts ? ` ${counts}` : ""}${metadataLineSuffix(bundleMeta(bundle))}`;
+      console.log(line.trimEnd());
+    }
   }
+
+  if (externalUserSkills.length > 0) {
+    console.log("");
+    console.log(formatUserSkillsHuman(externalUserSkills).join("\n"));
+  }
+}
+
+async function lsUser(
+  kind: ItemKind | undefined,
+  tags: string[],
+  json: boolean,
+): Promise<void> {
+  if (tags.length > 0) {
+    throw new Error("--tag is not supported with --user");
+  }
+
+  const project = currentProjectRootOrNull();
+  const skills =
+    kind && kind !== "skills"
+      ? []
+      : await userSkillsWithProjectShadows(project);
+
+  if (json) {
+    console.log(JSON.stringify(skills, null, 2));
+    return;
+  }
+
+  console.log(formatUserSkillsHuman(skills).join("\n"));
+}
+
+async function userSkillsWithProjectShadows(
+  project: string | null,
+): Promise<ExternalUserSkill[]> {
+  const skills = await listUserSkills();
+  if (!project) return skills;
+  const projectLock = await loadLock(project);
+  const localLock = await loadLocalLock(project);
+  return withUserSkillShadows(skills, projectLock, localLock);
+}
+
+function currentProjectRootOrNull(): string | null {
+  const project = initProjectRoot();
+  return manifestReadPath(project) ? project : null;
 }
 
 /** Bundle description/tags shaped as item metadata for shared helpers. */

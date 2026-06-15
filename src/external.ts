@@ -1,8 +1,12 @@
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { z } from "zod";
+import type { Lock } from "./lock";
+import { parseLockKey } from "./installed";
+
+export type UserSkillSurface = "claude" | "codex";
 
 export type ClaudePluginScope = "managed" | "user" | "project" | "local";
 
@@ -18,6 +22,19 @@ export interface ExternalClaudePlugin {
   scope: ClaudePluginScope;
   enabled: boolean;
   settingsPath: string;
+}
+
+export interface UserSkillShadow {
+  scope: "project" | "local";
+  source: "data" | "system";
+}
+
+export interface ExternalUserSkill {
+  kind: "skills";
+  name: string;
+  surface: UserSkillSurface;
+  path: string;
+  shadows: UserSkillShadow[];
 }
 
 // skills-lock.json is written by skills.sh; validate only the shape we read
@@ -38,6 +55,15 @@ interface ClaudePluginSettingsPaths {
   user?: string;
   project?: string;
   local?: string;
+}
+
+interface UserSkillRoot {
+  surface: UserSkillSurface;
+  path: string;
+}
+
+interface UserSkillPaths {
+  roots?: UserSkillRoot[];
 }
 
 export async function listSkillsShSkills(
@@ -120,6 +146,36 @@ export async function findClaudePlugin(
   );
 }
 
+export async function listUserSkills(
+  paths: UserSkillPaths = {},
+): Promise<ExternalUserSkill[]> {
+  const skills: ExternalUserSkill[] = [];
+  const seenRoots = new Set<string>();
+  for (const root of paths.roots ?? defaultUserSkillRoots()) {
+    const rootKey = `${root.surface}\0${root.path}`;
+    if (seenRoots.has(rootKey)) continue;
+    seenRoots.add(rootKey);
+    skills.push(...(await listUserSkillsInRoot(root)));
+  }
+  return skills.sort(
+    (a, b) =>
+      a.name.localeCompare(b.name) ||
+      surfaceSort(a.surface) - surfaceSort(b.surface) ||
+      a.path.localeCompare(b.path),
+  );
+}
+
+export function withUserSkillShadows(
+  skills: ExternalUserSkill[],
+  projectLock: Lock,
+  localLock: Lock,
+): ExternalUserSkill[] {
+  return skills.map((skill) => ({
+    ...skill,
+    shadows: userSkillShadows(skill.name, projectLock, localLock),
+  }));
+}
+
 async function readClaudePluginsFromSettings(settings: {
   scope: ClaudePluginScope;
   path: string;
@@ -158,6 +214,73 @@ function parseEnabledPlugins(
     .map(([id, enabled]) => ({ id, enabled }));
 }
 
+async function listUserSkillsInRoot(
+  root: UserSkillRoot,
+): Promise<ExternalUserSkill[]> {
+  if (!existsSync(root.path)) return [];
+  const entries = await readdir(root.path, { withFileTypes: true });
+  const skills: ExternalUserSkill[] = [];
+  for (const entry of entries) {
+    if (entry.name.startsWith(".")) continue;
+    if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+    const skillPath = join(root.path, entry.name);
+    const skillFile = join(skillPath, "SKILL.md");
+    if (!(await isFile(skillFile))) continue;
+    skills.push({
+      kind: "skills",
+      name: entry.name,
+      surface: root.surface,
+      path: skillPath,
+      shadows: [],
+    });
+  }
+  return skills;
+}
+
+async function isFile(path: string): Promise<boolean> {
+  try {
+    return (await stat(path)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function userSkillShadows(
+  name: string,
+  projectLock: Lock,
+  localLock: Lock,
+): UserSkillShadow[] {
+  return [
+    ...skillShadowsInLock(name, "project", projectLock),
+    ...skillShadowsInLock(name, "local", localLock),
+  ];
+}
+
+function skillShadowsInLock(
+  name: string,
+  scope: UserSkillShadow["scope"],
+  lock: Lock,
+): UserSkillShadow[] {
+  const shadows: UserSkillShadow[] = [];
+  for (const key of Object.keys(lock.items)) {
+    const parsed = parseLockKey(key);
+    if (parsed.kind !== "skills" || parsed.name !== name) continue;
+    shadows.push({ scope, source: parsed.source });
+  }
+  return shadows;
+}
+
+function defaultUserSkillRoots(): UserSkillRoot[] {
+  return [
+    { surface: "claude", path: join(homedir(), ".claude", "skills") },
+    { surface: "codex", path: join(homedir(), ".agents", "skills") },
+    {
+      surface: "codex",
+      path: join(process.env.CODEX_HOME ?? join(homedir(), ".codex"), "skills"),
+    },
+  ];
+}
+
 function splitPluginId(id: string): { name: string; marketplace?: string } {
   const at = id.lastIndexOf("@");
   if (at <= 0 || at === id.length - 1) return { name: id };
@@ -187,5 +310,14 @@ function scopeSort(scope: ClaudePluginScope): number {
       return 2;
     case "local":
       return 3;
+  }
+}
+
+function surfaceSort(surface: UserSkillSurface): number {
+  switch (surface) {
+    case "claude":
+      return 0;
+    case "codex":
+      return 1;
   }
 }

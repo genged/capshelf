@@ -24,6 +24,13 @@ skill first. Capshelf does not manage the personal copy, but `init`, `add`,
 `external/  (Personal Claude)`, and `status --strict` exits 4 while the shadow
 exists.
 
+Capshelf also inventories user-level runtime skills without taking ownership:
+`capshelf ls` and `capshelf status` include skills from `~/.claude/skills`,
+`~/.agents/skills`, and `$CODEX_HOME/skills` (defaulting to
+`~/.codex/skills`) by default. Hidden directories such as `.system` are
+ignored. The `--user` flag narrows `ls` or `status` to only this user-level
+inventory and does not require a capshelf project or data repo.
+
 Most item arguments accept either a bare unique name (`hello`) or an explicit kind/name ref (`skills/hello`). Lock keys such as `data/skills/hello` are internal and are not accepted as normal item refs.
 
 Mutating commands only touch item files that are tracked in `.capshelf/capshelf.lock.json` or `.capshelf/local.lock.json`. `add` refuses to overwrite an existing untracked target, `init` refuses to overwrite an existing untracked system target, and `rm` deletes only locked data items. For a local-only skill that should become shared, use `share <item>` to keep it local here or `share <item> --to project` to commit it to project policy.
@@ -37,10 +44,10 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
 | `set-upstream <url>` | write the committed `dataRepoUpstream` URL in `.capshelf/capshelf.json` | implemented |
 | `data-path` | print the resolved local data repo path; `--json` includes the path and the normalized upstream (`null` when absent) | implemented |
 | `sync-data` | explicitly fetch the bound data repo's `origin` and fast-forward the current branch when provably safe; the only capshelf command that performs network I/O besides the `init --data <url>` bootstrap clone and `self-update` | implemented |
-| `ls` | list items in master (default) or in this project (`--here`); shows descriptions and `#tags` from item metadata; `--tag` filters; appends a `bundles/` section for data-repo bundles | implemented |
+| `ls` | list items in master plus user-level runtime skills by default, in this project (`--here`), or user-level runtime skills only (`--user`); master/project listings show descriptions and `#tags` from item metadata; `--tag` filters master/project listings; appends a `bundles/` section for data-repo bundles | implemented |
 | `show <item>` | print metadata + content for one item, including `requires`/`conflicts-with` install state; `--json` always carries a `metadata` object; `show bundles/<name>` previews bundle membership with per-member install state | implemented |
 | `search <query...>` | search available items (data repo + system) and bundles by name, tags, description, and content; supports `--kind` and `--json`; zero matches exit 0 | implemented |
-| `status [<item>]` | drift / update report for this project; `--project` and `--local` filter scopes; `--diff` explains local drift; reports `missing_source_commit` when a locked `sourceCommit` is unreachable in the data repo | implemented |
+| `status [<item>]` | drift / update report for this project plus user-level runtime skill inventory by default; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` explains local drift; reports `missing_source_commit` when a locked `sourceCommit` is unreachable in the data repo | implemented |
 | `add <item>` | install an item from the bound data repo; `--local` installs a clone-local skill; warns on unmet `requires`, refuses on `conflicts-with` (exit 3); `add bundles/<name>` expands a bundle (see Bundles) | implemented |
 | `rm <item>` | remove from this project; `--local` removes clone-local skills | implemented |
 | `get-path <item>` | print the editable path; skills return their managed directory, fragments support `--output` for generated output paths, and MCP supports `--target` | implemented |
@@ -65,6 +72,8 @@ there is no separate `bundle` verb family. See Bundles below.
 - `--data <path>` — global override for the data repo (otherwise resolved from `.capshelf/local.json`, then `$CAPSHELF_HOME`, then fail)
 - `--json` — per-command structured output where supported
 - `--dry-run` — supported by `apply` and `update`; previews planned writes without changing files or lock state
+- `--user` — supported by `ls` and `status`; narrows output to user-level
+  runtime skills only, without requiring a capshelf project or data repo
 - `--diff` — supported by `status`; shows local drift against the locked
   content without changing files. For copy items, extra current files are
   filtered through `.gitignore` files inside the installed item.
@@ -617,6 +626,27 @@ Capshelf reads Claude Code `enabledPlugins` entries from managed settings,
 `external/  (Claude plugins)` with scope and enabled/disabled state. These are
 read-only external items: capshelf does not edit Claude plugin settings or
 mutate `~/.claude/plugins/cache`.
+
+## Viewing user-level skills
+
+`capshelf ls` and `capshelf status` include a read-only inventory for skills
+already installed at user runtime scope. `capshelf ls --user` and
+`capshelf status --user` narrow the report to only that inventory. They scan:
+
+| Surface | Directory |
+|---|---|
+| Claude | `~/.claude/skills/<name>/SKILL.md` |
+| Codex | `~/.agents/skills/<name>/SKILL.md` |
+| Codex | `$CODEX_HOME/skills/<name>/SKILL.md` or `~/.codex/skills/<name>/SKILL.md` |
+
+Hidden directories are ignored. The human report splits Claude and Codex user
+skills into separate sections because each runtime only loads its own user
+paths. Default JSON output includes the flat `externalUserSkills` row array;
+`ls --user --json` returns only that array, while `status --user --json`
+returns the normal status envelope with only user inventory populated. When
+the command runs from a capshelf project root, each row's `shadows` array names
+any project or local capshelf skill with the same name. The command never
+writes capshelf metadata and never adopts the user skill.
 
 ## Install
 

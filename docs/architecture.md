@@ -325,6 +325,16 @@ JSON output, `status` lists the personal skill under
 `external/  (Personal Claude)`, and `status --strict` exits 4 until the personal
 skill is removed or renamed.
 
+`ls` and `status` include a broader read-only inventory of user-level runtime
+skills in `~/.claude/skills`, `~/.agents/skills`, and `$CODEX_HOME/skills` (or
+`~/.codex/skills`) by default; `--user` narrows either command to only that
+inventory. Human output groups Claude and Codex user skills separately because
+the runtimes do not load each other's user paths. These rows are external
+inventory, not managed state: capshelf does not write user-scope metadata,
+adopt the skills, or reconcile them. When run from a project root, the
+inventory reports whether a user skill shadows a project or clone-local
+capshelf skill.
+
 ## Item Metadata
 
 Items carry catalog metadata from two sources:

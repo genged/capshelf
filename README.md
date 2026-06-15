@@ -247,10 +247,10 @@ reported as external state instead of overwritten.
 | `set-upstream` | write the committed upstream URL |
 | `data-path` | print the resolved local data repo path |
 | `sync-data` | fetch the data repo's `origin` and fast-forward when safe; the only network command besides the `init` bootstrap clone and `self-update` |
-| `ls` / `show` | inspect data repo items, installed items, and bundles, with descriptions and tags from item metadata |
+| `ls` / `show` | inspect data repo items, installed items, and bundles; `ls` also shows user-level runtime skills by default |
 | `search` | find items and bundles by name, tags, description, or content |
 | `add` / `rm` | add or remove an item in this project; `add bundles/<name>` expands a bundle |
-| `status` | report drift, missing files, and update availability |
+| `status` | report drift, missing files, update availability, and user-level runtime skill inventory |
 | `apply` | reconcile project files to the current locks |
 | `update` | bump pins to data repo HEAD, then apply |
 | `share` | adopt an on-disk item into the data repo; fragments can extract unmanaged values straight from generated outputs (`--pick`) |

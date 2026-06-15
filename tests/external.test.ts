@@ -7,9 +7,13 @@ import {
   findSkillsShSkill,
   listClaudePlugins,
   listSkillsShSkills,
+  listUserSkills,
   readSkillsShLock,
   skillsShConflictMessage,
+  withUserSkillShadows,
 } from "../src/external";
+import type { ExternalUserSkill } from "../src/external";
+import type { LockEntry } from "../src/lock";
 
 async function tempDir(): Promise<string> {
   return await mkdtemp(join(tmpdir(), "capshelf-external-"));
@@ -221,5 +225,95 @@ describe("Claude plugin settings reader", () => {
     expect(
       await findClaudePlugin(project, "capshelf-test-no-such-plugin"),
     ).toBeNull();
+  });
+});
+
+describe("user skill reader", () => {
+  test("lists user-level skills from runtime roots and skips hidden directories", async () => {
+    const home = await tempDir();
+    const claudeRoot = join(home, ".claude", "skills");
+    const codexRoot = join(home, ".agents", "skills");
+    const codexHomeRoot = join(home, ".codex", "skills");
+
+    await mkdir(join(claudeRoot, "alpha"), { recursive: true });
+    await writeFile(join(claudeRoot, "alpha", "SKILL.md"), "alpha\n");
+    await mkdir(join(codexRoot, "beta"), { recursive: true });
+    await writeFile(join(codexRoot, "beta", "SKILL.md"), "beta\n");
+    await mkdir(join(codexHomeRoot, ".system"), { recursive: true });
+    await writeFile(join(codexHomeRoot, ".system", "SKILL.md"), "system\n");
+    await mkdir(join(codexHomeRoot, "missing-skill-file"), {
+      recursive: true,
+    });
+
+    expect(
+      await listUserSkills({
+        roots: [
+          { surface: "claude", path: claudeRoot },
+          { surface: "codex", path: codexRoot },
+          { surface: "codex", path: codexHomeRoot },
+        ],
+      }),
+    ).toEqual([
+      {
+        kind: "skills",
+        name: "alpha",
+        surface: "claude",
+        path: join(claudeRoot, "alpha"),
+        shadows: [],
+      },
+      {
+        kind: "skills",
+        name: "beta",
+        surface: "codex",
+        path: join(codexRoot, "beta"),
+        shadows: [],
+      },
+    ]);
+  });
+
+  test("annotates user skills that shadow capshelf-managed project or local skills", async () => {
+    const entry: LockEntry = {
+      source: "data",
+      sha: "abc",
+      sourceCommit: "commit",
+      appliedAt: "now",
+    };
+    const alpha: ExternalUserSkill = {
+      kind: "skills",
+      name: "alpha",
+      surface: "claude",
+      path: "/home/u/.claude/skills/alpha",
+      shadows: [],
+    };
+    const beta: ExternalUserSkill = {
+      kind: "skills",
+      name: "beta",
+      surface: "codex",
+      path: "/home/u/.agents/skills/beta",
+      shadows: [],
+    };
+    const skills = [
+      {
+        ...alpha,
+      },
+      { ...beta },
+    ];
+
+    expect(
+      withUserSkillShadows(
+        skills,
+        { version: 2, items: { "data/skills/alpha": entry } },
+        { version: 2, items: { "data/skills/beta": entry } },
+      ),
+    ).toEqual([
+      {
+        ...alpha,
+        shadows: [{ scope: "project", source: "data" }],
+      },
+      {
+        ...beta,
+        shadows: [{ scope: "local", source: "data" }],
+      },
+    ]);
   });
 });
