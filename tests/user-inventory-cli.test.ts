@@ -81,6 +81,7 @@ describe("user-level inventory CLI", () => {
 
     await writeSkill(join(home, ".claude", "skills"), "alpha");
     await writeSkill(join(home, ".agents", "skills"), "beta");
+    await writeSkill(join(home, ".codex", "skills"), "gamma");
     await writeSkill(join(home, ".codex", "skills"), ".system");
 
     const result = runCli(cli, cwd, home, ["status", "--user", "--json"]);
@@ -89,13 +90,39 @@ describe("user-level inventory CLI", () => {
     expect(result.stderr.toString()).toBe("");
     const json = JSON.parse(result.stdout.toString());
     expect(json.project).toBeNull();
-    expect(json.count).toBe(2);
+    expect(json.count).toBe(3);
     expect(
       json.externalUserSkills.map(
         (skill: { name: string; surface: string }) =>
           `${skill.surface}:${skill.name}`,
       ),
-    ).toEqual(["claude:alpha", "codex:beta"]);
+    ).toEqual(["claude:alpha", "codex:beta", "codex:gamma"]);
+    expect(
+      json.externalUserSkills.find(
+        (skill: { name: string }) => skill.name === "gamma",
+      )?.path,
+    ).toBe(join(home, ".codex", "skills", "gamma"));
+  });
+
+  test("status --user human output splits Claude and Codex skills", async () => {
+    const home = await tempDir("capshelf-user-human-home-");
+    const cwd = await tempDir("capshelf-user-human-cwd-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+
+    await writeSkill(join(home, ".claude", "skills"), "alpha");
+    await writeSkill(join(home, ".agents", "skills"), "beta");
+
+    const result = runCli(cli, cwd, home, ["status", "--user"]);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.toString()).toBe("");
+    const stdout = result.stdout.toString();
+    const claudeHeader = stdout.indexOf("external/user/claude/");
+    const codexHeader = stdout.indexOf("external/user/codex/");
+    expect(claudeHeader).toBeGreaterThanOrEqual(0);
+    expect(codexHeader).toBeGreaterThan(claudeHeader);
+    expect(stdout).toContain("skills/alpha");
+    expect(stdout).toContain("skills/beta");
   });
 
   test("ls --user reports shadowing when run from a capshelf project root", async () => {
