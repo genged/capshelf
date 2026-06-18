@@ -158,4 +158,4 @@ Codex only loads `.codex/config.toml` in trusted projects; `status` warns non-fa
 - `git is required but was not found on PATH` — install Git or fix `PATH`.
 - `not a git repository: <path>` — data repos must be git repos (`sourceCommit` provenance); `git init` it first.
 - `⚠ <item>: invalid .capshelf.yml … — metadata ignored` — the item still works; fix the sidecar in the data repo when convenient.
-- If `capshelf` itself is missing, point the user at the capshelf source repo and suggest `make install`.
+- `capshelf: command not found` — the CLI isn't on `PATH` (common when a teammate cloned this project, which has the capshelf skill committed, but never installed the binary). Recover with `brew install genged/tap/capshelf`, or without Homebrew run `curl -fsSL https://raw.githubusercontent.com/genged/capshelf/main/scripts/install.sh | sh` (downloads the latest release, verifies its checksum, installs to `~/.local/bin`; ensure that dir is on `PATH`). Building from source (`make install`) is a fallback; point the user at the repo README for the current options.
