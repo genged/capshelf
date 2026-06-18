@@ -1,7 +1,9 @@
 {
   "installMode": "codex-compatible",
-  "dataRepoUpstream": "https://github.com/genged/capshelf",
-  "skills": [],
+  "dataRepoUpstream": "https://github.com/genged/agent-shared",
+  "skills": [
+    "extract-generic-repo-patterns"
+  ],
   "settings": [
     "generic"
   ],

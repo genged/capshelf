@@ -1,0 +1,4 @@
+interface:
+  display_name: "Extract Generic Repo Patterns"
+  short_description: "Extract reusable patterns from repositories"
+  default_prompt: "Use $extract-generic-repo-patterns to extract reusable repo patterns from this codebase into a generic agent guide."
