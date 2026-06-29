@@ -450,6 +450,41 @@ export async function headSha(repo: string): Promise<string> {
   return out.trim();
 }
 
+export interface RepoCommit {
+  sha: string;
+  author: string;
+  date: string;
+  subject: string;
+}
+
+/**
+ * Recent commits in a repo, newest first. Read-only; used by `serve` to show
+ * a data-repo activity feed. Returns [] if the log can't be read.
+ */
+export async function recentCommits(
+  repo: string,
+  limit = 25,
+): Promise<RepoCommit[]> {
+  await assertGitAvailable();
+  // Unit separators keep parsing robust against subjects containing any char.
+  const fmt = "%H%x1f%an%x1f%aI%x1f%s";
+  try {
+    const out = await $`git -C ${repo} log -n ${limit} --pretty=format:${fmt}`
+      .quiet()
+      .text();
+    return out
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => {
+        const [sha = "", author = "", date = "", subject = ""] =
+          line.split("\x1f");
+        return { sha, author, date, subject };
+      });
+  } catch {
+    return [];
+  }
+}
+
 export async function commitInRepo(
   repo: string,
   relPaths: string[],

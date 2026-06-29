@@ -7,3 +7,6 @@ coverage/
 logs/
 .idea/
 .claude/settings.local.json
+
+# TS incremental build cache
+*.tsbuildinfo

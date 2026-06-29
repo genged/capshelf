@@ -215,6 +215,17 @@ export function metadataLineSuffix(meta: ItemMetadata): string {
   return parts.length > 0 ? `  ${parts.join("  ")}` : "";
 }
 
+/** Catalog metadata fields for JSON output (`ls --json`, serve API). */
+export function metadataJsonFields(meta: ItemMetadata): {
+  description?: string;
+  tags?: string[];
+} {
+  return {
+    ...(meta.description !== undefined && { description: meta.description }),
+    ...(meta.tags.length > 0 && { tags: meta.tags }),
+  };
+}
+
 /**
  * `--tag` filtering: every requested tag must be present (AND, narrowing),
  * compared case-insensitively. Items without metadata never match a filter.

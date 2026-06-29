@@ -1,12 +1,20 @@
 BIN_DIR ?= $(HOME)/.local/bin
 
-.PHONY: install dev build test typecheck lint check smoke smoke-modes smoke-skills smoke-settings smoke-mcp smoke-codex-config smoke-bootstrap smoke-metadata smoke-team-sync smoke-bundles clean deps
+.PHONY: install dev build web test typecheck lint check smoke smoke-modes smoke-skills smoke-settings smoke-mcp smoke-codex-config smoke-bootstrap smoke-metadata smoke-team-sync smoke-bundles clean deps
 
 deps:
 	bun install
 
-build: deps
+# Build the web UI and bake it into src/web-embed.ts for the binary.
+web: deps
+	bun run web:build
+	bun run embed-web
+
+# Compile the single binary with the UI embedded, then restore the committed
+# (empty) embed stub so the working tree stays clean.
+build: web
 	bun run build
+	@git checkout -- src/web-embed.ts 2>/dev/null || true
 
 install: build
 	mkdir -p $(BIN_DIR)
