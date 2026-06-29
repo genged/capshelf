@@ -114,8 +114,34 @@ async function get<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+export interface Config {
+  project: string;
+  dataRepo: string | null;
+  dataRepoReady: boolean;
+  dataRepoUpstream: string | null;
+  installMode: string;
+  readOnly: boolean;
+  paths: { manifest: string; lock: string };
+  counts: {
+    tracked: number; local: number;
+    skills: number; settings: number; mcp: number; codexConfig: number;
+  };
+}
+
+export interface RepoCommit {
+  sha: string; author: string; date: string; subject: string;
+}
+export interface Activity {
+  dataRepoReady: boolean;
+  dataRepo: string | null;
+  head: string | null;
+  commits: RepoCommit[];
+}
+
 export const api = {
   health: () => get<Health>("api/health"),
+  config: () => get<Config>("api/config"),
+  activity: () => get<Activity>("api/activity"),
   status: (opts: { diff?: boolean; item?: string } = {}) => {
     const q = new URLSearchParams();
     if (opts.diff) q.set("diff", "1");

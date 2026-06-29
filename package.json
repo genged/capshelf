@@ -12,6 +12,7 @@
     "serve": "bun run src/cli.ts serve",
     "web:dev": "cd web && bun run dev",
     "web:build": "cd web && bun install && bun run build",
+    "embed-web": "bun run scripts/embed-web.ts",
     "test": "bun test",
     "coverage": "bun test --coverage",
     "typecheck": "tsc --noEmit",

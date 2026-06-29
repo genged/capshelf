@@ -6,6 +6,9 @@ import { Overview } from "./components/Overview";
 import { ItemScreen } from "./components/ItemScreen";
 import { Shelf } from "./components/Shelf";
 import { Bundles } from "./components/Bundles";
+import { Settings } from "./components/Settings";
+import { Activity } from "./components/Activity";
+import { CommandPalette } from "./components/CommandPalette";
 import { bucketOf } from "./api";
 
 const ROUTES = ["overview", "items", "shelf", "bundles", "activity", "settings"] as const;
@@ -26,11 +29,26 @@ export default function App() {
   const [report, setReport] = useState<StatusReport | null>(null);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(
+    new URLSearchParams(location.search).get("cmdk") === "1",
+  );
 
   useEffect(() => {
     const onHash = () => setRoute(currentRoute());
     addEventListener("hashchange", onHash);
     return () => removeEventListener("hashchange", onHash);
+  }, []);
+
+  // ⌘K / Ctrl-K opens the command palette.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((o) => !o);
+      }
+    };
+    addEventListener("keydown", onKey);
+    return () => removeEventListener("keydown", onKey);
   }, []);
 
   // theme
@@ -50,11 +68,11 @@ export default function App() {
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
 
-  // catalog loaded lazily for shelf/bundles
+  // catalog loaded lazily for shelf/bundles and palette search
   useEffect(() => {
-    if ((route === "shelf" || route === "bundles") && !catalog)
+    if ((route === "shelf" || route === "bundles" || paletteOpen) && !catalog)
       api.catalog().then(setCatalog).catch(() => setCatalog(null));
-  }, [route, catalog]);
+  }, [route, catalog, paletteOpen]);
 
   const installed = useMemo(() => {
     const m = new Map<string, StatusRow>();
@@ -71,21 +89,38 @@ export default function App() {
   );
 
   return (
-    <Shell route={route} title={TITLE[route]} health={health} attention={attention} onToggleTheme={toggleTheme}>
-      {error ? (
-        <div className="content"><div className="note err">Couldn’t reach the capshelf API: {error}</div></div>
-      ) : route === "overview" ? (
-        report ? <Overview report={report} /> : <Loading />
-      ) : route === "items" ? (
-        report ? <ItemScreen report={report} /> : <Loading />
-      ) : route === "shelf" ? (
-        <Shelf catalog={catalog} installed={installed} />
-      ) : route === "bundles" ? (
-        <Bundles catalog={catalog} installed={installed} />
-      ) : (
-        <div className="content"><div className="note">{TITLE[route]} — coming soon.</div></div>
-      )}
-    </Shell>
+    <>
+      <Shell
+        route={route}
+        title={TITLE[route]}
+        health={health}
+        attention={attention}
+        onToggleTheme={toggleTheme}
+        onOpenPalette={() => setPaletteOpen(true)}
+      >
+        {error ? (
+          <div className="content"><div className="note err">Couldn’t reach the capshelf API: {error}</div></div>
+        ) : route === "overview" ? (
+          report ? <Overview report={report} /> : <Loading />
+        ) : route === "items" ? (
+          report ? <ItemScreen report={report} /> : <Loading />
+        ) : route === "shelf" ? (
+          <Shelf catalog={catalog} installed={installed} />
+        ) : route === "bundles" ? (
+          <Bundles catalog={catalog} installed={installed} />
+        ) : route === "activity" ? (
+          <Activity />
+        ) : (
+          <Settings />
+        )}
+      </Shell>
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        report={report}
+        catalog={catalog}
+      />
+    </>
   );
 }
 

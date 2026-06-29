@@ -5,6 +5,11 @@ import { projectRoot } from "../paths";
 import { globalOpts } from "../cli";
 import { PRODUCT_NAME } from "../identity";
 import { defaultApiContext, handleApiRequest } from "../serve-api";
+import { WEB_ASSETS } from "../web-embed";
+
+// When the binary was compiled with embedded assets, serve those; otherwise
+// (dev / `bun run`) fall back to web/dist on disk.
+const EMBEDDED = Object.keys(WEB_ASSETS).length > 0;
 
 interface ServeOptions {
   port: string;
@@ -60,6 +65,17 @@ export function registerServe(program: Command): void {
 async function serveStatic(req: Request): Promise<Response> {
   const { pathname } = new URL(req.url);
   const rel = pathname === "/" ? "/index.html" : pathname;
+
+  if (EMBEDDED) {
+    // SPA fallback to index.html for unknown client-side routes.
+    const asset = WEB_ASSETS[rel] ?? WEB_ASSETS["/index.html"];
+    if (asset) {
+      return new Response(Buffer.from(asset.base64, "base64"), {
+        headers: { "content-type": asset.type },
+      });
+    }
+  }
+
   // Resolve and confine to WEB_DIR to block path traversal.
   const target = normalize(join(WEB_DIR, rel));
   if (target.startsWith(WEB_DIR)) {

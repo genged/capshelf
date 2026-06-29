@@ -20,13 +20,14 @@ function repoName(dataRepo: string | null): string {
 }
 
 export function Shell({
-  route, title, health, attention, onToggleTheme, children,
+  route, title, health, attention, onToggleTheme, onOpenPalette, children,
 }: {
   route: string;
   title: string;
   health: Health | null;
   attention: number;
   onToggleTheme: () => void;
+  onOpenPalette: () => void;
   children: ReactNode;
 }) {
   return (
@@ -88,11 +89,11 @@ export function Shell({
             <span className="c2">{title}</span>
           </div>
           <div className="grow" />
-          <label className="search">
+          <button className="search" onClick={onOpenPalette} style={{ cursor: "pointer" }}>
             <IconSearch className="ico" />
-            <input placeholder="Search…" />
+            <span style={{ flex: 1, textAlign: "left" }}>Search…</span>
             <span className="k">⌘K</span>
-          </label>
+          </button>
           <button className="btn btn--icon" title="Toggle theme" onClick={onToggleTheme}>
             <IconSync className="ico" />
           </button>

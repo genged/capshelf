@@ -1,5 +1,12 @@
-import { projectRoot, resolveDataRepoOptional } from "./paths";
+import {
+  lockPath,
+  manifestPath,
+  projectRoot,
+  resolveDataRepoOptional,
+} from "./paths";
 import { loadManifest } from "./manifest";
+import { loadLocalLock, loadLock } from "./lock";
+import { headSha, recentCommits } from "./git";
 import { CLI_VERSION, SYSTEM_ITEMS, shaOfSystemItem } from "./bundled";
 import { PRODUCT_NAME } from "./identity";
 import {
@@ -54,6 +61,10 @@ export async function handleApiRequest(
         return json(await status(ctx, url));
       case "/api/catalog":
         return json(await catalog(ctx, url));
+      case "/api/config":
+        return json(await config(ctx));
+      case "/api/activity":
+        return json(await activity(ctx, url));
       default:
         return json({ error: "not found" }, 404);
     }
@@ -97,6 +108,62 @@ async function status(ctx: ApiContext, url: URL) {
       local: scope === "local",
     },
   });
+}
+
+async function config(ctx: ApiContext) {
+  const manifest = await loadManifest(ctx.project);
+  const dataRepo = await resolveDataRepoOptional({
+    override: ctx.dataOverride,
+    manifest,
+    project: ctx.project,
+  });
+  const [lock, local] = await Promise.all([
+    loadLock(ctx.project),
+    loadLocalLock(ctx.project),
+  ]);
+  return {
+    project: ctx.project,
+    dataRepo,
+    dataRepoReady: !!dataRepo && (await isGitRepo(dataRepo)),
+    dataRepoUpstream: manifest.dataRepoUpstream ?? null,
+    installMode: manifest.installMode,
+    readOnly: true,
+    paths: {
+      manifest: manifestPath(ctx.project),
+      lock: lockPath(ctx.project),
+    },
+    counts: {
+      tracked: Object.keys(lock.items).length,
+      local: Object.keys(local.items).length,
+      skills: manifest.skills.length,
+      settings: manifest.settings.length,
+      mcp: manifest.mcp.length,
+      codexConfig: manifest.codexConfig.length,
+    },
+  };
+}
+
+async function activity(ctx: ApiContext, url: URL) {
+  const manifest = await loadManifest(ctx.project);
+  const dataRepo = await resolveDataRepoOptional({
+    override: ctx.dataOverride,
+    manifest,
+    project: ctx.project,
+  });
+  if (!dataRepo || !(await isGitRepo(dataRepo))) {
+    return {
+      dataRepoReady: false,
+      dataRepo: dataRepo ?? null,
+      head: null,
+      commits: [],
+    };
+  }
+  const limit = Math.min(Number(url.searchParams.get("n")) || 25, 100);
+  const [head, commits] = await Promise.all([
+    headSha(dataRepo),
+    recentCommits(dataRepo, limit),
+  ]);
+  return { dataRepoReady: true, dataRepo, head, commits };
 }
 
 const metaFields = (meta: ItemMetadata) => ({
