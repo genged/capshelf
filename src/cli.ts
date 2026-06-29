@@ -20,6 +20,7 @@ import { registerSetData } from "./commands/set-data";
 import { registerSetUpstream } from "./commands/set-upstream";
 import { registerDataPath } from "./commands/data-path";
 import { registerSyncData } from "./commands/sync-data";
+import { registerServe } from "./commands/serve";
 import { registerSelfUpdate } from "./commands/self-update";
 import { CliError } from "./errors";
 import { HOME_ENV, PRODUCT_NAME } from "./identity";
@@ -55,6 +56,7 @@ registerSetData(program);
 registerSetUpstream(program);
 registerDataPath(program);
 registerSyncData(program);
+registerServe(program);
 registerSelfUpdate(program);
 
 /**
