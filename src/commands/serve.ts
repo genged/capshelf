@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import type { Command as CmdType } from "commander";
-import { join, normalize, resolve } from "node:path";
+import { join, normalize, resolve, sep } from "node:path";
 import { projectRoot } from "../paths";
 import { globalOpts } from "../cli";
 import { PRODUCT_NAME } from "../identity";
@@ -76,9 +76,11 @@ async function serveStatic(req: Request): Promise<Response> {
     }
   }
 
-  // Resolve and confine to WEB_DIR to block path traversal.
+  // Resolve and confine to WEB_DIR to block path traversal. The trailing
+  // separator on the boundary check stops a sibling like "<WEB_DIR>-evil"
+  // from satisfying a bare startsWith().
   const target = normalize(join(WEB_DIR, rel));
-  if (target.startsWith(WEB_DIR)) {
+  if (target === WEB_DIR || target.startsWith(WEB_DIR + sep)) {
     const file = Bun.file(target);
     if (await file.exists()) return new Response(file);
   }

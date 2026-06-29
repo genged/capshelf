@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { Activity as ActivityData } from "../api";
+import { useFetch } from "../useFetch";
 
 function ago(iso: string): string {
   const t = new Date(iso).getTime();
@@ -15,12 +14,7 @@ function ago(iso: string): string {
 }
 
 export function Activity() {
-  const [data, setData] = useState<ActivityData | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    api.activity().then(setData).catch((e) => setErr(String(e)));
-  }, []);
+  const { data, error: err } = useFetch(api.activity);
 
   if (err) return <div className="content"><div className="note err">{err}</div></div>;
   if (!data) return <div className="content"><div className="skeleton" /></div>;

@@ -6,7 +6,7 @@ import {
 } from "./paths";
 import { loadManifest } from "./manifest";
 import { loadLocalLock, loadLock } from "./lock";
-import { headSha, recentCommits } from "./git";
+import { headSha, isGitRepo, recentCommits } from "./git";
 import { CLI_VERSION, SYSTEM_ITEMS, shaOfSystemItem } from "./bundled";
 import { PRODUCT_NAME } from "./identity";
 import {
@@ -17,10 +17,12 @@ import {
 } from "./master";
 import type { ItemKind } from "./master";
 import { shaOfFragmentItem } from "./fragments";
-import { isGitRepo } from "./git";
 import { buildStatusReport } from "./status-report";
-import { loadDataItemMetadata, loadSystemItemMetadata } from "./metadata";
-import type { ItemMetadata } from "./metadata";
+import {
+  loadDataItemMetadata,
+  loadSystemItemMetadata,
+  metadataJsonFields,
+} from "./metadata";
 import { listBundles, memberRef } from "./bundles";
 import { parseItemRef } from "./item-ref";
 
@@ -158,18 +160,14 @@ async function activity(ctx: ApiContext, url: URL) {
       commits: [],
     };
   }
-  const limit = Math.min(Number(url.searchParams.get("n")) || 25, 100);
+  const n = Number(url.searchParams.get("n"));
+  const limit = Number.isInteger(n) && n > 0 ? Math.min(n, 100) : 25;
   const [head, commits] = await Promise.all([
     headSha(dataRepo),
     recentCommits(dataRepo, limit),
   ]);
   return { dataRepoReady: true, dataRepo, head, commits };
 }
-
-const metaFields = (meta: ItemMetadata) => ({
-  ...(meta.description !== undefined && { description: meta.description }),
-  ...(meta.tags.length > 0 && { tags: meta.tags }),
-});
 
 async function catalog(ctx: ApiContext, url: URL) {
   const manifest = await loadManifest(ctx.project);
@@ -179,9 +177,7 @@ async function catalog(ctx: ApiContext, url: URL) {
     project: ctx.project,
   });
   const kindParam = url.searchParams.get("kind");
-  const kind = ITEM_KINDS.includes(kindParam as ItemKind)
-    ? (kindParam as ItemKind)
-    : undefined;
+  const kind: ItemKind | undefined = ITEM_KINDS.find((k) => k === kindParam);
 
   const system = await Promise.all(
     SYSTEM_ITEMS.filter((s) => !kind || s.kind === kind).map(async (item) => ({
@@ -189,7 +185,7 @@ async function catalog(ctx: ApiContext, url: URL) {
       kind: item.kind,
       name: item.name,
       sha: await shaOfSystemItem(item),
-      ...metaFields(loadSystemItemMetadata(item)),
+      ...metadataJsonFields(loadSystemItemMetadata(item)),
     })),
   );
 
@@ -212,7 +208,7 @@ async function catalog(ctx: ApiContext, url: URL) {
       sha: isFragmentItemKind(item.kind)
         ? await shaOfFragmentItem(dataRepo, item.kind, item.name)
         : await shaOfGitVisibleItem(dataRepo, item.repoRelPath),
-      ...metaFields(await loadDataItemMetadata(item)),
+      ...metadataJsonFields(await loadDataItemMetadata(item)),
     })),
   );
 

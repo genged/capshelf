@@ -1,14 +1,8 @@
-import { useEffect, useState } from "react";
 import { api } from "../api";
-import type { Config } from "../api";
+import { useFetch } from "../useFetch";
 
 export function Settings() {
-  const [cfg, setCfg] = useState<Config | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-
-  useEffect(() => {
-    api.config().then(setCfg).catch((e) => setErr(String(e)));
-  }, []);
+  const { data: cfg, error: err } = useFetch(api.config);
 
   if (err) return <div className="content"><div className="note err">{err}</div></div>;
   if (!cfg) return <div className="content"><div className="skeleton" /></div>;

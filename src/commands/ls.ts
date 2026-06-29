@@ -27,6 +27,7 @@ import {
   loadDataItemMetadata,
   loadSystemItemMetadata,
   matchesTagFilter,
+  metadataJsonFields,
   metadataLineSuffix,
   printMetadataWarnings,
 } from "../metadata";
@@ -225,16 +226,6 @@ function bundleMeta(bundle: Bundle): ItemMetadata {
     requires: [],
     conflictsWith: [],
     warnings: [],
-  };
-}
-
-function metadataJsonFields(meta: ItemMetadata): {
-  description?: string;
-  tags?: string[];
-} {
-  return {
-    ...(meta.description !== undefined && { description: meta.description }),
-    ...(meta.tags.length > 0 && { tags: meta.tags }),
   };
 }
 

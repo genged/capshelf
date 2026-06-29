@@ -175,7 +175,6 @@ export function bucketOf(state: State): Bucket {
 
 export const STATE_LABEL: Record<State, string> = {
   ok: "In sync",
-  kept_local: "Kept-local",
   "kept-local": "Kept-local",
   update_available: "Update",
   drifted_local: "Drifted",
@@ -189,4 +188,4 @@ export const STATE_LABEL: Record<State, string> = {
   drifted_and_upstream_dirty: "Drifted · dirty",
   output_drift: "Output drift",
   source_dirty_and_output_drift: "Source · output drift",
-} as Record<State, string>;
+};

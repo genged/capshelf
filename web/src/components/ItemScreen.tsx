@@ -65,7 +65,7 @@ function Drawer({ row, onClose }: { row: StatusRow; onClose: () => void }) {
       .catch(() => { if (live) setDiff(null); })
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
-  }, [row.kind, row.name, bucket]);
+  }, [row.kind, row.name, row.state, bucket]);
 
   return (
     <aside className="drawer">
@@ -80,7 +80,7 @@ function Drawer({ row, onClose }: { row: StatusRow; onClose: () => void }) {
 
       <div className="dw-meta">
         <StatusBadge state={row.state} />
-        <span className="ver"><VersionInline row={row} /></span>
+        <span className="ver"><VersionCell row={row} /></span>
       </div>
 
       <div className="dw-tabs"><span className="on">Diff</span><span>Metadata</span><span>History</span></div>
@@ -133,10 +133,6 @@ function Drawer({ row, onClose }: { row: StatusRow; onClose: () => void }) {
       </div>
     </aside>
   );
-}
-
-function VersionInline({ row }: { row: StatusRow }) {
-  return <VersionCell row={row} />;
 }
 
 function DiffView({ text }: { text: string }) {
