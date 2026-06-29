@@ -76,13 +76,10 @@ async function serveStatic(req: Request): Promise<Response> {
     }
   }
 
-  // Resolve and confine to WEB_DIR to block path traversal. The trailing
-  // separator on the boundary check stops a sibling like "<WEB_DIR>-evil"
-  // from satisfying a bare startsWith().
-  const target = normalize(join(WEB_DIR, rel));
-  if (target === WEB_DIR || target.startsWith(WEB_DIR + sep)) {
-    const file = Bun.file(target);
-    if (await file.exists()) return new Response(file);
+  const target = staticTarget(WEB_DIR, pathname);
+  if (target) {
+    const f = Bun.file(target);
+    if (await f.exists()) return new Response(f);
   }
   // SPA fallback to index.html for client-side routes.
   const index = Bun.file(join(WEB_DIR, "index.html"));
@@ -91,6 +88,19 @@ async function serveStatic(req: Request): Promise<Response> {
     status: 200,
     headers: { "content-type": "text/html; charset=utf-8" },
   });
+}
+
+/**
+ * Resolve a request path to an absolute file under `webDir`, or null if it
+ * would escape. The trailing-separator boundary stops a sibling directory like
+ * "<webDir>-evil" from satisfying a bare startsWith() (path traversal).
+ * Exported for unit tests.
+ */
+export function staticTarget(webDir: string, pathname: string): string | null {
+  const rel = pathname === "/" ? "/index.html" : pathname;
+  const target = normalize(join(webDir, rel));
+  if (target === webDir || target.startsWith(webDir + sep)) return target;
+  return null;
 }
 
 function openBrowser(url: string): void {
