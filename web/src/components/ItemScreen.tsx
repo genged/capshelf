@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, bucketOf } from "../api";
 import type { StatusDiff, StatusReport, StatusRow } from "../api";
-import { KindIcon, IconClose, IconCopy } from "../icons";
+import { KindIcon, IconClose } from "../icons";
 import { StatusBadge, VersionCell, short } from "./bits";
+import { useCommand } from "./CommandDialog";
 
 const refOf = (r: StatusRow) => `${r.kind}/${r.name}`;
 
@@ -49,6 +50,8 @@ export function ItemScreen({ report }: { report: StatusReport }) {
 
 function Drawer({ row, onClose }: { row: StatusRow; onClose: () => void }) {
   const bucket = bucketOf(row.state);
+  const showCommand = useCommand();
+  const ref = `${row.kind}/${row.name}`;
   const [diff, setDiff] = useState<StatusDiff | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -63,13 +66,6 @@ function Drawer({ row, onClose }: { row: StatusRow; onClose: () => void }) {
       .finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
   }, [row.kind, row.name, bucket]);
-
-  const cli =
-    bucket === "drift"
-      ? `revert ${row.kind}/${row.name}`
-      : bucket === "update"
-        ? `update ${row.kind}/${row.name}`
-        : `status ${row.kind}/${row.name}`;
 
   return (
     <aside className="drawer">
@@ -115,11 +111,25 @@ function Drawer({ row, onClose }: { row: StatusRow; onClose: () => void }) {
         {row.sourceCommit && <div className="kv"><span className="k">Source commit</span><span className="v">{short(row.sourceCommit, 12)}</span></div>}
       </div>
 
-      <div className="dw-sec">
-        <div className="lbl">Equivalent command</div>
-        <div className="cli"><span><span className="p">capshelf</span> {cli}</span>
-          <IconCopy className="ico cp" />
-        </div>
+      <div className="dw-actions">
+        {bucket === "update" && (
+          <button className="btn btn--primary" onClick={() => showCommand({ args: `update ${ref}`, title: "Update to the latest version" })}>
+            Update…
+          </button>
+        )}
+        {bucket === "drift" && (
+          <button className="btn btn--primary" onClick={() => showCommand({ args: `revert ${ref}`, title: "Discard local edits", note: "Reapplies the locked content, discarding this item's local changes." })}>
+            Revert…
+          </button>
+        )}
+        {row.source === "data" && bucket !== "local" && (
+          <button className="btn" onClick={() => showCommand({ args: `keep-local ${ref}`, title: "Keep this item local", note: "Marks the item as intentionally diverged so reconciliation tolerates the drift." })}>
+            Keep-local
+          </button>
+        )}
+        <button className="btn" onClick={() => showCommand({ args: `status ${ref}` })}>
+          Command…
+        </button>
       </div>
     </aside>
   );

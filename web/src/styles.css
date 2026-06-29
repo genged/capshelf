@@ -138,6 +138,8 @@ svg { display: block; }
 .b-ext { color: var(--ext); background: var(--ext-bg); } .b-ext .bd { background: var(--ext); }
 .rowmore { color: var(--faint); display: grid; place-items: center; height: 28px; width: 28px; border-radius: 7px; }
 .tr--ext { opacity: .64; }
+button.rowmore { background: none; border: 0; padding: 0; cursor: pointer; font: inherit; }
+button.rowmore:hover { background: var(--raise); color: var(--text); }
 .tfoot { display: flex; align-items: center; padding: 11px 16px; border-top: 1px solid var(--line); color: var(--faint); font-size: 12px; background: var(--panel-2); }
 
 /* master-detail drawer */
@@ -219,6 +221,19 @@ svg { display: block; }
 .pal-hint { margin-left: auto; font-size: 11px; color: var(--faint); font-family: var(--mono); }
 .pal-foot { display: flex; gap: 16px; padding: 9px 14px; border-top: 1px solid var(--line); color: var(--faint); font-size: 11px; }
 .pal-kbd { font-family: var(--mono); border: 1px solid var(--line-2); border-radius: 4px; padding: 0 5px; margin-right: 5px; }
+
+/* command dialog (read-only writes → copyable CLI) */
+.cmddlg { width: min(540px, 92vw); background: var(--panel); border: 1px solid var(--line-2); border-radius: 14px; box-shadow: 0 24px 70px -20px oklch(0 0 0 / .7); overflow: hidden; }
+.cmddlg-head { display: flex; align-items: center; padding: 15px 16px; border-bottom: 1px solid var(--line); }
+.cmddlg-title { font-size: 13.5px; font-weight: 650; }
+.cmddlg-head .x { margin-left: auto; color: var(--faint); width: 28px; height: 28px; display: grid; place-items: center; border-radius: 7px; cursor: pointer; }
+.cmddlg-head .x:hover { background: var(--raise); }
+.cmddlg-code { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 12px; width: calc(100% - 32px); margin: 16px; padding: 12px 14px; background: var(--bg); border: 1px solid var(--line); border-radius: 9px; font-family: var(--mono); font-size: 13px; color: var(--text); cursor: pointer; }
+.cmddlg-code:hover { border-color: var(--line-2); }
+.cmddlg-code .p { color: var(--accent-ink); }
+.cmddlg-copy { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--faint); font-family: var(--sans); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.cmddlg-copy .ico { width: 14px; height: 14px; }
+.cmddlg-note { margin: 0 16px 16px; color: var(--faint); font-size: 12px; line-height: 1.5; }
 
 .tabbar { display: none; }
 

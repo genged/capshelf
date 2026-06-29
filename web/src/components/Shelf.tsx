@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { Catalog, ItemKind, StatusRow } from "../api";
 import { KindIcon } from "../icons";
 import { StatusBadge } from "./bits";
+import { useCommand } from "./CommandDialog";
 
 export function Shelf({
   catalog, installed,
@@ -45,6 +46,7 @@ function Section({
   items: Catalog["data"];
   installed: Map<string, StatusRow>;
 }) {
+  const showCommand = useCommand();
   if (items.length === 0) return null;
   return (
     <>
@@ -66,7 +68,16 @@ function Section({
                 <div className="tagrow">{it.tags.map((t) => <span className="tag" key={t}>#{t}</span>)}</div>
               )}
               <div className="foot">
-                {row ? <StatusBadge state={row.state} /> : <button className="btn btn--sm add">Add</button>}
+                {row ? (
+                  <StatusBadge state={row.state} />
+                ) : (
+                  <button
+                    className="btn btn--sm add"
+                    onClick={() => showCommand({ args: `add ${it.kind}/${it.name}` })}
+                  >
+                    Add
+                  </button>
+                )}
               </div>
             </div>
           );

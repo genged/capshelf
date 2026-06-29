@@ -1,6 +1,7 @@
 import type { Catalog, ItemKind, StatusRow } from "../api";
 import { KindIcon } from "../icons";
 import { StatusBadge, ExternalBadge } from "./bits";
+import { useCommand } from "./CommandDialog";
 
 function parseMember(ref: string): { kind: ItemKind; name: string } {
   const [kind = "", ...rest] = ref.split("/");
@@ -13,6 +14,7 @@ export function Bundles({
   catalog: Catalog | null;
   installed: Map<string, StatusRow>;
 }) {
+  const showCommand = useCommand();
   if (!catalog) return <div className="content"><div className="skeleton" /></div>;
   const bundles = catalog.bundles ?? [];
   if (bundles.length === 0)
@@ -39,7 +41,12 @@ export function Bundles({
                   <span className="chipc" key={k}>{n} {k}</span>
                 ))}
               </div>
-              <button className={`btn${allInstalled ? "" : " btn--primary"}`} style={{ marginLeft: 14 }}>
+              <button
+                className={`btn${allInstalled ? "" : " btn--primary"}`}
+                style={{ marginLeft: 14 }}
+                disabled={allInstalled}
+                onClick={() => showCommand({ args: `add bundles/${b.name}` })}
+              >
                 {allInstalled ? "Installed" : "Add bundle"}
               </button>
             </div>

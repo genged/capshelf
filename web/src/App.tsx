@@ -9,6 +9,7 @@ import { Bundles } from "./components/Bundles";
 import { Settings } from "./components/Settings";
 import { Activity } from "./components/Activity";
 import { CommandPalette } from "./components/CommandPalette";
+import { CommandProvider } from "./components/CommandDialog";
 import { bucketOf } from "./api";
 
 const ROUTES = ["overview", "items", "shelf", "bundles", "activity", "settings"] as const;
@@ -89,7 +90,7 @@ export default function App() {
   );
 
   return (
-    <>
+    <CommandProvider>
       <Shell
         route={route}
         title={TITLE[route]}
@@ -120,7 +121,7 @@ export default function App() {
         report={report}
         catalog={catalog}
       />
-    </>
+    </CommandProvider>
   );
 }
 

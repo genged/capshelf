@@ -2,8 +2,9 @@ import type { ReactNode } from "react";
 import type { Health } from "../api";
 import {
   IconActivity, IconBundles, IconItems, IconOverview, IconSearch,
-  IconSettings, IconShelf, IconSync, IconMenu, IconClock,
+  IconSettings, IconShelf, IconSync, IconMenu, IconClock, IconCheck,
 } from "../icons";
+import { useCommand } from "./CommandDialog";
 
 const NAV = [
   { id: "overview", label: "Overview", Icon: IconOverview },
@@ -30,6 +31,7 @@ export function Shell({
   onOpenPalette: () => void;
   children: ReactNode;
 }) {
+  const showCommand = useCommand();
   return (
     <div className="app">
       <aside className="sb">
@@ -96,6 +98,19 @@ export function Shell({
           </button>
           <button className="btn btn--icon" title="Toggle theme" onClick={onToggleTheme}>
             <IconSync className="ico" />
+          </button>
+          <button
+            className="btn btn--primary"
+            onClick={() =>
+              showCommand({
+                args: "apply",
+                title: "Apply pending changes",
+                note: "Reconciles this project's files and generated config to the lockfile.",
+              })
+            }
+          >
+            <IconCheck className="ico" /> Apply
+            {attention > 0 ? <span className="apply-lbl">&nbsp;{attention}</span> : null}
           </button>
         </header>
         {children}

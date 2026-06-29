@@ -3,11 +3,24 @@ import type { StatusReport } from "../api";
 import { bucketOf } from "../api";
 import { KindIcon, IconMore } from "../icons";
 import { StatStrip, StatusBadge, ExternalBadge, VersionCell, emptyCounts } from "./bits";
+import { useCommand } from "./CommandDialog";
+import type { StatusRow } from "../api";
 
 type Tab = "all" | "attention" | "sync" | "local" | "external";
 
+function rowCommand(r: StatusRow): string {
+  const ref = `${r.kind}/${r.name}`;
+  switch (bucketOf(r.state)) {
+    case "update": return `update ${ref}`;
+    case "drift": return `revert ${ref}`;
+    case "local": return `keep-local ${ref}`;
+    default: return `status ${ref}`;
+  }
+}
+
 export function Overview({ report }: { report: StatusReport }) {
   const [tab, setTab] = useState<Tab>("all");
+  const showCommand = useCommand();
 
   const counts = useMemo(() => {
     const c = emptyCounts();
@@ -60,7 +73,11 @@ export function Overview({ report }: { report: StatusReport }) {
           <div className="note">Nothing here.</div>
         ) : (
           rows.map((r) => (
-            <a className="tr" key={`${r.scope}/${r.source}/${r.kind}/${r.name}`} href="#items">
+            <div
+              className="tr"
+              key={`${r.scope}/${r.source}/${r.kind}/${r.name}`}
+              onClick={() => { location.hash = "#items"; }}
+            >
               <span className="cbx" />
               <div className="cell-item">
                 <span className="ti"><KindIcon kind={r.kind} /></span>
@@ -72,8 +89,14 @@ export function Overview({ report }: { report: StatusReport }) {
               <div className="src src-cell">{r.source}</div>
               <div className="ver-cell"><VersionCell row={r} /></div>
               <div className="badge-cell"><StatusBadge state={r.state} /></div>
-              <div className="rowmore"><IconMore /></div>
-            </a>
+              <button
+                className="rowmore"
+                title="Show command"
+                onClick={(e) => { e.stopPropagation(); showCommand({ args: rowCommand(r) }); }}
+              >
+                <IconMore />
+              </button>
+            </div>
           ))
         )}
 
