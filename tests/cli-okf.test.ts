@@ -168,6 +168,43 @@ describe("cli okf integration", () => {
     ).toContain("promoted");
   });
 
+  test("okf is rejected from local scope (skills-only) without corrupting local state", async () => {
+    const project = await tempRepo("capshelf-okf-local-project-");
+    const dataRepo = await tempRepo("capshelf-okf-local-data-");
+    await seedBundle(dataRepo, "sales");
+    await commitAll(dataRepo, "okf bundle");
+
+    expect(run(project, ["init", "--data", dataRepo]).exitCode).toBe(0);
+
+    // add --local must refuse and leave local.json untouched (no okf field
+    // exists, and skills[] must not be polluted with the okf name).
+    const addLocal = run(project, ["add", "--local", "okf/sales"]);
+    expect(addLocal.exitCode).toBe(3);
+    expect(
+      (addLocal.stdout.toString() + addLocal.stderr.toString()).toLowerCase(),
+    ).toContain("skills-only");
+    const localCfg = await file(
+      join(project, ".capshelf", "local.json"),
+    ).json();
+    expect(localCfg.skills ?? []).not.toContain("sales");
+    expect(localCfg.okf).toBeUndefined();
+
+    // An explicit `share --to local` is also refused.
+    const root = join(project, ".okf", "draft");
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, "index.md"), "# draft\n");
+    await writeFile(join(root, "log.md"), "## 2026-06-30\n\n- new\n");
+    expect(run(project, ["share", "okf/draft", "--to", "local"]).exitCode).toBe(
+      3,
+    );
+
+    // But share with no scope flag defaults to project scope and succeeds.
+    expect(
+      run(project, ["share", "okf/draft", "-m", "add draft"]).exitCode,
+    ).toBe(0);
+    expect(existsSync(join(dataRepo, "okf", "draft", "index.md"))).toBe(true);
+  });
+
   test("get-path returns the materialized bundle directory", async () => {
     const project = await tempRepo("capshelf-okf-getpath-project-");
     const dataRepo = await tempRepo("capshelf-okf-getpath-data-");

@@ -7,7 +7,7 @@ import { LOCAL_CONFIG_FILE, LOCAL_LOCK_FILE, METADATA_DIR } from "./identity";
 import { expandTilde } from "./paths";
 import { PreconditionError } from "./errors";
 import type { ItemKind } from "./master";
-import { isFragmentItemKind } from "./master";
+import { isSkillKind } from "./master";
 import { gitInfoExcludePath, isGitWorkTreeRoot } from "./git";
 
 const LocalConfigSchema = z.object({
@@ -154,7 +154,12 @@ export function assertLocalScopeSupported(
   verb: string,
   mcpMessage = "local scope is not supported for mcp fragments; keep project-local values in .mcp.json or .codex/config.toml",
 ): void {
-  if (!isFragmentItemKind(kind)) return;
+  if (isSkillKind(kind)) return;
+  if (kind === "okf") {
+    throw new PreconditionError(
+      `${verb} is not supported for okf bundles; local scope is skills-only — keep okf bundles in project scope`,
+    );
+  }
   if (kind === "settings") {
     throw new PreconditionError(
       `${verb} is not supported for settings fragments; keep project-local values in .claude/settings.json`,

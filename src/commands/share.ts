@@ -51,6 +51,7 @@ import {
   type FragmentValue,
 } from "../fragments";
 import type { FragmentItemKind } from "../master";
+import { isSkillKind } from "../master";
 import {
   extractPickedFragment,
   mcpServerContainerKey,
@@ -107,13 +108,18 @@ export function registerShare(program: Command): void {
 
       const kind = ref.kind ?? "skills";
       const name = ref.name;
+      // Only skills support local scope; fragments and okf bundles default to
+      // project scope, and an explicit `--to local` for them is rejected below.
       const scope = parseShareScope(
         opts.to,
-        isFragmentKind(kind) ? "project" : "local",
+        isSkillKind(kind) ? "local" : "project",
       );
       if (isFragmentKind(kind)) {
         await shareFragment(kind, name, scope, opts, cmd);
         return;
+      }
+      if (scope === "local") {
+        assertLocalScopeSupported(kind, name, "share");
       }
       if (opts.pick !== undefined) {
         throw new PreconditionError(

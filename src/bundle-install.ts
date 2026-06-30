@@ -31,7 +31,7 @@ import { dataKey } from "./lock";
 import type { Lock } from "./lock";
 import { addManifestName } from "./manifest";
 import type { Manifest } from "./manifest";
-import { ITEM_KINDS, isFragmentItemKind } from "./master";
+import { ITEM_KINDS, isFragmentItemKind, isSkillKind } from "./master";
 import type { ItemKind, MasterItem } from "./master";
 import { METADATA_SIDECAR } from "./metadata";
 import type { ItemMetadata } from "./metadata";
@@ -161,7 +161,7 @@ export function planBundleInstall(opts: PlanBundleInstallOptions): BundlePlan {
       m.reason = `already owned by ${otherScope} scope; fix with: capshelf move ${ref} --to ${scope}`;
       continue;
     }
-    if (scope === "local" && isFragmentItemKind(member.kind)) {
+    if (scope === "local" && !isSkillKind(member.kind)) {
       plan.localFragmentMembers.push(ref);
       m.status = "refused";
       m.reason = "local scope is skills-only";
