@@ -10,22 +10,110 @@ export const ITEM_KINDS = [
   "settings",
   "mcp",
   "codex-config",
+  "okf",
 ] as const;
 export type ItemKind = (typeof ITEM_KINDS)[number];
-export type FragmentItemKind = Exclude<ItemKind, "skills">;
 
-export const FRAGMENT_ITEM_KINDS = [
-  "settings",
-  "mcp",
-  "codex-config",
-] as const satisfies readonly FragmentItemKind[];
+export const FRAGMENT_ITEM_KINDS = ["settings", "mcp", "codex-config"] as const;
+export type FragmentItemKind = (typeof FRAGMENT_ITEM_KINDS)[number];
+
+/**
+ * The behavioral shape of an item kind. This is the real axis the codebase
+ * branches on; before the registry it was encoded negatively as
+ * `=== "skills"` / `!== "skills"`, which silently conflated "is a fragment"
+ * with "is a skill" because skills was the only non-fragment kind.
+ *
+ * - `fragment`: partial values merged into a shared generated output file
+ *   (`.claude/settings.json`, `.mcp.json`, `.codex/config.toml`).
+ * - `skill`: a Claude/Codex skill directory — `.claude/skills` symlink,
+ *   `SKILL.md`, install-mode awareness, external-state, frontmatter catalog.
+ * - `okf`: an Open Knowledge Format bundle directory — copied wholesale to a
+ *   configurable output dir, no symlink, not mode-aware.
+ */
+export type ItemShape = "fragment" | "skill" | "okf";
+
+/** Manifest array key that records the installed names for a kind. */
+export type ManifestListKey =
+  | "skills"
+  | "settings"
+  | "mcp"
+  | "codexConfig"
+  | "okf";
+
+export interface ItemKindDescriptor {
+  kind: ItemKind;
+  shape: ItemShape;
+  /** Directory under the data repo root that holds items of this kind. */
+  repoDir: string;
+  /**
+   * Source files inside an item that are canonical for a fragment kind,
+   * relative to the item directory. Empty for whole-directory kinds
+   * (skills, okf), whose entire tree is the item.
+   */
+  canonicalFiles: string[];
+  /** Manifest array that records installed names for this kind. */
+  manifestKey: ManifestListKey;
+}
+
+export const ITEM_KIND_DESCRIPTORS: Record<ItemKind, ItemKindDescriptor> = {
+  skills: {
+    kind: "skills",
+    shape: "skill",
+    repoDir: "skills",
+    canonicalFiles: [],
+    manifestKey: "skills",
+  },
+  settings: {
+    kind: "settings",
+    shape: "fragment",
+    repoDir: "settings",
+    canonicalFiles: ["settings.json"],
+    manifestKey: "settings",
+  },
+  mcp: {
+    kind: "mcp",
+    shape: "fragment",
+    repoDir: "mcp",
+    canonicalFiles: ["claude.json", "codex.toml"],
+    manifestKey: "mcp",
+  },
+  "codex-config": {
+    kind: "codex-config",
+    shape: "fragment",
+    repoDir: "codex/config",
+    canonicalFiles: ["config.toml"],
+    manifestKey: "codexConfig",
+  },
+  okf: {
+    kind: "okf",
+    shape: "okf",
+    repoDir: "okf",
+    canonicalFiles: [],
+    manifestKey: "okf",
+  },
+};
+
+export function descriptorFor(kind: ItemKind): ItemKindDescriptor {
+  return ITEM_KIND_DESCRIPTORS[kind];
+}
 
 export function isItemKind(value: string): value is ItemKind {
   return (ITEM_KINDS as readonly string[]).includes(value);
 }
 
+/** Merges into a shared generated output file. */
 export function isFragmentItemKind(value: ItemKind): value is FragmentItemKind {
-  return value !== "skills";
+  return descriptorFor(value).shape === "fragment";
+}
+
+/** A Claude/Codex skill, with skill-only install semantics. */
+export function isSkillKind(value: ItemKind): boolean {
+  return descriptorFor(value).shape === "skill";
+}
+
+/** Materialized as a self-contained directory tree, not a merged fragment. */
+export function isDirectoryKind(value: ItemKind): boolean {
+  return descriptorFor(value).shape !== "fragment";
 }
 
 export interface MasterItem {
@@ -168,32 +256,17 @@ export async function shaOfItemFiles(
 }
 
 export function itemRepoRelPath(kind: ItemKind, name: string): string {
-  switch (kind) {
-    case "skills":
-      return `skills/${name}`;
-    case "settings":
-      return `settings/${name}`;
-    case "mcp":
-      return `mcp/${name}`;
-    case "codex-config":
-      return `codex/config/${name}`;
-  }
+  return `${descriptorFor(kind).repoDir}/${name}`;
 }
 
 export function allCanonicalItemRelPaths(
   kind: ItemKind,
   name: string,
 ): string[] {
-  switch (kind) {
-    case "skills":
-      return [itemRepoRelPath(kind, name)];
-    case "settings":
-      return [`settings/${name}/settings.json`];
-    case "mcp":
-      return [`mcp/${name}/claude.json`, `mcp/${name}/codex.toml`];
-    case "codex-config":
-      return [`codex/config/${name}/config.toml`];
-  }
+  const { canonicalFiles } = descriptorFor(kind);
+  const itemPath = itemRepoRelPath(kind, name);
+  if (canonicalFiles.length === 0) return [itemPath];
+  return canonicalFiles.map((file) => `${itemPath}/${file}`);
 }
 
 export async function canonicalItemRelPaths(
@@ -201,7 +274,7 @@ export async function canonicalItemRelPaths(
   kind: ItemKind,
   name: string,
 ): Promise<string[]> {
-  if (kind === "skills") return [itemRepoRelPath(kind, name)];
+  if (isDirectoryKind(kind)) return [itemRepoRelPath(kind, name)];
   const paths = allCanonicalItemRelPaths(kind, name).filter((relPath) =>
     existsSync(join(dataRepo, ...relPath.split("/"))),
   );
@@ -214,8 +287,7 @@ export async function canonicalItemRelPaths(
 }
 
 function masterListDir(dataRepo: string, kind: ItemKind): string {
-  if (kind === "codex-config") return join(dataRepo, "codex", "config");
-  return join(dataRepo, kind);
+  return join(dataRepo, ...descriptorFor(kind).repoDir.split("/"));
 }
 
 async function isInstallableDataItem(
@@ -223,7 +295,7 @@ async function isInstallableDataItem(
   kind: ItemKind,
   name: string,
 ): Promise<boolean> {
-  if (kind === "skills") return true;
+  if (isDirectoryKind(kind)) return true;
   return allCanonicalItemRelPaths(kind, name).some((relPath) =>
     existsSync(join(dataRepo, ...relPath.split("/"))),
   );

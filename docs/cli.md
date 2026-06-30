@@ -763,3 +763,38 @@ Codex only loads `.codex/config.toml` from trusted projects. When `codex` is on
 
 Old MCP copy-dir behavior is gone: capshelf does not write
 `.agents/mcp/<name>` and does not install `mcp/<name>/fragment.json`.
+
+## OKF bundles
+
+`okf` items are Google [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
+bundles: a directory of Markdown concept documents with YAML frontmatter,
+including the reserved `index.md` and `log.md` files. Unlike fragments, an OKF
+bundle is a whole-directory item like a skill — capshelf manages the entire
+tree, so editing any file (including `log.md`, which OKF treats as native
+change history) is real drift.
+
+| Item ref | Source path | Output |
+|---|---|---|
+| `okf/<name>` | `okf/<name>/` (Markdown bundle tree) | `<okfPath>/<name>/` |
+
+OKF prescribes no consumer-specific install location, so capshelf materializes
+the bundle to a configurable project-relative directory, `okfPath`, defaulting
+to `.okf`. Set it per project at init:
+
+```bash
+capshelf init --data ../capshelf-data --okf-path knowledge
+```
+
+`okfPath` is recorded in `.capshelf/capshelf.json`; it must be project-relative
+with no `..` segments. There is no `.claude`/`.codex` symlink and no install
+mode interaction — `okf` items always materialize under the single `okfPath`
+directory.
+
+```bash
+capshelf add okf/sales            # materialize okf/sales/ under .okf/sales/
+capshelf get-path okf/sales       # print the bundle directory
+capshelf status                   # editing log.md or any concept doc is drift
+capshelf revert okf/sales         # restore the locked bundle
+capshelf share okf/draft --to project -m "add draft bundle"   # adopt a project bundle
+capshelf promote okf/sales -m "refresh sales knowledge"       # push local edits back
+```

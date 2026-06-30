@@ -3,6 +3,7 @@ import {
   DEFAULT_INSTALL_MODE,
   homeRelative,
   initProjectRoot,
+  isValidOkfPath,
   resolveDataRepo,
   resolveDataRepoOptional,
 } from "../paths";
@@ -35,6 +36,7 @@ interface InitOptions {
   claudeOnly?: boolean;
   json?: boolean;
   upstream?: string | false;
+  okfPath?: string;
 }
 
 interface BootstrapInfo {
@@ -63,6 +65,10 @@ export function registerInit(program: Command): void {
     .option(
       "--claude-only",
       "install directly under .claude without .agents symlinks",
+    )
+    .option(
+      "--okf-path <dir>",
+      "project-relative directory OKF bundles materialize under (default .okf)",
     )
     .option("--json", "output JSON")
     .action(async (opts: InitOptions, cmd: Command) => {
@@ -155,6 +161,14 @@ export function registerInit(program: Command): void {
       await assertIsGitRepo(dataRepo);
 
       manifest.installMode = installMode;
+      if (opts.okfPath !== undefined) {
+        if (!isValidOkfPath(opts.okfPath)) {
+          throw new Error(
+            `--okf-path must be a project-relative path without ".." segments: ${opts.okfPath}`,
+          );
+        }
+        manifest.okfPath = opts.okfPath;
+      }
       const upstream = await initUpstream(dataRepo, opts);
       if (upstream) manifest.dataRepoUpstream = upstream;
       else delete manifest.dataRepoUpstream;

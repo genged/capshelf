@@ -50,6 +50,7 @@ import {
   type FragmentSource,
   type FragmentValue,
 } from "../fragments";
+import type { FragmentItemKind } from "../master";
 import {
   extractPickedFragment,
   mcpServerContainerKey,
@@ -232,7 +233,7 @@ export function registerShare(program: Command): void {
 }
 
 async function shareFragment(
-  kind: Exclude<ReturnType<typeof parseItemRef>["kind"], undefined | "skills">,
+  kind: FragmentItemKind,
   name: string,
   scope: ShareScope,
   opts: ShareOptions,

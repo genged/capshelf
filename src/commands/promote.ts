@@ -14,7 +14,7 @@ import {
 } from "../lock";
 import type { Lock } from "../lock";
 import { installedPath, parseLockKey } from "../installed";
-import type { ItemKind } from "../master";
+import type { FragmentItemKind, ItemKind } from "../master";
 import { NotFoundError, PreconditionError } from "../errors";
 import {
   assertIsGitRepo,
@@ -282,7 +282,7 @@ export async function promoteFragmentSource(
   dataRepo: string,
   manifest: Manifest,
   lock: Lock,
-  kind: Exclude<ItemKind, "skills">,
+  kind: FragmentItemKind,
   name: string,
   opts: PromoteOptions,
 ): Promise<PromoteResult> {

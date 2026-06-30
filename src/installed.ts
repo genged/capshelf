@@ -2,7 +2,13 @@ import { existsSync, readlinkSync } from "node:fs";
 import { lstatOrNull } from "./fs-utils";
 import { mkdir, rm, symlink } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
-import { ITEM_KINDS, isItemKind, type ItemKind } from "./master";
+import {
+  ITEM_KINDS,
+  descriptorFor,
+  isItemKind,
+  isSkillKind,
+  type ItemKind,
+} from "./master";
 import { shaOfGitVisibleItem, shaOfItem } from "./master";
 import { isGitWorkTreeRoot } from "./git";
 import {
@@ -11,6 +17,7 @@ import {
   codexDir,
   detectInstallMode,
   installBaseDir,
+  okfDir,
 } from "./paths";
 import type { InstallMode } from "./paths";
 
@@ -20,7 +27,8 @@ export function installedPath(
   name: string,
   mode: InstallMode = detectInstallMode(project),
 ): string {
-  if (kind === "skills") return skillInstalledPath(project, name, mode);
+  if (isSkillKind(kind)) return skillInstalledPath(project, name, mode);
+  if (descriptorFor(kind).shape === "okf") return join(okfDir(project), name);
 
   switch (kind) {
     case "settings":
@@ -29,6 +37,8 @@ export function installedPath(
       return join(project, ".mcp.json");
     case "codex-config":
       return join(codexProjectConfigDir(project), "config.toml");
+    default:
+      throw new Error(`no installed path for kind: ${kind}`);
   }
 }
 
@@ -49,7 +59,7 @@ export function findInstallConflict(
   const dst = installedPath(project, kind, name, mode);
   if (pathExists(dst)) return dst;
 
-  if (kind === "skills" && mode === "codex-compatible") {
+  if (isSkillKind(kind) && mode === "codex-compatible") {
     const claudePath = claudeSkillPath(project, name);
     if (pathExists(claudePath)) return claudePath;
   }
@@ -63,7 +73,7 @@ export function assertCanMaterializeInstalled(
   name: string,
   mode: InstallMode = detectInstallMode(project),
 ): void {
-  if (kind !== "skills" || mode !== "codex-compatible") return;
+  if (!isSkillKind(kind) || mode !== "codex-compatible") return;
 
   const claudePath = claudeSkillPath(project, name);
   const stat = lstatOrNull(claudePath);
@@ -80,7 +90,7 @@ export async function ensureInstallAliases(
   name: string,
   mode: InstallMode = detectInstallMode(project),
 ): Promise<void> {
-  if (kind !== "skills" || mode !== "codex-compatible") return;
+  if (!isSkillKind(kind) || mode !== "codex-compatible") return;
 
   const dst = installedPath(project, kind, name, mode);
   const claudePath = claudeSkillPath(project, name);
@@ -110,7 +120,7 @@ export async function removeInstallAliases(
   managedPath: string,
   mode: InstallMode = detectInstallMode(project),
 ): Promise<boolean> {
-  if (kind !== "skills" || mode !== "codex-compatible") return false;
+  if (!isSkillKind(kind) || mode !== "codex-compatible") return false;
 
   const claudePath = claudeSkillPath(project, name);
   const stat = lstatOrNull(claudePath);

@@ -64,7 +64,7 @@ For system items (e.g. this `capshelf` skill), the edit loop doesn't apply — t
 
 ## How it works
 
-- **Data repo** (e.g. `~/code/work-skills/`) holds canonical versions of every shared item under `skills/`, `settings/`, `mcp/`, and `codex/config/`. It must be a git repo. Resolution order: `--data <path>` flag > gitignored `.capshelf/local.json` > `$CAPSHELF_HOME`. There is no implicit default.
+- **Data repo** (e.g. `~/code/work-skills/`) holds canonical versions of every shared item under `skills/`, `settings/`, `mcp/`, `codex/config/`, and `okf/`. It must be a git repo. Resolution order: `--data <path>` flag > gitignored `.capshelf/local.json` > `$CAPSHELF_HOME`. There is no implicit default.
 - **This project** pins the exact content hash + source commit of each item in `.capshelf/capshelf.lock.json` (clone-local pins in gitignored `.capshelf/local.lock.json`). Data-repo updates do NOT propagate until this project runs `capshelf update`.
 - **Installed copies** live under `.agents/skills/<name>/` by default with `.claude/skills/<name>` symlinks (Claude-only projects install directly under `.claude/skills/<name>/`). Claude custom commands are modeled as skills.
 - **Item metadata** (optional `<item>/.capshelf.yml` in the data repo: `description`, `tags`, `requires`, `conflicts-with`) feeds `ls`/`show`/`search` and `add` enforcement. It is never copied into projects and never affects drift.
@@ -131,6 +131,10 @@ capshelf share settings/permissions --pick permissions.allow
 ```
 
 Codex only loads `.codex/config.toml` in trusted projects; `status` warns non-fatally when the project appears untrusted.
+
+## OKF bundles
+
+`okf/<name>` items are Google Open Knowledge Format bundles — a directory of Markdown concept docs (plus the reserved `index.md`/`log.md`). Unlike fragments, a bundle is a whole-directory item like a skill: capshelf manages the entire tree, so editing any file (including `log.md`) is real drift. They materialize to a configurable project dir, `okfPath` (default `.okf`, set with `init --okf-path <dir>`), with no `.claude`/`.codex` symlink and no install-mode interaction. Use `add`/`get-path`/`status`/`revert`/`share`/`promote` exactly as with skills.
 
 ## Coexistence
 

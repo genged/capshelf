@@ -130,6 +130,7 @@ describe("status diff helpers", () => {
         settings: [],
         mcp: [],
         codexConfig: [],
+        okf: [],
       },
       lock: {
         version: 2,
@@ -193,6 +194,7 @@ describe("status diff helpers", () => {
       settings: [],
       mcp: [],
       codexConfig: [],
+      okf: [],
     };
     await expect(
       currentCopyItemSha({
@@ -258,6 +260,7 @@ describe("status diff helpers", () => {
           settings: [],
           mcp: [],
           codexConfig: [],
+          okf: [],
         },
         source: "data",
         kind: "skills",
@@ -275,6 +278,7 @@ describe("status diff helpers", () => {
         settings: [],
         mcp: [],
         codexConfig: [],
+        okf: [],
       },
       lock: {
         version: 2,
@@ -336,6 +340,7 @@ describe("status diff helpers", () => {
         settings: ["security"],
         mcp: [],
         codexConfig: [],
+        okf: [],
       },
       lock: {
         version: 2,
@@ -382,6 +387,7 @@ describe("status diff helpers", () => {
         settings: [],
         mcp: [],
         codexConfig: [],
+        okf: [],
       },
       lock: { version: 2, items: {} },
       row: {
@@ -435,6 +441,7 @@ describe("status diff helpers", () => {
         settings: [],
         mcp: ["server"],
         codexConfig: [],
+        okf: [],
       },
       lock: {
         version: 2,
@@ -477,6 +484,7 @@ describe("status diff helpers", () => {
           settings: [],
           mcp: [],
           codexConfig: [],
+          okf: [],
         },
         lock: {
           version: 2,

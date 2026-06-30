@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import {
   DEFAULT_INSTALL_MODE,
   InstallModeSchema,
+  isValidOkfPath,
   manifestPath,
   manifestReadPath,
 } from "./paths";
@@ -11,6 +12,7 @@ import type { InstallMode } from "./paths";
 import { normalizeRemoteUrl } from "./git";
 import { MANIFEST_FILE, METADATA_DIR, PRODUCT_NAME } from "./identity";
 import type { ItemKind } from "./master";
+import { descriptorFor } from "./master";
 
 export const ManifestSchema = z
   .object({
@@ -30,6 +32,14 @@ export const ManifestSchema = z
     settings: z.array(z.string()).default([]),
     mcp: z.array(z.string()).default([]),
     codexConfig: z.array(z.string()).default([]),
+    okf: z.array(z.string()).default([]),
+    okfPath: z
+      .string()
+      .optional()
+      .refine((value) => value === undefined || isValidOkfPath(value), {
+        message:
+          "okfPath must be a project-relative path without '..' segments",
+      }),
   })
   .superRefine((manifest, ctx) => {
     if ((manifest.commands?.length ?? 0) > 0) {
@@ -96,16 +106,7 @@ export function manifestNamesForKind(
   manifest: Manifest,
   kind: ItemKind,
 ): string[] {
-  switch (kind) {
-    case "skills":
-      return manifest.skills;
-    case "settings":
-      return manifest.settings;
-    case "mcp":
-      return manifest.mcp;
-    case "codex-config":
-      return manifest.codexConfig;
-  }
+  return manifest[descriptorFor(kind).manifestKey];
 }
 
 export function addManifestName(

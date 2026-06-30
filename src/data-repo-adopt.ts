@@ -2,6 +2,7 @@ import { existsSync, readlinkSync } from "node:fs";
 import { rm as fsRm } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import type { ItemKind } from "./master";
+import { descriptorFor } from "./master";
 import type { Manifest } from "./manifest";
 import { NotFoundError, PreconditionError } from "./errors";
 import {
@@ -187,6 +188,13 @@ function findAdoptionSource(
   name: string,
   mode: Manifest["installMode"],
 ): AdoptionSource | null {
+  if (descriptorFor(kind).shape === "okf") {
+    return existingItemDir(
+      installedPath(project, kind, name, mode),
+      "installed",
+      kind,
+    );
+  }
   if (kind === "mcp") {
     return existingItemDir(
       installedPath(project, kind, name, mode),

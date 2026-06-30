@@ -25,6 +25,7 @@ function manifest(upstream?: string): Manifest {
     settings: [],
     mcp: [],
     codexConfig: [],
+    okf: [],
   };
 }
 

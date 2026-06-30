@@ -162,6 +162,16 @@ capshelf get-path mcp/github --target codex
 capshelf get-path mcp/github --target codex --output
 ```
 
+Share a Google Open Knowledge Format (OKF) bundle — a directory of Markdown
+concept docs — across projects. The whole bundle is managed as one item and
+materializes under `.okf/<name>/` (override with `init --okf-path <dir>`):
+
+```bash
+capshelf add okf/sales
+capshelf get-path okf/sales       # the materialized bundle directory
+capshelf share okf/draft --to project -m "add draft knowledge bundle"
+```
+
 Set up a whole service from a curated bundle (`bundles/<name>.yml` in the
 data repo) — members install as independent items, all-or-nothing:
 
@@ -201,6 +211,7 @@ That works when the project committed `.capshelf/capshelf.json` with a
 | `settings` | `settings/<name>/settings.json`      | merged into `.claude/settings.json` |
 | `mcp` | `mcp/<name>/claude.json`, `mcp/<name>/codex.toml` | merged into `.mcp.json` and/or `.codex/config.toml` |
 | `codex-config` | `codex/config/<name>/config.toml` | merged into `.codex/config.toml` |
+| `okf` | `okf/<name>/` (Open Knowledge Format bundle: Markdown + YAML frontmatter) | copied to `<okfPath>/<name>/` (default `.okf`) |
 
 Codex only loads project `.codex/config.toml` in trusted projects. Capshelf
 writes the project file and reports a non-failing status warning when Codex
@@ -282,8 +293,8 @@ make build                          # compile dist/capshelf
 
 ## Project Status
 
-Skills, settings fragments, MCP fragments, and project-scoped Codex config
-fragments are implemented. Fragment outputs preserve project-local values, fragment
+Skills, settings fragments, MCP fragments, project-scoped Codex config
+fragments, and Google Open Knowledge Format (OKF) bundles are implemented. Fragment outputs preserve project-local values, fragment
 promotion commits canonical data repo source files rather than generated
 outputs, and `share` can extract unmanaged fragment values directly from a
 project's generated outputs. Item metadata (`.capshelf.yml` sidecars) drives `ls --tag`, `search`,

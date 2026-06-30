@@ -1,5 +1,5 @@
 import type { ItemKind } from "./master";
-import { isFragmentItemKind } from "./master";
+import { isFragmentItemKind, isSkillKind } from "./master";
 import type { ItemSource } from "./installed";
 import type { Lock, LockEntry } from "./lock";
 import type { ItemRef } from "./item-ref";
@@ -209,7 +209,7 @@ export function personalClaudeExternals(
 ): ExternalPersonalClaudeSkill[] {
   const out: ExternalPersonalClaudeSkill[] = [];
   for (const row of rows) {
-    if (row.kind !== "skills") continue;
+    if (!isSkillKind(row.kind)) continue;
     for (const warning of row.runtimeWarnings ?? []) {
       if (warning.type !== "shadowed_by_personal_claude_skill") continue;
       out.push({

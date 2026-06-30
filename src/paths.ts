@@ -19,6 +19,32 @@ export const InstallModeSchema = z.enum(["codex-compatible", "claude-only"]);
 export type InstallMode = z.infer<typeof InstallModeSchema>;
 export const DEFAULT_INSTALL_MODE: InstallMode = "codex-compatible";
 
+/** Default project-relative directory OKF bundles materialize under. */
+export const DEFAULT_OKF_PATH = ".okf";
+
+/**
+ * True when an okfPath is a safe project-relative directory: not absolute and
+ * with no `..` segments that could escape the project root.
+ */
+export function isValidOkfPath(p: string): boolean {
+  if (p.length === 0 || isAbsolute(p)) return false;
+  return !p.split(/[\\/]/).includes("..");
+}
+
+/**
+ * Resolve the configured OKF output directory name, defaulting to `.okf`.
+ * Throws on an absolute or escaping path.
+ */
+export function normalizeOkfPath(p: string | undefined): string {
+  if (p === undefined || p === "") return DEFAULT_OKF_PATH;
+  if (!isValidOkfPath(p)) {
+    throw new Error(
+      `okfPath must be a project-relative path without ".." segments: ${p}`,
+    );
+  }
+  return p;
+}
+
 export function expandTilde(p: string): string {
   if (p === "~") return homedir();
   if (p.startsWith("~/")) return join(homedir(), p.slice(2));
@@ -166,6 +192,13 @@ export function codexProjectConfigDir(project: string): string {
   return join(project, ".codex");
 }
 
+export function okfDir(
+  project: string,
+  okfPath: string = detectOkfPath(project),
+): string {
+  return join(project, ...okfPath.split(/[\\/]/));
+}
+
 export function installBaseDir(
   project: string,
   mode: InstallMode = detectInstallMode(project),
@@ -184,6 +217,19 @@ export function detectInstallMode(project: string): InstallMode {
     JSON.parse(readFileSync(source, "utf-8")),
   );
   return parsed.installMode ?? DEFAULT_INSTALL_MODE;
+}
+
+const ManifestOkfPathSchema = z.object({
+  okfPath: z.string().optional(),
+});
+
+export function detectOkfPath(project: string): string {
+  const source = manifestReadPath(project) ?? manifestPath(project);
+  if (!existsSync(source)) return DEFAULT_OKF_PATH;
+  const parsed = ManifestOkfPathSchema.parse(
+    JSON.parse(readFileSync(source, "utf-8")),
+  );
+  return normalizeOkfPath(parsed.okfPath);
 }
 
 export function manifestPath(project: string): string {

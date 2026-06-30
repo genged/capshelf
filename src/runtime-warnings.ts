@@ -8,6 +8,7 @@ import {
 import { delimiter } from "node:path";
 import { join, resolve } from "node:path";
 import type { ItemKind } from "./master";
+import { isSkillKind } from "./master";
 import {
   claudeDir,
   codexProjectConfigDir,
@@ -36,7 +37,7 @@ export function runtimeWarningsForItem(
   name: string,
   opts: RuntimeWarningOptions = {},
 ): RuntimeWarning[] {
-  if (kind !== "skills") return [];
+  if (!isSkillKind(kind)) return [];
 
   const personalPath = opts.personalSkillPath ?? personalClaudeSkillPath(name);
   if (!existsSync(personalPath)) return [];

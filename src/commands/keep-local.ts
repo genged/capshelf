@@ -4,6 +4,7 @@ import { loadLocalLock, loadLock, saveLocalLock, saveLock } from "../lock";
 import { parseLockKey } from "../installed";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
 import { isFragmentItemKind } from "../master";
+import type { FragmentItemKind } from "../master";
 import { NotFoundError, PreconditionError } from "../errors";
 
 interface KeepLocalOptions {
@@ -99,9 +100,7 @@ export function registerKeepLocal(program: Command): void {
     });
 }
 
-function keepLocalRejectMessage(
-  kind: Exclude<ReturnType<typeof parseLockKey>["kind"], "skills">,
-): string {
+function keepLocalRejectMessage(kind: FragmentItemKind): string {
   switch (kind) {
     case "settings":
       return "keep-local is not supported for settings fragments; keep project-local values in .claude/settings.json";

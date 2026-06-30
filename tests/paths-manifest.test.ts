@@ -185,6 +185,7 @@ describe("path normalization", () => {
       settings: [],
       mcp: [],
       codexConfig: [],
+      okf: [],
     });
     expect(detectInstallMode(project)).toBe("claude-only");
   });
@@ -201,6 +202,7 @@ describe("legacy root layout fallback", () => {
         settings: [],
         mcp: [],
         codexConfig: [],
+        okf: [],
       }),
     );
 
@@ -210,6 +212,7 @@ describe("legacy root layout fallback", () => {
       settings: [],
       mcp: [],
       codexConfig: [],
+      okf: [],
     });
     // "claude-only" differs from DEFAULT_INSTALL_MODE, so this proves the
     // root manifest was actually read rather than falling back to defaults.
@@ -227,6 +230,7 @@ describe("legacy root layout fallback", () => {
         settings: [],
         mcp: [],
         codexConfig: [],
+        okf: [],
       }),
     );
     await mkdir(join(project, ".capshelf"), { recursive: true });
@@ -238,6 +242,7 @@ describe("legacy root layout fallback", () => {
         settings: [],
         mcp: [],
         codexConfig: [],
+        okf: [],
       }),
     );
 
@@ -270,6 +275,7 @@ describe("manifest commands migration", () => {
       settings: [],
       mcp: [],
       codexConfig: [],
+      okf: [],
     });
   });
 
@@ -343,6 +349,7 @@ describe("manifest commands migration", () => {
       settings: [],
       mcp: [],
       codexConfig: [],
+      okf: [],
     });
 
     expect("commands" in parsed).toBe(false);
@@ -367,6 +374,7 @@ describe("manifest commands migration", () => {
         settings: [],
         mcp: [],
         codexConfig: [],
+        okf: [],
       }),
     ).toThrow(/commands are no longer managed/);
   });
@@ -383,6 +391,7 @@ describe("manifest commands migration", () => {
         settings: [],
         mcp: [],
         codexConfig: [],
+        okf: [],
       }),
     );
 
@@ -393,6 +402,7 @@ describe("manifest commands migration", () => {
       settings: [],
       mcp: [],
       codexConfig: [],
+      okf: [],
     });
   });
 
@@ -408,6 +418,7 @@ describe("manifest commands migration", () => {
         settings: [],
         mcp: [],
         codexConfig: [],
+        okf: [],
       });
       await writeFile(manifestPath(project), raw);
 
@@ -474,6 +485,7 @@ describe("manifest commands migration", () => {
         settings: [],
         mcp: [],
         codexConfig: [],
+        okf: [],
       }),
     );
 
@@ -488,6 +500,7 @@ describe("manifest commands migration", () => {
         settings: [],
         mcp: [],
         codexConfig: [],
+        okf: [],
       }),
     ).toThrow(/dataRepoUpstream/);
   });
@@ -500,6 +513,7 @@ describe("manifest commands migration", () => {
         settings: [],
         mcp: [],
         codexConfig: [],
+        okf: [],
       }),
     ).toThrow();
   });

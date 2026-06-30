@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { YAMLParseError, parse as parseYaml } from "yaml";
 import { z } from "zod";
 import type { SystemItem } from "./bundled";
-import { isItemKind } from "./master";
+import { isItemKind, isSkillKind } from "./master";
 import type { MasterItem } from "./master";
 
 export const METADATA_SIDECAR = ".capshelf.yml";
@@ -166,7 +166,7 @@ export async function loadDataItemMetadata(
       item.name,
     );
   }
-  if (item.kind !== "skills") return sidecar;
+  if (!isSkillKind(item.kind)) return sidecar;
   return mergeItemMetadata(
     sidecar,
     await skillFrontmatterMetadata(
