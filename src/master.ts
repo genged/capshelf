@@ -1,6 +1,7 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, basename } from "node:path";
+import { hashNamedContents } from "./content-hash";
 import { isIgnoredDotDirent } from "./dotfiles";
 import { gitVisibleFilesUnderPath } from "./git";
 import { METADATA_SIDECAR } from "./metadata";
@@ -149,22 +150,21 @@ export async function shaOfItemFiles(
   itemPath: string,
   files: string[],
 ): Promise<string> {
-  const hasher = new Bun.CryptoHasher("sha256");
   const info = await stat(itemPath);
-  if (info.isFile()) {
-    hasher.update(basename(itemPath));
-    hasher.update("\0");
-    hasher.update(await readFile(itemPath));
-    hasher.update("\0");
-  } else {
-    for (const rel of files) {
-      hasher.update(rel);
-      hasher.update("\0");
-      hasher.update(await readFile(join(itemPath, ...rel.split("/"))));
-      hasher.update("\0");
-    }
-  }
-  return hasher.digest("hex").slice(0, 12);
+  const named = info.isFile()
+    ? [{ name: basename(itemPath), path: itemPath }]
+    : files.map((rel) => ({
+        name: rel,
+        path: join(itemPath, ...rel.split("/")),
+      }));
+  return hashNamedContents(
+    await Promise.all(
+      named.map(async ({ name, path }) => ({
+        name,
+        content: await readFile(path),
+      })),
+    ),
+  );
 }
 
 export function itemRepoRelPath(kind: ItemKind, name: string): string {

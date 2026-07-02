@@ -1,4 +1,5 @@
 import { posix } from "node:path";
+import { hashNamedContents } from "./content-hash";
 import type { Lock } from "./lock";
 import { parseLockKey } from "./installed";
 import { lsTreeEntriesAtCommit, showAtCommit } from "./git";
@@ -62,14 +63,14 @@ async function shaOfFragmentAtCommit(
   if (present.length === 0) {
     throw new Error(missingSourceCommitMessage(dataRepo, commit, manifest));
   }
-  const hasher = new Bun.CryptoHasher("sha256");
-  for (const relPath of present.sort()) {
-    hasher.update(relPath);
-    hasher.update("\0");
-    hasher.update(await showAtCommit(dataRepo, commit, relPath));
-    hasher.update("\0");
-  }
-  return hasher.digest("hex").slice(0, 12);
+  return hashNamedContents(
+    await Promise.all(
+      present.map(async (relPath) => ({
+        name: relPath,
+        content: await showAtCommit(dataRepo, commit, relPath),
+      })),
+    ),
+  );
 }
 
 async function shaOfDataAtCommit(
@@ -85,13 +86,12 @@ async function shaOfDataAtCommit(
     throw new Error(missingSourceCommitMessage(dataRepo, commit, manifest));
   }
 
-  // Reduce to item-relative paths and sort by that path in default (code-unit)
-  // order — this must exactly mirror shaOfItemFiles (add-time hashing over
-  // gitVisibleFilesUnderPath), which sorts item-relative names with a plain
-  // .sort(). Sorting by the repo-relative path with localeCompare instead would
-  // reorder multi-file items (e.g. SKILL.md before/after café.md) and make
-  // rebind (set-data) reject valid locks.
-  const files = entries
+  // Reduce to item-relative paths. hashNamedContents sorts by name in the same
+  // code-unit order as shaOfItemFiles (add-time hashing over
+  // gitVisibleFilesUnderPath), so the recorded sha reproduces here. Sorting by
+  // repo-relative path with localeCompare instead — as this once did — reorders
+  // multi-file items (e.g. SKILL.md vs café.md) and rejects valid rebinds.
+  const rels = entries
     .filter((file) => {
       const rel = posix.relative(relPath, file.path);
       return (
@@ -105,25 +105,26 @@ async function shaOfDataAtCommit(
         !isMetadataSidecarPath(rel)
       );
     })
-    .map((file) => posix.relative(relPath, file.path))
-    .sort();
+    .map((file) => posix.relative(relPath, file.path));
 
-  if (files.length === 0) {
+  if (rels.length === 0) {
     throw new Error(`${relPath} has no materializable files at ${commit}`);
   }
 
-  const hasher = new Bun.CryptoHasher("sha256");
-  for (const rel of files) {
-    hasher.update(rel);
-    hasher.update("\0");
-    try {
-      hasher.update(
-        await showAtCommit(dataRepo, commit, posix.join(relPath, rel)),
-      );
-    } catch {
-      throw new Error(missingSourceCommitMessage(dataRepo, commit, manifest));
-    }
-    hasher.update("\0");
+  try {
+    return hashNamedContents(
+      await Promise.all(
+        rels.map(async (rel) => ({
+          name: rel,
+          content: await showAtCommit(
+            dataRepo,
+            commit,
+            posix.join(relPath, rel),
+          ),
+        })),
+      ),
+    );
+  } catch {
+    throw new Error(missingSourceCommitMessage(dataRepo, commit, manifest));
   }
-  return hasher.digest("hex").slice(0, 12);
 }

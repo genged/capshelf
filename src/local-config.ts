@@ -2,12 +2,11 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
-import { $ } from "bun";
 import { LOCAL_CONFIG_FILE, LOCAL_LOCK_FILE, METADATA_DIR } from "./identity";
 import { expandTilde } from "./paths";
 import { PreconditionError } from "./errors";
 import type { ItemKind } from "./master";
-import { gitInfoExcludePath, isGitWorkTreeRoot } from "./git";
+import { gitInfoExcludePath, gitTry, isGitWorkTreeRoot } from "./git";
 
 const LocalConfigSchema = z.object({
   dataRepo: z.string().min(1),
@@ -171,12 +170,7 @@ async function trackedPathExists(
   repo: string,
   relPath: string,
 ): Promise<boolean> {
-  try {
-    const out = await $`git -C ${repo} ls-files -- ${relPath}`.quiet().text();
-    return out.trim().length > 0;
-  } catch (err) {
-    const shellError = err as { exitCode?: number };
-    if (shellError.exitCode !== undefined) return false;
-    throw err;
-  }
+  const r = await gitTry(repo, ["ls-files", "--", relPath]);
+  if (r.exitCode !== 0) return false;
+  return r.stdout.toString().trim().length > 0;
 }

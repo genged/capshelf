@@ -9,8 +9,21 @@ import {
 } from "./paths";
 import type { InstallMode } from "./paths";
 import { normalizeRemoteUrl } from "./git";
+import { isSafeItemName } from "./assert";
 import { MANIFEST_FILE, METADATA_DIR, PRODUCT_NAME } from "./identity";
 import type { ItemKind } from "./master";
+
+// Names in a committed manifest are as untrusted as lockfile names — a cloned
+// project's manifest could carry `skills: ["../../evil"]`, which would flow to
+// installedPath. Validate every tracked name against the one canonical rule.
+const itemNameArray = z
+  .array(
+    z.string().refine(isSafeItemName, {
+      message:
+        "unsafe item name (must be non-empty, relative, no '..' segments, no leading '-')",
+    }),
+  )
+  .default([]);
 
 export const ManifestSchema = z
   .object({
@@ -25,11 +38,11 @@ export const ManifestSchema = z
         },
       ),
     dataRepo: z.never().optional(),
-    skills: z.array(z.string()).default([]),
+    skills: itemNameArray,
     commands: z.array(z.string()).optional(),
-    settings: z.array(z.string()).default([]),
-    mcp: z.array(z.string()).default([]),
-    codexConfig: z.array(z.string()).default([]),
+    settings: itemNameArray,
+    mcp: itemNameArray,
+    codexConfig: itemNameArray,
   })
   .superRefine((manifest, ctx) => {
     if ((manifest.commands?.length ?? 0) > 0) {

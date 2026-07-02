@@ -260,6 +260,19 @@ describe("manifest error handling", () => {
     // the file, so only the error type is pinned here.
     await expect(loadManifest(project)).rejects.toThrow(SyntaxError);
   });
+
+  test("loadManifest rejects a committed manifest with a traversal item name", async () => {
+    const project = await tempDir();
+    await mkdir(join(project, ".capshelf"), { recursive: true });
+    // A cloned project's manifest is untrusted; a name like ../../evil would
+    // otherwise flow into installedPath. It must be rejected on load.
+    await writeFile(
+      manifestPath(project),
+      JSON.stringify({ skills: ["../../evil"] }),
+    );
+
+    await expect(loadManifest(project)).rejects.toThrow(/unsafe item name/);
+  });
 });
 
 describe("manifest commands migration", () => {

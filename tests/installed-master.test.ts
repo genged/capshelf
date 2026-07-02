@@ -144,6 +144,16 @@ describe("installed item paths and hashes", () => {
     ).rejects.toThrow(/not a symlink/);
   });
 
+  test("installedPath refuses a destination that escapes the project root", async () => {
+    const project = await tempDir();
+    // Even if a traversal name reached installedPath directly (bypassing the
+    // manifest/lock validators), the containment invariant must reject it
+    // before any destructive rm/write uses the path.
+    expect(() => installedPath(project, "skills", "../../../evil")).toThrow(
+      /outside project/,
+    );
+  });
+
   test("refuses to resolve a compatibility symlink that points outside the managed dir", async () => {
     const project = await tempDir();
     const victim = await tempDir("capshelf-victim-");
@@ -355,8 +365,9 @@ describe("parseLockKey", () => {
       "data/skills/foo/../bar",
       "data/skills//hello",
       "data/skills/.",
+      "data/skills/-rf",
     ]) {
-      expect(() => parseLockKey(key)).toThrow(/invalid lock key name/);
+      expect(() => parseLockKey(key)).toThrow(/invalid item name/);
     }
   });
 });

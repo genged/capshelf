@@ -1,7 +1,8 @@
 import { existsSync, readlinkSync } from "node:fs";
+import { assertSafeItemName } from "./assert";
 import { lstatOrNull } from "./fs-utils";
 import { mkdir, rm, symlink } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { ITEM_KINDS, isItemKind, type ItemKind } from "./master";
 import { shaOfGitVisibleItem, shaOfItem } from "./master";
 import { isGitWorkTreeRoot } from "./git";
@@ -20,6 +21,23 @@ export function installedPath(
   name: string,
   mode: InstallMode = detectInstallMode(project),
 ): string {
+  const dst = installedPathUnchecked(project, kind, name, mode);
+  // Root invariant: an install destination is always inside the project. Every
+  // destructive caller (materialize/sync rm+rewrite) trusts this path, so a
+  // path that escapes — via a `..`/absolute item name or a redirected
+  // compatibility symlink — must never be returned. This backstops the
+  // per-boundary name validation and the symlink guard rather than relying on
+  // either alone.
+  assertInsideProject(project, dst);
+  return dst;
+}
+
+function installedPathUnchecked(
+  project: string,
+  kind: ItemKind,
+  name: string,
+  mode: InstallMode,
+): string {
   if (kind === "skills") return skillInstalledPath(project, name, mode);
 
   switch (kind) {
@@ -29,6 +47,16 @@ export function installedPath(
       return join(project, ".mcp.json");
     case "codex-config":
       return join(codexProjectConfigDir(project), "config.toml");
+  }
+}
+
+function assertInsideProject(project: string, dst: string): void {
+  const root = resolve(project);
+  const target = resolve(dst);
+  if (target !== root && !target.startsWith(root + sep)) {
+    throw new Error(
+      `refusing install path outside project: ${dst}\n  (resolved to ${target}, project root ${root})`,
+    );
   }
 }
 
@@ -169,16 +197,7 @@ export function parseLockKey(key: string): {
     );
   }
   const name = nameParts.join("/");
-  // The name becomes a filesystem path segment (installedPath) and a git
-  // pathspec (materialize). Reject traversal/absolute/option-like names so a
-  // hostile lockfile can't escape the project or the data-repo item dir.
-  if (
-    nameParts.some((part) => part === "" || part === "." || part === "..") ||
-    name.startsWith("/") ||
-    name.startsWith("-")
-  ) {
-    throw new Error(`invalid lock key name: ${key}`);
-  }
+  assertSafeItemName(name, `lock key ${key}`);
   return {
     source,
     kind,

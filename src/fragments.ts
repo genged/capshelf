@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
+import { hashNamedContents } from "./content-hash";
 import {
   cloneConfig,
   configPathLabel,
@@ -251,14 +252,14 @@ export async function shaOfFragmentItem(
   name: string,
 ): Promise<string> {
   const relPaths = await canonicalItemRelPaths(dataRepo, kind, name);
-  const hasher = new Bun.CryptoHasher("sha256");
-  for (const relPath of relPaths.sort()) {
-    hasher.update(relPath);
-    hasher.update("\0");
-    hasher.update(await readFile(join(dataRepo, ...relPath.split("/"))));
-    hasher.update("\0");
-  }
-  return hasher.digest("hex").slice(0, 12);
+  return hashNamedContents(
+    await Promise.all(
+      relPaths.map(async (relPath) => ({
+        name: relPath,
+        content: await readFile(join(dataRepo, ...relPath.split("/"))),
+      })),
+    ),
+  );
 }
 
 /**
@@ -277,23 +278,18 @@ export async function shaOfFragmentItemAtCommit(
   name: string,
   commit: string,
 ): Promise<string> {
-  const present: Array<[string, Buffer]> = [];
+  const present: Array<{ name: string; content: Buffer }> = [];
   for (const relPath of allCanonicalItemRelPaths(kind, name)) {
     try {
-      present.push([relPath, await showAtCommit(dataRepo, commit, relPath)]);
+      present.push({
+        name: relPath,
+        content: await showAtCommit(dataRepo, commit, relPath),
+      });
     } catch {
       // Absent at that commit; participates as absent in the file map.
     }
   }
-  const hasher = new Bun.CryptoHasher("sha256");
-  present.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  for (const [relPath, content] of present) {
-    hasher.update(relPath);
-    hasher.update("\0");
-    hasher.update(content);
-    hasher.update("\0");
-  }
-  return hasher.digest("hex").slice(0, 12);
+  return hashNamedContents(present);
 }
 
 export async function lastTouchingFragmentCommit(

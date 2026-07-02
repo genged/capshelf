@@ -1,11 +1,11 @@
-import { $ } from "bun";
 import { existsSync } from "node:fs";
 import { mkdir, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { CliError, PreconditionError } from "./errors";
 import {
-  assertGitAvailable,
+  gitBuffer,
+  gitTry,
   isGitWorkTreeRoot,
   normalizeRemoteUrl,
   originRemoteUrl,
@@ -131,16 +131,11 @@ export async function ensureClone(
   clonePath: string,
   upstream: string,
 ): Promise<EnsureCloneResult> {
-  await assertGitAvailable();
-
   if (await cloneTargetAbsent(clonePath)) {
     await mkdir(dirname(clonePath), { recursive: true });
-    try {
-      await $`git clone -- ${url} ${clonePath}`.quiet();
-    } catch (err) {
-      throw new CliError(cloneFailedMessage(url, cloneStderr(err)), {
-        cause: err,
-      });
+    const clone = await gitTry(null, ["clone", "--", url, clonePath]);
+    if (clone.exitCode !== 0) {
+      throw new CliError(cloneFailedMessage(url, clone.stderr), {});
     }
     return { cloned: true };
   }
@@ -177,7 +172,7 @@ export async function ensureClone(
   // Guard against a partial clone (e.g. a killed clone process): origin can
   // already be configured while no commit was ever checked out.
   try {
-    await $`git -C ${clonePath} rev-parse --verify HEAD`.quiet();
+    await gitBuffer(clonePath, ["rev-parse", "--verify", "HEAD"]);
   } catch (err) {
     throw new PreconditionError(
       "data repo cache path already exists but has no usable HEAD commit.\n\n" +
@@ -222,15 +217,6 @@ function cloneFailedMessage(url: string, stderr: string): string {
     "fix the URL, authenticate with Git, or clone manually and run:\n" +
     `  ${PRODUCT_NAME} init --data <local-path>`
   );
-}
-
-function cloneStderr(err: unknown): string {
-  const stderr = (err as { stderr?: unknown }).stderr;
-  if (stderr instanceof Uint8Array) {
-    return Buffer.from(stderr).toString("utf-8").trim();
-  }
-  if (typeof stderr === "string") return stderr.trim();
-  return "";
 }
 
 function rejectDataInput(input: string): PreconditionError {
