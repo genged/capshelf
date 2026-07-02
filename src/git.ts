@@ -7,6 +7,21 @@ import { CliError, ExitCode } from "./errors";
 const GIT_MISSING_MESSAGE =
   "git is required but was not found on PATH\n  install Git, then retry";
 
+// Bun's `$` mis-serializes certain UTF-16-backed strings containing non-Latin1
+// characters when it builds the child argv — it can duplicate a prefix, so a
+// pathspec like `skills/café.md` reaches git as `skills/cafskills/café.md`.
+// Round-tripping through a UTF-8 buffer yields a value-equal, flatly-encoded
+// string that `$` serializes correctly. Apply it to every content-derived
+// argument (item paths/pathspecs, refs, commit messages) whose value can
+// contain non-ASCII characters. A no-op for pure-ASCII input.
+function flat(s: string): string {
+  return Buffer.from(s, "utf-8").toString("utf-8");
+}
+
+function flatAll(items: string[]): string[] {
+  return items.map(flat);
+}
+
 export class GitUnavailableError extends CliError {
   constructor() {
     super(GIT_MISSING_MESSAGE, { exitCode: ExitCode.GitUnavailable });
@@ -146,7 +161,7 @@ async function tryLastTouchingCommitForPaths(
   }
   let out: string;
   try {
-    out = await $`git -C ${repo} log -1 --format=%H -- ${relPaths}`
+    out = await $`git -C ${repo} log -1 --format=%H -- ${flatAll(relPaths)}`
       .quiet()
       .text();
   } catch {
@@ -162,7 +177,7 @@ export async function showAtCommit(
   relPath: string,
 ): Promise<Buffer> {
   await assertGitAvailable();
-  const result = await $`git -C ${repo} show ${commit}:${relPath}`
+  const result = await $`git -C ${repo} show ${commit}:${flat(relPath)}`
     .quiet()
     .arrayBuffer();
   return Buffer.from(result);
@@ -208,15 +223,19 @@ export async function lsTreeEntriesAtCommit(
   relPath: string,
 ): Promise<GitTreeEntry[]> {
   await assertGitAvailable();
-  const out = await $`git -C ${repo} ls-tree -r ${commit} -- ${relPath}`
-    .quiet()
-    .text();
+  // -z terminates records with NUL and, crucially, emits pathnames verbatim
+  // instead of git's default octal-quoting. Without it, filenames with
+  // non-ASCII/control/quote characters come back quoted (e.g. "caf\303\251")
+  // and every downstream `git show <commit>:<path>` fails to find them.
+  const out =
+    await $`git -C ${repo} ls-tree -r -z ${commit} -- ${flat(relPath)}`
+      .quiet()
+      .text();
   return out
-    .trim()
-    .split("\n")
+    .split("\0")
     .filter((s) => s.length > 0)
     .map((line) => {
-      const match = /^(\d{6})\s+(\S+)\s+([0-9a-f]+)\t(.+)$/.exec(line);
+      const match = /^(\d{6}) (\S+) ([0-9a-f]+)\t([\s\S]+)$/.exec(line);
       if (!match) throw new Error(`unexpected git ls-tree output: ${line}`);
       return {
         mode: match[1]!,
@@ -239,7 +258,7 @@ export async function gitVisibleFilesUnderPath(
   await assertGitAvailable();
   const normalized = normalizeGitPath(relPath);
   const out =
-    await $`git -C ${repo} ls-files -z --cached --others --exclude-standard -- ${normalized}`
+    await $`git -C ${repo} ls-files -z --cached --others --exclude-standard -- ${flat(normalized)}`
       .quiet()
       .text();
   return out
@@ -255,7 +274,7 @@ export async function statusPorcelain(
 ): Promise<string> {
   await assertGitAvailable();
   if (relPath) {
-    return await $`git -C ${repo} status --porcelain -- ${relPath}`
+    return await $`git -C ${repo} status --porcelain -- ${flat(relPath)}`
       .quiet()
       .text();
   }
@@ -286,7 +305,7 @@ export async function statusPorcelainOutsidePaths(
   relPaths: string[],
 ): Promise<string> {
   await assertGitAvailable();
-  const excludes = relPaths.map((relPath) => `:(exclude)${relPath}`);
+  const excludes = relPaths.map((relPath) => `:(exclude)${flat(relPath)}`);
   return await $`git -C ${repo} status --porcelain -- . ${excludes}`
     .quiet()
     .text();
@@ -441,7 +460,7 @@ export async function aheadBehind(
 /** Fast-forward the current branch to `ref`; throws when not a fast-forward. */
 export async function fastForwardTo(repo: string, ref: string): Promise<void> {
   await assertGitAvailable();
-  await $`git -C ${repo} merge --ff-only ${ref}`.quiet();
+  await $`git -C ${repo} merge --ff-only ${flat(ref)}`.quiet();
 }
 
 export async function headSha(repo: string): Promise<string> {
@@ -456,8 +475,8 @@ export async function commitInRepo(
   message: string,
 ): Promise<string> {
   await assertGitAvailable();
-  await $`git -C ${repo} add ${relPaths}`.quiet();
-  await $`git -C ${repo} commit -m ${message} -- ${relPaths}`.quiet();
+  await $`git -C ${repo} add ${flatAll(relPaths)}`.quiet();
+  await $`git -C ${repo} commit -m ${flat(message)} -- ${flatAll(relPaths)}`.quiet();
   const out = await $`git -C ${repo} rev-parse HEAD`.quiet().text();
   return out.trim();
 }

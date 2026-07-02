@@ -112,6 +112,30 @@ describe("lock schema", () => {
     await expect(loadLock(project)).rejects.toThrow(SyntaxError);
   });
 
+  test("loadLock rejects data entries whose sourceCommit is not a hex object name", async () => {
+    const project = await tempDir();
+    await mkdir(join(project, ".capshelf"), { recursive: true });
+    await writeFile(
+      lockPath(project),
+      JSON.stringify({
+        version: 2,
+        items: {
+          // An option-like sourceCommit would otherwise reach the
+          // `git show <rev>:<path>` argv, where `--output=...` writes an
+          // attacker-chosen file. Reject it at load time.
+          "data/mcp/x": {
+            source: "data",
+            sha: "abc123",
+            sourceCommit: "--output=/tmp/pwned",
+            appliedAt: "2026-05-08T00:00:00.000Z",
+          },
+        },
+      }),
+    );
+
+    await expect(loadLock(project)).rejects.toThrow(/sourceCommit/);
+  });
+
   test("loadLock rejects entries with an unknown source", async () => {
     const project = await tempDir();
     await mkdir(join(project, ".capshelf"), { recursive: true });

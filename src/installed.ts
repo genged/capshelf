@@ -168,10 +168,21 @@ export function parseLockKey(key: string): {
       `unsupported lock key kind: ${kind ?? "(missing)"} (supported: ${ITEM_KINDS.join(", ")})`,
     );
   }
+  const name = nameParts.join("/");
+  // The name becomes a filesystem path segment (installedPath) and a git
+  // pathspec (materialize). Reject traversal/absolute/option-like names so a
+  // hostile lockfile can't escape the project or the data-repo item dir.
+  if (
+    nameParts.some((part) => part === "" || part === "." || part === "..") ||
+    name.startsWith("/") ||
+    name.startsWith("-")
+  ) {
+    throw new Error(`invalid lock key name: ${key}`);
+  }
   return {
     source,
     kind,
-    name: nameParts.join("/"),
+    name,
   };
 }
 
@@ -180,24 +191,34 @@ function skillInstalledPath(
   name: string,
   mode: InstallMode,
 ): string {
+  const canonical = join(installBaseDir(project, mode), "skills", name);
   const claudePath = claudeSkillPath(project, name);
   const stat = lstatOrNull(claudePath);
   if (stat?.isSymbolicLink()) {
     const symlinkTarget = resolveSymlinkTarget(claudePath);
-    const codexPath = codexSkillPath(project, name);
-    if (
-      mode === "codex-compatible" &&
-      pathExists(codexPath) &&
-      !samePath(codexPath, symlinkTarget)
-    ) {
+    // The compatibility alias must resolve to the managed skill location.
+    // Materialize/sync delete-and-rewrite whatever path this returns, so
+    // following a stray or hostile symlink that points elsewhere would let it
+    // wipe an arbitrary directory. Refuse instead of following it.
+    if (!samePath(symlinkTarget, canonical)) {
+      const codexPath = codexSkillPath(project, name);
+      if (
+        mode === "codex-compatible" &&
+        pathExists(codexPath) &&
+        !samePath(codexPath, symlinkTarget)
+      ) {
+        throw new Error(
+          `ambiguous skill install paths for skills/${name}: ${codexPath} and ${claudePath} -> ${symlinkTarget}`,
+        );
+      }
       throw new Error(
-        `ambiguous skill install paths for skills/${name}: ${codexPath} and ${claudePath} -> ${symlinkTarget}`,
+        `compatibility symlink for skills/${name} resolves outside the managed skills dir: ${claudePath} -> ${symlinkTarget}`,
       );
     }
-    return symlinkTarget;
+    return canonical;
   }
 
-  return join(installBaseDir(project, mode), "skills", name);
+  return canonical;
 }
 
 function pathExists(path: string): boolean {

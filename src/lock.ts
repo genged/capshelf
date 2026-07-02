@@ -4,10 +4,21 @@ import { dirname } from "node:path";
 import { localLockPath, lockPath, lockReadPath } from "./paths";
 import { isErrno } from "./fs-utils";
 
+// A git object name (abbreviated or full, SHA-1 or SHA-256). Validated on load
+// so an attacker-supplied lockfile can't smuggle option-like values (e.g.
+// `--output=/path`) into the `git show <rev>:<path>` argv, where the trailing
+// `:<path>` defeats any `--` argument guard.
+const GitCommitSchema = z
+  .string()
+  .regex(
+    /^[0-9a-f]{7,64}$/,
+    "sourceCommit must be a lowercase hex git object name",
+  );
+
 export const DataLockEntrySchema = z.object({
   source: z.literal("data"),
   sha: z.string(),
-  sourceCommit: z.string(),
+  sourceCommit: GitCommitSchema,
   appliedAt: z.string(),
   label: z.string().optional(),
   local: z.literal(true).optional(),

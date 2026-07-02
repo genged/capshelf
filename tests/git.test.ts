@@ -187,6 +187,25 @@ describe("git historical content helpers", () => {
     ]);
   });
 
+  test("ls-tree returns non-ASCII filenames verbatim (not octal-quoted)", async () => {
+    const repo = await tempRepo();
+    await mkdir(join(repo, "skills", "hello"), { recursive: true });
+    // With git's default core.quotepath=true and no -z, this path comes back as
+    // "skills/hello/caf\303\251.md" and breaks every downstream `git show`.
+    await writeFile(join(repo, "skills", "hello", "café.md"), "unicode\n");
+    await commitAll(repo, "unicode name");
+    const commit = await lastTouchingCommit(repo, "skills/hello");
+
+    expect(await lsTreeAtCommit(repo, commit, "skills/hello")).toEqual([
+      "skills/hello/café.md",
+    ]);
+    expect(
+      (await showAtCommit(repo, commit, "skills/hello/café.md")).toString(
+        "utf-8",
+      ),
+    ).toBe("unicode\n");
+  });
+
   test("lastTouchingContentCommit ignores sidecar-only commits", async () => {
     const repo = await tempRepo();
     await mkdir(join(repo, "skills", "hello"), { recursive: true });
