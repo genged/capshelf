@@ -11,7 +11,7 @@ import { isFragmentItemKind, shaOfItem } from "../master";
 import { installedPath, shaOfInstalled, parseLockKey } from "../installed";
 import { ResultExitError } from "../errors";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
-import { globalOpts } from "../cli";
+import { globalOpts } from "../global-options";
 import { parseItemRef } from "../item-ref";
 import { commitExists, isGitRepo } from "../git";
 import { upstreamFactsForItem } from "../upstream-facts";

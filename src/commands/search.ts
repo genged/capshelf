@@ -15,7 +15,7 @@ import type { ItemKind, MasterItem } from "../master";
 import { SYSTEM_ITEMS, shaOfSystemItem } from "../bundled";
 import type { SystemItem } from "../bundled";
 import { assertIsGitRepo, gitVisibleFilesUnderPath } from "../git";
-import { globalOpts } from "../cli";
+import { globalOpts } from "../global-options";
 import { shaOfFragmentItem } from "../fragments";
 import {
   loadDataItemMetadata,

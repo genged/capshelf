@@ -21,7 +21,7 @@ import { loadManifest } from "../manifest";
 import { parseLockKey } from "../installed";
 import { SYSTEM_ITEMS, findSystemItem, shaOfSystemItem } from "../bundled";
 import { assertIsGitRepo } from "../git";
-import { globalOpts } from "../cli";
+import { globalOpts } from "../global-options";
 import { shaOfFragmentItem } from "../fragments";
 import {
   loadDataItemMetadata,

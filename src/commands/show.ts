@@ -19,7 +19,7 @@ import {
 import type { ItemMetadata } from "../metadata";
 import { findSystemItem, shaOfSystemItem } from "../bundled";
 import { assertIsGitRepo, gitVisibleFilesUnderPath } from "../git";
-import { globalOpts } from "../cli";
+import { globalOpts } from "../global-options";
 import { NotFoundError, PreconditionError } from "../errors";
 import { findMasterItemByRef, parseItemRef } from "../item-ref";
 import { isIgnoredDotEntry } from "../dotfiles";

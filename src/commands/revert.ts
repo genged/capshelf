@@ -4,7 +4,7 @@ import { loadManifest } from "../manifest";
 import { loadLocalLock, loadLock, saveLocalLock, saveLock } from "../lock";
 import { parseLockKey } from "../installed";
 import { assertIsGitRepo } from "../git";
-import { globalOpts } from "../cli";
+import { globalOpts } from "../global-options";
 import { NotFoundError, PreconditionError } from "../errors";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import { materializeLockEntry } from "../materialize";

@@ -13,7 +13,7 @@ import { ensureInstallAliases, parseLockKey } from "../installed";
 import { NotFoundError, PreconditionError } from "../errors";
 import { isSystemItemName } from "../bundled";
 import { assertIsGitRepo } from "../git";
-import { globalOpts } from "../cli";
+import { globalOpts } from "../global-options";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
 import type { ItemKind } from "../master";
 import { isFragmentItemKind } from "../master";

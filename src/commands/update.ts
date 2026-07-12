@@ -10,7 +10,7 @@ import {
   lastTouchingContentCommit,
 } from "../git";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
-import { globalOpts } from "../cli";
+import { globalOpts } from "../global-options";
 import { NotFoundError, PreconditionError, ResultExitError } from "../errors";
 import { findMasterItemByRef, lockKeysForRef, parseItemRef } from "../item-ref";
 import { materializeLockEntry } from "../materialize";

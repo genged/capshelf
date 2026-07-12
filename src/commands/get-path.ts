@@ -5,7 +5,7 @@ import { loadLock } from "../lock";
 import { installedPath, parseLockKey } from "../installed";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import { loadManifest } from "../manifest";
-import { globalOpts } from "../cli";
+import { globalOpts } from "../global-options";
 import { NotFoundError, PreconditionError } from "../errors";
 import { assertIsGitRepo } from "../git";
 import {

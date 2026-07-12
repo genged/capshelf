@@ -33,7 +33,7 @@ import {
   assertPathClean,
   lastTouchingContentCommit,
 } from "../git";
-import { globalOpts } from "../cli";
+import { globalOpts } from "../global-options";
 import { findMasterItemByRef, parseItemRef } from "../item-ref";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import {

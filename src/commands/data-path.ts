@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import { globalOpts } from "../cli";
+import { globalOpts } from "../global-options";
 import { loadManifest } from "../manifest";
 import { projectRoot, resolveDataRepo } from "../paths";
 import { normalizedManifestUpstream } from "../upstream-check";

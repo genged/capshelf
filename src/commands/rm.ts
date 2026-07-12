@@ -23,7 +23,7 @@ import { isSystemItemName } from "../bundled";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import { assertIsGitRepo } from "../git";
-import { globalOpts } from "../cli";
+import { globalOpts } from "../global-options";
 import {
   loadLocalConfig,
   removeLocalExcludes,

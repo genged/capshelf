@@ -19,7 +19,7 @@ import {
 } from "../bundled";
 import { findInstallConflict } from "../installed";
 import { assertIsGitRepo, normalizeRemoteUrl, originRemoteUrl } from "../git";
-import { globalOpts } from "../cli";
+import { globalOpts } from "../global-options";
 import { PreconditionError } from "../errors";
 import { saveLocalConfig } from "../local-config";
 import { UpstreamVerificationError } from "../upstream-check";

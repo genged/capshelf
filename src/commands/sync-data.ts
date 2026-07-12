@@ -2,7 +2,7 @@ import type { Command } from "commander";
 import { projectRoot, resolveDataRepo } from "../paths";
 import { loadManifest } from "../manifest";
 import { assertIsGitRepo } from "../git";
-import { globalOpts } from "../cli";
+import { globalOpts } from "../global-options";
 import { ResultExitError } from "../errors";
 import { formatSyncHuman, syncData } from "../data-sync";
 

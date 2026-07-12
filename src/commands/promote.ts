@@ -26,7 +26,7 @@ import {
   statusPorcelain,
 } from "../git";
 import { isSystemItemName } from "../bundled";
-import { globalOpts } from "../cli";
+import { globalOpts } from "../global-options";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import { assertLocalScopeSupported } from "../local-config";
 import { readSidecarBytes, restoreSidecarBytes } from "../metadata";

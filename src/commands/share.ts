@@ -20,7 +20,7 @@ import {
   commitInRepo,
   originRemoteUrl,
 } from "../git";
-import { globalOpts } from "../cli";
+import { globalOpts } from "../global-options";
 import { PreconditionError } from "../errors";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import {

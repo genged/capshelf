@@ -96,14 +96,3 @@ function reportError(err: unknown): number {
 if (import.meta.main) {
   process.exit(await main());
 }
-
-export interface GlobalOptions {
-  data?: string;
-}
-
-export function globalOpts(cmd: Command): GlobalOptions {
-  // Walk up to root command
-  let root: Command = cmd;
-  while (root.parent) root = root.parent;
-  return root.opts() as GlobalOptions;
-}

@@ -5,7 +5,7 @@ import { loadLocalLock, loadLock } from "../lock";
 import { parseLockKey } from "../installed";
 import { assertIsGitRepo } from "../git";
 import { assertNoScopeCollisions } from "../status-core";
-import { globalOpts } from "../cli";
+import { globalOpts } from "../global-options";
 import { NotFoundError, PreconditionError, ResultExitError } from "../errors";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
 import { materializeLockEntry } from "../materialize";
