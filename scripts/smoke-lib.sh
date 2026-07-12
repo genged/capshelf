@@ -4,6 +4,12 @@ set -euo pipefail
 ROOT="${CAPSHELF_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 CLI=(bun run "$ROOT/src/cli.ts")
 
+# Isolate git from the machine's global/system config so smoke runs are
+# hermetic — a global url.<x>.insteadOf rewrite (proxies, SSH-rewrite setups)
+# would otherwise rewrite seeded clone origins and trip upstream checks.
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+
 init_git_repo() {
   local repo="$1"
   git -C "$repo" init -q
