@@ -11,14 +11,12 @@ import {
 } from "../git";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
 import { globalOpts } from "../global-options";
-import { NotFoundError, PreconditionError, ResultExitError } from "../errors";
-import { findMasterItemByRef, lockKeysForRef, parseItemRef } from "../item-ref";
+import { PreconditionError, ResultExitError } from "../errors";
+import { findMasterItemByRef } from "../item-ref";
+import { resolveTrackedTarget } from "../targets";
+import type { ScopedTarget } from "../targets";
 import { materializeLockEntry } from "../materialize";
-import {
-  findSkillsShSkill,
-  listSkillsShSkills,
-  skillsShConflictMessage,
-} from "../external";
+import { listSkillsShSkills, skillsShConflictMessage } from "../external";
 import {
   printRuntimeWarnings,
   runtimeWarningsForItem,
@@ -91,46 +89,18 @@ export function registerUpdate(program: Command): void {
         const refs = itemRefs ?? [];
         const explicit = refs.length > 0;
 
-        const targets: Array<{ scope: "project" | "local"; key: string }> = [];
+        const targets: ScopedTarget[] = [];
         if (refs.length > 0) {
           for (const itemRef of refs) {
-            const ref = parseItemRef(itemRef);
-            const matches = opts.local
-              ? lockKeysForRef(localLock, ref).map((key) => ({
-                  scope: "local" as const,
-                  key,
-                }))
-              : [
-                  ...lockKeysForRef(projectLock, ref).map((key) => ({
-                    scope: "project" as const,
-                    key,
-                  })),
-                  ...lockKeysForRef(localLock, ref).map((key) => ({
-                    scope: "local" as const,
-                    key,
-                  })),
-                ];
-            if (matches.length === 0) {
-              if (ref.kind === undefined || ref.kind === "skills") {
-                const external = await findSkillsShSkill(project, ref.name);
-                if (external) {
-                  throw new PreconditionError(
-                    `not updating skills/${ref.name} — ${skillsShConflictMessage(external)}`,
-                  );
-                }
-              }
-              throw new NotFoundError(
-                `not tracked in this project: ${itemRef}`,
-              );
-            }
-            if (matches.length > 1) {
-              throw new Error(
-                `ambiguous item "${ref.name}": found in ${matches
-                  .map((match) => `${match.scope}/${match.key}`)
-                  .join(", ")}; use --local or remove one owner`,
-              );
-            }
-            targets.push(matches[0]!);
+            targets.push(
+              await resolveTrackedTarget(
+                project,
+                projectLock,
+                localLock,
+                itemRef,
+                { local: opts.local, verb: "updating" },
+              ),
+            );
           }
         } else {
           const selectedLock = opts.local ? localLock : projectLock;

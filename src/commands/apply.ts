@@ -6,8 +6,9 @@ import { parseLockKey } from "../installed";
 import { assertIsGitRepo } from "../git";
 import { assertNoScopeCollisions } from "../status-core";
 import { globalOpts } from "../global-options";
-import { NotFoundError, PreconditionError, ResultExitError } from "../errors";
-import { lockKeysForRef, parseItemRef } from "../item-ref";
+import { PreconditionError, ResultExitError } from "../errors";
+import { resolveTrackedTarget } from "../targets";
+import type { ScopedTarget } from "../targets";
 import { materializeLockEntry } from "../materialize";
 import type { MaterializeResult } from "../materialize";
 import {
@@ -68,38 +69,17 @@ export function registerApply(program: Command): void {
         const localLock = await loadLocalLock(project);
         assertNoScopeCollisions(projectLock, localLock, "applying");
 
-        let targets: Array<{ scope: "project" | "local"; key: string }>;
+        let targets: ScopedTarget[];
         if (itemRef) {
-          const ref = parseItemRef(itemRef);
-          const matches = [
-            ...lockKeysForRef(projectLock, ref).map((key) => ({
-              scope: "project" as const,
-              key,
-            })),
-            ...lockKeysForRef(localLock, ref).map((key) => ({
-              scope: "local" as const,
-              key,
-            })),
-          ].filter((target) => !opts.local || target.scope === "local");
-          if (matches.length === 0) {
-            if (ref.kind === undefined || ref.kind === "skills") {
-              const external = await findSkillsShSkill(project, ref.name);
-              if (external) {
-                throw new PreconditionError(
-                  `not applying skills/${ref.name} — ${skillsShConflictMessage(external)}`,
-                );
-              }
-            }
-            throw new NotFoundError(`not tracked in this project: ${itemRef}`);
-          }
-          if (matches.length > 1) {
-            throw new Error(
-              `ambiguous item "${ref.name}": found in ${matches
-                .map((target) => `${target.scope}/${target.key}`)
-                .join(", ")}; use --local or remove one owner`,
-            );
-          }
-          targets = matches;
+          targets = [
+            await resolveTrackedTarget(
+              project,
+              projectLock,
+              localLock,
+              itemRef,
+              { local: opts.local, verb: "applying" },
+            ),
+          ];
         } else {
           targets = [
             ...(!opts.local
