@@ -1,7 +1,9 @@
 import type { Command } from "commander";
 import { projectRoot, resolveDataRepo } from "../paths";
 import { loadManifest } from "../manifest";
+import type { Manifest } from "../manifest";
 import { loadLocalLock, loadLock, saveLocalLock, saveLock } from "../lock";
+import type { DataLockEntry, LockEntry, SystemLockEntry } from "../lock";
 import { parseLockKey } from "../installed";
 import { isFragmentItemKind, shaOfGitVisibleItem } from "../master";
 import {
@@ -17,6 +19,7 @@ import { resolveTrackedTarget } from "../targets";
 import type { ScopedTarget } from "../targets";
 import { materializeLockEntry } from "../materialize";
 import { listSkillsShSkills, skillsShConflictMessage } from "../external";
+import type { ExternalSkill } from "../external";
 import {
   printRuntimeWarnings,
   runtimeWarningsForItem,
@@ -139,238 +142,43 @@ export function registerUpdate(program: Command): void {
         );
         const originalLock = structuredClone(projectLock);
         const fragmentNextLock = structuredClone(projectLock);
-        const pendingFragmentEntries = new Map<
-          string,
-          (typeof projectLock.items)[string]
-        >();
+        const pendingFragmentEntries = new Map<string, LockEntry>();
         const touchedFragmentTargets = new Set<FragmentTarget>();
         let fragmentLockChanged = false;
 
+        const ctx: UpdateContext = {
+          project,
+          manifest,
+          dataRepo,
+          dryRun: opts.dryRun === true,
+          explicit,
+          externalSkillByName,
+        };
+
+        // Each target is planned in isolation and returns an explicit effect;
+        // the loop is the only place the shared accumulators are mutated, so
+        // their consistency no longer depends on reading a 380-line body.
         for (const target of targets) {
           const { scope, key } = target;
           const lock = scope === "local" ? localLock : projectLock;
-          const parsed = parseLockKey(key);
           const entry = lock.items[key]!;
-          if (
-            parsed.kind === "skills" &&
-            externalSkillByName.has(parsed.name)
-          ) {
-            const message = skillsShConflictMessage(
-              externalSkillByName.get(parsed.name)!,
-            );
-            if (explicit) {
-              throw new PreconditionError(
-                `not updating skills/${parsed.name} — ${message}`,
-              );
+          const outcome = await updateOneTarget(ctx, target, entry);
+          results.push(outcome.result);
+          if (outcome.fragment) {
+            const contribution = outcome.fragment;
+            fragmentNextLock.items[contribution.key] = contribution.entry;
+            pendingFragmentEntries.set(contribution.key, contribution.entry);
+            for (const fragmentTarget of contribution.targets) {
+              touchedFragmentTargets.add(fragmentTarget);
             }
-            results.push({
-              key,
-              source: parsed.source,
-              kind: parsed.kind,
-              name: parsed.name,
-              action: "skipped-external",
-              error: message,
-            });
-            continue;
-          }
-          try {
-            if (entry.source === "data") {
-              if (entry.local === true) {
-                const runtimeWarnings = runtimeWarningsForItem(
-                  project,
-                  parsed.kind,
-                  parsed.name,
-                );
-                results.push({
-                  key,
-                  scope,
-                  source: parsed.source,
-                  kind: parsed.kind,
-                  name: parsed.name,
-                  action: "kept-local",
-                  sha: entry.sha,
-                  sourceCommit: entry.sourceCommit,
-                  ...(runtimeWarnings.length > 0 && { runtimeWarnings }),
-                });
-                continue;
-              }
-              if (!dataRepo) throw new Error("data repo is required");
-              const item = await findMasterItemByRef(dataRepo, {
-                kind: parsed.kind,
-                name: parsed.name,
-              });
-              if (!item)
-                throw new Error(
-                  `missing upstream item: ${parsed.kind}/${parsed.name}`,
-                );
-
-              const sha = isFragmentItemKind(parsed.kind)
-                ? await shaOfFragmentItem(dataRepo, parsed.kind, parsed.name)
-                : await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
-              const sourceCommit = isFragmentItemKind(parsed.kind)
-                ? await lastTouchingFragmentCommit(
-                    dataRepo,
-                    parsed.kind,
-                    parsed.name,
-                  )
-                : await lastTouchingContentCommit(dataRepo, item.repoRelPath);
-              const newEntry = {
-                ...entry,
-                sha,
-                sourceCommit,
-                appliedAt:
-                  sha !== entry.sha || sourceCommit !== entry.sourceCommit
-                    ? new Date().toISOString()
-                    : entry.appliedAt,
-              };
-              const lockWouldChange =
-                sha !== entry.sha || sourceCommit !== entry.sourceCommit;
-              if (isFragmentItemKind(parsed.kind)) {
-                if (scope === "local") {
-                  throw new Error(
-                    `--local is not supported for ${parsed.kind} fragments`,
-                  );
-                }
-                fragmentLockChanged = fragmentLockChanged || lockWouldChange;
-                fragmentNextLock.items[key] = newEntry;
-                pendingFragmentEntries.set(key, newEntry);
-                for (const target of await touchedFragmentTargetsForItem(
-                  dataRepo,
-                  parsed.kind,
-                  parsed.name,
-                  entry,
-                  manifest,
-                )) {
-                  touchedFragmentTargets.add(target);
-                }
-                results.push({
-                  key,
-                  scope,
-                  source: parsed.source,
-                  kind: parsed.kind,
-                  name: parsed.name,
-                  action: lockWouldChange
-                    ? opts.dryRun
-                      ? "would-update"
-                      : "updated"
-                    : "already-current",
-                  sha,
-                  lockedSha: entry.sha,
-                  plannedSha: sha,
-                  sourceCommit,
-                  ...(opts.dryRun && { dryRun: true as const }),
-                });
-                continue;
-              }
-              const materialized = await materializeLockEntry({
-                project,
-                dataRepo,
-                manifest,
-                key,
-                entry: newEntry,
-                dryRun: opts.dryRun,
-              });
-              if (!opts.dryRun) {
-                lock.items[key] = newEntry;
-                if (scope === "local") {
-                  localChanged =
-                    localChanged ||
-                    sha !== entry.sha ||
-                    sourceCommit !== entry.sourceCommit;
-                } else {
-                  projectChanged =
-                    projectChanged ||
-                    sha !== entry.sha ||
-                    sourceCommit !== entry.sourceCommit;
-                }
-              }
-              results.push({
-                key,
-                scope,
-                source: parsed.source,
-                kind: parsed.kind,
-                name: parsed.name,
-                action: lockWouldChange
-                  ? opts.dryRun
-                    ? "would-update"
-                    : "updated"
-                  : materialized.action,
-                sha,
-                currentSha: materialized.currentSha,
-                lockedSha: entry.sha,
-                plannedSha: sha,
-                sourceCommit,
-                runtimeWarnings: materialized.runtimeWarnings,
-                ...(opts.dryRun && { dryRun: true as const }),
-              });
-            } else {
-              const item = findSystemItem(parsed.name);
-              if (!item || item.kind !== parsed.kind) {
-                throw new Error(
-                  `system item no longer bundled: ${parsed.kind}/${parsed.name}`,
-                );
-              }
-              const sha = await shaOfSystemItem(item);
-              const newEntry = {
-                source: "system" as const,
-                sha,
-                cliVersion: CLI_VERSION,
-                appliedAt:
-                  sha !== entry.sha ||
-                  entry.source !== "system" ||
-                  entry.cliVersion !== CLI_VERSION
-                    ? new Date().toISOString()
-                    : entry.appliedAt,
-              };
-              const materialized = await materializeLockEntry({
-                project,
-                key,
-                manifest,
-                entry: newEntry,
-                dryRun: opts.dryRun,
-              });
-              if (!opts.dryRun) {
-                lock.items[key] = newEntry;
-                projectChanged =
-                  projectChanged ||
-                  sha !== entry.sha ||
-                  entry.source !== "system" ||
-                  entry.cliVersion !== CLI_VERSION;
-              }
-              const lockWouldChange =
-                sha !== entry.sha ||
-                entry.source !== "system" ||
-                entry.cliVersion !== CLI_VERSION;
-              results.push({
-                key,
-                scope,
-                source: parsed.source,
-                kind: parsed.kind,
-                name: parsed.name,
-                action: lockWouldChange
-                  ? opts.dryRun
-                    ? "would-update"
-                    : "updated"
-                  : materialized.action,
-                sha,
-                currentSha: materialized.currentSha,
-                lockedSha: entry.sha,
-                plannedSha: sha,
-                cliVersion: CLI_VERSION,
-                runtimeWarnings: materialized.runtimeWarnings,
-                ...(opts.dryRun && { dryRun: true as const }),
-              });
+            fragmentLockChanged =
+              fragmentLockChanged || contribution.lockChanged;
+          } else if (!ctx.dryRun && outcome.newEntry) {
+            lock.items[key] = outcome.newEntry;
+            if (outcome.changed) {
+              if (scope === "local") localChanged = true;
+              else projectChanged = true;
             }
-          } catch (err) {
-            results.push({
-              key,
-              scope,
-              source: parsed.source,
-              kind: parsed.kind,
-              name: parsed.name,
-              action: "error",
-              error: err instanceof Error ? err.message : String(err),
-            });
           }
         }
 
@@ -432,6 +240,247 @@ export function registerUpdate(program: Command): void {
         }
       },
     );
+}
+
+interface UpdateContext {
+  project: string;
+  manifest: Manifest;
+  dataRepo: string | undefined;
+  dryRun: boolean;
+  explicit: boolean;
+  externalSkillByName: Map<string, ExternalSkill>;
+}
+
+interface FragmentContribution {
+  key: string;
+  entry: LockEntry;
+  targets: FragmentTarget[];
+  lockChanged: boolean;
+}
+
+interface TargetOutcome {
+  result: UpdateResult;
+  /** Lock entry to write into the target's scope when this is not a dry run. */
+  newEntry?: LockEntry;
+  /** Whether the pinned content changed (marks the scope's lock dirty). */
+  changed?: boolean;
+  /** Fragment items defer their lock write and reconcile after the loop. */
+  fragment?: FragmentContribution;
+}
+
+async function updateOneTarget(
+  ctx: UpdateContext,
+  target: ScopedTarget,
+  entry: LockEntry,
+): Promise<TargetOutcome> {
+  const { scope, key } = target;
+  const parsed = parseLockKey(key);
+  if (parsed.kind === "skills" && ctx.externalSkillByName.has(parsed.name)) {
+    const message = skillsShConflictMessage(
+      ctx.externalSkillByName.get(parsed.name)!,
+    );
+    // An explicit request to update a skills.sh-owned skill is refused; an
+    // implicit sweep records the skip and continues.
+    if (ctx.explicit) {
+      throw new PreconditionError(
+        `not updating skills/${parsed.name} — ${message}`,
+      );
+    }
+    return {
+      result: {
+        key,
+        source: parsed.source,
+        kind: parsed.kind,
+        name: parsed.name,
+        action: "skipped-external",
+        error: message,
+      },
+    };
+  }
+  try {
+    return entry.source === "data"
+      ? await updateDataTarget(ctx, scope, key, parsed, entry)
+      : await updateSystemTarget(ctx, scope, key, parsed, entry);
+  } catch (err) {
+    return {
+      result: {
+        key,
+        scope,
+        source: parsed.source,
+        kind: parsed.kind,
+        name: parsed.name,
+        action: "error",
+        error: err instanceof Error ? err.message : String(err),
+      },
+    };
+  }
+}
+
+async function updateDataTarget(
+  ctx: UpdateContext,
+  scope: "project" | "local",
+  key: string,
+  parsed: ReturnType<typeof parseLockKey>,
+  entry: DataLockEntry,
+): Promise<TargetOutcome> {
+  if (entry.local === true) {
+    const runtimeWarnings = runtimeWarningsForItem(
+      ctx.project,
+      parsed.kind,
+      parsed.name,
+    );
+    return {
+      result: {
+        key,
+        scope,
+        source: parsed.source,
+        kind: parsed.kind,
+        name: parsed.name,
+        action: "kept-local",
+        sha: entry.sha,
+        sourceCommit: entry.sourceCommit,
+        ...(runtimeWarnings.length > 0 && { runtimeWarnings }),
+      },
+    };
+  }
+  if (!ctx.dataRepo) throw new Error("data repo is required");
+  const item = await findMasterItemByRef(ctx.dataRepo, {
+    kind: parsed.kind,
+    name: parsed.name,
+  });
+  if (!item) {
+    throw new Error(`missing upstream item: ${parsed.kind}/${parsed.name}`);
+  }
+
+  const sha = isFragmentItemKind(parsed.kind)
+    ? await shaOfFragmentItem(ctx.dataRepo, parsed.kind, parsed.name)
+    : await shaOfGitVisibleItem(ctx.dataRepo, item.repoRelPath);
+  const sourceCommit = isFragmentItemKind(parsed.kind)
+    ? await lastTouchingFragmentCommit(ctx.dataRepo, parsed.kind, parsed.name)
+    : await lastTouchingContentCommit(ctx.dataRepo, item.repoRelPath);
+  const lockWouldChange =
+    sha !== entry.sha || sourceCommit !== entry.sourceCommit;
+  const newEntry: DataLockEntry = {
+    ...entry,
+    sha,
+    sourceCommit,
+    appliedAt: lockWouldChange ? new Date().toISOString() : entry.appliedAt,
+  };
+  const changedAction: UpdateAction | undefined = lockWouldChange
+    ? ctx.dryRun
+      ? "would-update"
+      : "updated"
+    : undefined;
+
+  if (isFragmentItemKind(parsed.kind)) {
+    if (scope === "local") {
+      throw new Error(`--local is not supported for ${parsed.kind} fragments`);
+    }
+    const targets = await touchedFragmentTargetsForItem(
+      ctx.dataRepo,
+      parsed.kind,
+      parsed.name,
+      entry,
+      ctx.manifest,
+    );
+    return {
+      result: {
+        key,
+        scope,
+        source: parsed.source,
+        kind: parsed.kind,
+        name: parsed.name,
+        action: changedAction ?? "already-current",
+        sha,
+        lockedSha: entry.sha,
+        plannedSha: sha,
+        sourceCommit,
+        ...(ctx.dryRun && { dryRun: true as const }),
+      },
+      fragment: { key, entry: newEntry, targets, lockChanged: lockWouldChange },
+    };
+  }
+
+  const materialized = await materializeLockEntry({
+    project: ctx.project,
+    dataRepo: ctx.dataRepo,
+    manifest: ctx.manifest,
+    key,
+    entry: newEntry,
+    dryRun: ctx.dryRun,
+  });
+  return {
+    result: {
+      key,
+      scope,
+      source: parsed.source,
+      kind: parsed.kind,
+      name: parsed.name,
+      action: changedAction ?? materialized.action,
+      sha,
+      currentSha: materialized.currentSha,
+      lockedSha: entry.sha,
+      plannedSha: sha,
+      sourceCommit,
+      runtimeWarnings: materialized.runtimeWarnings,
+      ...(ctx.dryRun && { dryRun: true as const }),
+    },
+    newEntry,
+    changed: lockWouldChange,
+  };
+}
+
+async function updateSystemTarget(
+  ctx: UpdateContext,
+  scope: "project" | "local",
+  key: string,
+  parsed: ReturnType<typeof parseLockKey>,
+  entry: SystemLockEntry,
+): Promise<TargetOutcome> {
+  const item = findSystemItem(parsed.name);
+  if (!item || item.kind !== parsed.kind) {
+    throw new Error(
+      `system item no longer bundled: ${parsed.kind}/${parsed.name}`,
+    );
+  }
+  const sha = await shaOfSystemItem(item);
+  const lockWouldChange = sha !== entry.sha || entry.cliVersion !== CLI_VERSION;
+  const newEntry: SystemLockEntry = {
+    source: "system",
+    sha,
+    cliVersion: CLI_VERSION,
+    appliedAt: lockWouldChange ? new Date().toISOString() : entry.appliedAt,
+  };
+  const materialized = await materializeLockEntry({
+    project: ctx.project,
+    key,
+    manifest: ctx.manifest,
+    entry: newEntry,
+    dryRun: ctx.dryRun,
+  });
+  return {
+    result: {
+      key,
+      scope,
+      source: parsed.source,
+      kind: parsed.kind,
+      name: parsed.name,
+      action: lockWouldChange
+        ? ctx.dryRun
+          ? "would-update"
+          : "updated"
+        : materialized.action,
+      sha,
+      currentSha: materialized.currentSha,
+      lockedSha: entry.sha,
+      plannedSha: sha,
+      cliVersion: CLI_VERSION,
+      runtimeWarnings: materialized.runtimeWarnings,
+      ...(ctx.dryRun && { dryRun: true as const }),
+    },
+    newEntry,
+    changed: lockWouldChange,
+  };
 }
 
 function printUpdateResults(results: UpdateResult[]): void {
