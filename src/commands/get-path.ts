@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { join } from "node:path";
-import { projectRoot, resolveDataRepo } from "../paths";
+import { projectRoot } from "../paths";
+import { resolveDataRepo } from "../data-repo";
 import { loadLock } from "../lock";
 import { installedPath, parseLockKey } from "../installed";
 import { lockKeyForRef, parseItemRef } from "../item-ref";

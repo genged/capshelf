@@ -1,5 +1,6 @@
 import type { Command } from "commander";
-import { projectRoot, resolveDataRepo } from "../paths";
+import { projectRoot } from "../paths";
+import { resolveDataRepo } from "../data-repo";
 import { loadManifest, saveManifest } from "../manifest";
 import {
   dataKey,

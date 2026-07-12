@@ -6,7 +6,8 @@ import {
   listMasterItems,
   shaOfGitVisibleItem,
 } from "../master";
-import { homeRelative, projectRoot, resolveDataRepo } from "../paths";
+import { homeRelative, projectRoot } from "../paths";
+import { resolveDataRepo } from "../data-repo";
 import { isBundleRef, loadBundle, memberRef } from "../bundles";
 import { loadLocalLock, loadLock, dataKey, systemKey } from "../lock";
 import type { Lock } from "../lock";

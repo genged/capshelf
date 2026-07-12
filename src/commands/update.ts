@@ -1,5 +1,6 @@
 import type { Command } from "commander";
-import { projectRoot, resolveDataRepo } from "../paths";
+import { projectRoot } from "../paths";
+import { resolveDataRepo } from "../data-repo";
 import { loadManifest } from "../manifest";
 import type { Manifest } from "../manifest";
 import { loadLocalLock, loadLock, saveLocalLock, saveLock } from "../lock";

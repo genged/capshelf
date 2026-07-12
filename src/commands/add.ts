@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { join } from "node:path";
-import { homeRelative, projectRoot, resolveDataRepo } from "../paths";
+import { homeRelative, projectRoot } from "../paths";
+import { resolveDataRepo } from "../data-repo";
 import { loadManifest, saveManifest } from "../manifest";
 import type { Manifest } from "../manifest";
 import { addManifestName, manifestNamesForKind } from "../manifest";

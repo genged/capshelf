@@ -1,7 +1,8 @@
 import type { Command } from "commander";
 import type { Command as CmdType } from "commander";
 import { existsSync } from "node:fs";
-import { projectRoot, resolveDataRepoOptional } from "../paths";
+import { projectRoot } from "../paths";
+import { resolveDataRepoOptional } from "../data-repo";
 import { loadLocalLock, loadLock } from "../lock";
 import type { Lock, LockEntry } from "../lock";
 import { loadManifest } from "../manifest";

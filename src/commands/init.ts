@@ -1,11 +1,6 @@
 import type { Command } from "commander";
-import {
-  DEFAULT_INSTALL_MODE,
-  homeRelative,
-  initProjectRoot,
-  resolveDataRepo,
-  resolveDataRepoOptional,
-} from "../paths";
+import { DEFAULT_INSTALL_MODE, homeRelative, initProjectRoot } from "../paths";
+import { resolveDataRepo, resolveDataRepoOptional } from "../data-repo";
 import type { InstallMode } from "../paths";
 import { ensureClone, resolveDataInput } from "../data-bootstrap";
 import { LOCAL_CONFIG_FILE, METADATA_DIR } from "../identity";

@@ -1,7 +1,8 @@
 import type { Command } from "commander";
 import { globalOpts } from "../global-options";
 import { loadManifest } from "../manifest";
-import { projectRoot, resolveDataRepo } from "../paths";
+import { projectRoot } from "../paths";
+import { resolveDataRepo } from "../data-repo";
 import { normalizedManifestUpstream } from "../upstream-check";
 
 interface DataPathOptions {

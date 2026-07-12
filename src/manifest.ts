@@ -143,9 +143,9 @@ export function removeManifestName(
 /**
  * True when a parsed JSON document carries a `shelves` key with any value
  * (including `null`). Reserved by the federation spec; see `loadManifest`.
- * (Duplicated in local-config.ts to avoid a module cycle via paths.ts.)
+ * Shared with local-config.ts, which enforces the same reservation.
  */
-function hasShelvesKey(value: unknown): boolean {
+export function hasShelvesKey(value: unknown): boolean {
   return typeof value === "object" && value !== null && "shelves" in value;
 }
 

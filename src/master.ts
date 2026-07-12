@@ -4,7 +4,7 @@ import { join, basename } from "node:path";
 import { hashNamedContents } from "./content-hash";
 import { isIgnoredDotDirent } from "./dotfiles";
 import { gitVisibleFilesUnderPath } from "./git";
-import { METADATA_SIDECAR } from "./metadata";
+import { METADATA_SIDECAR } from "./identity";
 
 export const ITEM_KINDS = [
   "skills",

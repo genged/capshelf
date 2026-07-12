@@ -1,12 +1,8 @@
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import {
-  projectRoot,
-  resolveDataRepo,
-  resolveDataRepoOptional,
-  homeRelative,
-} from "../paths";
+import { projectRoot, homeRelative } from "../paths";
+import { resolveDataRepo, resolveDataRepoOptional } from "../data-repo";
 import { CLI_VERSION } from "../bundled";
 import {
   isFragmentItemKind,

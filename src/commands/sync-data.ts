@@ -1,5 +1,6 @@
 import type { Command } from "commander";
-import { projectRoot, resolveDataRepo } from "../paths";
+import { projectRoot } from "../paths";
+import { resolveDataRepo } from "../data-repo";
 import { loadManifest } from "../manifest";
 import { assertIsGitRepo } from "../git";
 import { globalOpts } from "../global-options";

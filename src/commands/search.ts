@@ -1,7 +1,8 @@
 import type { Command } from "commander";
 import { readFile, stat } from "node:fs/promises";
 import { join, posix } from "node:path";
-import { homeRelative, projectRoot, resolveDataRepo } from "../paths";
+import { homeRelative, projectRoot } from "../paths";
+import { resolveDataRepo } from "../data-repo";
 import { loadManifest } from "../manifest";
 import {
   ITEM_KINDS,

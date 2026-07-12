@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 import { LOCAL_CONFIG_FILE, LOCAL_LOCK_FILE, METADATA_DIR } from "./identity";
 import { expandTilde } from "./paths";
+import { hasShelvesKey } from "./manifest";
 import { PreconditionError } from "./errors";
 import type { ItemKind } from "./master";
 import { gitInfoExcludePath, gitTry, isGitWorkTreeRoot } from "./git";
@@ -138,12 +139,6 @@ export async function assertLocalInstallPathsUntracked(
       );
     }
   }
-}
-
-// Duplicated from manifest.ts (importing it would create a module cycle via
-// paths.ts): a `shelves` key with any value, including `null`, is reserved.
-function hasShelvesKey(value: unknown): boolean {
-  return typeof value === "object" && value !== null && "shelves" in value;
 }
 
 export function assertLocalScopeSupported(

@@ -1,7 +1,8 @@
 import type { Command } from "commander";
 import { rm as fsRm } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { projectRoot, resolveDataRepo } from "../paths";
+import { projectRoot } from "../paths";
+import { resolveDataRepo } from "../data-repo";
 import { loadManifest, saveManifest } from "../manifest";
 import { manifestNamesForKind, removeManifestName } from "../manifest";
 import {

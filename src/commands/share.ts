@@ -2,7 +2,8 @@ import type { Command } from "commander";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
-import { homeRelative, projectRoot, resolveDataRepo } from "../paths";
+import { homeRelative, projectRoot } from "../paths";
+import { resolveDataRepo } from "../data-repo";
 import { loadManifest, saveManifest, type Manifest } from "../manifest";
 import { addManifestName } from "../manifest";
 import {

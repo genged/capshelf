@@ -19,7 +19,10 @@ import type { SystemItem } from "./bundled";
 import { isItemKind } from "./master";
 import type { MasterItem } from "./master";
 
-export const METADATA_SIDECAR = ".capshelf.yml";
+// Defined in identity.ts (a leaf) to break the master.ts <-> metadata.ts
+// cycle; re-exported here so existing `from "./metadata"` importers still work.
+import { METADATA_SIDECAR } from "./identity";
+export { METADATA_SIDECAR };
 
 const MAX_SIDECAR_BYTES = 64 * 1024;
 const MAX_FRONTMATTER_BYTES = 16 * 1024;

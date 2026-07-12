@@ -29,10 +29,9 @@ import {
   normalizePath,
   personalClaudeSkillPath,
   projectRoot,
-  resolveDataRepo,
-  resolveDataRepoOptional,
   rootManifestPath,
 } from "../src/paths";
+import { resolveDataRepo, resolveDataRepoOptional } from "../src/data-repo";
 
 async function tempDir(): Promise<string> {
   return await mkdtemp(join(tmpdir(), "capshelf-paths-"));
