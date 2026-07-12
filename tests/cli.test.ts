@@ -170,6 +170,26 @@ describe("cli integration", () => {
     expect(fromOutside.stderr.toString()).toContain("not a capshelf project");
   });
 
+  test("read-only browse commands run with --data outside any project", async () => {
+    const dataRepo = await tempRepo("capshelf-browse-data-");
+    const outside = await tempDir("capshelf-browse-outside-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+
+    // ls/search/show are read-only inspection of the shelf, so a user can
+    // evaluate a data repo before adopting it into any project.
+    for (const args of [["ls"], ["search", "skill"]]) {
+      const result = Bun.spawnSync({
+        cmd: [process.execPath, cli, "--data", dataRepo, ...args],
+        cwd: outside,
+        env: process.env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect({ args, code: result.exitCode }).toEqual({ args, code: 0 });
+      expect(result.stderr.toString()).not.toContain("not a capshelf project");
+    }
+  });
+
   test("self-update --check reports through the CLI with Homebrew metadata", async () => {
     const home = await tempDir("capshelf-self-update-home-");
     const bin = await tempDir("capshelf-self-update-bin-");

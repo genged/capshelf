@@ -6,10 +6,16 @@ import {
   listMasterItems,
   shaOfGitVisibleItem,
 } from "../master";
-import { homeRelative, projectRoot } from "../paths";
+import { homeRelative, findProjectRoot } from "../paths";
 import { resolveDataRepo } from "../data-repo";
 import { isBundleRef, loadBundle, memberRef } from "../bundles";
-import { loadLocalLock, loadLock, dataKey, systemKey } from "../lock";
+import {
+  loadLocalLock,
+  loadLock,
+  emptyLock,
+  dataKey,
+  systemKey,
+} from "../lock";
 import type { Lock } from "../lock";
 import { loadManifest } from "../manifest";
 import {
@@ -59,10 +65,13 @@ export function registerShow(program: Command): void {
       }
 
       const ref = parseItemRef(itemRef);
-      const project = projectRoot();
-      const manifest = await loadManifest(project);
-      const lock = await loadLock(project);
-      const localLock = await loadLocalLock(project);
+      // Browse-only: works inside a project (showing install/tracking status)
+      // or anywhere with --data / $CAPSHELF_HOME (locks default to empty), so an
+      // item can be inspected before its shelf is adopted.
+      const project = findProjectRoot();
+      const manifest = project ? await loadManifest(project) : null;
+      const lock = project ? await loadLock(project) : emptyLock();
+      const localLock = project ? await loadLocalLock(project) : emptyLock();
 
       const systemItem = findSystemItem(ref.name);
       if (
@@ -76,7 +85,7 @@ export function registerShow(program: Command): void {
       const dataRepo = await resolveDataRepo({
         override: globalOpts(cmd).data,
         manifest,
-        project,
+        project: project ?? undefined,
       });
       await assertIsGitRepo(dataRepo);
       const item = await findMasterItemByRef(dataRepo, ref);
@@ -122,10 +131,12 @@ export function registerShow(program: Command): void {
                 sources: fragmentSources.map((source) => ({
                   target: source.sourceTarget ?? source.target,
                   sourcePath: source.relPath,
-                  outputPath: relativeProjectPath(
-                    project,
-                    fragmentOutputPath(project, source.target),
-                  ),
+                  outputPath: project
+                    ? relativeProjectPath(
+                        project,
+                        fragmentOutputPath(project, source.target),
+                      )
+                    : null,
                 })),
               }),
               sourceCommit:
@@ -219,14 +230,14 @@ async function showBundle(
     );
   }
 
-  const project = projectRoot();
-  const manifest = await loadManifest(project);
-  const lock = await loadLock(project);
-  const localLock = await loadLocalLock(project);
+  const project = findProjectRoot();
+  const manifest = project ? await loadManifest(project) : null;
+  const lock = project ? await loadLock(project) : emptyLock();
+  const localLock = project ? await loadLocalLock(project) : emptyLock();
   const dataRepo = await resolveDataRepo({
     override: globalOpts(cmd).data,
     manifest,
-    project,
+    project: project ?? undefined,
   });
   await assertIsGitRepo(dataRepo);
 

@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { projectRoot, homeRelative } from "../paths";
+import { findProjectRoot, projectRoot, homeRelative } from "../paths";
 import { resolveDataRepo, resolveDataRepoOptional } from "../data-repo";
 import { CLI_VERSION } from "../bundled";
 import {
@@ -67,12 +67,15 @@ export function registerLs(program: Command): void {
       if (opts.here) {
         await lsHere(kindFilter, opts.tag, opts.json ?? false);
       } else {
-        const project = projectRoot();
-        const manifest = await loadManifest(project);
+        // Browse-only: works inside a project (uses its binding) or anywhere
+        // with --data / $CAPSHELF_HOME, so a shelf can be evaluated before it
+        // is adopted.
+        const project = findProjectRoot();
+        const manifest = project ? await loadManifest(project) : null;
         const dataRepo = await resolveDataRepo({
           override: globalOpts(cmd).data,
           manifest,
-          project,
+          project: project ?? undefined,
         });
         await lsAvailable(dataRepo, kindFilter, opts.tag, opts.json ?? false);
       }

@@ -42,18 +42,25 @@ export function normalizePath(
   return isAbsolute(expanded) ? expanded : resolve(baseDir, expanded);
 }
 
-export function projectRoot(cwd: string = process.cwd()): string {
-  // Walk up to the nearest ancestor that is a capshelf project, like git/npm/
-  // cargo find their root — so commands work from any subdirectory, not only
-  // the exact project directory. `init` stays cwd-only (initProjectRoot).
-  const start = resolve(cwd);
-  let dir = start;
+/**
+ * The nearest ancestor of `cwd` that is a capshelf project, or null. Walks up
+ * like git/npm/cargo. Read-only commands (ls/search/show) use this so they can
+ * run with only `--data`/`$CAPSHELF_HOME` when the cwd isn't inside a project.
+ */
+export function findProjectRoot(cwd: string = process.cwd()): string | null {
+  let dir = resolve(cwd);
   for (;;) {
     if (existsSync(manifestPath(dir))) return dir;
     const parent = dirname(dir);
-    if (parent === dir) break; // reached the filesystem root
+    if (parent === dir) return null; // reached the filesystem root
     dir = parent;
   }
+}
+
+export function projectRoot(cwd: string = process.cwd()): string {
+  const found = findProjectRoot(cwd);
+  if (found) return found;
+  const start = resolve(cwd);
   throw new Error(
     `not a capshelf project: ${start}\n` +
       `  run this from a capshelf project (a directory, or any subdirectory of one, containing ${METADATA_DIR}/${MANIFEST_FILE}),\n` +

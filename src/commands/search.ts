@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { readFile, stat } from "node:fs/promises";
 import { join, posix } from "node:path";
-import { homeRelative, projectRoot } from "../paths";
+import { homeRelative, findProjectRoot } from "../paths";
 import { resolveDataRepo } from "../data-repo";
 import { loadManifest } from "../manifest";
 import {
@@ -80,12 +80,14 @@ export function registerSearch(program: Command): void {
       const query = queryParts.join(" ");
       const terms = splitTerms(query);
 
-      const project = projectRoot();
-      const manifest = await loadManifest(project);
+      // Browse-only: works inside a project or anywhere with --data /
+      // $CAPSHELF_HOME, so a shelf can be searched before it is adopted.
+      const project = findProjectRoot();
+      const manifest = project ? await loadManifest(project) : null;
       const dataRepo = await resolveDataRepo({
         override: globalOpts(cmd).data,
         manifest,
-        project,
+        project: project ?? undefined,
       });
       await assertIsGitRepo(dataRepo);
 

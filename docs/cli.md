@@ -18,6 +18,11 @@ find the nearest project root, like git/npm/cargo. It does not fall back to Git
 roots. `init` acts on the current directory (no upward discovery), so it creates
 `.capshelf/` exactly where it is run.
 
+The read-only browse commands — `ls`, `search`, `show` — are the exception:
+they also run outside any project when a data repo is given via `--data` or
+`$CAPSHELF_HOME`, so a shelf can be evaluated before it is adopted. Inside a
+project they use its binding and show install/tracking status as usual.
+
 Claude also loads personal skills from `~/.claude/skills/<name>`. If a personal
 skill has the same name as a project-managed skill, Claude will use the personal
 skill first. Capshelf does not manage the personal copy, but `init`, `add`,
