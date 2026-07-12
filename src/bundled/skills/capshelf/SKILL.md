@@ -7,7 +7,7 @@ description: Use the capshelf CLI to manage shared skills, settings, and MCP con
 
 This project uses **capshelf** to track shared Claude Code / Codex config (skills, settings fragments, MCP configs) pulled from a **data repo**. When the user asks to add, remove, discover, edit, or update shared config, use the `capshelf` CLI. **Do not hand-edit** `.capshelf/capshelf.json` or `.capshelf/capshelf.lock.json` — they are tool-managed.
 
-Run project commands from the project root: the directory containing `.capshelf/capshelf.json`. Capshelf does not walk upward from subdirectories.
+Run project commands from anywhere inside a capshelf project — the directory containing `.capshelf/capshelf.json`, or any subdirectory of it (capshelf walks upward to find the root, like git). `init` acts on the current directory, not a discovered parent.
 
 ## The agent decision loop
 

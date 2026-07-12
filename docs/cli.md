@@ -12,9 +12,11 @@ Claude custom commands are modeled as skills. capshelf does not manage `.claude/
 
 Capshelf metadata lives under `.capshelf/` at the project root. `.capshelf/capshelf.json` and `.capshelf/capshelf.lock.json` are committed; `.capshelf/local.json` and `.capshelf/local.lock.json` are gitignored by `.capshelf/.gitignore` and store the per-machine data repo path plus local-only item intent and pins. By default, skills are installed as real directories under `.agents/skills/<name>` and exposed to Claude through per-skill symlinks at `.claude/skills/<name>`. Use `capshelf init --claude-only` only when a project should install directly under `.claude/` without `.agents` symlinks.
 
-Project commands must be run from the project root, the directory containing
-`.capshelf/capshelf.json`. Capshelf does not walk upward from subdirectories or
-fall back to Git roots. `init` creates `.capshelf/` in the current directory.
+Project commands can be run from the project root — the directory containing
+`.capshelf/capshelf.json` — or any subdirectory of it: capshelf walks upward to
+find the nearest project root, like git/npm/cargo. It does not fall back to Git
+roots. `init` acts on the current directory (no upward discovery), so it creates
+`.capshelf/` exactly where it is run.
 
 Claude also loads personal skills from `~/.claude/skills/<name>`. If a personal
 skill has the same name as a project-managed skill, Claude will use the personal

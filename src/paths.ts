@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import {
   LOCAL_LOCK_FILE,
@@ -43,11 +43,21 @@ export function normalizePath(
 }
 
 export function projectRoot(cwd: string = process.cwd()): string {
-  const project = resolve(cwd);
-  if (existsSync(manifestPath(project))) return project;
+  // Walk up to the nearest ancestor that is a capshelf project, like git/npm/
+  // cargo find their root — so commands work from any subdirectory, not only
+  // the exact project directory. `init` stays cwd-only (initProjectRoot).
+  const start = resolve(cwd);
+  let dir = start;
+  for (;;) {
+    if (existsSync(manifestPath(dir))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) break; // reached the filesystem root
+    dir = parent;
+  }
   throw new Error(
-    `not a capshelf project root: ${project}\n` +
-      `  run this command from the directory containing ${METADATA_DIR}/${MANIFEST_FILE}, or initialize this directory with: ${PRODUCT_NAME} init --data <path>`,
+    `not a capshelf project: ${start}\n` +
+      `  run this from a capshelf project (a directory, or any subdirectory of one, containing ${METADATA_DIR}/${MANIFEST_FILE}),\n` +
+      `  or initialize the current directory with: ${PRODUCT_NAME} init --data <path>`,
   );
 }
 

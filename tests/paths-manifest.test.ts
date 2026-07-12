@@ -120,20 +120,21 @@ describe("path normalization", () => {
     expect(projectRoot(project)).toBe(project);
   });
 
-  test("projectRoot rejects subdirectories of a capshelf project", async () => {
+  test("projectRoot resolves up from a subdirectory of a capshelf project", async () => {
     const project = await tempDir();
     await mkdir(join(project, ".capshelf"), { recursive: true });
     await writeFile(
       join(project, ".capshelf", "capshelf.json"),
       JSON.stringify(emptyManifest()),
     );
-    const nested = join(project, "nested");
+    const nested = join(project, "nested", "deep");
     await mkdir(nested, { recursive: true });
 
-    expect(() => projectRoot(nested)).toThrow(/not a capshelf project root/);
+    // git/npm/cargo-style upward discovery: a subdirectory resolves to the root.
+    expect(projectRoot(nested)).toBe(project);
   });
 
-  test("projectRoot rejects the capshelf metadata directory itself", async () => {
+  test("projectRoot resolves up from within the capshelf metadata directory", async () => {
     const project = await tempDir();
     const metadata = join(project, ".capshelf");
     await mkdir(metadata, { recursive: true });
@@ -142,19 +143,20 @@ describe("path normalization", () => {
       JSON.stringify(emptyManifest()),
     );
 
-    expect(() => projectRoot(metadata)).toThrow(/not a capshelf project root/);
+    // .capshelf is itself a subdirectory of the project, so it resolves up too.
+    expect(projectRoot(metadata)).toBe(project);
   });
 
   test("projectRoot rejects git repos without capshelf metadata", async () => {
     const project = await tempDir();
     await mkdir(join(project, ".git"), { recursive: true });
 
-    expect(() => projectRoot(project)).toThrow(/not a capshelf project root/);
+    expect(() => projectRoot(project)).toThrow(/not a capshelf project/);
   });
 
   test("projectRoot rejects uninitialized directories", async () => {
     const dir = await tempDir();
-    expect(() => projectRoot(dir)).toThrow(/not a capshelf project root/);
+    expect(() => projectRoot(dir)).toThrow(/not a capshelf project/);
   });
 
   test("resolves root metadata and install mode directories", async () => {

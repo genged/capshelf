@@ -132,9 +132,9 @@ describe("cli integration", () => {
     ).toBe(false);
   });
 
-  test("project commands require running from the capshelf project root", async () => {
-    const project = await tempRepo("capshelf-root-only-project-");
-    const dataRepo = await tempRepo("capshelf-root-only-data-");
+  test("project commands resolve from any subdirectory, and fail only outside a project", async () => {
+    const project = await tempRepo("capshelf-root-discovery-project-");
+    const dataRepo = await tempRepo("capshelf-root-discovery-data-");
     const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
     const init = Bun.spawnSync({
@@ -146,30 +146,28 @@ describe("cli integration", () => {
     });
     expect(init.exitCode).toBe(0);
 
-    await mkdir(join(project, "nested"), { recursive: true });
+    // A nested subdirectory resolves up to the project root (git-style).
+    await mkdir(join(project, "nested", "deep"), { recursive: true });
     const fromNested = Bun.spawnSync({
       cmd: [process.execPath, cli, "status"],
-      cwd: join(project, "nested"),
+      cwd: join(project, "nested", "deep"),
       env: process.env,
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect(fromNested.exitCode).toBe(1);
-    expect(fromNested.stderr.toString()).toContain(
-      "not a capshelf project root",
-    );
+    expect(fromNested.exitCode).toBe(0);
 
-    const fromMetadata = Bun.spawnSync({
+    // Outside any project it still fails with a clear message.
+    const outside = await tempDir("capshelf-root-discovery-outside-");
+    const fromOutside = Bun.spawnSync({
       cmd: [process.execPath, cli, "status"],
-      cwd: join(project, ".capshelf"),
+      cwd: outside,
       env: process.env,
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect(fromMetadata.exitCode).toBe(1);
-    expect(fromMetadata.stderr.toString()).toContain(
-      "not a capshelf project root",
-    );
+    expect(fromOutside.exitCode).toBe(1);
+    expect(fromOutside.stderr.toString()).toContain("not a capshelf project");
   });
 
   test("self-update --check reports through the CLI with Homebrew metadata", async () => {

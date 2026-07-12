@@ -27,9 +27,9 @@ The lockfile is the safety boundary. Data items are pinned by content hash and
 the last data-repo commit that touched that item path. System items are bundled
 inside the CLI and pinned by content hash plus CLI version.
 
-Project commands run only from the project root, the directory containing
-`.capshelf/capshelf.json`. `init` creates `.capshelf/` in the current
-directory.
+Project commands run from the project root, the directory containing
+`.capshelf/capshelf.json`, or any subdirectory of it (capshelf walks upward to
+find the root, like git). `init` creates `.capshelf/` in the current directory.
 
 ## Mental Model
 
