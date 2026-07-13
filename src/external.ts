@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { z } from "zod";
+import { parseJsonc } from "./json-fragments";
 
 export type ClaudePluginScope = "managed" | "user" | "project" | "local";
 
@@ -126,8 +127,10 @@ async function readClaudePluginsFromSettings(settings: {
 }): Promise<ExternalClaudePlugin[]> {
   if (!existsSync(settings.path)) return [];
 
+  // settings.json is JSONC — parse tolerantly so a commented file (which Claude
+  // Code accepts) doesn't crash status/plugin scanning.
   const parsed = ClaudeSettingsSchema.parse(
-    JSON.parse(await readFile(settings.path, "utf-8")),
+    parseJsonc(await readFile(settings.path, "utf-8")),
   );
   return parseEnabledPlugins(parsed.enabledPlugins).map(({ id, enabled }) => {
     const { name, marketplace } = splitPluginId(id);

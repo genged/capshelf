@@ -264,13 +264,15 @@ Deterministic, boring:
 |---|---|
 | objects/tables | recursive merge |
 | arrays | concat in manifest order with deterministic dedupe |
-| scalars | last-fragment-wins |
+| scalars | identical across fragments merges; a genuine conflict is refused |
 
 The existing generated output is the local base. On `add`, `apply`, `update`,
 `rm`, and `revert`, capshelf removes the old managed contribution, keeps local
 values that were not contributed by the old fragment set, then merges the newly
 locked managed contribution on top. It refuses unmanaged scalar or shape
-collisions instead of overwriting project-local values.
+collisions instead of overwriting project-local values, and refuses two
+fragments that set the same key to conflicting scalar values instead of
+resolving them silently by manifest order.
 
 ## Versioning: content-hash + last-touching-commit
 

@@ -702,8 +702,13 @@ Generated outputs preserve unmanaged project-local values. On reconciliation,
 capshelf removes the old managed contribution, keeps local values, detects
 unmanaged scalar or shape collisions, and then merges the newly locked fragments.
 Arrays concatenate with deterministic dedupe; objects and TOML tables merge
-recursively; scalars are last-fragment-wins. TOML comments in rewritten
-`.codex/config.toml` are not preserved. TOML date/time values are rejected in
+recursively. Two fragments that set the same scalar to *different* values are
+refused (naming both fragments) rather than resolved silently by manifest
+order; identical values and mergeable arrays/objects are fine. JSON outputs
+(`settings.json`, `.mcp.json`) are read as JSONC (comments and trailing commas
+tolerated), but a managed rewrite serializes plain JSON — comments are not
+preserved, and capshelf warns when it drops them. TOML comments in rewritten
+`.codex/config.toml` are likewise not preserved. TOML date/time values are rejected in
 fragment sources: capshelf's merge and hash pipeline round-trips values through
 JSON, which cannot preserve TOML date types (a local date would silently become
 a string or an offset date-time on re-emit).

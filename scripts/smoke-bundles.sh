@@ -27,10 +27,11 @@ printf '%s\n' 'write go tests' > "$DATA/skills/go-test-writer/SKILL.md"
 printf '%s\n' 'quick review' > "$DATA/skills/quick-review/SKILL.md"
 printf '%s\n' 'conflicts-with: [skills/security-review]' \
   > "$DATA/skills/quick-review/.capshelf.yml"
-# SHARED proves bundle-order fragment merge: last fragment wins.
-printf '%s\n' '{ "env": { "BASE": "1", "SHARED": "base" } }' \
+# Two bundled settings fragments contribute to the same output; disjoint keys
+# merge cleanly. (Conflicting scalars are refused, not silently last-write-win.)
+printf '%s\n' '{ "env": { "BASE": "1" } }' \
   > "$DATA/settings/permissions-base/settings.json"
-printf '%s\n' '{ "env": { "GO": "1", "SHARED": "go" } }' \
+printf '%s\n' '{ "env": { "GO": "1" } }' \
   > "$DATA/settings/permissions-go/settings.json"
 printf '%s\n' '{ "mcpServers": { "github": { "command": "github-mcp" } } }' \
   > "$DATA/mcp/github/claude.json"
@@ -78,9 +79,9 @@ for member in skills/security-review skills/go-test-writer \
 done
 assert_fixed_not_contains 'go-backend' "$TMP/here.txt"
 (cd "$A" && "${CLI[@]}" status --strict >/dev/null)
-# permissions-go is listed after permissions-base, so its SHARED value wins.
-assert_fixed_contains '"SHARED": "go"' "$A/.claude/settings.json"
+# Both fragments' env entries merge into the output.
 assert_fixed_contains '"BASE": "1"' "$A/.claude/settings.json"
+assert_fixed_contains '"GO": "1"' "$A/.claude/settings.json"
 
 # --- 5. re-run: converges, lock byte-identical (no pin bump) ---
 cp "$A/.capshelf/capshelf.lock.json" "$TMP/lock-after-add.json"
