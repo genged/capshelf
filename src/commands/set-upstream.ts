@@ -2,6 +2,7 @@ import type { Command } from "commander";
 import { normalizeRemoteUrl } from "../git";
 import { loadManifest, saveManifest } from "../manifest";
 import { projectRoot } from "../paths";
+import { PreconditionError } from "../errors";
 
 interface SetUpstreamOptions {
   json?: boolean;
@@ -16,7 +17,9 @@ export function registerSetUpstream(program: Command): void {
     .option("--json", "output JSON")
     .action(async (url: string, opts: SetUpstreamOptions) => {
       const normalized = normalizeRemoteUrl(url);
-      if (!normalized) throw new Error(`unsupported git remote URL: ${url}`);
+      if (!normalized) {
+        throw new PreconditionError(`unsupported git remote URL: ${url}`);
+      }
 
       const project = projectRoot();
       const manifest = await loadManifest(project);

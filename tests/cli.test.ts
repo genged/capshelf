@@ -190,6 +190,56 @@ describe("cli integration", () => {
     }
   });
 
+  test("--json emits a JSON error envelope with the typed exit code", async () => {
+    const outside = await tempDir("capshelf-json-error-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, cli, "status", "--json"],
+      cwd: outside,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // "not a capshelf project" is a precondition (exit 3), and --json means an
+    // agent gets a parseable envelope on stderr, not prose.
+    expect(result.exitCode).toBe(3);
+    const envelope = JSON.parse(result.stderr.toString());
+    expect(envelope.error.exitCode).toBe(3);
+    expect(envelope.error.message).toContain("not a capshelf project");
+    // Human channel is untouched — no bare ✗ prose leaked into the JSON.
+    expect(result.stderr.toString()).not.toContain("✗");
+  });
+
+  test("keep-local refuses an item with no divergence", async () => {
+    const project = await tempRepo("capshelf-keeplocal-project-");
+    const dataRepo = await tempRepo("capshelf-keeplocal-data-");
+    const skill = join(dataRepo, "skills", "greet");
+    await mkdir(skill, { recursive: true });
+    await writeFile(join(skill, "SKILL.md"), "name: greet\n---\nhi\n");
+    await $`git -C ${dataRepo} add -A`.quiet();
+    await $`git -C ${dataRepo} commit -qm seed`.quiet();
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+    const run = (args: string[]) =>
+      Bun.spawnSync({
+        cmd: [process.execPath, cli, "--data", dataRepo, ...args],
+        cwd: project,
+        env: process.env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+    expect(run(["init", "--no-upstream"]).exitCode).toBe(0);
+    expect(run(["add", "skills/greet"]).exitCode).toBe(0);
+
+    // Freshly added: installed content matches the lock, so there is no drift
+    // to accept — keep-local must refuse rather than silently marking it local.
+    const kept = run(["keep-local", "skills/greet"]);
+    expect(kept.exitCode).toBe(3);
+    expect(kept.stderr.toString()).toContain("no local divergence");
+  });
+
   test("self-update --check reports through the CLI with Homebrew metadata", async () => {
     const home = await tempDir("capshelf-self-update-home-");
     const bin = await tempDir("capshelf-self-update-bin-");
@@ -276,7 +326,7 @@ describe("cli integration", () => {
       stderr: "pipe",
     });
 
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(3);
     expect(result.stderr.toString()).toContain(
       "--upstream and --no-upstream cannot be used together",
     );
@@ -533,7 +583,7 @@ describe("cli integration", () => {
 
     // file:// is rejected as a committed upstream even when it matches the
     // bootstrap URL, since --upstream writes the manifest.
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(3);
     expect(result.stderr.toString()).toContain(
       `unsupported git remote URL: ${url}`,
     );
@@ -599,7 +649,7 @@ describe("cli integration", () => {
       stderr: "pipe",
     });
 
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(3);
     expect(result.stderr.toString()).toContain(
       "unsupported git remote URL: file:///tmp/some/mirror",
     );

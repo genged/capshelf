@@ -369,7 +369,9 @@ async function updateDataTarget(
 
   if (isFragmentItemKind(parsed.kind)) {
     if (scope === "local") {
-      throw new Error(`--local is not supported for ${parsed.kind} fragments`);
+      throw new PreconditionError(
+        `--local is not supported for ${parsed.kind} fragments`,
+      );
     }
     const targets = await touchedFragmentTargetsForItem(
       ctx.dataRepo,

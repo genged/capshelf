@@ -282,7 +282,7 @@ function assertUpstreamFlagMatchesBootstrap(
   if (typeof opts.upstream !== "string") return;
   const normalized = normalizeRemoteUrl(opts.upstream);
   if (!normalized) {
-    throw new Error(`unsupported git remote URL: ${opts.upstream}`);
+    throw new PreconditionError(`unsupported git remote URL: ${opts.upstream}`);
   }
   if (normalized === bootstrapUpstream) return;
   throw new UpstreamVerificationError(
@@ -298,13 +298,17 @@ async function initUpstream(
   opts: InitOptions,
 ): Promise<string | null> {
   if (hasUpstreamFlag() && hasNoUpstreamFlag()) {
-    throw new Error("--upstream and --no-upstream cannot be used together");
+    throw new PreconditionError(
+      "--upstream and --no-upstream cannot be used together",
+    );
   }
   if (opts.upstream === false) return null;
   if (opts.upstream) {
     const normalized = normalizeRemoteUrl(opts.upstream);
     if (!normalized)
-      throw new Error(`unsupported git remote URL: ${opts.upstream}`);
+      throw new PreconditionError(
+        `unsupported git remote URL: ${opts.upstream}`,
+      );
     await assertDataRepoOriginMatchesUpstream(dataRepo, normalized);
     return normalized;
   }

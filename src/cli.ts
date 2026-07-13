@@ -72,25 +72,49 @@ export async function main(argv: string[] = process.argv): Promise<number> {
     await program.parseAsync(argv);
     return 0;
   } catch (err) {
-    return reportError(err);
+    // Options are parsed before the action runs, so by the time an action
+    // throws --json (if present) is on argv. Match the command's own output
+    // channel: agents that pass --json get a JSON error envelope, not prose.
+    return reportError(err, argv.includes("--json"));
   }
 }
 
-function reportError(err: unknown): number {
-  if (err instanceof CliError) {
-    // A message-less CliError (ResultExitError) only sets the code; the command
-    // has already printed its own report.
-    if (err.message) {
-      console.error(`✗ ${err.message}`);
-      if (err.hint) console.error(`  ${err.hint}`);
+function reportError(err: unknown, json: boolean): number {
+  const exitCode = err instanceof CliError ? err.exitCode : 1;
+  // ResultExitError carries no message: the command already printed its own
+  // report (its --json payload is on stdout), so the boundary prints nothing.
+  const message =
+    err instanceof CliError
+      ? err.message
+      : err instanceof Error
+        ? err.message
+        : String(err);
+  const hint = err instanceof CliError ? err.hint : undefined;
+
+  if (json) {
+    if (message) {
+      console.error(
+        JSON.stringify({
+          error: { message, ...(hint && { hint }), exitCode },
+        }),
+      );
     }
-    return err.exitCode;
+    return exitCode;
   }
-  console.error(`✗ ${err instanceof Error ? err.message : String(err)}`);
-  if (process.env.CAPSHELF_DEBUG && err instanceof Error && err.stack) {
+
+  if (message) {
+    console.error(`✗ ${message}`);
+    if (hint) console.error(`  ${hint}`);
+  }
+  if (
+    !(err instanceof CliError) &&
+    process.env.CAPSHELF_DEBUG &&
+    err instanceof Error &&
+    err.stack
+  ) {
     console.error(err.stack);
   }
-  return 1;
+  return exitCode;
 }
 
 if (import.meta.main) {

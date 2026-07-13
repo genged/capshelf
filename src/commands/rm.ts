@@ -83,7 +83,7 @@ export function registerRm(program: Command): void {
       }
 
       if (dataKeys.length > 1) {
-        throw new Error(
+        throw new PreconditionError(
           `ambiguous item "${ref.name}": found ${dataKeys
             .map((key) => {
               const parsed = parseLockKey(key);

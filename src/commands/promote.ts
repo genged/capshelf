@@ -438,7 +438,7 @@ export async function syncTrackedIntoDataRepo(
     opts.scope ?? "project",
   );
   if (!snapshot) {
-    throw new Error(
+    throw new PreconditionError(
       `installed files are missing: ${installedPath(project, kind, name)}`,
     );
   }

@@ -111,11 +111,13 @@ export async function buildStatusDiff(
         target,
       });
       firstPath ||= plan.path;
+      // locked is the baseline (---), current is the new side (+++), so a local
+      // edit reads as an addition, matching `git diff` convention.
       const text = await unifiedDiff(
-        `${plan.path} (current)`,
         `${plan.path} (locked)`,
-        plan.currentText ?? "",
+        `${plan.path} (current)`,
         plan.plannedText ?? "",
+        plan.currentText ?? "",
       );
       if (text) parts.push(text);
     }
@@ -325,11 +327,12 @@ async function diffFileMaps(
   for (const file of files) {
     const currentText = current.get(file)?.toString("utf-8") ?? "";
     const expectedText = expected.get(file)?.toString("utf-8") ?? "";
+    // locked is the baseline (---), current the new side (+++) — see above.
     const text = await unifiedDiff(
-      `${file} (current)`,
       `${file} (locked ${item})`,
-      currentText,
+      `${file} (current)`,
       expectedText,
+      currentText,
     );
     if (text) parts.push(text);
   }

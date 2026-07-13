@@ -3,6 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { homeRelative, findProjectRoot } from "../paths";
 import { resolveDataRepo } from "../data-repo";
+import { PreconditionError } from "../errors";
 import { loadManifest } from "../manifest";
 import {
   ITEM_KINDS,
@@ -72,7 +73,7 @@ export function registerSearch(program: Command): void {
     .option("--json", "output JSON")
     .action(async (queryParts: string[], opts: SearchOptions, cmd: Command) => {
       if (opts.kind && !ITEM_KINDS.includes(opts.kind as ItemKind)) {
-        throw new Error(
+        throw new PreconditionError(
           `invalid kind "${opts.kind}"; must be one of ${ITEM_KINDS.join(", ")}`,
         );
       }

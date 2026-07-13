@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { findProjectRoot, projectRoot, homeRelative } from "../paths";
 import { resolveDataRepo, resolveDataRepoOptional } from "../data-repo";
+import { PreconditionError } from "../errors";
 import { CLI_VERSION } from "../bundled";
 import {
   isFragmentItemKind,
@@ -58,7 +59,7 @@ export function registerLs(program: Command): void {
     )
     .action(async (opts: LsOptions, cmd: Command) => {
       if (opts.kind && !ITEM_KINDS.includes(opts.kind as ItemKind)) {
-        throw new Error(
+        throw new PreconditionError(
           `invalid kind "${opts.kind}"; must be one of ${ITEM_KINDS.join(", ")}`,
         );
       }

@@ -10,7 +10,7 @@ import type { Manifest } from "../manifest";
 import type { ItemKind } from "../master";
 import { isFragmentItemKind, shaOfItem } from "../master";
 import { installedPath, shaOfInstalled, parseLockKey } from "../installed";
-import { ResultExitError } from "../errors";
+import { PreconditionError, ResultExitError } from "../errors";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
 import { globalOpts } from "../global-options";
 import { parseItemRef } from "../item-ref";
@@ -69,7 +69,9 @@ export function registerStatus(program: Command): void {
         const project = projectRoot();
         const manifest = await loadManifest(project);
         if (opts.project && opts.local) {
-          throw new Error("--project and --local cannot be used together");
+          throw new PreconditionError(
+            "--project and --local cannot be used together",
+          );
         }
         const projectLock = await loadLock(project);
         const localLock = await loadLocalLock(project);

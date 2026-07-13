@@ -132,7 +132,7 @@ export function registerShare(program: Command): void {
       }
       if (scope === "local") {
         if (!localConfig) {
-          throw new Error(
+          throw new PreconditionError(
             "no local manifest exists; run capshelf init or capshelf set-data first",
           );
         }

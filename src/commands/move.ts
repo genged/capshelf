@@ -151,7 +151,7 @@ function resolveMoveItem(
     });
   }
   if (resolved.size > 1) {
-    throw new Error(
+    throw new PreconditionError(
       `ambiguous item "${ref.name}": found ${[...resolved.keys()].join(", ")}; use kind/name`,
     );
   }

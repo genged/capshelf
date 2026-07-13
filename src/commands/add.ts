@@ -282,7 +282,7 @@ export async function installDataItem(
 
   if (ctx.local) {
     if (!localConfig) {
-      throw new Error(
+      throw new PreconditionError(
         "no local manifest exists; run capshelf init or capshelf set-data first",
       );
     }
