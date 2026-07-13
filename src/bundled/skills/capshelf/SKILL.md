@@ -82,11 +82,11 @@ Always check the current surface with `capshelf --help` and `capshelf <verb> --h
 
 | verb | purpose |
 |---|---|
-| `init` / `set-data` / `set-upstream` / `data-path` | bind the project to a data repo |
+| `init` / `data bind` / `data upstream` / `data path` | bind the project to a data repo (the data-repo verbs live under `capshelf data <sub>`; old `set-data`/`set-upstream`/`data-path`/`sync-data` still work as aliases) |
 | `ls` / `show` / `search` / `status` | inspect and discover (all support `--json`) |
 | `add` / `rm` / `apply` / `update` / `revert` | converge the project on its locks |
 | `share` / `move` / `promote` / `keep-local` | flow content and intent between project and data repo |
-| `sync-data [--json]` | explicitly fetch the bound data repo's origin and fast-forward when safe; the **only** capshelf command that touches the network besides the `init` bootstrap clone and `self-update`. Run it when the user asks to pick up teammates' changes, then `capshelf status` to see `update_available` |
+| `data sync [--json]` | explicitly fetch the bound data repo's origin and fast-forward when safe; the **only** capshelf command that touches the network besides the `init` bootstrap clone and `self-update`. Run it when the user asks to pick up teammates' changes, then `capshelf status` to see `update_available` |
 | `get-path` | print the editable path for an item |
 | `self-update` | update the Homebrew-installed binary (not project pins) |
 

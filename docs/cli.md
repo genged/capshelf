@@ -40,10 +40,10 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
 | verb | purpose | availability |
 |---|---|---|
 | `init` | scaffold a new project (manifest + lock, install bundled system items, bind data repo) | implemented |
-| `set-data <path>` | bind this machine to the project's data repo clone via `.capshelf/local.json` | implemented |
-| `set-upstream <url>` | write the committed `dataRepoUpstream` URL in `.capshelf/capshelf.json` | implemented |
-| `data-path` | print the resolved local data repo path; `--json` includes the path and the normalized upstream (`null` when absent) | implemented |
-| `sync-data` | explicitly fetch the bound data repo's `origin` and fast-forward the current branch when provably safe; the only capshelf command that performs network I/O besides the `init --data <url>` bootstrap clone and `self-update` | implemented |
+| `data bind <path>` | bind this machine to the project's data repo clone via `.capshelf/local.json` (alias: `set-data`) | implemented |
+| `data upstream <url>` | write the committed `dataRepoUpstream` URL in `.capshelf/capshelf.json` (alias: `set-upstream`) | implemented |
+| `data path` | print the resolved local data repo path; `--json` includes the path and the normalized upstream (`null` when absent) (alias: `data-path`) | implemented |
+| `data sync` | explicitly fetch the bound data repo's `origin` and fast-forward the current branch when provably safe; the only capshelf command that performs network I/O besides the `init --data <url>` bootstrap clone and `self-update` (alias: `sync-data`) | implemented |
 | `ls` | list items in master (default) or in this project (`--here`); shows descriptions and `#tags` from item metadata; `--tag` filters; appends a `bundles/` section for data-repo bundles | implemented |
 | `show <item>` | print metadata + content for one item, including `requires`/`conflicts-with` install state; `--json` always carries a `metadata` object; `show bundles/<name>` previews bundle membership with per-member install state | implemented |
 | `search <query...>` | search available items (data repo + system) and bundles by name, tags, description, and content; supports `--kind` and `--json`; zero matches exit 0 | implemented |

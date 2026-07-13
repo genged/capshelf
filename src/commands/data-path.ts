@@ -1,4 +1,4 @@
-import type { Command } from "commander";
+import { Command } from "commander";
 import { globalOpts } from "../global-options";
 import { loadManifest } from "../manifest";
 import { projectRoot } from "../paths";
@@ -9,9 +9,8 @@ interface DataPathOptions {
   json?: boolean;
 }
 
-export function registerDataPath(program: Command): void {
-  program
-    .command("data-path")
+export function buildDataPath(name: string): Command {
+  return new Command(name)
     .description(
       "print the resolved local data repo path for this project (read-only)",
     )

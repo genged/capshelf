@@ -190,6 +190,35 @@ describe("cli integration", () => {
     }
   });
 
+  test("data-repo commands are grouped under `data`, old names hidden aliases", async () => {
+    const dataRepo = await tempRepo("capshelf-datagrp-data-");
+    const project = await tempRepo("capshelf-datagrp-project-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+    const run = (args: string[]) =>
+      Bun.spawnSync({
+        cmd: [process.execPath, cli, "--data", dataRepo, ...args],
+        cwd: project,
+        env: process.env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+    expect(run(["init", "--no-upstream"]).exitCode).toBe(0);
+
+    // Grouped form and the legacy top-level alias behave identically.
+    const grouped = run(["data", "path"]);
+    const legacy = run(["data-path"]);
+    expect(grouped.exitCode).toBe(0);
+    expect(legacy.exitCode).toBe(0);
+    expect(grouped.stdout.toString()).toBe(legacy.stdout.toString());
+
+    // Help shows the `data` group but hides the legacy top-level names.
+    const help = run(["--help"]).stdout.toString();
+    expect(help).toContain("data ");
+    expect(help).not.toContain("data-path");
+    expect(help).not.toContain("set-data");
+  });
+
   test("--json emits a JSON error envelope with the typed exit code", async () => {
     const outside = await tempDir("capshelf-json-error-");
     const cli = join(import.meta.dir, "..", "src", "cli.ts");

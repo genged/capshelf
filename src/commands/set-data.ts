@@ -1,4 +1,4 @@
-import type { Command } from "commander";
+import { Command } from "commander";
 import { isAbsolute, resolve } from "node:path";
 import { isRemoteDataUrl } from "../data-bootstrap";
 import { assertIsGitRepo } from "../git";
@@ -15,10 +15,10 @@ interface SetDataOptions {
   json?: boolean;
 }
 
-export function registerSetData(program: Command): void {
-  program
-    .command("set-data <path>")
+export function buildSetData(name: string): Command {
+  return new Command(name)
     .description("bind this project to a local clone of its data repo")
+    .argument("<path>")
     .option("--json", "output JSON")
     .action(async (path: string, opts: SetDataOptions) => {
       if (isRemoteDataUrl(path)) {

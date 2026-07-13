@@ -16,10 +16,10 @@ import { registerUpdate } from "./commands/update";
 import { registerPromote } from "./commands/promote";
 import { registerShare } from "./commands/share";
 import { registerMove } from "./commands/move";
-import { registerSetData } from "./commands/set-data";
-import { registerSetUpstream } from "./commands/set-upstream";
-import { registerDataPath } from "./commands/data-path";
-import { registerSyncData } from "./commands/sync-data";
+import { buildSetData } from "./commands/set-data";
+import { buildSetUpstream } from "./commands/set-upstream";
+import { buildDataPath } from "./commands/data-path";
+import { buildSyncData } from "./commands/sync-data";
 import { registerSelfUpdate } from "./commands/self-update";
 import { CliError } from "./errors";
 import { HOME_ENV, PRODUCT_NAME } from "./identity";
@@ -51,11 +51,23 @@ registerUpdate(program);
 registerPromote(program);
 registerShare(program);
 registerMove(program);
-registerSetData(program);
-registerSetUpstream(program);
-registerDataPath(program);
-registerSyncData(program);
 registerSelfUpdate(program);
+
+// Data-repo commands are grouped under `capshelf data <sub>` for a consistent,
+// scannable surface. The original top-level names (set-data/data-path/
+// sync-data/set-upstream) remain as hidden aliases so existing scripts and
+// muscle memory keep working.
+const data = program
+  .command("data")
+  .description("bind, inspect, sync, or set the upstream of the data repo");
+data.addCommand(buildSetData("bind"));
+data.addCommand(buildDataPath("path"));
+data.addCommand(buildSyncData("sync"));
+data.addCommand(buildSetUpstream("upstream"));
+program.addCommand(buildSetData("set-data"), { hidden: true });
+program.addCommand(buildDataPath("data-path"), { hidden: true });
+program.addCommand(buildSyncData("sync-data"), { hidden: true });
+program.addCommand(buildSetUpstream("set-upstream"), { hidden: true });
 
 /**
  * Parse argv and run the matched command, returning the process exit code.
