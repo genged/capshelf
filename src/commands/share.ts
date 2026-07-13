@@ -3,25 +3,13 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { homeRelative, projectRoot } from "../paths";
-import { resolveDataRepo } from "../data-repo";
+import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import { loadManifest, saveManifest, type Manifest } from "../manifest";
 import { addManifestName } from "../manifest";
-import {
-  dataKey,
-  loadLocalLock,
-  loadLock,
-  saveLocalLock,
-  saveLock,
-} from "../lock";
+import { dataKey, loadLock, saveLocalLock, saveLock } from "../lock";
 import type { DataLockEntry, Lock } from "../lock";
 import { isSystemItemName } from "../bundled";
-import {
-  assertIsGitRepo,
-  assertRepoClean,
-  commitInRepo,
-  originRemoteUrl,
-} from "../git";
-import { globalOpts } from "../global-options";
+import { assertRepoClean, commitInRepo, originRemoteUrl } from "../git";
 import { PreconditionError } from "../errors";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import {
@@ -121,17 +109,10 @@ export function registerShare(program: Command): void {
         );
       }
 
-      const project = projectRoot();
-      const manifest = await loadManifest(project);
-      const projectLock = await loadLock(project);
-      const localLock = await loadLocalLock(project);
+      const { project, manifest, projectLock, localLock } =
+        await loadProjectContext({ cmd });
       const localConfig = await loadLocalConfig(project);
-      const dataRepo = await resolveDataRepo({
-        override: globalOpts(cmd).data,
-        manifest,
-        project,
-      });
-      await assertIsGitRepo(dataRepo);
+      const dataRepo = await resolveProjectDataRepo(project, manifest, cmd);
 
       const repoRelPath = `${kind}/${name}`;
       if (existsSync(join(dataRepo, repoRelPath))) {
@@ -271,12 +252,7 @@ async function shareFragment(
   const projectLock = await loadLock(project);
   const oldManifest = structuredClone(manifest);
   const oldLock = structuredClone(projectLock);
-  const dataRepo = await resolveDataRepo({
-    override: globalOpts(cmd).data,
-    manifest,
-    project,
-  });
-  await assertIsGitRepo(dataRepo);
+  const dataRepo = await resolveProjectDataRepo(project, manifest, cmd);
   await assertRepoClean(dataRepo);
 
   const candidates = fragmentSourceCandidates(kind, name).filter((candidate) =>

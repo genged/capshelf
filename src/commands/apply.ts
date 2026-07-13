@@ -1,12 +1,7 @@
 import type { Command } from "commander";
-import { projectRoot } from "../paths";
-import { resolveDataRepo } from "../data-repo";
-import { loadManifest } from "../manifest";
-import { loadLocalLock, loadLock } from "../lock";
+import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import { parseLockKey } from "../installed";
-import { assertIsGitRepo } from "../git";
 import { assertNoScopeCollisions } from "../status-core";
-import { globalOpts } from "../global-options";
 import { PreconditionError, ResultExitError } from "../errors";
 import { resolveTrackedTarget } from "../targets";
 import type { ScopedTarget } from "../targets";
@@ -64,10 +59,8 @@ export function registerApply(program: Command): void {
     .option("--json", "output JSON")
     .action(
       async (itemRef: string | undefined, opts: ApplyOptions, cmd: Command) => {
-        const project = projectRoot();
-        const manifest = await loadManifest(project);
-        const projectLock = await loadLock(project);
-        const localLock = await loadLocalLock(project);
+        const { project, manifest, projectLock, localLock } =
+          await loadProjectContext({ cmd });
         assertNoScopeCollisions(projectLock, localLock, "applying");
 
         let targets: ScopedTarget[];
@@ -100,13 +93,8 @@ export function registerApply(program: Command): void {
           (target) => parseLockKey(target.key).source === "data",
         );
         const dataRepo = needsDataRepo
-          ? await resolveDataRepo({
-              override: globalOpts(cmd).data,
-              manifest,
-              project,
-            })
+          ? await resolveProjectDataRepo(project, manifest, cmd)
           : undefined;
-        if (dataRepo) await assertIsGitRepo(dataRepo);
 
         const externalSkills = await listSkillsShSkills(project);
         const externalSkillNames = new Set(externalSkills.map((s) => s.name));

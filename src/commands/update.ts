@@ -1,19 +1,12 @@
 import type { Command } from "commander";
-import { projectRoot } from "../paths";
-import { resolveDataRepo } from "../data-repo";
-import { loadManifest } from "../manifest";
+import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import type { Manifest } from "../manifest";
-import { loadLocalLock, loadLock, saveLocalLock, saveLock } from "../lock";
+import { saveLocalLock, saveLock } from "../lock";
 import type { DataLockEntry, LockEntry, SystemLockEntry } from "../lock";
 import { parseLockKey } from "../installed";
 import { isFragmentItemKind, shaOfGitVisibleItem } from "../master";
-import {
-  assertIsGitRepo,
-  assertRepoClean,
-  lastTouchingContentCommit,
-} from "../git";
+import { assertRepoClean, lastTouchingContentCommit } from "../git";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
-import { globalOpts } from "../global-options";
 import { PreconditionError, ResultExitError } from "../errors";
 import { findMasterItemByRef } from "../item-ref";
 import { resolveTrackedTarget } from "../targets";
@@ -87,10 +80,8 @@ export function registerUpdate(program: Command): void {
         opts: UpdateOptions,
         cmd: Command,
       ) => {
-        const project = projectRoot();
-        const manifest = await loadManifest(project);
-        const projectLock = await loadLock(project);
-        const localLock = await loadLocalLock(project);
+        const { project, manifest, projectLock, localLock } =
+          await loadProjectContext({ cmd });
         const refs = itemRefs ?? [];
         const explicit = refs.length > 0;
 
@@ -124,14 +115,9 @@ export function registerUpdate(program: Command): void {
           return entry.source === "data" && entry.local !== true;
         });
         const dataRepo = needsDataRepo
-          ? await resolveDataRepo({
-              override: globalOpts(cmd).data,
-              manifest,
-              project,
-            })
+          ? await resolveProjectDataRepo(project, manifest, cmd)
           : undefined;
         if (dataRepo) {
-          await assertIsGitRepo(dataRepo);
           await assertRepoClean(dataRepo);
         }
 
