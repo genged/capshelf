@@ -1,13 +1,10 @@
 import type { Command } from "commander";
-import { projectRoot, resolveDataRepo } from "../paths";
-import { loadManifest } from "../manifest";
-import { loadLocalLock, loadLock } from "../lock";
+import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import { parseLockKey } from "../installed";
-import { assertIsGitRepo } from "../git";
 import { assertNoScopeCollisions } from "../status-core";
-import { globalOpts } from "../cli";
-import { NotFoundError, PreconditionError, ResultExitError } from "../errors";
-import { lockKeysForRef, parseItemRef } from "../item-ref";
+import { PreconditionError, ResultExitError } from "../errors";
+import { resolveTrackedTarget } from "../targets";
+import type { ScopedTarget } from "../targets";
 import { materializeLockEntry } from "../materialize";
 import type { MaterializeResult } from "../materialize";
 import {
@@ -62,44 +59,21 @@ export function registerApply(program: Command): void {
     .option("--json", "output JSON")
     .action(
       async (itemRef: string | undefined, opts: ApplyOptions, cmd: Command) => {
-        const project = projectRoot();
-        const manifest = await loadManifest(project);
-        const projectLock = await loadLock(project);
-        const localLock = await loadLocalLock(project);
+        const { project, manifest, projectLock, localLock } =
+          await loadProjectContext({ cmd });
         assertNoScopeCollisions(projectLock, localLock, "applying");
 
-        let targets: Array<{ scope: "project" | "local"; key: string }>;
+        let targets: ScopedTarget[];
         if (itemRef) {
-          const ref = parseItemRef(itemRef);
-          const matches = [
-            ...lockKeysForRef(projectLock, ref).map((key) => ({
-              scope: "project" as const,
-              key,
-            })),
-            ...lockKeysForRef(localLock, ref).map((key) => ({
-              scope: "local" as const,
-              key,
-            })),
-          ].filter((target) => !opts.local || target.scope === "local");
-          if (matches.length === 0) {
-            if (ref.kind === undefined || ref.kind === "skills") {
-              const external = await findSkillsShSkill(project, ref.name);
-              if (external) {
-                throw new PreconditionError(
-                  `not applying skills/${ref.name} — ${skillsShConflictMessage(external)}`,
-                );
-              }
-            }
-            throw new NotFoundError(`not tracked in this project: ${itemRef}`);
-          }
-          if (matches.length > 1) {
-            throw new Error(
-              `ambiguous item "${ref.name}": found in ${matches
-                .map((target) => `${target.scope}/${target.key}`)
-                .join(", ")}; use --local or remove one owner`,
-            );
-          }
-          targets = matches;
+          targets = [
+            await resolveTrackedTarget(
+              project,
+              projectLock,
+              localLock,
+              itemRef,
+              { local: opts.local, verb: "applying" },
+            ),
+          ];
         } else {
           targets = [
             ...(!opts.local
@@ -119,13 +93,8 @@ export function registerApply(program: Command): void {
           (target) => parseLockKey(target.key).source === "data",
         );
         const dataRepo = needsDataRepo
-          ? await resolveDataRepo({
-              override: globalOpts(cmd).data,
-              manifest,
-              project,
-            })
+          ? await resolveProjectDataRepo(project, manifest, cmd)
           : undefined;
-        if (dataRepo) await assertIsGitRepo(dataRepo);
 
         const externalSkills = await listSkillsShSkills(project);
         const externalSkillNames = new Set(externalSkills.map((s) => s.name));

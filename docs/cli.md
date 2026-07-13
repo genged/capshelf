@@ -12,9 +12,16 @@ Claude custom commands are modeled as skills. capshelf does not manage `.claude/
 
 Capshelf metadata lives under `.capshelf/` at the project root. `.capshelf/capshelf.json` and `.capshelf/capshelf.lock.json` are committed; `.capshelf/local.json` and `.capshelf/local.lock.json` are gitignored by `.capshelf/.gitignore` and store the per-machine data repo path plus local-only item intent and pins. By default, skills are installed as real directories under `.agents/skills/<name>` and exposed to Claude through per-skill symlinks at `.claude/skills/<name>`. Use `capshelf init --claude-only` only when a project should install directly under `.claude/` without `.agents` symlinks.
 
-Project commands must be run from the project root, the directory containing
-`.capshelf/capshelf.json`. Capshelf does not walk upward from subdirectories or
-fall back to Git roots. `init` creates `.capshelf/` in the current directory.
+Project commands can be run from the project root — the directory containing
+`.capshelf/capshelf.json` — or any subdirectory of it: capshelf walks upward to
+find the nearest project root, like git/npm/cargo. It does not fall back to Git
+roots. `init` acts on the current directory (no upward discovery), so it creates
+`.capshelf/` exactly where it is run.
+
+The read-only browse commands — `ls`, `search`, `show` — are the exception:
+they also run outside any project when a data repo is given via `--data` or
+`$CAPSHELF_HOME`, so a shelf can be evaluated before it is adopted. Inside a
+project they use its binding and show install/tracking status as usual.
 
 Claude also loads personal skills from `~/.claude/skills/<name>`. If a personal
 skill has the same name as a project-managed skill, Claude will use the personal
@@ -40,10 +47,10 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
 | verb | purpose | availability |
 |---|---|---|
 | `init` | scaffold a new project (manifest + lock, install bundled system items, bind data repo) | implemented |
-| `set-data <path>` | bind this machine to the project's data repo clone via `.capshelf/local.json` | implemented |
-| `set-upstream <url>` | write the committed `dataRepoUpstream` URL in `.capshelf/capshelf.json` | implemented |
-| `data-path` | print the resolved local data repo path; `--json` includes the path and the normalized upstream (`null` when absent) | implemented |
-| `sync-data` | explicitly fetch the bound data repo's `origin` and fast-forward the current branch when provably safe; the only capshelf command that performs network I/O besides the `init --data <url>` bootstrap clone and `self-update` | implemented |
+| `data bind <path>` | bind this machine to the project's data repo clone via `.capshelf/local.json` (alias: `set-data`) | implemented |
+| `data upstream <url>` | write the committed `dataRepoUpstream` URL in `.capshelf/capshelf.json` (alias: `set-upstream`) | implemented |
+| `data path` | print the resolved local data repo path; `--json` includes the path and the normalized upstream (`null` when absent) (alias: `data-path`) | implemented |
+| `data sync` | explicitly fetch the bound data repo's `origin` and fast-forward the current branch when provably safe; the only capshelf command that performs network I/O besides the `init --data <url>` bootstrap clone and `self-update` (alias: `sync-data`) | implemented |
 | `ls` | list items in master plus user-level runtime skills by default, in this project (`--here`), or user-level runtime skills only (`--user`); master/project listings show descriptions and `#tags` from item metadata; `--tag` filters master/project listings; appends a `bundles/` section for data-repo bundles | implemented |
 | `show <item>` | print metadata + content for one item, including `requires`/`conflicts-with` install state; `--json` always carries a `metadata` object; `show bundles/<name>` previews bundle membership with per-member install state | implemented |
 | `search <query...>` | search available items (data repo + system) and bundles by name, tags, description, and content; supports `--kind` and `--json`; zero matches exit 0 | implemented |
@@ -438,7 +445,7 @@ this command closes.
 | 3 | conflict (promote would clobber, operation rejected on a system item, untracked target would be overwritten, path is managed by skills.sh, `add` refused by a `conflicts-with` declaration, a bundle failed preflight or its file is malformed/unsupported, or `sync-data` cannot run in the current configuration: detached HEAD, no tracking ref, no origin) |
 | 4 | drift detected (for `status --strict`), upstream verification failed, or `sync-data` needs human action (diverged history, or upstream commits blocked by a dirty worktree) |
 | 5 | reserved for future unmet-requires checks (`add` with unmet `requires` warns and exits 0) |
-| 6 | reserved for data repo not configured |
+| 6 | no data repo configured for this project (pass `--data`, set `.capshelf/local.json`, or `$CAPSHELF_HOME`) |
 | 7 | required dependency missing (`git` not found on `PATH`) |
 
 Initializing with no portable data repo origin:
@@ -725,8 +732,13 @@ Generated outputs preserve unmanaged project-local values. On reconciliation,
 capshelf removes the old managed contribution, keeps local values, detects
 unmanaged scalar or shape collisions, and then merges the newly locked fragments.
 Arrays concatenate with deterministic dedupe; objects and TOML tables merge
-recursively; scalars are last-fragment-wins. TOML comments in rewritten
-`.codex/config.toml` are not preserved. TOML date/time values are rejected in
+recursively. Two fragments that set the same scalar to *different* values are
+refused (naming both fragments) rather than resolved silently by manifest
+order; identical values and mergeable arrays/objects are fine. JSON outputs
+(`settings.json`, `.mcp.json`) are read as JSONC (comments and trailing commas
+tolerated), but a managed rewrite serializes plain JSON — comments are not
+preserved, and capshelf warns when it drops them. TOML comments in rewritten
+`.codex/config.toml` are likewise not preserved. TOML date/time values are rejected in
 fragment sources: capshelf's merge and hash pipeline round-trips values through
 JSON, which cannot preserve TOML date types (a local date would silently become
 a string or an offset date-time on re-emit).

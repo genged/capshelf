@@ -1,11 +1,6 @@
 import type { Command } from "commander";
-import {
-  DEFAULT_INSTALL_MODE,
-  homeRelative,
-  initProjectRoot,
-  resolveDataRepo,
-  resolveDataRepoOptional,
-} from "../paths";
+import { DEFAULT_INSTALL_MODE, homeRelative, initProjectRoot } from "../paths";
+import { resolveDataRepo, resolveDataRepoOptional } from "../data-repo";
 import type { InstallMode } from "../paths";
 import { ensureClone, resolveDataInput } from "../data-bootstrap";
 import { LOCAL_CONFIG_FILE, METADATA_DIR } from "../identity";
@@ -19,7 +14,7 @@ import {
 } from "../bundled";
 import { findInstallConflict } from "../installed";
 import { assertIsGitRepo, normalizeRemoteUrl, originRemoteUrl } from "../git";
-import { globalOpts } from "../cli";
+import { globalOpts } from "../global-options";
 import { PreconditionError } from "../errors";
 import { saveLocalConfig } from "../local-config";
 import { UpstreamVerificationError } from "../upstream-check";
@@ -287,7 +282,7 @@ function assertUpstreamFlagMatchesBootstrap(
   if (typeof opts.upstream !== "string") return;
   const normalized = normalizeRemoteUrl(opts.upstream);
   if (!normalized) {
-    throw new Error(`unsupported git remote URL: ${opts.upstream}`);
+    throw new PreconditionError(`unsupported git remote URL: ${opts.upstream}`);
   }
   if (normalized === bootstrapUpstream) return;
   throw new UpstreamVerificationError(
@@ -303,13 +298,17 @@ async function initUpstream(
   opts: InitOptions,
 ): Promise<string | null> {
   if (hasUpstreamFlag() && hasNoUpstreamFlag()) {
-    throw new Error("--upstream and --no-upstream cannot be used together");
+    throw new PreconditionError(
+      "--upstream and --no-upstream cannot be used together",
+    );
   }
   if (opts.upstream === false) return null;
   if (opts.upstream) {
     const normalized = normalizeRemoteUrl(opts.upstream);
     if (!normalized)
-      throw new Error(`unsupported git remote URL: ${opts.upstream}`);
+      throw new PreconditionError(
+        `unsupported git remote URL: ${opts.upstream}`,
+      );
     await assertDataRepoOriginMatchesUpstream(dataRepo, normalized);
     return normalized;
   }

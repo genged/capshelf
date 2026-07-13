@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { projectRoot } from "../paths";
 import { loadLocalLock, loadLock, saveLocalLock, saveLock } from "../lock";
-import { parseLockKey } from "../installed";
+import { parseLockKey, shaOfInstalled } from "../installed";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
 import { isFragmentItemKind } from "../master";
 import { NotFoundError, PreconditionError } from "../errors";
@@ -35,7 +35,7 @@ export function registerKeepLocal(program: Command): void {
       );
 
       if (dataKeys.length > 1) {
-        throw new Error(
+        throw new PreconditionError(
           `ambiguous item "${ref.name}": found ${dataKeys
             .map((key) => {
               const parsed = parseLockKey(key);
@@ -61,6 +61,23 @@ export function registerKeepLocal(program: Command): void {
       const entry = lock.items[key]!;
       if (entry.source !== "data") {
         throw new Error(`expected data lock entry for ${key}`);
+      }
+
+      // keep-local accepts *existing* drift as intentional. Marking a
+      // non-drifted item silently flips it to "≠ kept local" and suppresses
+      // future update signals for no reason — refuse instead of doing that.
+      if (!opts.unset && entry.local !== true) {
+        const installedSha = await shaOfInstalled(
+          project,
+          parsed.kind,
+          parsed.name,
+        );
+        if (installedSha === entry.sha) {
+          throw new PreconditionError(
+            `${parsed.kind}/${parsed.name} has no local divergence — its installed content matches the lock, so there is nothing to keep.\n` +
+              "  keep-local marks existing drift as intentional; edit the files first, or use --unset to clear a marker.",
+          );
+        }
       }
 
       if (opts.unset) {

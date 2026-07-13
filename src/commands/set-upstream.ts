@@ -1,22 +1,25 @@
-import type { Command } from "commander";
+import { Command } from "commander";
 import { normalizeRemoteUrl } from "../git";
 import { loadManifest, saveManifest } from "../manifest";
 import { projectRoot } from "../paths";
+import { PreconditionError } from "../errors";
 
 interface SetUpstreamOptions {
   json?: boolean;
 }
 
-export function registerSetUpstream(program: Command): void {
-  program
-    .command("set-upstream <url>")
+export function buildSetUpstream(name: string): Command {
+  return new Command(name)
     .description(
       "set the committed dataRepoUpstream URL in .capshelf/capshelf.json",
     )
+    .argument("<url>")
     .option("--json", "output JSON")
     .action(async (url: string, opts: SetUpstreamOptions) => {
       const normalized = normalizeRemoteUrl(url);
-      if (!normalized) throw new Error(`unsupported git remote URL: ${url}`);
+      if (!normalized) {
+        throw new PreconditionError(`unsupported git remote URL: ${url}`);
+      }
 
       const project = projectRoot();
       const manifest = await loadManifest(project);

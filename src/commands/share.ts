@@ -1,26 +1,16 @@
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
+import { atomicWriteFile } from "../fs-utils";
 import { dirname, join, relative } from "node:path";
-import { homeRelative, projectRoot, resolveDataRepo } from "../paths";
+import { homeRelative, projectRoot } from "../paths";
+import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import { loadManifest, saveManifest, type Manifest } from "../manifest";
 import { addManifestName } from "../manifest";
-import {
-  dataKey,
-  loadLocalLock,
-  loadLock,
-  saveLocalLock,
-  saveLock,
-} from "../lock";
+import { dataKey, loadLock, saveLocalLock, saveLock } from "../lock";
 import type { DataLockEntry, Lock } from "../lock";
 import { isSystemItemName } from "../bundled";
-import {
-  assertIsGitRepo,
-  assertRepoClean,
-  commitInRepo,
-  originRemoteUrl,
-} from "../git";
-import { globalOpts } from "../cli";
+import { assertRepoClean, commitInRepo, originRemoteUrl } from "../git";
 import { PreconditionError } from "../errors";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import {
@@ -120,17 +110,10 @@ export function registerShare(program: Command): void {
         );
       }
 
-      const project = projectRoot();
-      const manifest = await loadManifest(project);
-      const projectLock = await loadLock(project);
-      const localLock = await loadLocalLock(project);
+      const { project, manifest, projectLock, localLock } =
+        await loadProjectContext({ cmd });
       const localConfig = await loadLocalConfig(project);
-      const dataRepo = await resolveDataRepo({
-        override: globalOpts(cmd).data,
-        manifest,
-        project,
-      });
-      await assertIsGitRepo(dataRepo);
+      const dataRepo = await resolveProjectDataRepo(project, manifest, cmd);
 
       const repoRelPath = `${kind}/${name}`;
       if (existsSync(join(dataRepo, repoRelPath))) {
@@ -149,7 +132,7 @@ export function registerShare(program: Command): void {
       }
       if (scope === "local") {
         if (!localConfig) {
-          throw new Error(
+          throw new PreconditionError(
             "no local manifest exists; run capshelf init or capshelf set-data first",
           );
         }
@@ -270,12 +253,7 @@ async function shareFragment(
   const projectLock = await loadLock(project);
   const oldManifest = structuredClone(manifest);
   const oldLock = structuredClone(projectLock);
-  const dataRepo = await resolveDataRepo({
-    override: globalOpts(cmd).data,
-    manifest,
-    project,
-  });
-  await assertIsGitRepo(dataRepo);
+  const dataRepo = await resolveProjectDataRepo(project, manifest, cmd);
   await assertRepoClean(dataRepo);
 
   const candidates = fragmentSourceCandidates(kind, name).filter((candidate) =>
@@ -314,7 +292,7 @@ async function shareFragment(
   for (const { source, raw } of pending) {
     const canonicalPath = join(dataRepo, ...source.relPath.split("/"));
     await mkdir(dirname(canonicalPath), { recursive: true });
-    await writeFile(canonicalPath, raw);
+    await atomicWriteFile(canonicalPath, raw);
   }
   const sourceCommit = await commitInRepo(
     dataRepo,

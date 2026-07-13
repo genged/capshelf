@@ -1,6 +1,8 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
+import { atomicWriteFile } from "./fs-utils";
 import { dirname, join, relative } from "node:path";
+import { hashNamedContents } from "./content-hash";
 import {
   cloneConfig,
   configPathLabel,
@@ -15,6 +17,7 @@ import {
 } from "./config-values";
 import {
   isSyntheticOnlyClaudeSettings,
+  jsonTextHasComments,
   normalizeClaudeSettingsOutput,
   parseJsonConfigObject,
   stringifyJsonConfig,
@@ -81,6 +84,8 @@ export interface FragmentOutputPlan {
   currentSha: string | null;
   plannedSha: string | null;
   changed: boolean;
+  /** The existing JSON file had comments a managed rewrite will not preserve. */
+  commentLoss: boolean;
 }
 
 export interface ApplyFragmentOutputOptions {
@@ -251,14 +256,14 @@ export async function shaOfFragmentItem(
   name: string,
 ): Promise<string> {
   const relPaths = await canonicalItemRelPaths(dataRepo, kind, name);
-  const hasher = new Bun.CryptoHasher("sha256");
-  for (const relPath of relPaths.sort()) {
-    hasher.update(relPath);
-    hasher.update("\0");
-    hasher.update(await readFile(join(dataRepo, ...relPath.split("/"))));
-    hasher.update("\0");
-  }
-  return hasher.digest("hex").slice(0, 12);
+  return hashNamedContents(
+    await Promise.all(
+      relPaths.map(async (relPath) => ({
+        name: relPath,
+        content: await readFile(join(dataRepo, ...relPath.split("/"))),
+      })),
+    ),
+  );
 }
 
 /**
@@ -277,23 +282,18 @@ export async function shaOfFragmentItemAtCommit(
   name: string,
   commit: string,
 ): Promise<string> {
-  const present: Array<[string, Buffer]> = [];
+  const present: Array<{ name: string; content: Buffer }> = [];
   for (const relPath of allCanonicalItemRelPaths(kind, name)) {
     try {
-      present.push([relPath, await showAtCommit(dataRepo, commit, relPath)]);
+      present.push({
+        name: relPath,
+        content: await showAtCommit(dataRepo, commit, relPath),
+      });
     } catch {
       // Absent at that commit; participates as absent in the file map.
     }
   }
-  const hasher = new Bun.CryptoHasher("sha256");
-  present.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  for (const [relPath, content] of present) {
-    hasher.update(relPath);
-    hasher.update("\0");
-    hasher.update(content);
-    hasher.update("\0");
-  }
-  return hasher.digest("hex").slice(0, 12);
+  return hashNamedContents(present);
 }
 
 export async function lastTouchingFragmentCommit(
@@ -373,6 +373,7 @@ export async function planFragmentOutput(
   const baseValue = removeManagedValue(current, oldManaged) ?? {};
   let base = isPlainConfigObject(baseValue) ? baseValue : {};
   if (spec.isSyntheticOnly(base)) base = {};
+  assertNoFragmentConflicts(path, nextFragments);
   assertNoUnmanagedCollisions(path, base, nextFragments);
 
   const planned = spec.normalizeOutput(
@@ -388,6 +389,13 @@ export async function planFragmentOutput(
       ? currentText !== null
       : stableStringifyConfig(current) !== stableStringifyConfig(planned);
 
+  const commentLoss =
+    spec.format === "json" &&
+    changed &&
+    plannedText !== null &&
+    currentText !== null &&
+    jsonTextHasComments(currentText);
+
   return {
     target: opts.target,
     path,
@@ -396,6 +404,7 @@ export async function planFragmentOutput(
     currentSha,
     plannedSha,
     changed,
+    commentLoss,
   };
 }
 
@@ -404,11 +413,16 @@ export async function applyFragmentOutput(
 ): Promise<FragmentApplyResult> {
   const plan = await planFragmentOutput(opts);
   if (!opts.dryRun && plan.changed) {
+    if (plan.commentLoss) {
+      console.error(
+        `⚠ ${relative(opts.project, plan.path)}: comments in this file are not preserved when capshelf rewrites its managed content`,
+      );
+    }
     if (plan.plannedText === null) {
       await rm(plan.path, { force: true });
     } else {
       await mkdir(dirname(plan.path), { recursive: true });
-      await writeFile(plan.path, plan.plannedText);
+      await atomicWriteFile(plan.path, plan.plannedText);
     }
   }
   return {
@@ -702,6 +716,58 @@ function assertNoUnmanagedCollisions(
     throw new Error(
       `cannot reconcile ${outputPath}: ${fragment.source.relPath} would overwrite unmanaged local value at ${configPathLabel(collision.path)} (${collision.localKind} vs ${collision.managedKind}). Edit the local output, change fragment order, or remove the conflicting fragment.`,
     );
+  }
+}
+
+/**
+ * Refuse when two fragments targeting the same output set the same key to
+ * conflicting values. Without this, mergeConfigValues resolves scalar
+ * conflicts as last-write-wins (config-values.ts), so the output would depend
+ * silently on manifest order. Arrays (concat+dedupe), deep-mergeable objects,
+ * and identical values are not conflicts and merge as before.
+ */
+function assertNoFragmentConflicts(
+  outputPath: string,
+  fragments: FragmentValue[],
+): void {
+  let mergedSoFar: ConfigObject = {};
+  // Dotted leaf path -> the fragment that set it, so a conflict names both.
+  const provenance = new Map<string, string>();
+  for (const fragment of fragments) {
+    const collision = findUnmanagedCollision(mergedSoFar, fragment.value);
+    if (collision) {
+      const earlier =
+        provenance.get(collision.path.join(" ")) ?? "an earlier fragment";
+      throw new Error(
+        `cannot reconcile ${outputPath}: ${fragment.source.relPath} and ${earlier} set a conflicting value at ${configPathLabel(collision.path)} (${collision.managedKind} vs ${collision.localKind}). Two fragments set the same key to different values — reconcile or remove one.`,
+      );
+    }
+    recordLeafProvenance(
+      fragment.value,
+      fragment.source.relPath,
+      [],
+      provenance,
+    );
+    mergedSoFar = mergeConfigValues(
+      mergedSoFar,
+      fragment.value,
+    ) as ConfigObject;
+  }
+}
+
+function recordLeafProvenance(
+  value: ConfigObject,
+  source: string,
+  prefix: string[],
+  out: Map<string, string>,
+): void {
+  for (const [key, child] of Object.entries(value)) {
+    const path = [...prefix, key];
+    if (isPlainConfigObject(child)) {
+      recordLeafProvenance(child, source, path, out);
+    } else {
+      out.set(path.join(" "), source);
+    }
   }
 }
 

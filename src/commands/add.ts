@@ -1,16 +1,11 @@
 import type { Command } from "commander";
 import { join } from "node:path";
-import { homeRelative, projectRoot, resolveDataRepo } from "../paths";
-import { loadManifest, saveManifest } from "../manifest";
+import { homeRelative } from "../paths";
+import { loadProjectContext } from "../command-context";
+import { saveManifest } from "../manifest";
 import type { Manifest } from "../manifest";
 import { addManifestName, manifestNamesForKind } from "../manifest";
-import {
-  loadLocalLock,
-  loadLock,
-  saveLocalLock,
-  saveLock,
-  dataKey,
-} from "../lock";
+import { saveLocalLock, saveLock, dataKey } from "../lock";
 import type { Lock } from "../lock";
 import {
   isFragmentItemKind,
@@ -28,12 +23,7 @@ import { NotFoundError, PreconditionError, ResultExitError } from "../errors";
 import { copyItemIntoProject, targetDir } from "../sync";
 import { findInstallConflict } from "../installed";
 import { isSystemItemName } from "../bundled";
-import {
-  assertIsGitRepo,
-  assertPathClean,
-  lastTouchingContentCommit,
-} from "../git";
-import { globalOpts } from "../cli";
+import { assertPathClean, lastTouchingContentCommit } from "../git";
 import { findMasterItemByRef, parseItemRef } from "../item-ref";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import {
@@ -178,23 +168,12 @@ async function loadAddContext(
   opts: AddOptions,
   cmd: Command,
 ): Promise<AddContext> {
-  const project = projectRoot();
-  const manifest = await loadManifest(project);
-  const projectLock = await loadLock(project);
-  const localLock = await loadLocalLock(project);
-  const localConfig = await loadLocalConfig(project);
-  const dataRepo = await resolveDataRepo({
-    override: globalOpts(cmd).data,
-    manifest,
-    project,
-  });
-  await assertIsGitRepo(dataRepo);
+  const base = await loadProjectContext({ cmd, dataRepo: true });
+  const localConfig = await loadLocalConfig(base.project);
   return {
-    project,
-    dataRepo,
-    manifest,
-    projectLock,
-    localLock,
+    ...base,
+    // dataRepo: true guarantees it is resolved.
+    dataRepo: base.dataRepo!,
     localConfig,
     local: opts.local ?? false,
   };
@@ -303,7 +282,7 @@ export async function installDataItem(
 
   if (ctx.local) {
     if (!localConfig) {
-      throw new Error(
+      throw new PreconditionError(
         "no local manifest exists; run capshelf init or capshelf set-data first",
       );
     }

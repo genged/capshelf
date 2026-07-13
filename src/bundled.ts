@@ -1,4 +1,5 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
+import { atomicWriteFile } from "./fs-utils";
 import { dirname, join } from "node:path";
 import bootstrap from "./bundled/skills/capshelf/SKILL.md" with {
   type: "text",
@@ -80,7 +81,7 @@ export async function installSystemItem(
   for (const f of item.files) {
     const filePath = join(dst, f.relPath);
     await mkdir(dirname(filePath), { recursive: true });
-    await writeFile(filePath, f.content);
+    await atomicWriteFile(filePath, f.content);
   }
   await ensureInstallAliases(project, item.kind, item.name, mode);
   return dst;

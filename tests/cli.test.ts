@@ -132,9 +132,9 @@ describe("cli integration", () => {
     ).toBe(false);
   });
 
-  test("project commands require running from the capshelf project root", async () => {
-    const project = await tempRepo("capshelf-root-only-project-");
-    const dataRepo = await tempRepo("capshelf-root-only-data-");
+  test("project commands resolve from any subdirectory, and fail only outside a project", async () => {
+    const project = await tempRepo("capshelf-root-discovery-project-");
+    const dataRepo = await tempRepo("capshelf-root-discovery-data-");
     const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
     const init = Bun.spawnSync({
@@ -146,30 +146,127 @@ describe("cli integration", () => {
     });
     expect(init.exitCode).toBe(0);
 
-    await mkdir(join(project, "nested"), { recursive: true });
+    // A nested subdirectory resolves up to the project root (git-style).
+    await mkdir(join(project, "nested", "deep"), { recursive: true });
     const fromNested = Bun.spawnSync({
       cmd: [process.execPath, cli, "status"],
-      cwd: join(project, "nested"),
+      cwd: join(project, "nested", "deep"),
       env: process.env,
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect(fromNested.exitCode).toBe(1);
-    expect(fromNested.stderr.toString()).toContain(
-      "not a capshelf project root",
-    );
+    expect(fromNested.exitCode).toBe(0);
 
-    const fromMetadata = Bun.spawnSync({
+    // Outside any project it still fails with a clear message.
+    const outside = await tempDir("capshelf-root-discovery-outside-");
+    const fromOutside = Bun.spawnSync({
       cmd: [process.execPath, cli, "status"],
-      cwd: join(project, ".capshelf"),
+      cwd: outside,
       env: process.env,
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect(fromMetadata.exitCode).toBe(1);
-    expect(fromMetadata.stderr.toString()).toContain(
-      "not a capshelf project root",
-    );
+    expect(fromOutside.exitCode).toBe(3);
+    expect(fromOutside.stderr.toString()).toContain("not a capshelf project");
+  });
+
+  test("read-only browse commands run with --data outside any project", async () => {
+    const dataRepo = await tempRepo("capshelf-browse-data-");
+    const outside = await tempDir("capshelf-browse-outside-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+
+    // ls/search/show are read-only inspection of the shelf, so a user can
+    // evaluate a data repo before adopting it into any project.
+    for (const args of [["ls"], ["search", "skill"]]) {
+      const result = Bun.spawnSync({
+        cmd: [process.execPath, cli, "--data", dataRepo, ...args],
+        cwd: outside,
+        env: process.env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect({ args, code: result.exitCode }).toEqual({ args, code: 0 });
+      expect(result.stderr.toString()).not.toContain("not a capshelf project");
+    }
+  });
+
+  test("data-repo commands are grouped under `data`, old names hidden aliases", async () => {
+    const dataRepo = await tempRepo("capshelf-datagrp-data-");
+    const project = await tempRepo("capshelf-datagrp-project-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+    const run = (args: string[]) =>
+      Bun.spawnSync({
+        cmd: [process.execPath, cli, "--data", dataRepo, ...args],
+        cwd: project,
+        env: process.env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+    expect(run(["init", "--no-upstream"]).exitCode).toBe(0);
+
+    // Grouped form and the legacy top-level alias behave identically.
+    const grouped = run(["data", "path"]);
+    const legacy = run(["data-path"]);
+    expect(grouped.exitCode).toBe(0);
+    expect(legacy.exitCode).toBe(0);
+    expect(grouped.stdout.toString()).toBe(legacy.stdout.toString());
+
+    // Help shows the `data` group but hides the legacy top-level names.
+    const help = run(["--help"]).stdout.toString();
+    expect(help).toContain("data ");
+    expect(help).not.toContain("data-path");
+    expect(help).not.toContain("set-data");
+  });
+
+  test("--json emits a JSON error envelope with the typed exit code", async () => {
+    const outside = await tempDir("capshelf-json-error-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, cli, "status", "--json"],
+      cwd: outside,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // "not a capshelf project" is a precondition (exit 3), and --json means an
+    // agent gets a parseable envelope on stderr, not prose.
+    expect(result.exitCode).toBe(3);
+    const envelope = JSON.parse(result.stderr.toString());
+    expect(envelope.error.exitCode).toBe(3);
+    expect(envelope.error.message).toContain("not a capshelf project");
+    // Human channel is untouched — no bare ✗ prose leaked into the JSON.
+    expect(result.stderr.toString()).not.toContain("✗");
+  });
+
+  test("keep-local refuses an item with no divergence", async () => {
+    const project = await tempRepo("capshelf-keeplocal-project-");
+    const dataRepo = await tempRepo("capshelf-keeplocal-data-");
+    const skill = join(dataRepo, "skills", "greet");
+    await mkdir(skill, { recursive: true });
+    await writeFile(join(skill, "SKILL.md"), "name: greet\n---\nhi\n");
+    await $`git -C ${dataRepo} add -A`.quiet();
+    await $`git -C ${dataRepo} commit -qm seed`.quiet();
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+    const run = (args: string[]) =>
+      Bun.spawnSync({
+        cmd: [process.execPath, cli, "--data", dataRepo, ...args],
+        cwd: project,
+        env: process.env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+    expect(run(["init", "--no-upstream"]).exitCode).toBe(0);
+    expect(run(["add", "skills/greet"]).exitCode).toBe(0);
+
+    // Freshly added: installed content matches the lock, so there is no drift
+    // to accept — keep-local must refuse rather than silently marking it local.
+    const kept = run(["keep-local", "skills/greet"]);
+    expect(kept.exitCode).toBe(3);
+    expect(kept.stderr.toString()).toContain("no local divergence");
   });
 
   test("self-update --check reports through the CLI with Homebrew metadata", async () => {
@@ -258,7 +355,7 @@ describe("cli integration", () => {
       stderr: "pipe",
     });
 
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(3);
     expect(result.stderr.toString()).toContain(
       "--upstream and --no-upstream cannot be used together",
     );
@@ -515,7 +612,7 @@ describe("cli integration", () => {
 
     // file:// is rejected as a committed upstream even when it matches the
     // bootstrap URL, since --upstream writes the manifest.
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(3);
     expect(result.stderr.toString()).toContain(
       `unsupported git remote URL: ${url}`,
     );
@@ -581,7 +678,7 @@ describe("cli integration", () => {
       stderr: "pipe",
     });
 
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(3);
     expect(result.stderr.toString()).toContain(
       "unsupported git remote URL: file:///tmp/some/mirror",
     );
@@ -869,7 +966,7 @@ describe("cli integration", () => {
       stderr: "pipe",
     });
 
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(6);
     const stderr = result.stderr.toString();
     expect(stderr).toContain(
       "upstream (per .capshelf/capshelf.json): https://github.com/acme/agent-config",
@@ -915,7 +1012,7 @@ describe("cli integration", () => {
       stderr: "pipe",
     });
 
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(6);
     const stderr = result.stderr.toString();
     expect(stderr).toContain(
       ".capshelf/capshelf.json does not declare dataRepoUpstream",

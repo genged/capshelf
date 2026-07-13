@@ -2,7 +2,6 @@ import { existsSync } from "node:fs";
 import { lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
-import { $ } from "bun";
 import type { Lock } from "./lock";
 import type { Manifest } from "./manifest";
 import { isMetadataSidecarPath } from "./master";
@@ -10,7 +9,7 @@ import type { ItemKind } from "./master";
 import type { ItemSource } from "./installed";
 import { installedPath } from "./installed";
 import { findSystemItem } from "./bundled";
-import { assertGitAvailable, lsTreeAtCommit, showAtCommit } from "./git";
+import { gitTry, lsTreeAtCommit, showAtCommit } from "./git";
 import { hasIgnoredDotSegment } from "./dotfiles";
 import { missingSourceCommitMessage } from "./upstream-check";
 import { gitignoreVisibleFiles } from "./gitignore";
@@ -112,11 +111,13 @@ export async function buildStatusDiff(
         target,
       });
       firstPath ||= plan.path;
+      // locked is the baseline (---), current is the new side (+++), so a local
+      // edit reads as an addition, matching `git diff` convention.
       const text = await unifiedDiff(
-        `${plan.path} (current)`,
         `${plan.path} (locked)`,
-        plan.currentText ?? "",
+        `${plan.path} (current)`,
         plan.plannedText ?? "",
+        plan.currentText ?? "",
       );
       if (text) parts.push(text);
     }
@@ -171,21 +172,21 @@ async function dataRepoDiff(
   dataRepo: string,
   relPaths: string[],
 ): Promise<string> {
-  await assertGitAvailable();
-  const result = await $`git -C ${dataRepo} diff HEAD -- ${relPaths}`
-    .quiet()
-    .nothrow();
+  const result = await gitTry(dataRepo, ["diff", "HEAD", "--", ...relPaths]);
   if (result.exitCode !== 0) {
-    throw new Error(result.stderr.toString().trim() || "git diff failed");
+    throw new Error(result.stderr || "git diff failed");
   }
   const parts = [result.stdout.toString()].filter((text) => text.length > 0);
   for (const relPath of await untrackedDataRepoFiles(dataRepo, relPaths)) {
-    const untracked =
-      await $`git -C ${dataRepo} diff --no-index -- /dev/null ${relPath}`
-        .quiet()
-        .nothrow();
+    const untracked = await gitTry(dataRepo, [
+      "diff",
+      "--no-index",
+      "--",
+      "/dev/null",
+      relPath,
+    ]);
     if (untracked.exitCode !== 0 && untracked.exitCode !== 1) {
-      throw new Error(untracked.stderr.toString().trim() || "git diff failed");
+      throw new Error(untracked.stderr || "git diff failed");
     }
     const text = untracked.stdout.toString();
     if (text.length > 0) parts.push(text);
@@ -197,12 +198,16 @@ async function untrackedDataRepoFiles(
   dataRepo: string,
   relPaths: string[],
 ): Promise<string[]> {
-  const result =
-    await $`git -C ${dataRepo} ls-files -z --others --exclude-standard -- ${relPaths}`
-      .quiet()
-      .nothrow();
+  const result = await gitTry(dataRepo, [
+    "ls-files",
+    "-z",
+    "--others",
+    "--exclude-standard",
+    "--",
+    ...relPaths,
+  ]);
   if (result.exitCode !== 0) {
-    throw new Error(result.stderr.toString().trim() || "git ls-files failed");
+    throw new Error(result.stderr || "git ls-files failed");
   }
   return result.stdout
     .toString()
@@ -322,11 +327,12 @@ async function diffFileMaps(
   for (const file of files) {
     const currentText = current.get(file)?.toString("utf-8") ?? "";
     const expectedText = expected.get(file)?.toString("utf-8") ?? "";
+    // locked is the baseline (---), current the new side (+++) — see above.
     const text = await unifiedDiff(
-      `${file} (current)`,
       `${file} (locked ${item})`,
-      currentText,
+      `${file} (current)`,
       expectedText,
+      currentText,
     );
     if (text) parts.push(text);
   }
@@ -351,7 +357,6 @@ export async function unifiedDiff(
   toText: string,
 ): Promise<string> {
   if (fromText === toText) return "";
-  await assertGitAvailable();
 
   const dir = await mkdtemp(join(tmpdir(), "capshelf-diff-"));
   const currentPath = join(dir, "current");
@@ -359,13 +364,17 @@ export async function unifiedDiff(
   try {
     await writeFile(currentPath, fromText);
     await writeFile(expectedPath, toText);
-    const result =
-      await $`git diff --no-index --unified=3 -- ${currentPath} ${expectedPath}`
-        .quiet()
-        .nothrow();
+    const result = await gitTry(null, [
+      "diff",
+      "--no-index",
+      "--unified=3",
+      "--",
+      currentPath,
+      expectedPath,
+    ]);
     if (result.exitCode === 0) return "";
     if (result.exitCode !== 1) {
-      throw new Error(result.stderr.toString().trim() || "git diff failed");
+      throw new Error(result.stderr || "git diff failed");
     }
     const text = result.stdout.toString();
     return normalizeDiffHeaders(

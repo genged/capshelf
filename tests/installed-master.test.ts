@@ -144,6 +144,44 @@ describe("installed item paths and hashes", () => {
     ).rejects.toThrow(/not a symlink/);
   });
 
+  test("installedPath refuses a destination that escapes the project root", async () => {
+    const project = await tempDir();
+    // Even if a traversal name reached installedPath directly (bypassing the
+    // manifest/lock validators), the containment invariant must reject it
+    // before any destructive rm/write uses the path.
+    expect(() => installedPath(project, "skills", "../../../evil")).toThrow(
+      /outside project/,
+    );
+  });
+
+  test("refuses to resolve a compatibility symlink that points outside the managed dir", async () => {
+    const project = await tempDir();
+    const victim = await tempDir("capshelf-victim-");
+    await mkdir(join(project, ".claude", "skills"), { recursive: true });
+    // A stray/hostile alias pointing at an unrelated directory. Materialize
+    // would rm+rewrite whatever installedPath returns, so returning the victim
+    // path here means data loss. It must throw instead.
+    await symlink(victim, join(project, ".claude", "skills", "hello"), "dir");
+
+    expect(() => installedPath(project, "skills", "hello")).toThrow(
+      /outside the managed skills dir/,
+    );
+  });
+
+  test("resolves a compatibility symlink that points at the managed dir", async () => {
+    const project = await tempDir();
+    const managed = join(project, ".agents", "skills", "hello");
+    await mkdir(managed, { recursive: true });
+    await mkdir(join(project, ".claude", "skills"), { recursive: true });
+    await symlink(
+      "../../.agents/skills/hello",
+      join(project, ".claude", "skills", "hello"),
+      "dir",
+    );
+
+    expect(installedPath(project, "skills", "hello")).toBe(managed);
+  });
+
   test("removes broken managed compatibility symlinks", async () => {
     const project = await tempDir();
     const realPath = join(project, ".agents", "skills", "hello");
@@ -317,6 +355,20 @@ describe("parseLockKey", () => {
     expect(() => parseLockKey("data/commands/hello")).toThrow(
       /unsupported lock key kind/,
     );
+  });
+
+  test("rejects traversal, absolute, and option-like names", () => {
+    // The name becomes a filesystem path segment and a git pathspec; a hostile
+    // lockfile must not be able to escape the project or data-repo item dir.
+    for (const key of [
+      "data/skills/../../etc/profile.d",
+      "data/skills/foo/../bar",
+      "data/skills//hello",
+      "data/skills/.",
+      "data/skills/-rf",
+    ]) {
+      expect(() => parseLockKey(key)).toThrow(/invalid item name/);
+    }
   });
 });
 

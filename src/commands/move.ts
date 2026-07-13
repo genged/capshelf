@@ -1,19 +1,11 @@
 import type { Command } from "commander";
-import { projectRoot, resolveDataRepo } from "../paths";
-import { loadManifest, saveManifest } from "../manifest";
-import {
-  dataKey,
-  loadLocalLock,
-  loadLock,
-  saveLocalLock,
-  saveLock,
-} from "../lock";
+import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
+import { saveManifest } from "../manifest";
+import { dataKey, saveLocalLock, saveLock } from "../lock";
 import type { Lock } from "../lock";
 import { ensureInstallAliases, parseLockKey } from "../installed";
 import { NotFoundError, PreconditionError } from "../errors";
 import { isSystemItemName } from "../bundled";
-import { assertIsGitRepo } from "../git";
-import { globalOpts } from "../cli";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
 import type { ItemKind } from "../master";
 import { isFragmentItemKind } from "../master";
@@ -51,10 +43,8 @@ export function registerMove(program: Command): void {
       }
       const to = parseMoveScope(opts.to);
 
-      const project = projectRoot();
-      const manifest = await loadManifest(project);
-      const projectLock = await loadLock(project);
-      const localLock = await loadLocalLock(project);
+      const { project, manifest, projectLock, localLock } =
+        await loadProjectContext({ cmd });
       const localConfig = await loadLocalConfig(project);
       const resolved = resolveMoveItem(ref, projectLock, localLock);
       if (!resolved) {
@@ -82,12 +72,7 @@ export function registerMove(program: Command): void {
         return;
       }
 
-      const dataRepo = await resolveDataRepo({
-        override: globalOpts(cmd).data,
-        manifest,
-        project,
-      });
-      await assertIsGitRepo(dataRepo);
+      const dataRepo = await resolveProjectDataRepo(project, manifest, cmd);
 
       const result = await moveScope(
         project,
@@ -166,7 +151,7 @@ function resolveMoveItem(
     });
   }
   if (resolved.size > 1) {
-    throw new Error(
+    throw new PreconditionError(
       `ambiguous item "${ref.name}": found ${[...resolved.keys()].join(", ")}; use kind/name`,
     );
   }

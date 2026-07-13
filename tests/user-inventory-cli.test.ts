@@ -141,7 +141,7 @@ describe("user-level inventory CLI", () => {
             "data/skills/alpha": {
               source: "data",
               sha: "abc",
-              sourceCommit: "commit",
+              sourceCommit: "abc1234",
               appliedAt: "now",
             },
           },
@@ -187,7 +187,7 @@ describe("user-level inventory CLI", () => {
             "data/skills/alpha": {
               source: "data",
               sha: "abc",
-              sourceCommit: "commit",
+              sourceCommit: "abc1234",
               appliedAt: "now",
             },
           },

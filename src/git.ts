@@ -1,8 +1,7 @@
-import { $ } from "bun";
 import { constants } from "node:fs";
 import { access, realpath } from "node:fs/promises";
 import { basename, delimiter, join, resolve } from "node:path";
-import { CliError, ExitCode } from "./errors";
+import { CliError, ExitCode, PreconditionError } from "./errors";
 
 const GIT_MISSING_MESSAGE =
   "git is required but was not found on PATH\n  install Git, then retry";
@@ -24,27 +23,79 @@ export async function assertGitAvailable(): Promise<void> {
   if (!checkedAvailable) throw new GitUnavailableError();
 }
 
+export interface GitInvocation {
+  exitCode: number;
+  stdout: Buffer;
+  /** trimmed */
+  stderr: string;
+}
+
+// Execute git with args as an explicit argv array — never a shell string. This
+// is the ONLY way capshelf runs git: Bun's `$` applies a shell-escape layer
+// that also mis-serializes some non-Latin1 strings when building argv,
+// corrupting pathspecs/refs for non-ASCII item names. Bun.spawn takes argv
+// directly and bypasses that layer. Pass repo=null for commands without -C
+// (e.g. `git clone`, `git diff --no-index`). Never throws on nonzero exit —
+// callers decide how to treat exit codes.
+export async function gitTry(
+  repo: string | null,
+  args: string[],
+): Promise<GitInvocation> {
+  await assertGitAvailable();
+  const argv = repo === null ? ["git", ...args] : ["git", "-C", repo, ...args];
+  const proc = Bun.spawn(argv, {
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  const [stdout, stderr] = await Promise.all([
+    new Response(proc.stdout).arrayBuffer().then((b) => Buffer.from(b)),
+    new Response(proc.stderr).text(),
+  ]);
+  const exitCode = await proc.exited;
+  return { exitCode, stdout, stderr: stderr.trim() };
+}
+
+// Run git and throw on nonzero exit (message = git's stderr). Returns raw
+// stdout bytes.
+export async function gitBuffer(
+  repo: string | null,
+  args: string[],
+): Promise<Buffer> {
+  const r = await gitTry(repo, args);
+  if (r.exitCode !== 0) {
+    throw new Error(r.stderr || `git ${args.join(" ")} exited ${r.exitCode}`);
+  }
+  return r.stdout;
+}
+
+// Same, decoding stdout as UTF-8 text.
+export async function gitText(
+  repo: string | null,
+  args: string[],
+): Promise<string> {
+  return (await gitBuffer(repo, args)).toString("utf-8");
+}
+
 export async function assertIsGitRepo(path: string): Promise<void> {
   await assertGitAvailable();
   if (await isGitRepo(path)) return;
-  throw new Error(
+  throw new PreconditionError(
     `not a git repository: ${path}\n  initialize with: git -C ${path} init && git -C ${path} add -A && git -C ${path} commit -m "baseline"`,
   );
 }
 
 export async function originRemoteUrl(repo: string): Promise<string | null> {
-  await assertGitAvailable();
   try {
-    return await $`git -C ${repo} remote get-url origin`.quiet().text();
+    return await gitText(repo, ["remote", "get-url", "origin"]);
   } catch {
     return null;
   }
 }
 
 export async function isGitRepo(path: string): Promise<boolean> {
-  await assertGitAvailable();
   try {
-    await $`git -C ${path} rev-parse --git-dir`.quiet();
+    await gitBuffer(path, ["rev-parse", "--git-dir"]);
     return true;
   } catch {
     return false;
@@ -52,11 +103,8 @@ export async function isGitRepo(path: string): Promise<boolean> {
 }
 
 export async function gitWorkTreeRoot(path: string): Promise<string | null> {
-  await assertGitAvailable();
   try {
-    const out = await $`git -C ${path} rev-parse --show-toplevel`
-      .quiet()
-      .text();
+    const out = await gitText(path, ["rev-parse", "--show-toplevel"]);
     return resolve(out.trim());
   } catch {
     return null;
@@ -78,9 +126,7 @@ export async function isGitWorkTreeRoot(path: string): Promise<boolean> {
 
 export async function gitInfoExcludePath(repo: string): Promise<string | null> {
   if (!(await isGitWorkTreeRoot(repo))) return null;
-  const out = await $`git -C ${repo} rev-parse --git-path info/exclude`
-    .quiet()
-    .text();
+  const out = await gitText(repo, ["rev-parse", "--git-path", "info/exclude"]);
   return resolve(repo, out.trim());
 }
 
@@ -138,7 +184,6 @@ async function tryLastTouchingCommitForPaths(
   repo: string,
   relPaths: string[],
 ): Promise<string | null> {
-  await assertGitAvailable();
   if (relPaths.length === 0) {
     throw new Error(
       "cannot compute last touching commit for an empty path list",
@@ -146,9 +191,7 @@ async function tryLastTouchingCommitForPaths(
   }
   let out: string;
   try {
-    out = await $`git -C ${repo} log -1 --format=%H -- ${relPaths}`
-      .quiet()
-      .text();
+    out = await gitText(repo, ["log", "-1", "--format=%H", "--", ...relPaths]);
   } catch {
     out = "";
   }
@@ -161,20 +204,15 @@ export async function showAtCommit(
   commit: string,
   relPath: string,
 ): Promise<Buffer> {
-  await assertGitAvailable();
-  const result = await $`git -C ${repo} show ${commit}:${relPath}`
-    .quiet()
-    .arrayBuffer();
-  return Buffer.from(result);
+  return await gitBuffer(repo, ["show", `${commit}:${relPath}`]);
 }
 
 export async function commitExists(
   repo: string,
   commit: string,
 ): Promise<boolean> {
-  await assertGitAvailable();
   try {
-    await $`git -C ${repo} cat-file -e ${commit}^{commit}`.quiet();
+    await gitBuffer(repo, ["cat-file", "-e", `${commit}^{commit}`]);
     return true;
   } catch {
     return false;
@@ -207,16 +245,23 @@ export async function lsTreeEntriesAtCommit(
   commit: string,
   relPath: string,
 ): Promise<GitTreeEntry[]> {
-  await assertGitAvailable();
-  const out = await $`git -C ${repo} ls-tree -r ${commit} -- ${relPath}`
-    .quiet()
-    .text();
+  // -z terminates records with NUL and, crucially, emits pathnames verbatim
+  // instead of git's default octal-quoting. Without it, filenames with
+  // non-ASCII/control/quote characters come back quoted (e.g. "caf\303\251")
+  // and every downstream `git show <commit>:<path>` fails to find them.
+  const out = await gitText(repo, [
+    "ls-tree",
+    "-r",
+    "-z",
+    commit,
+    "--",
+    relPath,
+  ]);
   return out
-    .trim()
-    .split("\n")
+    .split("\0")
     .filter((s) => s.length > 0)
     .map((line) => {
-      const match = /^(\d{6})\s+(\S+)\s+([0-9a-f]+)\t(.+)$/.exec(line);
+      const match = /^(\d{6}) (\S+) ([0-9a-f]+)\t([\s\S]+)$/.exec(line);
       if (!match) throw new Error(`unexpected git ls-tree output: ${line}`);
       return {
         mode: match[1]!,
@@ -236,12 +281,16 @@ export async function gitVisibleFilesUnderPath(
   repo: string,
   relPath: string,
 ): Promise<string[]> {
-  await assertGitAvailable();
   const normalized = normalizeGitPath(relPath);
-  const out =
-    await $`git -C ${repo} ls-files -z --cached --others --exclude-standard -- ${normalized}`
-      .quiet()
-      .text();
+  const out = await gitText(repo, [
+    "ls-files",
+    "-z",
+    "--cached",
+    "--others",
+    "--exclude-standard",
+    "--",
+    normalized,
+  ]);
   return out
     .split("\0")
     .filter((path) => path.length > 0)
@@ -253,13 +302,10 @@ export async function statusPorcelain(
   repo: string,
   relPath?: string,
 ): Promise<string> {
-  await assertGitAvailable();
   if (relPath) {
-    return await $`git -C ${repo} status --porcelain -- ${relPath}`
-      .quiet()
-      .text();
+    return await gitText(repo, ["status", "--porcelain", "--", relPath]);
   }
-  return await $`git -C ${repo} status --porcelain`.quiet().text();
+  return await gitText(repo, ["status", "--porcelain"]);
 }
 
 export async function isRepoClean(repo: string): Promise<boolean> {
@@ -269,7 +315,7 @@ export async function isRepoClean(repo: string): Promise<boolean> {
 
 export async function assertRepoClean(repo: string): Promise<void> {
   if (await isRepoClean(repo)) return;
-  throw new Error(
+  throw new PreconditionError(
     `data repo has uncommitted changes\n  commit or stash them first: git -C ${repo} status --short`,
   );
 }
@@ -285,11 +331,8 @@ export async function statusPorcelainOutsidePaths(
   repo: string,
   relPaths: string[],
 ): Promise<string> {
-  await assertGitAvailable();
   const excludes = relPaths.map((relPath) => `:(exclude)${relPath}`);
-  return await $`git -C ${repo} status --porcelain -- . ${excludes}`
-    .quiet()
-    .text();
+  return await gitText(repo, ["status", "--porcelain", "--", ".", ...excludes]);
 }
 
 export async function assertRepoCleanOutsidePath(
@@ -306,7 +349,7 @@ export async function assertRepoCleanOutsidePaths(
   const out = await statusPorcelainOutsidePaths(repo, relPaths);
   if (out.trim().length === 0) return;
   const label = relPaths.join(", ");
-  throw new Error(
+  throw new PreconditionError(
     `data repo has uncommitted changes outside ${label}\n  commit or stash unrelated changes first: git -C ${repo} status --short`,
   );
 }
@@ -337,11 +380,11 @@ export async function assertPathClean(
   if (dirtyPathsFromPorcelain(out).every((path) => path === sidecarPath)) {
     // Metadata-dirty, not content-dirty: the catalog must not be read from
     // limbo, but no item content is at risk — the fix is a one-line commit.
-    throw new Error(
+    throw new PreconditionError(
       `data repo has uncommitted metadata changes: ${sidecarPath}\n  no item content is at risk — commit the sidecar in the data repo first:\n    git -C ${repo} add ${sidecarPath} && git -C ${repo} commit -m "..."`,
     );
   }
-  throw new Error(
+  throw new PreconditionError(
     `data repo has uncommitted changes under ${relPath}\n  the recorded sha would not match its source commit. Commit first:\n    git -C ${repo} add ${relPath} && git -C ${repo} commit -m "..."`,
   );
 }
@@ -371,20 +414,16 @@ export interface FetchResult {
  * include git's stderr in its `fetch_failed` state.
  */
 export async function fetchOrigin(repo: string): Promise<FetchResult> {
-  await assertGitAvailable();
-  const result = await $`git -C ${repo} fetch origin`.quiet().nothrow();
+  const result = await gitTry(repo, ["fetch", "origin"]);
   return {
     ok: result.exitCode === 0,
-    stderr: result.stderr.toString().trim(),
+    stderr: result.stderr,
   };
 }
 
 /** Current branch name, or null when HEAD is detached. */
 export async function currentBranch(repo: string): Promise<string | null> {
-  await assertGitAvailable();
-  const result = await $`git -C ${repo} symbolic-ref --short -q HEAD`
-    .quiet()
-    .nothrow();
+  const result = await gitTry(repo, ["symbolic-ref", "--short", "-q", "HEAD"]);
   if (result.exitCode !== 0) return null;
   const branch = result.stdout.toString().trim();
   return branch || null;
@@ -399,20 +438,22 @@ export async function trackingRef(
   repo: string,
   branch: string,
 ): Promise<string | null> {
-  await assertGitAvailable();
-  const upstream =
-    await $`git -C ${repo} rev-parse --abbrev-ref ${`${branch}@{upstream}`}`
-      .quiet()
-      .nothrow();
+  const upstream = await gitTry(repo, [
+    "rev-parse",
+    "--abbrev-ref",
+    `${branch}@{upstream}`,
+  ]);
   if (upstream.exitCode === 0) {
     const ref = upstream.stdout.toString().trim();
     if (ref) return ref;
   }
   const fallback = `origin/${branch}`;
-  const exists =
-    await $`git -C ${repo} rev-parse --verify --quiet ${`refs/remotes/${fallback}`}`
-      .quiet()
-      .nothrow();
+  const exists = await gitTry(repo, [
+    "rev-parse",
+    "--verify",
+    "--quiet",
+    `refs/remotes/${fallback}`,
+  ]);
   return exists.exitCode === 0 ? fallback : null;
 }
 
@@ -421,11 +462,12 @@ export async function aheadBehind(
   repo: string,
   ref: string,
 ): Promise<{ ahead: number; behind: number }> {
-  await assertGitAvailable();
-  const out =
-    await $`git -C ${repo} rev-list --left-right --count ${`HEAD...${ref}`}`
-      .quiet()
-      .text();
+  const out = await gitText(repo, [
+    "rev-list",
+    "--left-right",
+    "--count",
+    `HEAD...${ref}`,
+  ]);
   const [ahead, behind] = out.trim().split(/\s+/).map(Number);
   if (
     ahead === undefined ||
@@ -440,13 +482,11 @@ export async function aheadBehind(
 
 /** Fast-forward the current branch to `ref`; throws when not a fast-forward. */
 export async function fastForwardTo(repo: string, ref: string): Promise<void> {
-  await assertGitAvailable();
-  await $`git -C ${repo} merge --ff-only ${ref}`.quiet();
+  await gitBuffer(repo, ["merge", "--ff-only", ref]);
 }
 
 export async function headSha(repo: string): Promise<string> {
-  await assertGitAvailable();
-  const out = await $`git -C ${repo} rev-parse HEAD`.quiet().text();
+  const out = await gitText(repo, ["rev-parse", "HEAD"]);
   return out.trim();
 }
 
@@ -455,10 +495,9 @@ export async function commitInRepo(
   relPaths: string[],
   message: string,
 ): Promise<string> {
-  await assertGitAvailable();
-  await $`git -C ${repo} add ${relPaths}`.quiet();
-  await $`git -C ${repo} commit -m ${message} -- ${relPaths}`.quiet();
-  const out = await $`git -C ${repo} rev-parse HEAD`.quiet().text();
+  await gitBuffer(repo, ["add", ...relPaths]);
+  await gitBuffer(repo, ["commit", "-m", message, "--", ...relPaths]);
+  const out = await gitText(repo, ["rev-parse", "HEAD"]);
   return out.trim();
 }
 

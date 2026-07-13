@@ -153,12 +153,14 @@ describe("status diff helpers", () => {
 
     expect(diff?.item).toBe("data/skills/hello");
     expect(diff?.path).toBe(installed);
-    expect(diff?.text).toContain("--- SKILL.md (current)");
-    expect(diff?.text).toContain("+++ SKILL.md (locked data/skills/hello)");
-    expect(diff?.text).toContain("-local edit");
-    expect(diff?.text).toContain("+locked v1");
-    expect(diff?.text).toContain("+locked delete");
-    expect(diff?.text).toContain("-local add");
+    // locked is the baseline (---), current the new side (+++): a local edit
+    // reads as an addition and locked-only content as a removal, like git diff.
+    expect(diff?.text).toContain("--- SKILL.md (locked data/skills/hello)");
+    expect(diff?.text).toContain("+++ SKILL.md (current)");
+    expect(diff?.text).toContain("+local edit");
+    expect(diff?.text).toContain("-locked v1");
+    expect(diff?.text).toContain("-locked delete");
+    expect(diff?.text).toContain("+local add");
     expect(diff?.text).not.toContain("_virtualenv.py");
     expect(diff?.text).not.toContain("generated venv");
     expect(diff?.text).not.toContain("upstream v2");
@@ -296,10 +298,12 @@ describe("status diff helpers", () => {
       },
     });
 
-    expect(diff?.text).toContain("--- SKILL.md (current)");
-    expect(diff?.text).toContain("+locked file");
-    expect(diff?.text).toContain("--- SKILL.md/nested.txt (current)");
-    expect(diff?.text).toContain("-local dir");
+    expect(diff?.text).toContain("--- SKILL.md (locked data/skills/hello)");
+    expect(diff?.text).toContain("-locked file");
+    expect(diff?.text).toContain(
+      "--- SKILL.md/nested.txt (locked data/skills/hello)",
+    );
+    expect(diff?.text).toContain("+local dir");
   });
 
   test("buildStatusDiff compares settings drift against merged locked output", async () => {

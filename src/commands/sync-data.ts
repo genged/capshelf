@@ -1,8 +1,9 @@
-import type { Command } from "commander";
-import { projectRoot, resolveDataRepo } from "../paths";
+import { Command } from "commander";
+import { projectRoot } from "../paths";
+import { resolveDataRepo } from "../data-repo";
 import { loadManifest } from "../manifest";
 import { assertIsGitRepo } from "../git";
-import { globalOpts } from "../cli";
+import { globalOpts } from "../global-options";
 import { ResultExitError } from "../errors";
 import { formatSyncHuman, syncData } from "../data-sync";
 
@@ -10,9 +11,8 @@ interface SyncDataOptions {
   json?: boolean;
 }
 
-export function registerSyncData(program: Command): void {
-  program
-    .command("sync-data")
+export function buildSyncData(name: string): Command {
+  return new Command(name)
     .description(
       "fetch the bound data repo's origin and fast-forward when safe (the only network command)",
     )

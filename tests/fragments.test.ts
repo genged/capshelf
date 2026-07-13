@@ -114,6 +114,93 @@ describe("fragment output planning", () => {
     expect(await file(settingsPath).text()).toBe('{"theme":"light"}');
   });
 
+  test("refuses two fragments that set a conflicting scalar", async () => {
+    const dataRepo = await tempRepo();
+    const project = await tempDir("capshelf-fragments-project-");
+    for (const [name, value] of [
+      ["base", { model: "sonnet" }],
+      ["strict", { model: "opus" }],
+    ] as const) {
+      await mkdir(join(dataRepo, "settings", name), { recursive: true });
+      await writeFile(
+        join(dataRepo, "settings", name, "settings.json"),
+        JSON.stringify(value),
+      );
+    }
+    await commitAll(dataRepo, "two conflicting settings fragments");
+    const manifest = { ...emptyManifest(), settings: ["base", "strict"] };
+    const nextLock = emptyLock();
+    for (const name of ["base", "strict"]) {
+      nextLock.items[dataKey("settings", name)] = {
+        source: "data",
+        sha: await shaOfFragmentItem(dataRepo, "settings", name),
+        sourceCommit: await lastTouchingFragmentCommit(
+          dataRepo,
+          "settings",
+          name,
+        ),
+        appliedAt: new Date().toISOString(),
+      };
+    }
+
+    // Naming both fragments and the conflicting path, instead of silently
+    // last-write-win by manifest order.
+    await expect(
+      applyFragmentOutput({
+        project,
+        dataRepo,
+        manifest,
+        oldLock: emptyLock(),
+        nextLock,
+        target: "claude-settings",
+      }),
+    ).rejects.toThrow(/set a conflicting value at model/);
+    expect(existsSync(join(project, ".claude", "settings.json"))).toBe(false);
+  });
+
+  test("merges two fragments with disjoint keys", async () => {
+    const dataRepo = await tempRepo();
+    const project = await tempDir("capshelf-fragments-project-");
+    for (const [name, value] of [
+      ["base", { env: { BASE: "1" } }],
+      ["go", { env: { GO: "1" } }],
+    ] as const) {
+      await mkdir(join(dataRepo, "settings", name), { recursive: true });
+      await writeFile(
+        join(dataRepo, "settings", name, "settings.json"),
+        JSON.stringify(value),
+      );
+    }
+    await commitAll(dataRepo, "two disjoint settings fragments");
+    const manifest = { ...emptyManifest(), settings: ["base", "go"] };
+    const nextLock = emptyLock();
+    for (const name of ["base", "go"]) {
+      nextLock.items[dataKey("settings", name)] = {
+        source: "data",
+        sha: await shaOfFragmentItem(dataRepo, "settings", name),
+        sourceCommit: await lastTouchingFragmentCommit(
+          dataRepo,
+          "settings",
+          name,
+        ),
+        appliedAt: new Date().toISOString(),
+      };
+    }
+
+    await applyFragmentOutput({
+      project,
+      dataRepo,
+      manifest,
+      oldLock: emptyLock(),
+      nextLock,
+      target: "claude-settings",
+    });
+    const written = await file(
+      join(project, ".claude", "settings.json"),
+    ).json();
+    expect(written.env).toEqual({ BASE: "1", GO: "1" });
+  });
+
   test("restores drift on paths owned by the old managed contribution", async () => {
     const dataRepo = await tempRepo();
     const project = await tempDir("capshelf-fragments-project-");

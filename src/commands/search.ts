@@ -1,7 +1,9 @@
 import type { Command } from "commander";
 import { readFile, stat } from "node:fs/promises";
 import { join, posix } from "node:path";
-import { homeRelative, projectRoot, resolveDataRepo } from "../paths";
+import { homeRelative, findProjectRoot } from "../paths";
+import { resolveDataRepo } from "../data-repo";
+import { PreconditionError } from "../errors";
 import { loadManifest } from "../manifest";
 import {
   ITEM_KINDS,
@@ -15,7 +17,7 @@ import type { ItemKind, MasterItem } from "../master";
 import { SYSTEM_ITEMS, shaOfSystemItem } from "../bundled";
 import type { SystemItem } from "../bundled";
 import { assertIsGitRepo, gitVisibleFilesUnderPath } from "../git";
-import { globalOpts } from "../cli";
+import { globalOpts } from "../global-options";
 import { shaOfFragmentItem } from "../fragments";
 import {
   loadDataItemMetadata,
@@ -71,7 +73,7 @@ export function registerSearch(program: Command): void {
     .option("--json", "output JSON")
     .action(async (queryParts: string[], opts: SearchOptions, cmd: Command) => {
       if (opts.kind && !ITEM_KINDS.includes(opts.kind as ItemKind)) {
-        throw new Error(
+        throw new PreconditionError(
           `invalid kind "${opts.kind}"; must be one of ${ITEM_KINDS.join(", ")}`,
         );
       }
@@ -79,12 +81,14 @@ export function registerSearch(program: Command): void {
       const query = queryParts.join(" ");
       const terms = splitTerms(query);
 
-      const project = projectRoot();
-      const manifest = await loadManifest(project);
+      // Browse-only: works inside a project or anywhere with --data /
+      // $CAPSHELF_HOME, so a shelf can be searched before it is adopted.
+      const project = findProjectRoot();
+      const manifest = project ? await loadManifest(project) : null;
       const dataRepo = await resolveDataRepo({
         override: globalOpts(cmd).data,
         manifest,
-        project,
+        project: project ?? undefined,
       });
       await assertIsGitRepo(dataRepo);
 

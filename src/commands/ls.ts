@@ -1,14 +1,9 @@
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import {
-  initProjectRoot,
-  manifestReadPath,
-  projectRoot,
-  resolveDataRepo,
-  resolveDataRepoOptional,
-  homeRelative,
-} from "../paths";
+import { findProjectRoot, projectRoot, homeRelative } from "../paths";
+import { resolveDataRepo, resolveDataRepoOptional } from "../data-repo";
+import { PreconditionError } from "../errors";
 import { CLI_VERSION } from "../bundled";
 import {
   isFragmentItemKind,
@@ -23,7 +18,7 @@ import { loadManifest } from "../manifest";
 import { parseLockKey } from "../installed";
 import { SYSTEM_ITEMS, findSystemItem, shaOfSystemItem } from "../bundled";
 import { assertIsGitRepo } from "../git";
-import { globalOpts } from "../cli";
+import { globalOpts } from "../global-options";
 import { shaOfFragmentItem } from "../fragments";
 import {
   loadDataItemMetadata,
@@ -72,14 +67,16 @@ export function registerLs(program: Command): void {
     )
     .action(async (opts: LsOptions, cmd: Command) => {
       if (opts.kind && !ITEM_KINDS.includes(opts.kind as ItemKind)) {
-        throw new Error(
+        throw new PreconditionError(
           `invalid kind "${opts.kind}"; must be one of ${ITEM_KINDS.join(", ")}`,
         );
       }
       const kindFilter = opts.kind as ItemKind | undefined;
 
       if (opts.here && opts.user) {
-        throw new Error("--here and --user cannot be used together");
+        throw new PreconditionError(
+          "--here and --user cannot be used together",
+        );
       }
 
       if (opts.user) {
@@ -87,12 +84,15 @@ export function registerLs(program: Command): void {
       } else if (opts.here) {
         await lsHere(kindFilter, opts.tag, opts.json ?? false);
       } else {
-        const project = projectRoot();
-        const manifest = await loadManifest(project);
+        // Browse-only: works inside a project (uses its binding) or anywhere
+        // with --data / $CAPSHELF_HOME, so a shelf can be evaluated before it
+        // is adopted.
+        const project = findProjectRoot();
+        const manifest = project ? await loadManifest(project) : null;
         const dataRepo = await resolveDataRepo({
           override: globalOpts(cmd).data,
           manifest,
-          project,
+          project: project ?? undefined,
         });
         await lsAvailable(
           project,
@@ -106,7 +106,7 @@ export function registerLs(program: Command): void {
 }
 
 async function lsAvailable(
-  project: string,
+  project: string | null,
   dataRepo: string,
   kind: ItemKind | undefined,
   tags: string[],
@@ -255,7 +255,7 @@ async function lsUser(
   json: boolean,
 ): Promise<void> {
   if (tags.length > 0) {
-    throw new Error("--tag is not supported with --user");
+    throw new PreconditionError("--tag is not supported with --user");
   }
 
   const project = currentProjectRootOrNull();
@@ -283,8 +283,7 @@ async function userSkillsWithProjectShadows(
 }
 
 function currentProjectRootOrNull(): string | null {
-  const project = initProjectRoot();
-  return manifestReadPath(project) ? project : null;
+  return findProjectRoot();
 }
 
 /** Bundle description/tags shaped as item metadata for shared helpers. */

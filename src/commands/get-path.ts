@@ -1,11 +1,12 @@
 import type { Command } from "commander";
 import { join } from "node:path";
-import { projectRoot, resolveDataRepo } from "../paths";
+import { projectRoot } from "../paths";
+import { resolveDataRepo } from "../data-repo";
 import { loadLock } from "../lock";
 import { installedPath, parseLockKey } from "../installed";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import { loadManifest } from "../manifest";
-import { globalOpts } from "../cli";
+import { globalOpts } from "../global-options";
 import { NotFoundError, PreconditionError } from "../errors";
 import { assertIsGitRepo } from "../git";
 import {

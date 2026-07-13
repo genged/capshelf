@@ -1,4 +1,5 @@
-import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm } from "node:fs/promises";
+import { atomicWriteFile } from "./fs-utils";
 import { dirname, join, posix } from "node:path";
 import { existsSync } from "node:fs";
 import type { LockEntry } from "./lock";
@@ -231,7 +232,10 @@ async function materializeDataAtCommit(
     const out = join(dst, ...rel.split("/"));
     await mkdir(dirname(out), { recursive: true });
     try {
-      await writeFile(out, await showAtCommit(dataRepo, commit, file.path));
+      await atomicWriteFile(
+        out,
+        await showAtCommit(dataRepo, commit, file.path),
+      );
     } catch {
       throwMissingCommit(dataRepo, manifest, commit);
     }

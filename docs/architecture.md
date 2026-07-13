@@ -166,9 +166,11 @@ A real user creates their own data repos (`~/code/work-skills/`, `~/code/persona
 
 `capshelf init --claude-only` stores real skill directories directly under `.claude/skills/<name>/` and does not create `.agents` compatibility symlinks.
 
-Project commands must be run from the project root, the directory containing
-`.capshelf/capshelf.json`. Capshelf does not walk upward from subdirectories or
-fall back to Git roots. `init` creates `.capshelf/` in the current directory.
+Project commands can be run from the project root — the directory containing
+`.capshelf/capshelf.json` — or any subdirectory of it: capshelf walks upward to
+find the nearest project root, like git/npm/cargo. It does not fall back to Git
+roots. `init` acts on the current directory (no upward discovery), so it creates
+`.capshelf/` exactly where it is run.
 
 Manifest:
 ```json
@@ -262,13 +264,15 @@ Deterministic, boring:
 |---|---|
 | objects/tables | recursive merge |
 | arrays | concat in manifest order with deterministic dedupe |
-| scalars | last-fragment-wins |
+| scalars | identical across fragments merges; a genuine conflict is refused |
 
 The existing generated output is the local base. On `add`, `apply`, `update`,
 `rm`, and `revert`, capshelf removes the old managed contribution, keeps local
 values that were not contributed by the old fragment set, then merges the newly
 locked managed contribution on top. It refuses unmanaged scalar or shape
-collisions instead of overwriting project-local values.
+collisions instead of overwriting project-local values, and refuses two
+fragments that set the same key to conflicting scalar values instead of
+resolving them silently by manifest order.
 
 ## Versioning: content-hash + last-touching-commit
 

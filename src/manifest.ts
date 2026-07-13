@@ -1,7 +1,9 @@
 import { z } from "zod";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, mkdir } from "node:fs/promises";
+import { atomicWriteFile } from "./fs-utils";
 import { dirname } from "node:path";
 import {
+  clearInstallModeCache,
   DEFAULT_INSTALL_MODE,
   InstallModeSchema,
   manifestPath,
@@ -9,8 +11,21 @@ import {
 } from "./paths";
 import type { InstallMode } from "./paths";
 import { normalizeRemoteUrl } from "./git";
+import { isSafeItemName } from "./assert";
 import { MANIFEST_FILE, METADATA_DIR, PRODUCT_NAME } from "./identity";
 import type { ItemKind } from "./master";
+
+// Names in a committed manifest are as untrusted as lockfile names — a cloned
+// project's manifest could carry `skills: ["../../evil"]`, which would flow to
+// installedPath. Validate every tracked name against the one canonical rule.
+const itemNameArray = z
+  .array(
+    z.string().refine(isSafeItemName, {
+      message:
+        "unsafe item name (must be non-empty, relative, no '..' segments, no leading '-')",
+    }),
+  )
+  .default([]);
 
 export const ManifestSchema = z
   .object({
@@ -25,11 +40,11 @@ export const ManifestSchema = z
         },
       ),
     dataRepo: z.never().optional(),
-    skills: z.array(z.string()).default([]),
+    skills: itemNameArray,
     commands: z.array(z.string()).optional(),
-    settings: z.array(z.string()).default([]),
-    mcp: z.array(z.string()).default([]),
-    codexConfig: z.array(z.string()).default([]),
+    settings: itemNameArray,
+    mcp: itemNameArray,
+    codexConfig: itemNameArray,
   })
   .superRefine((manifest, ctx) => {
     if ((manifest.commands?.length ?? 0) > 0) {
@@ -89,7 +104,10 @@ export async function saveManifest(
 ): Promise<void> {
   const p = manifestPath(project);
   await mkdir(dirname(p), { recursive: true });
-  await writeFile(p, `${JSON.stringify(m, null, 2)}\n`);
+  await atomicWriteFile(p, `${JSON.stringify(m, null, 2)}\n`);
+  // installMode may have changed; drop the memoized detectInstallMode value so
+  // a later read in the same process sees the new manifest.
+  clearInstallModeCache(project);
 }
 
 export function manifestNamesForKind(
@@ -130,9 +148,9 @@ export function removeManifestName(
 /**
  * True when a parsed JSON document carries a `shelves` key with any value
  * (including `null`). Reserved by the federation spec; see `loadManifest`.
- * (Duplicated in local-config.ts to avoid a module cycle via paths.ts.)
+ * Shared with local-config.ts, which enforces the same reservation.
  */
-function hasShelvesKey(value: unknown): boolean {
+export function hasShelvesKey(value: unknown): boolean {
   return typeof value === "object" && value !== null && "shelves" in value;
 }
 

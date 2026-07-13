@@ -1,12 +1,8 @@
 import type { Command } from "commander";
 import type { Command as CmdType } from "commander";
 import { existsSync } from "node:fs";
-import {
-  initProjectRoot,
-  manifestReadPath,
-  projectRoot,
-  resolveDataRepoOptional,
-} from "../paths";
+import { findProjectRoot, projectRoot } from "../paths";
+import { resolveDataRepoOptional } from "../data-repo";
 import { loadLocalLock, loadLock } from "../lock";
 import type { Lock, LockEntry } from "../lock";
 import { loadManifest } from "../manifest";
@@ -14,9 +10,9 @@ import type { Manifest } from "../manifest";
 import type { ItemKind } from "../master";
 import { isFragmentItemKind, shaOfItem } from "../master";
 import { installedPath, shaOfInstalled, parseLockKey } from "../installed";
-import { ResultExitError } from "../errors";
+import { PreconditionError, ResultExitError } from "../errors";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
-import { globalOpts } from "../cli";
+import { globalOpts } from "../global-options";
 import { parseItemRef } from "../item-ref";
 import { commitExists, isGitRepo } from "../git";
 import { upstreamFactsForItem } from "../upstream-facts";
@@ -86,7 +82,9 @@ export function registerStatus(program: Command): void {
         const project = projectRoot();
         const manifest = await loadManifest(project);
         if (opts.project && opts.local) {
-          throw new Error("--project and --local cannot be used together");
+          throw new PreconditionError(
+            "--project and --local cannot be used together",
+          );
         }
         const projectLock = await loadLock(project);
         const localLock = await loadLocalLock(project);
@@ -324,10 +322,12 @@ async function statusUser(
   opts: StatusOptions,
 ): Promise<void> {
   if (opts.project || opts.local) {
-    throw new Error("--user cannot be combined with --project or --local");
+    throw new PreconditionError(
+      "--user cannot be combined with --project or --local",
+    );
   }
   if (opts.diff) {
-    throw new Error("--diff is not supported with --user");
+    throw new PreconditionError("--diff is not supported with --user");
   }
 
   const ref = itemRef ? parseItemRef(itemRef) : undefined;
@@ -367,8 +367,7 @@ async function userSkillsWithProjectShadows(
 }
 
 function currentProjectRootOrNull(): string | null {
-  const project = initProjectRoot();
-  return manifestReadPath(project) ? project : null;
+  return findProjectRoot();
 }
 
 function filterUserSkillsForRef(

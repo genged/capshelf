@@ -1,4 +1,5 @@
 import { posix } from "node:path";
+import { hashNamedContents } from "./content-hash";
 import type { Lock } from "./lock";
 import { parseLockKey } from "./installed";
 import { lsTreeEntriesAtCommit, showAtCommit } from "./git";
@@ -8,6 +9,7 @@ import { missingSourceCommitMessage } from "./upstream-check";
 import {
   allCanonicalItemRelPaths,
   isFragmentItemKind,
+  isMetadataSidecarPath,
   itemRepoRelPath,
 } from "./master";
 
@@ -61,14 +63,14 @@ async function shaOfFragmentAtCommit(
   if (present.length === 0) {
     throw new Error(missingSourceCommitMessage(dataRepo, commit, manifest));
   }
-  const hasher = new Bun.CryptoHasher("sha256");
-  for (const relPath of present.sort()) {
-    hasher.update(relPath);
-    hasher.update("\0");
-    hasher.update(await showAtCommit(dataRepo, commit, relPath));
-    hasher.update("\0");
-  }
-  return hasher.digest("hex").slice(0, 12);
+  return hashNamedContents(
+    await Promise.all(
+      present.map(async (relPath) => ({
+        name: relPath,
+        content: await showAtCommit(dataRepo, commit, relPath),
+      })),
+    ),
+  );
 }
 
 async function shaOfDataAtCommit(
@@ -77,38 +79,52 @@ async function shaOfDataAtCommit(
   relPath: string,
   commit: string,
 ): Promise<string> {
-  let files: Awaited<ReturnType<typeof lsTreeEntriesAtCommit>>;
+  let entries: Awaited<ReturnType<typeof lsTreeEntriesAtCommit>>;
   try {
-    files = (await lsTreeEntriesAtCommit(dataRepo, commit, relPath))
-      .filter((file) => {
-        const rel = posix.relative(relPath, file.path);
-        return (
-          file.type === "blob" &&
-          rel &&
-          !rel.startsWith("..") &&
-          !hasIgnoredDotSegment(rel)
-        );
-      })
-      .sort((a, b) => a.path.localeCompare(b.path));
+    entries = await lsTreeEntriesAtCommit(dataRepo, commit, relPath);
   } catch {
     throw new Error(missingSourceCommitMessage(dataRepo, commit, manifest));
   }
 
-  if (files.length === 0) {
+  // Reduce to item-relative paths. hashNamedContents sorts by name in the same
+  // code-unit order as shaOfItemFiles (add-time hashing over
+  // gitVisibleFilesUnderPath), so the recorded sha reproduces here. Sorting by
+  // repo-relative path with localeCompare instead — as this once did — reorders
+  // multi-file items (e.g. SKILL.md vs café.md) and rejects valid rebinds.
+  const rels = entries
+    .filter((file) => {
+      const rel = posix.relative(relPath, file.path);
+      return (
+        file.type === "blob" &&
+        rel &&
+        !rel.startsWith("..") &&
+        !hasIgnoredDotSegment(rel) &&
+        // The metadata sidecar is catalog data, never materialized and never
+        // included in the at-commit sha; keep this consistent with
+        // materialize.ts so rebind (set-data) doesn't reject valid locks.
+        !isMetadataSidecarPath(rel)
+      );
+    })
+    .map((file) => posix.relative(relPath, file.path));
+
+  if (rels.length === 0) {
     throw new Error(`${relPath} has no materializable files at ${commit}`);
   }
 
-  const hasher = new Bun.CryptoHasher("sha256");
-  for (const file of files) {
-    const rel = posix.relative(relPath, file.path);
-    hasher.update(rel);
-    hasher.update("\0");
-    try {
-      hasher.update(await showAtCommit(dataRepo, commit, file.path));
-    } catch {
-      throw new Error(missingSourceCommitMessage(dataRepo, commit, manifest));
-    }
-    hasher.update("\0");
+  try {
+    return hashNamedContents(
+      await Promise.all(
+        rels.map(async (rel) => ({
+          name: rel,
+          content: await showAtCommit(
+            dataRepo,
+            commit,
+            posix.join(relPath, rel),
+          ),
+        })),
+      ),
+    );
+  } catch {
+    throw new Error(missingSourceCommitMessage(dataRepo, commit, manifest));
   }
-  return hasher.digest("hex").slice(0, 12);
 }

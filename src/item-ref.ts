@@ -1,3 +1,4 @@
+import { assertSafeItemName } from "./assert";
 import type { Lock } from "./lock";
 import { ITEM_KINDS, isItemKind, listMasterItems } from "./master";
 import type { ItemKind, MasterItem } from "./master";
@@ -105,9 +106,10 @@ export function lockKeyForRef(
 
 function requireName(name: string, input: string): string {
   if (!name) throw new Error(`invalid item ref "${input}" (missing name)`);
-  if (name === "." || name === "..") {
-    throw new Error(`invalid item name "${name}"`);
-  }
+  // Shared traversal/absolute/option-name rejection — the same invariant the
+  // manifest and lockfile boundaries enforce, so a name like `../../evil` is
+  // refused here too, not just as a bare `..`.
+  assertSafeItemName(name, `item ref "${input}"`);
   // Same reservation as the parseItemRef guard: ":" in an item name would
   // collide with the shelf-qualified ref grammar reserved by
   // local/specs/multi-shelf-federation-spec.md (Group 2a).

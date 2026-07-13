@@ -1,0 +1,4 @@
+[test]
+# Preload isolates git from the machine global/system config so the suite is
+# hermetic. See tests/setup.ts.
+preload = ["./tests/setup.ts"]

@@ -16,10 +16,10 @@ import { registerUpdate } from "./commands/update";
 import { registerPromote } from "./commands/promote";
 import { registerShare } from "./commands/share";
 import { registerMove } from "./commands/move";
-import { registerSetData } from "./commands/set-data";
-import { registerSetUpstream } from "./commands/set-upstream";
-import { registerDataPath } from "./commands/data-path";
-import { registerSyncData } from "./commands/sync-data";
+import { buildSetData } from "./commands/set-data";
+import { buildSetUpstream } from "./commands/set-upstream";
+import { buildDataPath } from "./commands/data-path";
+import { buildSyncData } from "./commands/sync-data";
 import { registerSelfUpdate } from "./commands/self-update";
 import { CliError } from "./errors";
 import { HOME_ENV, PRODUCT_NAME } from "./identity";
@@ -51,11 +51,23 @@ registerUpdate(program);
 registerPromote(program);
 registerShare(program);
 registerMove(program);
-registerSetData(program);
-registerSetUpstream(program);
-registerDataPath(program);
-registerSyncData(program);
 registerSelfUpdate(program);
+
+// Data-repo commands are grouped under `capshelf data <sub>` for a consistent,
+// scannable surface. The original top-level names (set-data/data-path/
+// sync-data/set-upstream) remain as hidden aliases so existing scripts and
+// muscle memory keep working.
+const data = program
+  .command("data")
+  .description("bind, inspect, sync, or set the upstream of the data repo");
+data.addCommand(buildSetData("bind"));
+data.addCommand(buildDataPath("path"));
+data.addCommand(buildSyncData("sync"));
+data.addCommand(buildSetUpstream("upstream"));
+program.addCommand(buildSetData("set-data"), { hidden: true });
+program.addCommand(buildDataPath("data-path"), { hidden: true });
+program.addCommand(buildSyncData("sync-data"), { hidden: true });
+program.addCommand(buildSetUpstream("set-upstream"), { hidden: true });
 
 /**
  * Parse argv and run the matched command, returning the process exit code.
@@ -72,38 +84,51 @@ export async function main(argv: string[] = process.argv): Promise<number> {
     await program.parseAsync(argv);
     return 0;
   } catch (err) {
-    return reportError(err);
+    // Options are parsed before the action runs, so by the time an action
+    // throws --json (if present) is on argv. Match the command's own output
+    // channel: agents that pass --json get a JSON error envelope, not prose.
+    return reportError(err, argv.includes("--json"));
   }
 }
 
-function reportError(err: unknown): number {
-  if (err instanceof CliError) {
-    // A message-less CliError (ResultExitError) only sets the code; the command
-    // has already printed its own report.
-    if (err.message) {
-      console.error(`✗ ${err.message}`);
-      if (err.hint) console.error(`  ${err.hint}`);
+function reportError(err: unknown, json: boolean): number {
+  const exitCode = err instanceof CliError ? err.exitCode : 1;
+  // ResultExitError carries no message: the command already printed its own
+  // report (its --json payload is on stdout), so the boundary prints nothing.
+  const message =
+    err instanceof CliError
+      ? err.message
+      : err instanceof Error
+        ? err.message
+        : String(err);
+  const hint = err instanceof CliError ? err.hint : undefined;
+
+  if (json) {
+    if (message) {
+      console.error(
+        JSON.stringify({
+          error: { message, ...(hint && { hint }), exitCode },
+        }),
+      );
     }
-    return err.exitCode;
+    return exitCode;
   }
-  console.error(`✗ ${err instanceof Error ? err.message : String(err)}`);
-  if (process.env.CAPSHELF_DEBUG && err instanceof Error && err.stack) {
+
+  if (message) {
+    console.error(`✗ ${message}`);
+    if (hint) console.error(`  ${hint}`);
+  }
+  if (
+    !(err instanceof CliError) &&
+    process.env.CAPSHELF_DEBUG &&
+    err instanceof Error &&
+    err.stack
+  ) {
     console.error(err.stack);
   }
-  return 1;
+  return exitCode;
 }
 
 if (import.meta.main) {
   process.exit(await main());
-}
-
-export interface GlobalOptions {
-  data?: string;
-}
-
-export function globalOpts(cmd: Command): GlobalOptions {
-  // Walk up to root command
-  let root: Command = cmd;
-  while (root.parent) root = root.parent;
-  return root.opts() as GlobalOptions;
 }

@@ -1,7 +1,8 @@
 import type { Command } from "commander";
 import { rm as fsRm } from "node:fs/promises";
 import { existsSync } from "node:fs";
-import { projectRoot, resolveDataRepo } from "../paths";
+import { projectRoot } from "../paths";
+import { resolveProjectDataRepo } from "../command-context";
 import { loadManifest, saveManifest } from "../manifest";
 import { manifestNamesForKind, removeManifestName } from "../manifest";
 import {
@@ -22,8 +23,6 @@ import {
 import { isSystemItemName } from "../bundled";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
-import { assertIsGitRepo } from "../git";
-import { globalOpts } from "../cli";
 import {
   loadLocalConfig,
   removeLocalExcludes,
@@ -84,7 +83,7 @@ export function registerRm(program: Command): void {
       }
 
       if (dataKeys.length > 1) {
-        throw new Error(
+        throw new PreconditionError(
           `ambiguous item "${ref.name}": found ${dataKeys
             .map((key) => {
               const parsed = parseLockKey(key);
@@ -139,12 +138,11 @@ export function registerRm(program: Command): void {
         : installedPath(project, kind, name, manifest.installMode);
       let removed = false;
       if (isFragmentItemKind(kind)) {
-        const dataRepo = await resolveDataRepo({
-          override: globalOpts(cmd).data,
-          manifest: oldManifest,
+        const dataRepo = await resolveProjectDataRepo(
           project,
-        });
-        await assertIsGitRepo(dataRepo);
+          oldManifest,
+          cmd,
+        );
         const targets = await lockedFragmentTargetsForItem(
           dataRepo,
           kind,

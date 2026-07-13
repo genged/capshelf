@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { z } from "zod";
 import type { Lock } from "./lock";
 import { parseLockKey } from "./installed";
+import { parseJsonc } from "./json-fragments";
 
 export type UserSkillSurface = "claude" | "codex";
 
@@ -182,8 +183,10 @@ async function readClaudePluginsFromSettings(settings: {
 }): Promise<ExternalClaudePlugin[]> {
   if (!existsSync(settings.path)) return [];
 
+  // settings.json is JSONC — parse tolerantly so a commented file (which Claude
+  // Code accepts) doesn't crash status/plugin scanning.
   const parsed = ClaudeSettingsSchema.parse(
-    JSON.parse(await readFile(settings.path, "utf-8")),
+    parseJsonc(await readFile(settings.path, "utf-8")),
   );
   return parseEnabledPlugins(parsed.enabledPlugins).map(({ id, enabled }) => {
     const { name, marketplace } = splitPluginId(id);

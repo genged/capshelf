@@ -29,10 +29,9 @@ import {
   normalizePath,
   personalClaudeSkillPath,
   projectRoot,
-  resolveDataRepo,
-  resolveDataRepoOptional,
   rootManifestPath,
 } from "../src/paths";
+import { resolveDataRepo, resolveDataRepoOptional } from "../src/data-repo";
 
 async function tempDir(): Promise<string> {
   return await mkdtemp(join(tmpdir(), "capshelf-paths-"));
@@ -121,20 +120,21 @@ describe("path normalization", () => {
     expect(projectRoot(project)).toBe(project);
   });
 
-  test("projectRoot rejects subdirectories of a capshelf project", async () => {
+  test("projectRoot resolves up from a subdirectory of a capshelf project", async () => {
     const project = await tempDir();
     await mkdir(join(project, ".capshelf"), { recursive: true });
     await writeFile(
       join(project, ".capshelf", "capshelf.json"),
       JSON.stringify(emptyManifest()),
     );
-    const nested = join(project, "nested");
+    const nested = join(project, "nested", "deep");
     await mkdir(nested, { recursive: true });
 
-    expect(() => projectRoot(nested)).toThrow(/not a capshelf project root/);
+    // git/npm/cargo-style upward discovery: a subdirectory resolves to the root.
+    expect(projectRoot(nested)).toBe(project);
   });
 
-  test("projectRoot rejects the capshelf metadata directory itself", async () => {
+  test("projectRoot resolves up from within the capshelf metadata directory", async () => {
     const project = await tempDir();
     const metadata = join(project, ".capshelf");
     await mkdir(metadata, { recursive: true });
@@ -143,19 +143,20 @@ describe("path normalization", () => {
       JSON.stringify(emptyManifest()),
     );
 
-    expect(() => projectRoot(metadata)).toThrow(/not a capshelf project root/);
+    // .capshelf is itself a subdirectory of the project, so it resolves up too.
+    expect(projectRoot(metadata)).toBe(project);
   });
 
   test("projectRoot rejects git repos without capshelf metadata", async () => {
     const project = await tempDir();
     await mkdir(join(project, ".git"), { recursive: true });
 
-    expect(() => projectRoot(project)).toThrow(/not a capshelf project root/);
+    expect(() => projectRoot(project)).toThrow(/not a capshelf project/);
   });
 
   test("projectRoot rejects uninitialized directories", async () => {
     const dir = await tempDir();
-    expect(() => projectRoot(dir)).toThrow(/not a capshelf project root/);
+    expect(() => projectRoot(dir)).toThrow(/not a capshelf project/);
   });
 
   test("resolves root metadata and install mode directories", async () => {
@@ -259,6 +260,19 @@ describe("manifest error handling", () => {
     // The exact message is engine-specific JSON.parse output and does not name
     // the file, so only the error type is pinned here.
     await expect(loadManifest(project)).rejects.toThrow(SyntaxError);
+  });
+
+  test("loadManifest rejects a committed manifest with a traversal item name", async () => {
+    const project = await tempDir();
+    await mkdir(join(project, ".capshelf"), { recursive: true });
+    // A cloned project's manifest is untrusted; a name like ../../evil would
+    // otherwise flow into installedPath. It must be rejected on load.
+    await writeFile(
+      manifestPath(project),
+      JSON.stringify({ skills: ["../../evil"] }),
+    );
+
+    await expect(loadManifest(project)).rejects.toThrow(/unsafe item name/);
   });
 });
 

@@ -7,7 +7,7 @@ description: Use the capshelf CLI to manage shared skills, settings, and MCP con
 
 This project uses **capshelf** to track shared Claude Code / Codex config (skills, settings fragments, MCP configs) pulled from a **data repo**. When the user asks to add, remove, discover, edit, or update shared config, use the `capshelf` CLI. **Do not hand-edit** `.capshelf/capshelf.json` or `.capshelf/capshelf.lock.json` — they are tool-managed.
 
-Run project commands from the project root: the directory containing `.capshelf/capshelf.json`. Capshelf does not walk upward from subdirectories.
+Run project commands from anywhere inside a capshelf project — the directory containing `.capshelf/capshelf.json`, or any subdirectory of it (capshelf walks upward to find the root, like git). `init` acts on the current directory, not a discovered parent.
 
 ## The agent decision loop
 
@@ -82,11 +82,11 @@ Always check the current surface with `capshelf --help` and `capshelf <verb> --h
 
 | verb | purpose |
 |---|---|
-| `init` / `set-data` / `set-upstream` / `data-path` | bind the project to a data repo |
+| `init` / `data bind` / `data upstream` / `data path` | bind the project to a data repo (the data-repo verbs live under `capshelf data <sub>`; old `set-data`/`set-upstream`/`data-path`/`sync-data` still work as aliases) |
 | `ls` / `show` / `search` / `status` | inspect and discover (all support `--json`; `ls` and `status` include user-level runtime skills by default, `--user` narrows to them only) |
 | `add` / `rm` / `apply` / `update` / `revert` | converge the project on its locks |
 | `share` / `move` / `promote` / `keep-local` | flow content and intent between project and data repo |
-| `sync-data [--json]` | explicitly fetch the bound data repo's origin and fast-forward when safe; the **only** capshelf command that touches the network besides the `init` bootstrap clone and `self-update`. Run it when the user asks to pick up teammates' changes, then `capshelf status` to see `update_available` |
+| `data sync [--json]` | explicitly fetch the bound data repo's origin and fast-forward when safe; the **only** capshelf command that touches the network besides the `init` bootstrap clone and `self-update`. Run it when the user asks to pick up teammates' changes, then `capshelf status` to see `update_available` |
 | `get-path` | print the editable path for an item |
 | `self-update` | update the Homebrew-installed binary (not project pins) |
 
@@ -117,7 +117,7 @@ Fork variant (read-only consumers): `gh repo fork <owner/data-repo> --clone=fals
 
 ## Config fragments
 
-Shared fragments merge into project config outputs: `settings/<name>/settings.json` → `.claude/settings.json`; `mcp/<name>/claude.json` → `.mcp.json`; `mcp/<name>/codex.toml` and `codex/config/<name>/config.toml` → `.codex/config.toml`. Outputs preserve unmanaged project-local values; capshelf refuses unmanaged scalar or shape collisions and names the paths involved.
+Shared fragments merge into project config outputs: `settings/<name>/settings.json` → `.claude/settings.json`; `mcp/<name>/claude.json` → `.mcp.json`; `mcp/<name>/codex.toml` and `codex/config/<name>/config.toml` → `.codex/config.toml`. Outputs preserve unmanaged project-local values; capshelf refuses unmanaged scalar/shape collisions, and also refuses two fragments that set the same key to conflicting scalar values (naming both) rather than silently letting manifest order decide. JSON outputs are read as JSONC (comments tolerated) but rewritten as plain JSON, so comments in `settings.json`/`.mcp.json` are dropped on a managed write — capshelf warns when it does.
 
 Edit canonical source paths (from `get-path`), never the generated outputs, then `capshelf promote <fragment> -m "message"`. `share` for fragments always lands in project scope (`--to project` is the default). To share an existing MCP server, `capshelf share mcp/<server>` with no flags is the common case: the pick defaults to the item name and capshelf adopts the server from every output that contains it unmanaged (`.mcp.json` and/or `.codex/config.toml`), in one commit. Other cases use:
 

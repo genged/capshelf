@@ -1,9 +1,11 @@
 import type { ItemKind } from "./master";
 import { isFragmentItemKind } from "./master";
+import { PreconditionError } from "./errors";
 import type { ItemSource } from "./installed";
 import type { Lock, LockEntry } from "./lock";
 import type { ItemRef } from "./item-ref";
-import { lockKeysForRef } from "./item-ref";
+import { matchRefAcrossScopes } from "./targets";
+import type { ScopedTarget } from "./targets";
 import type { RuntimeWarning } from "./runtime-warnings";
 import type { FragmentContributionState } from "./fragments";
 
@@ -169,21 +171,24 @@ export function statusTargets(
   localLock: Lock,
   ref: ItemRef | undefined,
   opts: { project?: boolean; local?: boolean },
-): Array<{ scope: "project" | "local"; key: string }> {
+): ScopedTarget[] {
+  // Status lists every match (it never requires a unique target), so it uses
+  // the shared ref matcher for the ref case and enumerates all keys otherwise.
+  if (ref) return matchRefAcrossScopes(projectLock, localLock, ref, opts);
   const includeProject = !opts.local;
   const includeLocal = !opts.project;
-  const projectKeys = ref
-    ? lockKeysForRef(projectLock, ref)
-    : Object.keys(projectLock.items);
-  const localKeys = ref
-    ? lockKeysForRef(localLock, ref)
-    : Object.keys(localLock.items);
   return [
     ...(includeProject
-      ? projectKeys.map((key) => ({ scope: "project" as const, key }))
+      ? Object.keys(projectLock.items).map((key) => ({
+          scope: "project" as const,
+          key,
+        }))
       : []),
     ...(includeLocal
-      ? localKeys.map((key) => ({ scope: "local" as const, key }))
+      ? Object.keys(localLock.items).map((key) => ({
+          scope: "local" as const,
+          key,
+        }))
       : []),
   ];
 }
@@ -198,7 +203,7 @@ export function assertNoScopeCollisions(
     projectKeys.has(key),
   );
   if (collisions.length === 0) return;
-  throw new Error(
+  throw new PreconditionError(
     `item is owned by both project and local scope: ${collisions.join(", ")}\n` +
       `  remove one owner before ${action}; local scope does not shadow project scope`,
   );

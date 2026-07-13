@@ -2,22 +2,16 @@ import type { Command } from "commander";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
-import { homeRelative, projectRoot, resolveDataRepo } from "../paths";
-import { loadManifest, saveManifest } from "../manifest";
+import { homeRelative } from "../paths";
+import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
+import { saveManifest } from "../manifest";
 import type { Manifest } from "../manifest";
-import {
-  dataKey,
-  loadLocalLock,
-  loadLock,
-  saveLocalLock,
-  saveLock,
-} from "../lock";
+import { dataKey, saveLocalLock, saveLock } from "../lock";
 import type { Lock } from "../lock";
 import { installedPath, parseLockKey } from "../installed";
 import type { ItemKind } from "../master";
 import { NotFoundError, PreconditionError } from "../errors";
 import {
-  assertIsGitRepo,
   assertRepoCleanOutsidePath,
   assertRepoCleanOutsidePaths,
   commitInRepo,
@@ -26,7 +20,6 @@ import {
   statusPorcelain,
 } from "../git";
 import { isSystemItemName } from "../bundled";
-import { globalOpts } from "../cli";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import { assertLocalScopeSupported } from "../local-config";
 import { readSidecarBytes, restoreSidecarBytes } from "../metadata";
@@ -91,16 +84,13 @@ export function registerPromote(program: Command): void {
         );
       }
 
-      const project = projectRoot();
-      const manifest = await loadManifest(project);
-      const lock = await loadLock(project);
-      const localLock = await loadLocalLock(project);
-      const dataRepo = await resolveDataRepo({
-        override: globalOpts(cmd).data,
-        manifest,
+      const {
         project,
-      });
-      await assertIsGitRepo(dataRepo);
+        manifest,
+        projectLock: lock,
+        localLock,
+      } = await loadProjectContext({ cmd });
+      const dataRepo = await resolveProjectDataRepo(project, manifest, cmd);
 
       let result: PromoteResult;
       let saveProject = false;
@@ -448,7 +438,7 @@ export async function syncTrackedIntoDataRepo(
     opts.scope ?? "project",
   );
   if (!snapshot) {
-    throw new Error(
+    throw new PreconditionError(
       `installed files are missing: ${installedPath(project, kind, name)}`,
     );
   }
