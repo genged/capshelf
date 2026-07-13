@@ -1,9 +1,10 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { LOCAL_CONFIG_FILE, LOCAL_LOCK_FILE, METADATA_DIR } from "./identity";
 import { expandTilde } from "./paths";
+import { atomicWriteFile } from "./fs-utils";
 import { hasShelvesKey } from "./manifest";
 import { PreconditionError } from "./errors";
 import type { ItemKind } from "./master";
@@ -57,7 +58,7 @@ export async function saveLocalConfig(
 ): Promise<void> {
   const path = localConfigPath(project);
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(cfg, null, 2)}\n`);
+  await atomicWriteFile(path, `${JSON.stringify(cfg, null, 2)}\n`);
   await ensureGitignored(project, LOCAL_CONFIG_FILE);
   await ensureGitignored(project, LOCAL_LOCK_FILE);
 }
@@ -69,14 +70,14 @@ export async function ensureGitignored(
   const path = join(project, METADATA_DIR, ".gitignore");
   await mkdir(dirname(path), { recursive: true });
   if (!existsSync(path)) {
-    await writeFile(path, `${entry}\n`);
+    await atomicWriteFile(path, `${entry}\n`);
     return;
   }
 
   const raw = await readFile(path, "utf-8");
   if (raw.split(/\r?\n/).some((line) => line.trim() === entry)) return;
   const separator = raw.length === 0 || raw.endsWith("\n") ? "" : "\n";
-  await writeFile(path, `${raw}${separator}${entry}\n`);
+  await atomicWriteFile(path, `${raw}${separator}${entry}\n`);
 }
 
 export async function ensureLocalExcludes(
@@ -99,7 +100,10 @@ export async function ensureLocalExcludes(
   const additions = entries.filter((entry) => !existing.has(entry));
   if (additions.length === 0) return;
   const separator = raw.length === 0 || raw.endsWith("\n") ? "" : "\n";
-  await writeFile(excludePath, `${raw}${separator}${additions.join("\n")}\n`);
+  await atomicWriteFile(
+    excludePath,
+    `${raw}${separator}${additions.join("\n")}\n`,
+  );
 }
 
 export async function removeLocalExcludes(
@@ -117,7 +121,7 @@ export async function removeLocalExcludes(
   const lines = raw.split(/\r?\n/);
   const nextLines = lines.filter((line) => !entries.has(line.trim()));
   if (nextLines.length === lines.length) return;
-  await writeFile(excludePath, nextLines.join("\n"));
+  await atomicWriteFile(excludePath, nextLines.join("\n"));
 }
 
 export async function assertLocalInstallPathsUntracked(

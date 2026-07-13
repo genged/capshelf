@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
+import { atomicWriteFile } from "./fs-utils";
 import { dirname, join, relative } from "node:path";
 import { hashNamedContents } from "./content-hash";
 import {
@@ -404,7 +405,7 @@ export async function applyFragmentOutput(
       await rm(plan.path, { force: true });
     } else {
       await mkdir(dirname(plan.path), { recursive: true });
-      await writeFile(plan.path, plan.plannedText);
+      await atomicWriteFile(plan.path, plan.plannedText);
     }
   }
   return {

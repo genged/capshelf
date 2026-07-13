@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { localLockPath, lockPath, lockReadPath } from "./paths";
-import { isErrno } from "./fs-utils";
+import { atomicWriteFile, isErrno } from "./fs-utils";
 
 // A git object name (abbreviated or full, SHA-1 or SHA-256). Validated on load
 // so an attacker-supplied lockfile can't smuggle option-like values (e.g.
@@ -62,7 +62,7 @@ export async function loadLock(project: string): Promise<Lock> {
 export async function saveLock(project: string, lock: Lock): Promise<void> {
   const p = lockPath(project);
   await mkdir(dirname(p), { recursive: true });
-  await writeFile(p, `${JSON.stringify(lock, null, 2)}\n`);
+  await atomicWriteFile(p, `${JSON.stringify(lock, null, 2)}\n`);
 }
 
 export async function loadLocalLock(project: string): Promise<Lock> {
@@ -85,7 +85,7 @@ export async function saveLocalLock(
 ): Promise<void> {
   const p = localLockPath(project);
   await mkdir(dirname(p), { recursive: true });
-  await writeFile(p, `${JSON.stringify(lock, null, 2)}\n`);
+  await atomicWriteFile(p, `${JSON.stringify(lock, null, 2)}\n`);
 }
 
 export function dataKey(kind: string, name: string): string {

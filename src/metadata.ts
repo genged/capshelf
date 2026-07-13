@@ -11,7 +11,8 @@
  * them to stderr via `printMetadataWarnings`.
  */
 import { existsSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { atomicWriteFile } from "./fs-utils";
 import { join } from "node:path";
 import { YAMLParseError, parse as parseYaml } from "yaml";
 import { z } from "zod";
@@ -258,7 +259,7 @@ export async function restoreSidecarBytes(
   if (cached === null) return false;
   const path = join(itemDir, METADATA_SIDECAR);
   if (existsSync(path)) return false;
-  await writeFile(path, cached);
+  await atomicWriteFile(path, cached);
   return true;
 }
 

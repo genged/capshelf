@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { isErrno, lstatOrNull } from "../src/fs-utils";
+import { atomicWriteFile, isErrno, lstatOrNull } from "../src/fs-utils";
 
 describe("isErrno", () => {
   test("matches a Node errno by code", () => {
@@ -35,5 +35,37 @@ describe("lstatOrNull", () => {
     expect(
       lstatOrNull(join(tmpdir(), "definitely-missing-xyz-123")),
     ).toBeNull();
+  });
+});
+
+describe("atomicWriteFile", () => {
+  async function tmp(): Promise<string> {
+    return await mkdtemp(join(tmpdir(), "capshelf-atomic-"));
+  }
+
+  test("writes new content and leaves no temp file behind", async () => {
+    const dir = await tmp();
+    const target = join(dir, "lock.json");
+    await atomicWriteFile(target, '{"ok":true}\n');
+    expect(await readFile(target, "utf-8")).toBe('{"ok":true}\n');
+    // The temp file is renamed into place, never left dangling.
+    expect(await readdir(dir)).toEqual(["lock.json"]);
+  });
+
+  test("replaces existing content in place", async () => {
+    const dir = await tmp();
+    const target = join(dir, "manifest.json");
+    await writeFile(target, "old");
+    await atomicWriteFile(target, "new");
+    expect(await readFile(target, "utf-8")).toBe("new");
+    expect(await readdir(dir)).toEqual(["manifest.json"]);
+  });
+
+  test("writes byte content unchanged", async () => {
+    const dir = await tmp();
+    const target = join(dir, "blob.bin");
+    const bytes = new Uint8Array([0, 1, 2, 200, 255]);
+    await atomicWriteFile(target, bytes);
+    expect(new Uint8Array(await readFile(target))).toEqual(bytes);
   });
 });

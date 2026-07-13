@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
+import { atomicWriteFile } from "../fs-utils";
 import { dirname, join, relative } from "node:path";
 import { homeRelative, projectRoot } from "../paths";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
@@ -291,7 +292,7 @@ async function shareFragment(
   for (const { source, raw } of pending) {
     const canonicalPath = join(dataRepo, ...source.relPath.split("/"));
     await mkdir(dirname(canonicalPath), { recursive: true });
-    await writeFile(canonicalPath, raw);
+    await atomicWriteFile(canonicalPath, raw);
   }
   const sourceCommit = await commitInRepo(
     dataRepo,

@@ -1,10 +1,10 @@
-import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { z } from "zod";
 import { CLI_VERSION } from "./bundled";
-import { isErrno } from "./fs-utils";
+import { atomicWriteFile, isErrno } from "./fs-utils";
 
 const HOMEBREW_FORMULA = "genged/tap/capshelf";
 const UPDATE_COMMAND = `brew upgrade --formula ${HOMEBREW_FORMULA}`;
@@ -518,7 +518,10 @@ async function writeStartupCache(
 ): Promise<void> {
   try {
     await mkdir(dirname(context.cachePath), { recursive: true });
-    await writeFile(context.cachePath, `${JSON.stringify(status, null, 2)}\n`);
+    await atomicWriteFile(
+      context.cachePath,
+      `${JSON.stringify(status, null, 2)}\n`,
+    );
   } catch {
     // Cache writes are best-effort and must not affect command execution.
   }
