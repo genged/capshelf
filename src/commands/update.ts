@@ -29,6 +29,7 @@ import type { RuntimeWarning } from "../runtime-warnings";
 import {
   applyFragmentOutput,
   fragmentKindForTarget,
+  fragmentTargetKey,
   lastTouchingFragmentCommit,
   shaOfFragmentItem,
   touchedFragmentTargetsForItem,
@@ -184,8 +185,14 @@ export function registerUpdate(program: Command): void {
         }
 
         if (touchedFragmentTargets.size > 0 && dataRepo) {
-          try {
-            for (const target of touchedFragmentTargets) {
+          // Reconcile each target independently and report failures under that
+          // target's own key/kind (matching apply) instead of a single
+          // hardcoded data/fragments/(merged)/settings row that names a shape
+          // no other command emits. Only commit the fragment lock bumps if
+          // every reconcile succeeded, preserving the original all-or-nothing.
+          let reconcileFailed = false;
+          for (const target of touchedFragmentTargets) {
+            try {
               const applied = await applyFragmentOutput({
                 project,
                 dataRepo,
@@ -198,22 +205,23 @@ export function registerUpdate(program: Command): void {
               if (applied.action !== "already-current") {
                 results.push(fragmentMergedUpdateResult(applied));
               }
+            } catch (err) {
+              reconcileFailed = true;
+              results.push({
+                key: fragmentTargetKey(target),
+                source: "data",
+                kind: fragmentKindForTarget(target),
+                name: "(merged)",
+                action: "error",
+                error: err instanceof Error ? err.message : String(err),
+              });
             }
-            if (!opts.dryRun) {
-              for (const [key, entry] of pendingFragmentEntries) {
-                projectLock.items[key] = entry;
-              }
-              projectChanged = projectChanged || fragmentLockChanged;
+          }
+          if (!opts.dryRun && !reconcileFailed) {
+            for (const [key, entry] of pendingFragmentEntries) {
+              projectLock.items[key] = entry;
             }
-          } catch (err) {
-            results.push({
-              key: "data/fragments/(merged)",
-              source: "data",
-              kind: "settings",
-              name: "(merged)",
-              action: "error",
-              error: err instanceof Error ? err.message : String(err),
-            });
+            projectChanged = projectChanged || fragmentLockChanged;
           }
         }
 

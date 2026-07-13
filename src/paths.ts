@@ -103,7 +103,27 @@ const ManifestInstallModeSchema = z.object({
   installMode: InstallModeSchema.optional(),
 });
 
+// installedPath and friends default their `mode` to detectInstallMode(project),
+// and they run in per-item loops in status/apply/update — so without a cache
+// each item re-read and re-parsed the manifest. Memoize per resolved project
+// path for the process; saveManifest invalidates the entry it may have changed.
+const installModeCache = new Map<string, InstallMode>();
+
+export function clearInstallModeCache(project?: string): void {
+  if (project === undefined) installModeCache.clear();
+  else installModeCache.delete(resolve(project));
+}
+
 export function detectInstallMode(project: string): InstallMode {
+  const key = resolve(project);
+  const cached = installModeCache.get(key);
+  if (cached !== undefined) return cached;
+  const mode = readInstallMode(project);
+  installModeCache.set(key, mode);
+  return mode;
+}
+
+function readInstallMode(project: string): InstallMode {
   const source = manifestReadPath(project) ?? manifestPath(project);
   if (!existsSync(source)) return DEFAULT_INSTALL_MODE;
   const parsed = ManifestInstallModeSchema.parse(

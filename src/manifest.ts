@@ -2,6 +2,7 @@ import { z } from "zod";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
+  clearInstallModeCache,
   DEFAULT_INSTALL_MODE,
   InstallModeSchema,
   manifestPath,
@@ -103,6 +104,9 @@ export async function saveManifest(
   const p = manifestPath(project);
   await mkdir(dirname(p), { recursive: true });
   await writeFile(p, `${JSON.stringify(m, null, 2)}\n`);
+  // installMode may have changed; drop the memoized detectInstallMode value so
+  // a later read in the same process sees the new manifest.
+  clearInstallModeCache(project);
 }
 
 export function manifestNamesForKind(
