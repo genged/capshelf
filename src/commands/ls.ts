@@ -57,7 +57,7 @@ export function registerLs(program: Command): void {
     .option("--json", "output JSON")
     .option(
       "-k, --kind <kind>",
-      "filter by kind (skills|settings|mcp|codex-config)",
+      "filter by kind (skills|pi-extensions|settings|mcp|codex-config)",
     )
     .option(
       "--tag <tag>",

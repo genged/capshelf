@@ -68,7 +68,7 @@ export function registerSearch(program: Command): void {
     )
     .option(
       "-k, --kind <kind>",
-      "filter by kind (skills|settings|mcp|codex-config)",
+      "filter by kind (skills|pi-extensions|settings|mcp|codex-config)",
     )
     .option("--json", "output JSON")
     .action(async (queryParts: string[], opts: SearchOptions, cmd: Command) => {

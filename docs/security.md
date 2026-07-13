@@ -19,6 +19,7 @@ per kind:
 | `settings` | merged into `.claude/settings.json`, which can configure hooks — shell commands the agent harness executes on events. A settings fragment can run arbitrary commands on your machine. |
 | `mcp` | merged into `.mcp.json` / `.codex/config.toml`, which launch MCP servers. Those servers run as you, with your credentials, filesystem, and network access. A fragment can point at a hostile server binary or pass it hostile arguments. |
 | `codex-config` | merged into `.codex/config.toml`; same class of risk as MCP fragments for anything Codex executes from config. |
+| `pi-extensions` | copied into `.pi/extensions/<name>`; after Pi project trust, arbitrary TypeScript runs with the user's full system permissions and can register tools, intercept calls, or execute commands. |
 | `skills` | prose, not executables — but prose that steers an agent which *does* have execution tools. A skill can instruct an agent to exfiltrate data, weaken reviews, or run commands. Subtler than a hook, not safer. |
 
 There is no meaningful "config-only, therefore safe" tier. Treat
@@ -28,9 +29,11 @@ to the data repo the way you treat commit access to a shared library.
 What capshelf itself does on your machine is narrow: it reads the data repo
 clone you bound, writes managed files inside the current project, and commits
 to the data repo only on explicit `share`/`promote`. It does not execute item
-content. Execution happens later, in Claude/Codex, when the agent loads what
-capshelf materialized — which is exactly why review has to happen before
-content reaches the data repo's default branch.
+content. Execution happens later, in Claude, Codex, or Pi, when the agent loads
+what capshelf materialized — which is exactly why review has to happen before
+content reaches the data repo's default branch. For Pi extensions that boundary
+is explicit: capshelf warns, Pi asks for project trust, and then the extension
+runs without a capshelf sandbox or reviewed/trusted marker.
 
 ## The control plane is your git host
 
@@ -83,7 +86,7 @@ Explicitly out of scope, with the reasoning:
   host's commit/PR audit trail. A capshelf-layer signature scheme would
   duplicate that with weaker key management than your git host already has.
 - **Sandboxing or execution control.** Capshelf never executes item content;
-  Claude/Codex do. Sandboxing agent execution is the agent harness's job
+  Claude, Codex, or Pi do. Sandboxing agent execution is the agent harness's job
   (and its permission system's), not a file-syncing CLI's.
 - **Vetting, capability scanning, or malware analysis.** Capshelf cannot
   judge whether a hook command or an MCP server is benign. Pretending to
@@ -106,8 +109,11 @@ Concretely, for a team or org data repo:
 1. **Protect the default branch** of the data repo and require PR review for
    all changes. The default branch is what teammates' `update` pulls in; it
    should never be writable without review.
-2. **Treat `settings/*`, `mcp/*`, and `codex/config/*` changes as
-   privileged.** They configure things that execute. Consider a stricter
+2. **Treat `settings/*`, `mcp/*`, `codex/config/*`, and
+   `pi/extensions/*` changes as privileged.** They configure or contain things
+   that execute. Pi extension changes should be reviewed as application code;
+   capshelf does not install their dependencies, validate TypeScript, or reload
+   Pi. Inspect source before `add`/`promote`, then use `/reload` or restart Pi. Consider a stricter
    reviewer set (e.g. CODEOWNERS) for those paths than for `skills/*`.
 3. **Gate project PRs in CI** with `capshelf status --strict` against a
    fresh clone of the declared upstream. This blocks unreconciled drift,

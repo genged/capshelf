@@ -1,11 +1,11 @@
 ---
 name: capshelf
-description: Use the capshelf CLI to manage shared skills, settings, and MCP configs across multiple projects from a user-owned data repo.
+description: Use the capshelf CLI to manage shared skills, Pi extensions, settings, and MCP configs across multiple projects from a user-owned data repo.
 ---
 
 # capshelf
 
-This project uses **capshelf** to track shared Claude Code / Codex config (skills, settings fragments, MCP configs) pulled from a **data repo**. When the user asks to add, remove, discover, edit, or update shared config, use the `capshelf` CLI. **Do not hand-edit** `.capshelf/capshelf.json` or `.capshelf/capshelf.lock.json` — they are tool-managed.
+This project uses **capshelf** to track shared coding-agent config (skills, project-local Pi extensions, settings fragments, MCP configs) pulled from a **data repo**. When the user asks to add, remove, discover, edit, or update shared config, use the `capshelf` CLI. **Do not hand-edit** `.capshelf/capshelf.json` or `.capshelf/capshelf.lock.json` — they are tool-managed.
 
 Run project commands from anywhere inside a capshelf project — the directory containing `.capshelf/capshelf.json`, or any subdirectory of it (capshelf walks upward to find the root, like git). `init` acts on the current directory, not a discovered parent.
 
@@ -32,7 +32,7 @@ Results with a `bundles/` prefix are **bundles** — curated item sets. Prefer t
 
 ### 3. Evaluate before installing
 
-`capshelf show <item>` prints the full description, `requires`, `conflicts-with`, and whether each relation is already installed. Use it before committing to an `add`.
+`capshelf show <item>` prints the full description, `requires`, `conflicts-with`, and whether each relation is already installed. Use it before committing to an `add`. For `pi-extensions/*`, read **all extension source** shown before adding: Pi executes it as arbitrary code with full user permissions after project trust.
 
 ### 4. Install
 
@@ -51,12 +51,14 @@ When the user asks you to improve a shared (data) item:
 3. `capshelf status <item>` — should report `drifted_local` (or `source_dirty` for fragments).
 4. Decide with the user:
    - `capshelf promote <item> -m "why"` — push to the data repo. Other projects see `update available` next time they check; nothing auto-changes.
-   - `capshelf keep-local <item> --reason "why"` — intentional project-specific divergence (copy items only).
+   - `capshelf keep-local <item> --reason "why"` — intentional project-specific skill divergence. Pi extensions reject `keep-local`; keep a one-off extension unmanaged under `.pi/extensions` instead.
    - `capshelf revert <item>` — discard the edit, restore from the recorded `sourceCommit`.
+
+For Pi extensions, inspect the changed source before promoting and tell the user to run `/reload` or restart Pi after materialization. Never imply that capshelf reviewed, trusted, sandboxed, or dependency-installed the extension.
 
 If `promote` fails with "changed in the data repo since this project last updated" (exit 3), a teammate's newer version is upstream. **Do not retry with `--stale-ok` on your own** — show the user the upstream diff (`capshelf status <item> --diff` plus the scoped `git log` from the error message) and let them choose between `capshelf update <item>`-then-redo-the-edit and an intentional `capshelf promote <item> --stale-ok` overwrite. A promote that reports `already-upstream` means someone already promoted identical content; the lock was re-pinned and nothing more is needed.
 
-To change **metadata** (tags, description, `requires`/`conflicts-with`), edit `<data-repo>/<kind>/<name>/.capshelf.yml` and commit it in the data repo — no project `update` is needed afterwards; metadata is catalog data, never hashed into item content. **Commit the sidecar before returning to project work**: an uncommitted sidecar edit blocks `capshelf update` entirely (dirty data repo) and blocks `add` of that item.
+To change **metadata** (tags, description, `requires`/`conflicts-with`), edit the item's canonical data-repo sidecar (`skills/<name>/.capshelf.yml`, `pi/extensions/<name>/.capshelf.yml`, or the fragment path shown by `capshelf show`) and commit it in the data repo — no project `update` is needed afterwards; metadata is catalog data, never hashed into item content. **Commit the sidecar before returning to project work**: an uncommitted sidecar edit blocks `capshelf update` entirely (dirty data repo) and blocks `add` of that item.
 
 For a skill's **description**, prefer SKILL.md frontmatter — it doubles as the catalog fallback. Know the trade-off when choosing where to edit: a frontmatter edit is content drift (shipped to Claude, hashed — consuming projects see `update available`), while a sidecar edit is drift-free. Add a sidecar `description` only when the catalog blurb should differ from the frontmatter's invocation-trigger phrasing, or when tuning copy must not ship a content change; sidecar wins when both exist. Fragment items (settings/mcp/codex-config) have no frontmatter — the sidecar is their only description source.
 
@@ -64,9 +66,9 @@ For system items (e.g. this `capshelf` skill), the edit loop doesn't apply — t
 
 ## How it works
 
-- **Data repo** (e.g. `~/code/work-skills/`) holds canonical versions of every shared item under `skills/`, `settings/`, `mcp/`, and `codex/config/`. It must be a git repo. Resolution order: `--data <path>` flag > gitignored `.capshelf/local.json` > `$CAPSHELF_HOME`. There is no implicit default.
+- **Data repo** (e.g. `~/code/work-skills/`) holds canonical versions of every shared item under `skills/`, `pi/extensions/`, `settings/`, `mcp/`, and `codex/config/`. It must be a git repo. Resolution order: `--data <path>` flag > gitignored `.capshelf/local.json` > `$CAPSHELF_HOME`. There is no implicit default.
 - **This project** pins the exact content hash + source commit of each item in `.capshelf/capshelf.lock.json` (clone-local pins in gitignored `.capshelf/local.lock.json`). Data-repo updates do NOT propagate until this project runs `capshelf update`.
-- **Installed copies** live under `.agents/skills/<name>/` by default with `.claude/skills/<name>` symlinks (Claude-only projects install directly under `.claude/skills/<name>/`). Claude custom commands are modeled as skills.
+- **Installed copies** live under `.agents/skills/<name>/` by default with `.claude/skills/<name>` symlinks (Claude-only projects install directly under `.claude/skills/<name>/`). Pi extensions live under `.pi/extensions/<name>/`. Claude custom commands are modeled as skills.
 - **Item metadata** (optional `<item>/.capshelf.yml` in the data repo: `description`, `tags`, `requires`, `conflicts-with`) feeds `ls`/`show`/`search` and `add` enforcement. It is never copied into projects and never affects drift.
 
 ## Two kinds of items
@@ -87,7 +89,7 @@ Always check the current surface with `capshelf --help` and `capshelf <verb> --h
 | `add` / `rm` / `apply` / `update` / `revert` | converge the project on its locks |
 | `share` / `move` / `promote` / `keep-local` | flow content and intent between project and data repo |
 | `data sync [--json]` | explicitly fetch the bound data repo's origin and fast-forward when safe; the **only** capshelf command that touches the network besides the `init` bootstrap clone and `self-update`. Run it when the user asks to pick up teammates' changes, then `capshelf status` to see `update_available` |
-| `get-path` | print the editable path for an item |
+| `get-path` | print the editable path for an item; Pi extensions return `.pi/extensions/<name>` |
 | `self-update` | update the Homebrew-installed binary (not project pins) |
 
 ## Proposing changes upstream (review required, or no direct push access)
@@ -114,6 +116,12 @@ capshelf update <item>
 ```
 
 Fork variant (read-only consumers): `gh repo fork <owner/data-repo> --clone=false`, `git -C "$DATA" remote add fork <fork-url>`, branch and promote as above, then `git -C "$DATA" push -u fork propose/<topic>` and `gh pr create --repo <owner/data-repo> --head <user>:propose/<topic>`. Capshelf's upstream verification only checks `origin`, so the extra `fork` remote is safe and `sync-data` keeps pulling from `origin`.
+
+## Pi extensions
+
+`pi-extensions/<name>` maps `pi/extensions/<name>/index.ts` in the data repo to `.pi/extensions/<name>/index.ts` in the project. Extensions are project-scope only. `add --local`, `share --to local`, `move --to local`, and `keep-local` are rejected; use an unmanaged `.pi/extensions/<name>` for one-off policy.
+
+Pi loads project extensions only after project trust, but then they execute arbitrary TypeScript with full system permissions. Always inspect source before `add`, before `promote`, and before asking the user to `/reload` or restart Pi. Capshelf does not sandbox code, validate TypeScript, edit `.pi/settings.json`, manage Pi packages, invoke package managers, or install `package.json.dependencies`; dependency declarations produce an advisory warning only. Do not run install commands on the user's behalf as part of capshelf reconciliation.
 
 ## Config fragments
 
@@ -146,6 +154,7 @@ Codex only loads `.codex/config.toml` in trusted projects; `status` warns non-fa
 - **Treat `add` conflict refusals (exit 3) as decisions for the user**, not obstacles. There is no force flag by design.
 - **Never pass `promote --stale-ok` without explicit user direction** — it intentionally overwrites a teammate's newer upstream version.
 - **The lock is the source of truth** for what capshelf owns.
+- **Review Pi extension source before adding or promoting it.** The runtime warning is a trust boundary, not proof of safety; capshelf never installs extension dependencies or reloads Pi.
 - **Use `capshelf self-update` only for Homebrew installs**; source installs update with `git pull && make install`. Set `CAPSHELF_NO_SELF_UPDATE=1` to suppress startup prompts.
 
 ## Troubleshooting

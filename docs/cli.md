@@ -8,7 +8,7 @@
 4. **Read-only by default for foreign projects.** `update` in project A cannot affect project B. `share` and `promote` write only the bound data repo and the calling project; B only changes when it runs `update` or `add`.
 5. **No silent writes.** Mutating commands show what they touched; use `--json` where scripts need structured output.
 
-Claude custom commands are modeled as skills. capshelf does not manage `.claude/commands/`; create `skills/<name>/SKILL.md` for a reusable `/<name>` entry.
+Claude custom commands are modeled as skills. capshelf does not manage `.claude/commands/`; create `skills/<name>/SKILL.md` for a reusable `/<name>` entry. Project-local Pi extensions are modeled as `pi-extensions/<name>` copy items.
 
 Capshelf metadata lives under `.capshelf/` at the project root. `.capshelf/capshelf.json` and `.capshelf/capshelf.lock.json` are committed; `.capshelf/local.json` and `.capshelf/local.lock.json` are gitignored by `.capshelf/.gitignore` and store the per-machine data repo path plus local-only item intent and pins. By default, skills are installed as real directories under `.agents/skills/<name>` and exposed to Claude through per-skill symlinks at `.claude/skills/<name>`. Use `capshelf init --claude-only` only when a project should install directly under `.claude/` without `.agents` symlinks.
 
@@ -52,18 +52,18 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
 | `data path` | print the resolved local data repo path; `--json` includes the path and the normalized upstream (`null` when absent) (alias: `data-path`) | implemented |
 | `data sync` | explicitly fetch the bound data repo's `origin` and fast-forward the current branch when provably safe; the only capshelf command that performs network I/O besides the `init --data <url>` bootstrap clone and `self-update` (alias: `sync-data`) | implemented |
 | `ls` | list items in master plus user-level runtime skills by default, in this project (`--here`), or user-level runtime skills only (`--user`); master/project listings show descriptions and `#tags` from item metadata; `--tag` filters master/project listings; appends a `bundles/` section for data-repo bundles | implemented |
-| `show <item>` | print metadata + content for one item, including `requires`/`conflicts-with` install state; `--json` always carries a `metadata` object; `show bundles/<name>` previews bundle membership with per-member install state | implemented |
+| `show <item>` | print metadata + content for one item, including `requires`/`conflicts-with` install state; Pi extension warnings precede source content; `--json` always carries a `metadata` object and applicable `runtimeWarnings`; `show bundles/<name>` previews bundle membership with per-member install state | implemented |
 | `search <query...>` | search available items (data repo + system) and bundles by name, tags, description, and content; supports `--kind` and `--json`; zero matches exit 0 | implemented |
 | `status [<item>]` | drift / update report for this project plus user-level runtime skill inventory by default; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` explains local drift; reports `missing_source_commit` when a locked `sourceCommit` is unreachable in the data repo | implemented |
-| `add <item>` | install an item from the bound data repo; `--local` installs a clone-local skill; warns on unmet `requires`, refuses on `conflicts-with` (exit 3); `add bundles/<name>` expands a bundle (see Bundles) | implemented |
+| `add <item>` | install an item from the bound data repo; `--local` installs a clone-local skill (Pi extensions are project-only); warns on unmet `requires`, refuses on `conflicts-with` (exit 3); `add bundles/<name>` expands a bundle (see Bundles) | implemented |
 | `rm <item>` | remove from this project; `--local` removes clone-local skills | implemented |
-| `get-path <item>` | print the editable path; skills return their managed directory, fragments support `--output` for generated output paths, and MCP supports `--target` | implemented |
+| `get-path <item>` | print the editable path; skills and Pi extensions return their managed directory, fragments support `--output` for generated output paths, and MCP supports `--target` | implemented |
 | `apply [<item>]` | reconcile project and local files with lockfiles (data items via `git show <sourceCommit>`; system items from bundled content; fragments via merged outputs); supports `--local` and `--dry-run` | implemented |
 | `update [<item>...]` | bump project pins by default; `--local` or an explicit local-only skill ref updates local pins; supports `--dry-run` | implemented |
-| `share <item>` | adopt a not-yet-shared on-disk item into the data repo; fragments require project scope plus `--from <file>` or `--pick <path>` | implemented |
+| `share <item>` | adopt a not-yet-shared on-disk item into the data repo; Pi extensions default to project scope and require `index.ts`; fragments require project scope plus `--from <file>` or `--pick <path>` | implemented |
 | `move <item> --to <scope>` | move an already-tracked data item between local and project scope without changing data-repo content | implemented |
 | `promote <item>` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects local-scope skills; refuses stale promotes unless `--stale-ok` | implemented |
-| `keep-local <item>` | mark drifted copy-item content as intentional project-local divergence; supports `--local` for skills and rejects fragments | implemented |
+| `keep-local <item>` | mark drifted skill content as intentional project-local divergence; supports `--local` for skills and rejects fragments and Pi extensions | implemented |
 | `revert <item>` | discard local edits, restore locked version; supports `--local` | implemented |
 | `self-update` | check for and install a Homebrew update for the capshelf binary; supports `--check` and `--yes` | implemented |
 | `validate <name>` | lint an item (frontmatter, structure, broken refs) | roadmap |
@@ -154,7 +154,7 @@ Only `add` enforces relations; `update`, `apply`, and `rm` do not re-check.
 `capshelf search <query...> [--kind <kind>] [--json]` searches data items in
 the bound data repo plus bundled system items across four fields: the
 `<kind>/<name>` ref, tags, the resolved description, and item content
-(git-visible files for skills; canonical source files for fragments — the
+(git-visible files for copy items; canonical source files for fragments — the
 installed merged outputs are never read, so one fragment's text is never
 attributed to another).
 
@@ -221,8 +221,8 @@ Semantics:
   `.yml` is recognized; `.yaml` warns and is ignored. Bundles cannot
   include bundles.
 - **Scope**: `add bundles/<name> --local` works for skills-only bundles;
-  any fragment member fails preflight with one aggregated error naming all
-  fragment members.
+  every non-skill member fails preflight with one aggregated error naming all
+  project-only members.
 - **Freshness**: the bundle file is read from the data repo working tree
   and may be uncommitted (nothing pins it); member items still require
   clean, committed paths individually.
@@ -233,17 +233,53 @@ Semantics:
   rejecting `bundles/<name>` — after expansion the members are ordinary
   items, and a traceless macro has nothing for them to operate on.
 
+Bundles can include `pi-extensions` members. They install at project scope like
+standalone extension adds; `add bundles/<name> --local` rejects them together
+with every other non-skill member.
+
 Bundle exit codes:
 
 | situation | code |
 |---|---|
 | `add bundles/<x>`: bundle file not found | 2 |
-| `add bundles/<x>`: any preflight failure, malformed/unsupported bundle file, or `--local` with fragment members | 3 (per-member report printed first) |
+| `add bundles/<x>`: any preflight failure, malformed/unsupported bundle file, or `--local` with non-skill members | 3 (per-member report printed first) |
 | `add bundles/<x>`: all members already installed, or empty bundle | 0 |
 | `add bundles/<x>`: unmet `requires` across the expanded set | 0 + stderr warning + JSON `missingRequires` |
 | `show bundles/<x>`: bundle not found | 2 |
 | `show bundles/<x>` with `--target`/`--no-content` | 3 |
 | `bundles/<name>` passed to any other item command | 1 (invalid-kind error pointing at `add`/`show`) |
+
+## Pi extensions
+
+A data repo extension is a directory with a required entry point:
+
+```text
+pi/extensions/<name>/
+  index.ts
+  package.json       # optional metadata/dependencies
+  src/…
+  .capshelf.yml      # optional catalog metadata, never materialized
+```
+
+`capshelf add pi-extensions/<name>` copies the pinned Git-visible content to
+`.pi/extensions/<name>/`, where Pi auto-discovers `index.ts` after project
+trust. The manifest uses `piExtensions`, and the lock key is
+`data/pi-extensions/<name>`. Extensions are project-scope only: `add --local`,
+`share --to local`, `move --to local`, and `keep-local` are rejected. Use an
+unmanaged `.pi/extensions/<name>` directory for one-off project policy.
+
+Pi extensions execute arbitrary TypeScript with the user's permissions after
+Pi trusts the project. Capshelf emits `pi_extension_executes_code` runtime
+warnings on `add`, `share`, `promote`, `show`, and installed-item `status`, but
+does not sandbox code or claim that it has been reviewed. Inspect all extension
+source before materializing or promoting it.
+
+Capshelf does not edit `.pi/settings.json`, manage Pi packages, write global
+`~/.pi/agent/extensions`, install dependencies, or invoke a package manager.
+A non-empty `package.json.dependencies` produces the advisory
+`pi_extension_dependencies_not_installed` warning. Neither Pi warning makes
+`status --strict` fail. After materialization, run `/reload` in Pi or restart
+Pi; capshelf does not signal running Pi processes.
 
 ## Binary self-update
 

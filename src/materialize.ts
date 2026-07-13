@@ -13,7 +13,12 @@ import {
 } from "./installed";
 import type { ItemSource } from "./installed";
 import type { ItemKind } from "./master";
-import { isFragmentItemKind, isMetadataSidecarPath } from "./master";
+import {
+  isFragmentItemKind,
+  isMetadataSidecarPath,
+  itemRepoRelPath,
+} from "./master";
+import { hashNamedContents } from "./content-hash";
 import { findSystemItem, installSystemItem, shaOfSystemItem } from "./bundled";
 import { lsTreeEntriesAtCommit, showAtCommit } from "./git";
 import type { GitTreeEntry } from "./git";
@@ -63,7 +68,6 @@ export async function materializeLockEntry(
     );
   }
   const dst = installedPath(opts.project, kind, name);
-  const runtimeWarnings = runtimeWarningsForItem(opts.project, kind, name);
 
   if (opts.entry.source !== source) {
     throw new Error(
@@ -85,7 +89,7 @@ export async function materializeLockEntry(
       path: dst,
       sha: await shaOfInstalled(opts.project, kind, name),
       message: opts.entry.localReason,
-      ...(runtimeWarnings.length > 0 && { runtimeWarnings }),
+      ...runtimeWarningFields(opts.project, kind, name),
     };
   }
 
@@ -152,7 +156,7 @@ export async function materializeLockEntry(
         currentSha: before,
         plannedSha: opts.entry.sha,
         dryRun: true,
-        ...(runtimeWarnings.length > 0 && { runtimeWarnings }),
+        ...runtimeWarningFields(opts.project, kind, name),
       };
     }
     throw new Error(
@@ -173,7 +177,7 @@ export async function materializeLockEntry(
       plannedSha: opts.entry.sha,
       dryRun: true as const,
     }),
-    ...(runtimeWarnings.length > 0 && { runtimeWarnings }),
+    ...runtimeWarningFields(opts.project, kind, name),
   };
 }
 
@@ -184,26 +188,25 @@ async function shaOfDataAtCommit(
   name: string,
   commit: string,
 ): Promise<string> {
-  const repoRelPath = `${kind}/${name}`;
+  const repoRelPath = itemRepoRelPath(kind, name);
   const files = await materializableFilesAtCommit(
     dataRepo,
     manifest,
     commit,
     repoRelPath,
   );
-  const hasher = new Bun.CryptoHasher("sha256");
-  for (const file of files) {
-    const rel = posix.relative(repoRelPath, file.path);
-    hasher.update(rel);
-    hasher.update("\0");
-    try {
-      hasher.update(await showAtCommit(dataRepo, commit, file.path));
-    } catch {
-      throwMissingCommit(dataRepo, manifest, commit);
-    }
-    hasher.update("\0");
+  try {
+    return hashNamedContents(
+      await Promise.all(
+        files.map(async (file) => ({
+          name: posix.relative(repoRelPath, file.path),
+          content: await showAtCommit(dataRepo, commit, file.path),
+        })),
+      ),
+    );
+  } catch {
+    throwMissingCommit(dataRepo, manifest, commit);
   }
-  return hasher.digest("hex").slice(0, 12);
 }
 
 async function materializeDataAtCommit(
@@ -214,7 +217,7 @@ async function materializeDataAtCommit(
   name: string,
   commit: string,
 ): Promise<void> {
-  const repoRelPath = `${kind}/${name}`;
+  const repoRelPath = itemRepoRelPath(kind, name);
   const files = await materializableFilesAtCommit(
     dataRepo,
     manifest,
@@ -279,6 +282,15 @@ async function materializableFilesAtCommit(
   }
 
   return files;
+}
+
+function runtimeWarningFields(
+  project: string,
+  kind: ItemKind,
+  name: string,
+): Pick<MaterializeResult, "runtimeWarnings"> {
+  const runtimeWarnings = runtimeWarningsForItem(project, kind, name);
+  return runtimeWarnings.length > 0 ? { runtimeWarnings } : {};
 }
 
 function throwMissingCommit(

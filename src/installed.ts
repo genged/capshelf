@@ -12,6 +12,7 @@ import {
   codexDir,
   detectInstallMode,
   installBaseDir,
+  piDir,
 } from "./paths";
 import type { InstallMode } from "./paths";
 
@@ -41,6 +42,8 @@ function installedPathUnchecked(
   if (kind === "skills") return skillInstalledPath(project, name, mode);
 
   switch (kind) {
+    case "pi-extensions":
+      return join(piDir(project), "extensions", name);
     case "settings":
       return join(claudeDir(project), "settings.json");
     case "mcp":

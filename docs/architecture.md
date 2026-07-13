@@ -2,14 +2,14 @@
 
 ## Problem
 
-Multiple repos accumulate their own `.claude/`, `.agents/`, `.mcp.json`, and
-`.codex/` config. Some is project-specific, some is generic. There's no clean
+Multiple repos accumulate their own `.claude/`, `.agents/`, `.pi/`,
+`.mcp.json`, and `.codex/` config. Some is project-specific, some is generic. There's no clean
 way to share it. Whole-directory symlink schemes are fragile, so capshelf keeps
 real managed copies per project for copy items and reconciles shared JSON/TOML
 fragments into project config outputs.
 
 Requirements:
-1. Share skills/settings/MCPs across repos from one or more user-owned **data repos**.
+1. Share skills, Pi extensions, settings, and MCPs across repos from one or more user-owned **data repos**.
 2. Updates can stay local or be pushed up to the data repo.
 3. A change to a data repo **must not** disturb in-flight PRs on other projects.
 4. Some items are generic, some are project-specific. Both must coexist.
@@ -73,7 +73,7 @@ Naming `apply` rather than `install` is deliberate: the verb describes *convergi
 | origin | source of truth | examples | promotable? |
 |---|---|---|---|
 | **system** | bundled in the CLI binary | bootstrap `capshelf` skill, future built-ins | no — submit a PR to the capshelf repo |
-| **data** | a user-owned data repo (git) | user skills, settings/MCP fragments, Codex config fragments | yes — `share` and `promote` commit to the data repo |
+| **data** | a user-owned data repo (git) | user skills, Pi extensions, settings/MCP fragments, Codex config fragments | yes — `share` and `promote` commit to the data repo |
 
 Both kinds live in the same lockfile but with different entry schemas (see Lock below).
 
@@ -87,6 +87,11 @@ A data repo is any directory matching this layout, with its own git history:
 │   └── <name>/
 │       ├── SKILL.md
 │       └── assets/…
+├── pi/
+│   └── extensions/             project-local Pi extension copy items
+│       └── <name>/
+│           ├── index.ts        required entry point
+│           └── src/…
 ├── settings/                   mergeable fragments (→ settings.json)
 │   └── <name>/
 │       └── settings.json
@@ -105,8 +110,8 @@ A data repo is any directory matching this layout, with its own git history:
 
 Items may carry an optional `.capshelf.yml` metadata sidecar at their
 directory root (see Item Metadata below). The CLI discovers installable
-items only from `skills/`, `settings/`, `mcp/`, and `codex/config/`;
-`bundles/*.yml` files are catalog data, not items (see Bundles below).
+items only from `skills/`, `pi/extensions/`, `settings/`, `mcp/`, and
+`codex/config/`; `bundles/*.yml` files are catalog data, not items (see Bundles below).
 
 Multiple data repos can coexist on a single machine. Projects pick one in their manifest.
 
@@ -159,6 +164,7 @@ A real user creates their own data repos (`~/code/work-skills/`, `~/code/persona
 │   └── local.lock.json       gitignored lock for local-only items
 ├── .agents/skills/<name>/      default real skill directories
 ├── .claude/skills/<name>       default per-skill symlink to .agents/skills/<name>
+├── .pi/extensions/<name>/      project-local Pi extension directories
 ├── .claude/settings.json       Claude settings output, with local values preserved
 ├── .mcp.json                   Claude shared project MCP output
 └── .codex/config.toml          Codex project config output
@@ -180,7 +186,8 @@ Manifest:
   "skills":   ["security-review"],
   "settings": [],
   "mcp":      [],
-  "codexConfig": []
+  "codexConfig": [],
+  "piExtensions": []
 }
 ```
 
@@ -194,9 +201,9 @@ Local manifest:
 }
 ```
 
-Local scope is skills-only in current behavior. Fragment kinds preserve
-project-local values inside generated outputs instead of using clone-local
-manifest entries.
+Local scope is skills-only. Pi extensions are executable project policy and
+are project-scope only; fragment kinds preserve project-local values inside
+generated outputs instead of using clone-local manifest entries.
 In Git projects, local-scope skills add their install paths to
 `.git/info/exclude`; non-Git projects skip that step because local ownership is
 already recorded in `.capshelf/local.json` and `.capshelf/local.lock.json`.
@@ -235,8 +242,8 @@ system: { source: "system", sha, cliVersion,   appliedAt }
 ```
 
 Lock keys are prefixed, for example `data/skills/<name>`,
-`data/settings/<name>`, `data/mcp/<name>`, `data/codex-config/<name>`, or
-`system/skills/<name>`. This avoids collisions and makes the source obvious.
+`data/pi-extensions/<name>`, `data/settings/<name>`, `data/mcp/<name>`,
+`data/codex-config/<name>`, or `system/skills/<name>`. This avoids collisions and makes the source obvious.
 
 - `sha` — content hash (identity).
 - `sourceCommit` — for data items, the **last-touching commit** in the data repo (`git log -1 --format=%H -- <path>`). Fragment items use only canonical source files such as `settings/<name>/settings.json`, `mcp/<name>/claude.json`, `mcp/<name>/codex.toml`, and `codex/config/<name>/config.toml`. Lets `apply`/`revert` retrieve historical content via `git show <commit>:<path>` even if the data repo's HEAD has moved past the locked version.
@@ -249,10 +256,17 @@ CLI-only changes in the data repo (e.g. someone edits `src/foo.ts`) don't bump `
 | kind | strategy | output |
 |---|---|---|
 | skills | copy whole directory | default: `.agents/skills/<name>/` plus `.claude/skills/<name>` symlink; `--claude-only`: `.claude/skills/<name>/` |
+| pi-extensions | copy whole directory | `.pi/extensions/<name>/`; requires `index.ts`, no aliases or settings edits |
 | settings | merge `settings/<name>/settings.json` fragments in manifest order | `.claude/settings.json` |
 | mcp | merge `mcp/<name>/claude.json` and/or `mcp/<name>/codex.toml` fragments | `.mcp.json` and/or `.codex/config.toml` |
 | codex-config | merge `codex/config/<name>/config.toml` fragments | `.codex/config.toml` |
 | codex/agents | planned copy whole file | `<project>/.codex/agents/<name>.toml` or `~/.codex/agents/` |
+
+Pi extensions are loaded by Pi only after project trust. Capshelf does not
+sandbox their arbitrary TypeScript execution, install `package.json`
+dependencies, edit `.pi/settings.json`, or signal a running Pi process. Review
+source before adding or promoting an extension, then run `/reload` or restart
+Pi after materialization.
 
 Claude custom commands are represented as skills. In the default layout, a skill at `.agents/skills/<name>/SKILL.md` is exposed to Claude through `.claude/skills/<name>`. In Claude-only layout, the skill lives directly at `.claude/skills/<name>/SKILL.md`. capshelf does not manage `.claude/commands/`.
 
@@ -345,7 +359,8 @@ Items carry catalog metadata from two sources:
 
 1. An optional `.capshelf.yml` sidecar at the **item directory root** in the
    data repo (`skills/<name>/.capshelf.yml`,
-   `codex/config/<name>/.capshelf.yml`, …), for all four kinds:
+   `pi/extensions/<name>/.capshelf.yml`, `codex/config/<name>/.capshelf.yml`,
+   …), for all five kinds:
 
    ```yaml
    description: Deep multi-pass security audit of changed files.

@@ -6,10 +6,10 @@ its root command describes the job as managing shared Claude Code and Codex
 configuration across projects.
 
 The CLI lets a user keep reusable agent/project assets in a Git-backed data
-repo, then materialize selected items into individual code repositories. Today
-the supported item kinds are `skills`, `settings`, `mcp`, and `codex-config`.
-Skills are copy items; the other kinds are JSON/TOML fragments merged into
-project config outputs.
+repo, then materialize selected items into individual code repositories. The
+supported item kinds are `skills`, `pi-extensions`, `settings`, `mcp`, and
+`codex-config`. Skills and Pi extensions are copy items; the other kinds are
+JSON/TOML fragments merged into project config outputs.
 
 ## What It Manages
 
@@ -54,7 +54,8 @@ Core commands:
   in local or project scope.
 - `move` changes an already-tracked item's scope between local and project
   without changing data-repo content.
-- `keep-local` marks intentional project-local divergence.
+- `keep-local` marks intentional project-local divergence for skills; it is
+  intentionally unavailable for executable Pi extensions.
 - `revert` restores one item to its locked version.
 - `promote` copies already-tracked local edits or fragment source edits back
   into the data repo, commits them, and updates only the calling project's lock.
@@ -88,6 +89,12 @@ The default install mode is `codex-compatible`:
 Projects can opt into `claude-only` mode, where real skills are installed
 directly under `.claude/skills/<name>/`.
 
+Pi extensions are copied from `pi/extensions/<name>/` in the data repo to
+`.pi/extensions/<name>/` in the project. They are project-scope only and must
+contain `index.ts`. Capshelf does not edit `.pi/settings.json`, install declared
+package dependencies, sandbox extension code, or reload Pi; inspect the source,
+then run `/reload` or restart Pi after materialization.
+
 Fragments from the data repo are merged into project config outputs:
 
 - `settings/<name>/settings.json` -> `.claude/settings.json`
@@ -105,7 +112,9 @@ collisions instead of overwriting local values.
 The CLI treats the lockfile as the ownership boundary. It refuses to overwrite
 untracked targets and avoids co-managing skills owned by `skills.sh`. It also
 reports Claude plugins and personal Claude skills as external state instead of
-mutating them.
+mutating them. Pi extensions execute arbitrary code after Pi project trust;
+capshelf reports that boundary but does not imply that an extension was reviewed
+or trusted.
 
 ## One-Sentence Summary
 

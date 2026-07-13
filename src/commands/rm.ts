@@ -24,6 +24,7 @@ import { isSystemItemName } from "../bundled";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import {
+  assertLocalScopeSupported,
   loadLocalConfig,
   removeLocalExcludes,
   saveLocalConfig,
@@ -47,6 +48,9 @@ export function registerRm(program: Command): void {
     .option("--json", "output JSON")
     .action(async (itemRef: string, opts: RmOptions, cmd: Command) => {
       const ref = parseItemRef(itemRef);
+      if (opts.local && ref.kind) {
+        assertLocalScopeSupported(ref.kind, ref.name, "rm --local");
+      }
       if (isSystemItemName(ref.name)) {
         throw new PreconditionError(
           `"${ref.name}" is a system item — managed by the CLI, cannot be removed. It will be re-installed by 'capshelf init' anyway.`,
@@ -112,16 +116,9 @@ export function registerRm(program: Command): void {
       const parsed = parseLockKey(dataKeys[0]!);
       const kind = parsed.kind as ItemKind;
       const name = parsed.name;
-      if (opts.local && isFragmentItemKind(kind)) {
-        throw new PreconditionError(
-          `--local is not supported for ${kind} fragments`,
-        );
-      }
       if (opts.local) {
+        assertLocalScopeSupported(kind, name, "rm --local");
         if (!localConfig) throw new Error("no local manifest exists");
-        if (kind !== "skills") {
-          throw new PreconditionError("--local currently supports skills only");
-        }
         localConfig.skills = localConfig.skills.filter((x) => x !== name);
       } else {
         removeManifestName(manifest, kind, name);

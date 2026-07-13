@@ -7,6 +7,7 @@ import {
 } from "node:fs";
 import { delimiter } from "node:path";
 import { join, resolve } from "node:path";
+import { z } from "zod";
 import type { ItemKind } from "./master";
 import {
   claudeDir,
@@ -18,7 +19,9 @@ import {
 
 export type RuntimeWarningType =
   | "shadowed_by_personal_claude_skill"
-  | "codex_project_untrusted";
+  | "codex_project_untrusted"
+  | "pi_extension_executes_code"
+  | "pi_extension_dependencies_not_installed";
 
 export interface RuntimeWarning {
   type: RuntimeWarningType;
@@ -28,7 +31,13 @@ export interface RuntimeWarning {
 
 interface RuntimeWarningOptions {
   personalSkillPath?: string;
+  /** Content root to inspect instead of the installed extension directory. */
+  itemPath?: string;
 }
+
+const PiExtensionPackageSchema = z.object({
+  dependencies: z.record(z.unknown()).optional(),
+});
 
 export function runtimeWarningsForItem(
   project: string,
@@ -36,6 +45,12 @@ export function runtimeWarningsForItem(
   name: string,
   opts: RuntimeWarningOptions = {},
 ): RuntimeWarning[] {
+  if (kind === "pi-extensions") {
+    return piExtensionWarnings(
+      name,
+      opts.itemPath ?? join(project, ".pi", "extensions", name),
+    );
+  }
   if (kind !== "skills") return [];
 
   const personalPath = opts.personalSkillPath ?? personalClaudeSkillPath(name);
@@ -79,6 +94,17 @@ export function formatRuntimeWarnings(
     } else if (warning.type === "codex_project_untrusted") {
       lines.push(`${indent}⚠ Codex project config may be ignored`);
       lines.push(`${indent}  ${warning.message}`);
+    } else if (warning.type === "pi_extension_executes_code") {
+      lines.push(
+        `${indent}warning: Pi extensions execute arbitrary code after this project is trusted by Pi.`,
+      );
+      lines.push(
+        `${indent}review this extension before running /reload or starting pi in this project.`,
+      );
+    } else if (warning.type === "pi_extension_dependencies_not_installed") {
+      lines.push(
+        `${indent}warning: pi extension declares package dependencies; capshelf does not install them. Pi may fail to load this extension until dependencies are installed manually or the extension is packaged for Pi.`,
+      );
     }
   }
   return lines;
@@ -94,7 +120,47 @@ export function printRuntimeWarnings(
 }
 
 export function isStrictRuntimeWarning(warning: RuntimeWarning): boolean {
-  return warning.type !== "codex_project_untrusted";
+  return (
+    warning.type !== "codex_project_untrusted" &&
+    warning.type !== "pi_extension_executes_code" &&
+    warning.type !== "pi_extension_dependencies_not_installed"
+  );
+}
+
+function piExtensionWarnings(name: string, itemPath: string): RuntimeWarning[] {
+  const path = `.pi/extensions/${name}`;
+  const warnings: RuntimeWarning[] = [
+    {
+      type: "pi_extension_executes_code",
+      path,
+      message: "Pi extensions execute arbitrary code after project trust.",
+    },
+  ];
+  if (declaresPackageDependencies(join(itemPath, "package.json"))) {
+    warnings.push({
+      type: "pi_extension_dependencies_not_installed",
+      path,
+      message:
+        "Pi extension declares package dependencies; capshelf does not install them.",
+    });
+  }
+  return warnings;
+}
+
+function declaresPackageDependencies(packagePath: string): boolean {
+  if (!existsSync(packagePath)) return false;
+  try {
+    const parsed = PiExtensionPackageSchema.safeParse(
+      JSON.parse(readFileSync(packagePath, "utf-8")),
+    );
+    return (
+      parsed.success &&
+      parsed.data.dependencies !== undefined &&
+      Object.keys(parsed.data.dependencies).length > 0
+    );
+  } catch {
+    return false;
+  }
 }
 
 function isProjectSkillPath(

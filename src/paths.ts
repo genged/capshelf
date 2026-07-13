@@ -95,6 +95,10 @@ export function codexProjectConfigDir(project: string): string {
   return join(project, ".codex");
 }
 
+export function piDir(project: string): string {
+  return join(project, ".pi");
+}
+
 export function installBaseDir(
   project: string,
   mode: InstallMode = detectInstallMode(project),

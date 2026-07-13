@@ -10,6 +10,8 @@ import { addManifestName } from "../manifest";
 import { dataKey, loadLock, saveLocalLock, saveLock } from "../lock";
 import type { DataLockEntry, Lock } from "../lock";
 import { isSystemItemName } from "../bundled";
+import { itemRepoRelPath } from "../master";
+import type { FragmentItemKind } from "../master";
 import { assertRepoClean, commitInRepo, originRemoteUrl } from "../git";
 import { PreconditionError } from "../errors";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
@@ -68,7 +70,7 @@ export function registerShare(program: Command): void {
     .description("adopt an on-disk item into the data repo and track it here")
     .option(
       "--to <scope>",
-      "resulting scope: local or project (default: local for skills, project for fragments)",
+      "resulting scope: local or project (default: local for skills, project for Pi extensions and fragments)",
     )
     .option("--from <path>", "source file for fragment items")
     .option(
@@ -98,7 +100,7 @@ export function registerShare(program: Command): void {
       const name = ref.name;
       const scope = parseShareScope(
         opts.to,
-        isFragmentKind(kind) ? "project" : "local",
+        kind === "skills" ? "local" : "project",
       );
       if (isFragmentKind(kind)) {
         await shareFragment(kind, name, scope, opts, cmd);
@@ -110,12 +112,16 @@ export function registerShare(program: Command): void {
         );
       }
 
+      if (scope === "local") {
+        assertLocalScopeSupported(kind, name, "share");
+      }
+
       const { project, manifest, projectLock, localLock } =
         await loadProjectContext({ cmd });
       const localConfig = await loadLocalConfig(project);
       const dataRepo = await resolveProjectDataRepo(project, manifest, cmd);
 
-      const repoRelPath = `${kind}/${name}`;
+      const repoRelPath = itemRepoRelPath(kind, name);
       if (existsSync(join(dataRepo, repoRelPath))) {
         throw new PreconditionError(
           `data repo already has ${repoRelPath}; use promote to push edits, or move to change scope`,
@@ -215,7 +221,7 @@ export function registerShare(program: Command): void {
 }
 
 async function shareFragment(
-  kind: Exclude<ReturnType<typeof parseItemRef>["kind"], undefined | "skills">,
+  kind: FragmentItemKind,
   name: string,
   scope: ShareScope,
   opts: ShareOptions,

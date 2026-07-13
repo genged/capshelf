@@ -261,6 +261,22 @@ describe("planBundleInstall", () => {
     expect(result.members[0]?.status).toBe("install");
   });
 
+  test("--local rejects a Pi extension as a project-only member", () => {
+    const refs = ["skills/a", "pi-extensions/guard"];
+    const result = plan({
+      bundle: bundleOf(refs),
+      master: refs,
+      scope: "local",
+    });
+
+    expect(result.localUnsupportedMembers).toEqual(["pi-extensions/guard"]);
+    expect(result.localFragmentMembers).toEqual([]);
+    expect(planFailures(result).map((member) => member.ref)).toEqual([
+      "pi-extensions/guard",
+    ]);
+    expect(result.members[0]?.status).toBe("install");
+  });
+
   test("a skills-only bundle plans clean under --local", () => {
     const refs = ["skills/a", "skills/b"];
     const result = plan({
@@ -270,6 +286,7 @@ describe("planBundleInstall", () => {
     });
     expect(planFailures(result)).toEqual([]);
     expect(result.localFragmentMembers).toEqual([]);
+    expect(result.localUnsupportedMembers).toEqual([]);
   });
 });
 

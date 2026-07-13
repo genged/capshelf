@@ -152,6 +152,11 @@ export function assertLocalScopeSupported(
   mcpMessage = "local scope is not supported for mcp fragments; keep project-local values in .mcp.json or .codex/config.toml",
 ): void {
   if (kind === "skills") return;
+  if (kind === "pi-extensions") {
+    throw new PreconditionError(
+      "local scope is not supported for pi extensions; keep project-only extensions in .pi/extensions or add them to project scope",
+    );
+  }
   if (kind === "settings") {
     throw new PreconditionError(
       `${verb} is not supported for settings fragments; keep project-local values in .claude/settings.json`,

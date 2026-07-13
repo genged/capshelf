@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import type { Lock } from "./lock";
 import type { Manifest } from "./manifest";
-import { isMetadataSidecarPath } from "./master";
+import { isMetadataSidecarPath, itemRepoRelPath } from "./master";
 import type { ItemKind } from "./master";
 import type { ItemSource } from "./installed";
 import { installedPath } from "./installed";
@@ -247,7 +247,7 @@ async function expectedFilesForCopyItem(
   if (!opts.dataRepo) return null;
   if (!opts.sourceCommit) return null;
 
-  const repoRelPath = `${opts.kind}/${opts.name}`;
+  const repoRelPath = itemRepoRelPath(opts.kind, opts.name);
   let files: string[];
   try {
     files = await lsTreeAtCommit(opts.dataRepo, opts.sourceCommit, repoRelPath);

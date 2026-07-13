@@ -1,6 +1,7 @@
 import { existsSync, readlinkSync } from "node:fs";
 import { rm as fsRm } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
+import { itemRepoRelPath } from "./master";
 import type { ItemKind } from "./master";
 import type { Manifest } from "./manifest";
 import { NotFoundError, PreconditionError } from "./errors";
@@ -65,7 +66,7 @@ export async function adoptIntoDataRepo(
     );
   }
 
-  const repoRelPath = `${kind}/${name}`;
+  const repoRelPath = itemRepoRelPath(kind, name);
   const dataPath = join(dataRepo, repoRelPath);
   if (existsSync(dataPath)) {
     throw new PreconditionError(
@@ -187,14 +188,13 @@ function findAdoptionSource(
   name: string,
   mode: Manifest["installMode"],
 ): AdoptionSource | null {
-  if (kind === "mcp") {
+  if (kind === "pi-extensions") {
     return existingItemDir(
       installedPath(project, kind, name, mode),
       "installed",
       kind,
     );
   }
-  if (kind === "settings") return null;
 
   if (mode === "claude-only") {
     const path = claudeSkillPath(project, name);
@@ -239,6 +239,11 @@ function existingItemDir(
   }
   if (kind === "skills" && !existsSync(join(path, "SKILL.md"))) {
     throw new PreconditionError(`local skill is missing SKILL.md: ${path}`);
+  }
+  if (kind === "pi-extensions" && !existsSync(join(path, "index.ts"))) {
+    throw new PreconditionError(
+      `local pi extension is missing index.ts: ${path}`,
+    );
   }
   return { path, kind: sourceKind };
 }

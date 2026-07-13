@@ -3,6 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import {
   isFragmentItemKind,
+  isMetadataSidecarPath,
   listMasterItems,
   shaOfGitVisibleItem,
 } from "../master";
@@ -37,6 +38,10 @@ import {
   sourceMatchesCliTarget,
   sourceTargetForCli,
 } from "../fragments";
+import {
+  printRuntimeWarnings,
+  runtimeWarningsForItem,
+} from "../runtime-warnings";
 
 interface ShowOptions {
   json?: boolean;
@@ -112,6 +117,12 @@ export function registerShow(program: Command): void {
       const masterSha = isFragmentItemKind(item.kind)
         ? await shaOfFragmentItem(dataRepo, item.kind, item.name)
         : await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
+      const runtimeWarnings = runtimeWarningsForItem(
+        project ?? "",
+        item.kind,
+        item.name,
+        { itemPath: item.path },
+      );
       const lockEntry = lock.items[dataKey(item.kind, item.name)] ?? null;
       const meta = await loadDataItemMetadata(item);
       printMetadataWarnings(meta);
@@ -145,6 +156,7 @@ export function registerShow(program: Command): void {
                 lockEntry?.source === "data" ? (lockEntry.label ?? null) : null,
               appliedAt: lockEntry?.appliedAt ?? null,
               metadata: metadataJson(meta, locks),
+              ...(runtimeWarnings.length > 0 && { runtimeWarnings }),
             },
             null,
             2,
@@ -169,6 +181,10 @@ export function registerShow(program: Command): void {
       printMetadataBlock(meta, locks);
       console.log(`  path:       ${item.path}`);
 
+      if (runtimeWarnings.length > 0) {
+        console.log("");
+        printRuntimeWarnings(runtimeWarnings);
+      }
       if (opts.content === false) return;
 
       if (isFragmentItemKind(item.kind)) {
@@ -194,8 +210,8 @@ export function registerShow(program: Command): void {
           item.repoRelPath,
         );
         for (const file of files) {
-          if (file.includes("/")) continue;
-          if (isIgnoredDotEntry(file)) continue;
+          if (item.kind !== "pi-extensions" && file.includes("/")) continue;
+          if (isIgnoredDotEntry(file) || isMetadataSidecarPath(file)) continue;
           console.log(`─── ${file} ─────────────────────`);
           console.log(await readFile(join(item.path, file), "utf-8"));
         }

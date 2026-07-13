@@ -211,6 +211,7 @@ describe("legacy root layout fallback", () => {
       settings: [],
       mcp: [],
       codexConfig: [],
+      piExtensions: [],
     });
     // "claude-only" differs from DEFAULT_INSTALL_MODE, so this proves the
     // root manifest was actually read rather than falling back to defaults.
@@ -284,6 +285,7 @@ describe("manifest commands migration", () => {
       settings: [],
       mcp: [],
       codexConfig: [],
+      piExtensions: [],
     });
   });
 
@@ -407,6 +409,7 @@ describe("manifest commands migration", () => {
       settings: [],
       mcp: [],
       codexConfig: [],
+      piExtensions: [],
     });
   });
 

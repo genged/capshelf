@@ -45,6 +45,7 @@ export const ManifestSchema = z
     settings: itemNameArray,
     mcp: itemNameArray,
     codexConfig: itemNameArray,
+    piExtensions: itemNameArray,
   })
   .superRefine((manifest, ctx) => {
     if ((manifest.commands?.length ?? 0) > 0) {
@@ -60,8 +61,14 @@ export const ManifestSchema = z
     ({ commands: _commands, dataRepo: _dataRepo, ...manifest }) => manifest,
   );
 
-export type Manifest = z.infer<typeof ManifestSchema> & {
+type ParsedManifest = z.infer<typeof ManifestSchema>;
+
+// `piExtensions` is optional at the TypeScript boundary so older in-memory
+// fixtures and integrations remain source-compatible. ManifestSchema always
+// supplies it when loading persisted state, and mutation initializes it below.
+export type Manifest = Omit<ParsedManifest, "piExtensions"> & {
   installMode: InstallMode;
+  piExtensions?: string[];
 };
 
 export function emptyManifest(): Manifest {
@@ -104,7 +111,8 @@ export async function saveManifest(
 ): Promise<void> {
   const p = manifestPath(project);
   await mkdir(dirname(p), { recursive: true });
-  await atomicWriteFile(p, `${JSON.stringify(m, null, 2)}\n`);
+  const normalized = ManifestSchema.parse(m);
+  await atomicWriteFile(p, `${JSON.stringify(normalized, null, 2)}\n`);
   // installMode may have changed; drop the memoized detectInstallMode value so
   // a later read in the same process sees the new manifest.
   clearInstallModeCache(project);
@@ -117,6 +125,9 @@ export function manifestNamesForKind(
   switch (kind) {
     case "skills":
       return manifest.skills;
+    case "pi-extensions":
+      if (!manifest.piExtensions) manifest.piExtensions = [];
+      return manifest.piExtensions;
     case "settings":
       return manifest.settings;
     case "mcp":

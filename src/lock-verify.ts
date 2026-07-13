@@ -12,6 +12,7 @@ import {
   isMetadataSidecarPath,
   itemRepoRelPath,
 } from "./master";
+import type { FragmentItemKind } from "./master";
 
 export async function verifyDataLockEntries(
   dataRepo: string,
@@ -47,7 +48,7 @@ export async function verifyDataLockEntries(
 async function shaOfFragmentAtCommit(
   dataRepo: string,
   manifest: Manifest,
-  kind: Exclude<ReturnType<typeof parseLockKey>["kind"], "skills">,
+  kind: FragmentItemKind,
   name: string,
   commit: string,
 ): Promise<string> {

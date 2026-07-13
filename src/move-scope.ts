@@ -1,10 +1,10 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { itemRepoRelPath } from "./master";
 import type { ItemKind } from "./master";
 import { dataKey } from "./lock";
 import type { DataLockEntry } from "./lock";
 import { CheckFailedError, NotFoundError, PreconditionError } from "./errors";
-import { isFragmentKind } from "./fragments";
 import {
   assertLocalInstallPathsUntracked,
   assertLocalScopeSupported,
@@ -31,7 +31,7 @@ export async function moveScope(
   const key = dataKey(kind, name);
   const projectEntry = state.projectLock.items[key];
   const localEntry = state.localLock.items[key];
-  if (isFragmentKind(kind) && (to === "local" || localEntry !== undefined)) {
+  if (kind !== "skills" && localEntry !== undefined) {
     assertLocalScopeSupported(kind, name, "move");
   }
   if (to === "local") {
@@ -73,7 +73,7 @@ export async function moveScope(
     );
   }
 
-  const repoRelPath = `${kind}/${name}`;
+  const repoRelPath = itemRepoRelPath(kind, name);
   if (!existsSync(join(dataRepo, repoRelPath))) {
     throw new PreconditionError(
       `data repo does not have ${repoRelPath}; run "capshelf share ${kind}/${name} --to ${to}" instead`,

@@ -68,6 +68,8 @@ export interface BundlePlan {
    * hide the rest of the list.
    */
   localFragmentMembers: string[];
+  /** Every non-skill member rejected by local scope, including copy items. */
+  localUnsupportedMembers: string[];
   /**
    * Unmet `requires` per member, computed against installed items ∪ the
    * bundle's own members — a requirement satisfied by a sibling member that
@@ -128,6 +130,7 @@ export function planBundleInstall(opts: PlanBundleInstallOptions): BundlePlan {
     scope,
     members: [],
     localFragmentMembers: [],
+    localUnsupportedMembers: [],
     missingRequiresByMember: new Map(),
   };
 
@@ -161,8 +164,11 @@ export function planBundleInstall(opts: PlanBundleInstallOptions): BundlePlan {
       m.reason = `already owned by ${otherScope} scope; fix with: capshelf move ${ref} --to ${scope}`;
       continue;
     }
-    if (scope === "local" && isFragmentItemKind(member.kind)) {
-      plan.localFragmentMembers.push(ref);
+    if (scope === "local" && member.kind !== "skills") {
+      plan.localUnsupportedMembers.push(ref);
+      if (isFragmentItemKind(member.kind)) {
+        plan.localFragmentMembers.push(ref);
+      }
       m.status = "refused";
       m.reason = "local scope is skills-only";
     }

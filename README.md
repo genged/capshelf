@@ -13,8 +13,9 @@
 <img src="https://img.shields.io/badge/License-MIT-yellow.svg" />
 </p>
 
-A Git-backed CLI for sharing coding-agent configuration - skills, settings,
-and MCP fragments - across projects, with per-project lockfiles so a change in
+A Git-backed CLI for sharing coding-agent configuration — skills, Pi
+extensions, settings, and MCP fragments — across projects, with per-project
+lockfiles so a change in
 one repo never disturbs work in another.
 
 As you accumulate projects, you accumulate copies of the same skills, the same
@@ -152,6 +153,16 @@ capshelf share mcp/github                                    # adopt the unmanag
 capshelf share settings/permissions --pick permissions.allow # extract a settings value by path
 ```
 
+Add a project-local Pi extension from `pi/extensions/<name>/index.ts` in the
+data repo (review it first; extensions execute arbitrary code after Pi project
+trust):
+
+```bash
+capshelf show pi-extensions/path-guard
+capshelf add pi-extensions/path-guard
+# then run /reload in Pi or restart Pi
+```
+
 Add shared config fragments:
 
 ```bash
@@ -198,9 +209,14 @@ That works when the project committed `.capshelf/capshelf.json` with a
 | Kind | Data repo path                       | Project output |
 |---|--------------------------------------|---|
 | `skills` | `skills/<name>/SKILL.md` plus assets | `.agents/skills/<name>/` and `.claude/skills/<name>` symlink |
+| `pi-extensions` | `pi/extensions/<name>/index.ts` plus local modules | `.pi/extensions/<name>/` |
 | `settings` | `settings/<name>/settings.json`      | merged into `.claude/settings.json` |
 | `mcp` | `mcp/<name>/claude.json`, `mcp/<name>/codex.toml` | merged into `.mcp.json` and/or `.codex/config.toml` |
 | `codex-config` | `codex/config/<name>/config.toml` | merged into `.codex/config.toml` |
+
+Pi extensions are project-scope only and execute arbitrary code after Pi
+project trust. Capshelf reports that warning, but does not sandbox extensions,
+install `package.json` dependencies, edit `.pi/settings.json`, or reload Pi.
 
 Codex only loads project `.codex/config.toml` in trusted projects. Capshelf
 writes the project file and reports a non-failing status warning when Codex
@@ -282,8 +298,8 @@ make build                          # compile dist/capshelf
 
 ## Project Status
 
-Skills, settings fragments, MCP fragments, and project-scoped Codex config
-fragments are implemented. Fragment outputs preserve project-local values, fragment
+Skills, project-local Pi extensions, settings fragments, MCP fragments, and
+project-scoped Codex config fragments are implemented. Fragment outputs preserve project-local values, fragment
 promotion commits canonical data repo source files rather than generated
 outputs, and `share` can extract unmanaged fragment values directly from a
 project's generated outputs. Item metadata (`.capshelf.yml` sidecars) drives `ls --tag`, `search`,

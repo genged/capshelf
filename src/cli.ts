@@ -29,7 +29,7 @@ const program = new Command();
 
 program
   .name(PRODUCT_NAME)
-  .description("manage shared Claude Code / Codex config across projects")
+  .description("manage shared coding-agent config across projects")
   .version(CLI_VERSION)
   .option(
     "-d, --data <path>",

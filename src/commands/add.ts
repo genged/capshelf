@@ -566,13 +566,15 @@ function printBundleRefusal(
   // failures it becomes a block under a single headline whose count covers
   // every failed member.
   if (
-    plan.localFragmentMembers.length > 0 &&
-    failures.length === plan.localFragmentMembers.length
+    plan.localUnsupportedMembers.length > 0 &&
+    failures.length === plan.localUnsupportedMembers.length
   ) {
     console.log(
       `✗ not installing bundle ${bundle.name} --local — local scope is skills-only`,
     );
-    console.log(`  fragment members: ${plan.localFragmentMembers.join(", ")}`);
+    console.log(
+      `  ${localUnsupportedLabel(plan)}: ${plan.localUnsupportedMembers.join(", ")}`,
+    );
     console.log(
       `  install the bundle at project scope instead: capshelf add bundles/${bundle.name}`,
     );
@@ -585,16 +587,16 @@ function printBundleRefusal(
   console.log(
     `✗ not installing bundle ${bundle.name} — ${failures.length} of ${plan.members.length} members failed preflight`,
   );
-  if (plan.localFragmentMembers.length > 0) {
+  if (plan.localUnsupportedMembers.length > 0) {
     console.log("  ✗ local scope is skills-only");
     console.log(
-      `    fragment members: ${plan.localFragmentMembers.join(", ")}`,
+      `    ${localUnsupportedLabel(plan)}: ${plan.localUnsupportedMembers.join(", ")}`,
     );
     console.log(
       `    install the bundle at project scope instead: capshelf add bundles/${bundle.name}`,
     );
     failures = failures.filter(
-      (m) => !plan.localFragmentMembers.includes(m.ref),
+      (m) => !plan.localUnsupportedMembers.includes(m.ref),
     );
   }
   for (const member of failures) {
@@ -614,6 +616,13 @@ function printBundleRefusal(
   console.log(
     `  fix the failures above, then re-run: capshelf add bundles/${bundle.name}`,
   );
+}
+
+function localUnsupportedLabel(plan: BundlePlan): string {
+  return plan.localUnsupportedMembers.length ===
+    plan.localFragmentMembers.length
+    ? "fragment members"
+    : "project-only members";
 }
 
 function collectRuntimeWarnings(

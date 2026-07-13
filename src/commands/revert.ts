@@ -7,6 +7,7 @@ import { parseLockKey } from "../installed";
 import { assertIsGitRepo } from "../git";
 import { globalOpts } from "../global-options";
 import { NotFoundError, PreconditionError } from "../errors";
+import { assertLocalScopeSupported } from "../local-config";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import { materializeLockEntry } from "../materialize";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
@@ -35,6 +36,9 @@ export function registerRevert(program: Command): void {
         ? await loadLocalLock(project)
         : await loadLock(project);
       const ref = parseItemRef(itemRef);
+      if (opts.local && ref.kind) {
+        assertLocalScopeSupported(ref.kind, ref.name, "revert --local");
+      }
       const key = lockKeyForRef(lock, ref);
       if (!key) {
         if (ref.kind === undefined || ref.kind === "skills") {
@@ -49,6 +53,9 @@ export function registerRevert(program: Command): void {
       }
 
       const parsed = parseLockKey(key);
+      if (opts.local) {
+        assertLocalScopeSupported(parsed.kind, parsed.name, "revert --local");
+      }
       if (parsed.kind === "skills") {
         const external = await findSkillsShSkill(project, parsed.name);
         if (external) {

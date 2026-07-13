@@ -8,7 +8,8 @@ import { isFragmentItemKind, shaOfGitVisibleItem } from "../master";
 import { assertRepoClean, lastTouchingContentCommit } from "../git";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
 import { PreconditionError, ResultExitError } from "../errors";
-import { findMasterItemByRef } from "../item-ref";
+import { assertLocalScopeSupported } from "../local-config";
+import { findMasterItemByRef, parseItemRef } from "../item-ref";
 import { resolveTrackedTarget } from "../targets";
 import type { ScopedTarget } from "../targets";
 import { materializeLockEntry } from "../materialize";
@@ -80,9 +81,17 @@ export function registerUpdate(program: Command): void {
         opts: UpdateOptions,
         cmd: Command,
       ) => {
+        const refs = itemRefs ?? [];
+        if (opts.local) {
+          for (const itemRef of refs) {
+            const ref = parseItemRef(itemRef);
+            if (ref.kind) {
+              assertLocalScopeSupported(ref.kind, ref.name, "update --local");
+            }
+          }
+        }
         const { project, manifest, projectLock, localLock } =
           await loadProjectContext({ cmd });
-        const refs = itemRefs ?? [];
         const explicit = refs.length > 0;
 
         const targets: ScopedTarget[] = [];
@@ -318,6 +327,9 @@ async function updateDataTarget(
   parsed: ReturnType<typeof parseLockKey>,
   entry: DataLockEntry,
 ): Promise<TargetOutcome> {
+  if (scope === "local") {
+    assertLocalScopeSupported(parsed.kind, parsed.name, "update --local");
+  }
   if (entry.local === true) {
     const runtimeWarnings = runtimeWarningsForItem(
       ctx.project,

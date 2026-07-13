@@ -4,6 +4,7 @@ import { loadLocalLock, loadLock, saveLocalLock, saveLock } from "../lock";
 import { parseLockKey, shaOfInstalled } from "../installed";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
 import { isFragmentItemKind } from "../master";
+import type { FragmentItemKind } from "../master";
 import { NotFoundError, PreconditionError } from "../errors";
 
 interface KeepLocalOptions {
@@ -55,6 +56,11 @@ export function registerKeepLocal(program: Command): void {
 
       const key = dataKeys[0]!;
       const parsed = parseLockKey(key);
+      if (parsed.kind === "pi-extensions") {
+        throw new PreconditionError(
+          "keep-local is not supported for pi extensions; promote, revert, or keep an unmanaged project-only extension under .pi/extensions",
+        );
+      }
       if (isFragmentItemKind(parsed.kind)) {
         throw new PreconditionError(keepLocalRejectMessage(parsed.kind));
       }
@@ -116,9 +122,7 @@ export function registerKeepLocal(program: Command): void {
     });
 }
 
-function keepLocalRejectMessage(
-  kind: Exclude<ReturnType<typeof parseLockKey>["kind"], "skills">,
-): string {
+function keepLocalRejectMessage(kind: FragmentItemKind): string {
   switch (kind) {
     case "settings":
       return "keep-local is not supported for settings fragments; keep project-local values in .claude/settings.json";

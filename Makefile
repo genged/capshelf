@@ -1,6 +1,6 @@
 BIN_DIR ?= $(HOME)/.local/bin
 
-.PHONY: install dev build test typecheck lint check smoke smoke-modes smoke-skills smoke-settings smoke-mcp smoke-codex-config smoke-bootstrap smoke-metadata smoke-team-sync smoke-bundles clean deps
+.PHONY: install dev build test typecheck lint check smoke smoke-modes smoke-skills smoke-settings smoke-mcp smoke-codex-config smoke-bootstrap smoke-metadata smoke-team-sync smoke-bundles smoke-pi-extensions clean deps
 
 deps:
 	bun install
@@ -29,7 +29,7 @@ check: typecheck lint test smoke
 dev:
 	bun run src/cli.ts
 
-smoke: smoke-modes smoke-skills smoke-settings smoke-mcp smoke-codex-config smoke-bootstrap smoke-metadata smoke-team-sync smoke-bundles
+smoke: smoke-modes smoke-skills smoke-settings smoke-mcp smoke-codex-config smoke-bootstrap smoke-metadata smoke-team-sync smoke-bundles smoke-pi-extensions
 
 smoke-modes: deps
 	@./scripts/smoke-modes.sh
@@ -57,6 +57,9 @@ smoke-team-sync: deps
 
 smoke-bundles: deps
 	@./scripts/smoke-bundles.sh
+
+smoke-pi-extensions: deps
+	@./scripts/smoke-pi-extensions.sh
 
 clean:
 	rm -rf dist node_modules bun.lockb

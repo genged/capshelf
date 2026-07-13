@@ -8,25 +8,29 @@ import { METADATA_SIDECAR } from "./identity";
 
 export const ITEM_KINDS = [
   "skills",
+  "pi-extensions",
   "settings",
   "mcp",
   "codex-config",
 ] as const;
 export type ItemKind = (typeof ITEM_KINDS)[number];
-export type FragmentItemKind = Exclude<ItemKind, "skills">;
 
-export const FRAGMENT_ITEM_KINDS = [
-  "settings",
-  "mcp",
-  "codex-config",
-] as const satisfies readonly FragmentItemKind[];
+export const COPY_ITEM_KINDS = ["skills", "pi-extensions"] as const;
+export type CopyItemKind = (typeof COPY_ITEM_KINDS)[number];
+
+export const FRAGMENT_ITEM_KINDS = ["settings", "mcp", "codex-config"] as const;
+export type FragmentItemKind = (typeof FRAGMENT_ITEM_KINDS)[number];
 
 export function isItemKind(value: string): value is ItemKind {
   return (ITEM_KINDS as readonly string[]).includes(value);
 }
 
+export function isCopyItemKind(value: ItemKind): value is CopyItemKind {
+  return (COPY_ITEM_KINDS as readonly ItemKind[]).includes(value);
+}
+
 export function isFragmentItemKind(value: ItemKind): value is FragmentItemKind {
-  return value !== "skills";
+  return (FRAGMENT_ITEM_KINDS as readonly ItemKind[]).includes(value);
 }
 
 export interface MasterItem {
@@ -120,8 +124,8 @@ async function walkFiles(root: string): Promise<string[]> {
 }
 
 /**
- * Hash an item's content. Works on both directories (skills, settings,
- * mcp fragments) and single files (future codex agents).
+ * Hash an item's content. Works on both directories (copy items and fragment
+ * roots) and single files (future codex agents).
  */
 export async function shaOfItem(itemPath: string): Promise<string> {
   const info = await stat(itemPath);
@@ -171,6 +175,8 @@ export function itemRepoRelPath(kind: ItemKind, name: string): string {
   switch (kind) {
     case "skills":
       return `skills/${name}`;
+    case "pi-extensions":
+      return `pi/extensions/${name}`;
     case "settings":
       return `settings/${name}`;
     case "mcp":
@@ -186,6 +192,7 @@ export function allCanonicalItemRelPaths(
 ): string[] {
   switch (kind) {
     case "skills":
+    case "pi-extensions":
       return [itemRepoRelPath(kind, name)];
     case "settings":
       return [`settings/${name}/settings.json`];
@@ -201,7 +208,7 @@ export async function canonicalItemRelPaths(
   kind: ItemKind,
   name: string,
 ): Promise<string[]> {
-  if (kind === "skills") return [itemRepoRelPath(kind, name)];
+  if (isCopyItemKind(kind)) return [itemRepoRelPath(kind, name)];
   const paths = allCanonicalItemRelPaths(kind, name).filter((relPath) =>
     existsSync(join(dataRepo, ...relPath.split("/"))),
   );
@@ -213,9 +220,15 @@ export async function canonicalItemRelPaths(
   return paths;
 }
 
-function masterListDir(dataRepo: string, kind: ItemKind): string {
-  if (kind === "codex-config") return join(dataRepo, "codex", "config");
-  return join(dataRepo, kind);
+export function masterListDir(dataRepo: string, kind: ItemKind): string {
+  switch (kind) {
+    case "pi-extensions":
+      return join(dataRepo, "pi", "extensions");
+    case "codex-config":
+      return join(dataRepo, "codex", "config");
+    default:
+      return join(dataRepo, kind);
+  }
 }
 
 async function isInstallableDataItem(
@@ -224,6 +237,11 @@ async function isInstallableDataItem(
   name: string,
 ): Promise<boolean> {
   if (kind === "skills") return true;
+  if (kind === "pi-extensions") {
+    return existsSync(
+      join(dataRepo, ...itemRepoRelPath(kind, name).split("/"), "index.ts"),
+    );
+  }
   return allCanonicalItemRelPaths(kind, name).some((relPath) =>
     existsSync(join(dataRepo, ...relPath.split("/"))),
   );

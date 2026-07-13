@@ -9,7 +9,8 @@ import type { Manifest } from "../manifest";
 import { dataKey, saveLocalLock, saveLock } from "../lock";
 import type { Lock } from "../lock";
 import { installedPath, parseLockKey } from "../installed";
-import type { ItemKind } from "../master";
+import { itemRepoRelPath } from "../master";
+import type { FragmentItemKind, ItemKind } from "../master";
 import { NotFoundError, PreconditionError } from "../errors";
 import {
   assertRepoCleanOutsidePath,
@@ -78,6 +79,9 @@ export function registerPromote(program: Command): void {
     .option("--json", "output JSON")
     .action(async (itemRef: string, opts: PromoteOptions, cmd: Command) => {
       const ref = parseItemRef(itemRef);
+      if (opts.local && ref.kind) {
+        assertLocalScopeSupported(ref.kind, ref.name, "promote --local");
+      }
       if (isSystemItemName(ref.name)) {
         throw new PreconditionError(
           `"${ref.name}" is a system item — submit a PR to the capshelf repo instead`,
@@ -272,7 +276,7 @@ export async function promoteFragmentSource(
   dataRepo: string,
   manifest: Manifest,
   lock: Lock,
-  kind: Exclude<ItemKind, "skills">,
+  kind: FragmentItemKind,
   name: string,
   opts: PromoteOptions,
 ): Promise<PromoteResult> {
@@ -424,7 +428,7 @@ export async function syncTrackedIntoDataRepo(
     }
   }
 
-  const repoRelPath = `${kind}/${name}`;
+  const repoRelPath = itemRepoRelPath(kind, name);
   if (!existsSync(join(dataRepo, repoRelPath))) {
     throw new PreconditionError(
       `data repo does not have ${repoRelPath}; run "capshelf share ${kind}/${name}" instead`,

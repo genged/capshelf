@@ -3,6 +3,7 @@ import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import { parseLockKey } from "../installed";
 import { assertNoScopeCollisions } from "../status-core";
 import { PreconditionError, ResultExitError } from "../errors";
+import { parseItemRef } from "../item-ref";
 import { resolveTrackedTarget } from "../targets";
 import type { ScopedTarget } from "../targets";
 import { materializeLockEntry } from "../materialize";
@@ -13,6 +14,7 @@ import {
   skillsShConflictMessage,
 } from "../external";
 import { printRuntimeWarnings } from "../runtime-warnings";
+import { assertLocalScopeSupported } from "../local-config";
 import {
   applyFragmentOutput,
   fragmentKindForTarget,
@@ -59,6 +61,12 @@ export function registerApply(program: Command): void {
     .option("--json", "output JSON")
     .action(
       async (itemRef: string | undefined, opts: ApplyOptions, cmd: Command) => {
+        if (itemRef && opts.local) {
+          const ref = parseItemRef(itemRef);
+          if (ref.kind) {
+            assertLocalScopeSupported(ref.kind, ref.name, "apply --local");
+          }
+        }
         const { project, manifest, projectLock, localLock } =
           await loadProjectContext({ cmd });
         assertNoScopeCollisions(projectLock, localLock, "applying");
@@ -106,6 +114,13 @@ export function registerApply(program: Command): void {
           const { scope, key } = target;
           const lock = scope === "local" ? localLock : projectLock;
           const parsed = parseLockKey(key);
+          if (scope === "local") {
+            assertLocalScopeSupported(
+              parsed.kind,
+              parsed.name,
+              "apply --local",
+            );
+          }
           if (parsed.kind === "skills" && externalSkillNames.has(parsed.name)) {
             const external = await findSkillsShSkill(project, parsed.name);
             const message = external
