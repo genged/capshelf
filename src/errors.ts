@@ -17,6 +17,8 @@ export const ExitCode = {
   Precondition: 3,
   /** A verification or `--strict` check failed (drift, upstream mismatch). */
   CheckFailed: 4,
+  /** No data repo is configured for this project (pass --data / set a binding). */
+  DataRepoNotConfigured: 6,
   /** Git is required but unavailable on PATH. */
   GitUnavailable: 7,
 } as const;
@@ -67,6 +69,13 @@ export class PreconditionError extends CliError {
 export class CheckFailedError extends CliError {
   constructor(message: string, options: CliErrorOptions = {}) {
     super(message, { ...options, exitCode: ExitCode.CheckFailed });
+  }
+}
+
+/** Exit 6 — no data repo is configured for this project. */
+export class DataRepoNotConfiguredError extends CliError {
+  constructor(message: string, options: CliErrorOptions = {}) {
+    super(message, { ...options, exitCode: ExitCode.DataRepoNotConfigured });
   }
 }
 

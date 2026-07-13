@@ -5,6 +5,7 @@ import {
   METADATA_DIR,
   PRODUCT_NAME,
 } from "./identity";
+import { DataRepoNotConfiguredError } from "./errors";
 import { loadLocalConfig } from "./local-config";
 import type { Manifest } from "./manifest";
 import { normalizePath } from "./paths";
@@ -82,7 +83,9 @@ function noConfigMessage(manifest: Manifest | null | undefined): string {
 export async function resolveDataRepo(opts: ResolveOpts): Promise<string> {
   const r = await resolveOptional(opts);
   if (r !== null) return r;
-  throw new Error(noConfigMessage(opts.manifest));
+  // Distinct, recoverable state with its own documented exit code (6): the user
+  // resolves it by passing --data, setting local.json, or $CAPSHELF_HOME.
+  throw new DataRepoNotConfiguredError(noConfigMessage(opts.manifest));
 }
 
 /**

@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { access, realpath } from "node:fs/promises";
 import { basename, delimiter, join, resolve } from "node:path";
-import { CliError, ExitCode } from "./errors";
+import { CliError, ExitCode, PreconditionError } from "./errors";
 
 const GIT_MISSING_MESSAGE =
   "git is required but was not found on PATH\n  install Git, then retry";
@@ -80,7 +80,7 @@ export async function gitText(
 export async function assertIsGitRepo(path: string): Promise<void> {
   await assertGitAvailable();
   if (await isGitRepo(path)) return;
-  throw new Error(
+  throw new PreconditionError(
     `not a git repository: ${path}\n  initialize with: git -C ${path} init && git -C ${path} add -A && git -C ${path} commit -m "baseline"`,
   );
 }
@@ -315,7 +315,7 @@ export async function isRepoClean(repo: string): Promise<boolean> {
 
 export async function assertRepoClean(repo: string): Promise<void> {
   if (await isRepoClean(repo)) return;
-  throw new Error(
+  throw new PreconditionError(
     `data repo has uncommitted changes\n  commit or stash them first: git -C ${repo} status --short`,
   );
 }
@@ -349,7 +349,7 @@ export async function assertRepoCleanOutsidePaths(
   const out = await statusPorcelainOutsidePaths(repo, relPaths);
   if (out.trim().length === 0) return;
   const label = relPaths.join(", ");
-  throw new Error(
+  throw new PreconditionError(
     `data repo has uncommitted changes outside ${label}\n  commit or stash unrelated changes first: git -C ${repo} status --short`,
   );
 }
@@ -380,11 +380,11 @@ export async function assertPathClean(
   if (dirtyPathsFromPorcelain(out).every((path) => path === sidecarPath)) {
     // Metadata-dirty, not content-dirty: the catalog must not be read from
     // limbo, but no item content is at risk — the fix is a one-line commit.
-    throw new Error(
+    throw new PreconditionError(
       `data repo has uncommitted metadata changes: ${sidecarPath}\n  no item content is at risk — commit the sidecar in the data repo first:\n    git -C ${repo} add ${sidecarPath} && git -C ${repo} commit -m "..."`,
     );
   }
-  throw new Error(
+  throw new PreconditionError(
     `data repo has uncommitted changes under ${relPath}\n  the recorded sha would not match its source commit. Commit first:\n    git -C ${repo} add ${relPath} && git -C ${repo} commit -m "..."`,
   );
 }

@@ -9,6 +9,7 @@ import {
   METADATA_DIR,
   PRODUCT_NAME,
 } from "./identity";
+import { PreconditionError } from "./errors";
 
 // paths.ts is a leaf: pure path builders plus install-mode detection, no
 // imports from manifest / local-config / upstream-check. Data-repo resolution,
@@ -61,7 +62,9 @@ export function projectRoot(cwd: string = process.cwd()): string {
   const found = findProjectRoot(cwd);
   if (found) return found;
   const start = resolve(cwd);
-  throw new Error(
+  // A precondition (wrong directory), not an internal failure — exit 3 so a
+  // script/agent can tell "not in a project" apart from an unexpected crash.
+  throw new PreconditionError(
     `not a capshelf project: ${start}\n` +
       `  run this from a capshelf project (a directory, or any subdirectory of one, containing ${METADATA_DIR}/${MANIFEST_FILE}),\n` +
       `  or initialize the current directory with: ${PRODUCT_NAME} init --data <path>`,

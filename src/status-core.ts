@@ -1,5 +1,6 @@
 import type { ItemKind } from "./master";
 import { isFragmentItemKind } from "./master";
+import { PreconditionError } from "./errors";
 import type { ItemSource } from "./installed";
 import type { Lock, LockEntry } from "./lock";
 import type { ItemRef } from "./item-ref";
@@ -202,7 +203,7 @@ export function assertNoScopeCollisions(
     projectKeys.has(key),
   );
   if (collisions.length === 0) return;
-  throw new Error(
+  throw new PreconditionError(
     `item is owned by both project and local scope: ${collisions.join(", ")}\n` +
       `  remove one owner before ${action}; local scope does not shadow project scope`,
   );

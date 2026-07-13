@@ -75,7 +75,7 @@ export async function resolveTrackedTarget(
     throw new NotFoundError(`not tracked in this project: ${itemRef}`);
   }
   if (matches.length > 1) {
-    throw new Error(
+    throw new PreconditionError(
       `ambiguous item "${ref.name}": found in ${matches
         .map((match) => `${match.scope}/${match.key}`)
         .join(", ")}; use --local or remove one owner`,

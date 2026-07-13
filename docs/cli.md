@@ -436,7 +436,7 @@ this command closes.
 | 3 | conflict (promote would clobber, operation rejected on a system item, untracked target would be overwritten, path is managed by skills.sh, `add` refused by a `conflicts-with` declaration, a bundle failed preflight or its file is malformed/unsupported, or `sync-data` cannot run in the current configuration: detached HEAD, no tracking ref, no origin) |
 | 4 | drift detected (for `status --strict`), upstream verification failed, or `sync-data` needs human action (diverged history, or upstream commits blocked by a dirty worktree) |
 | 5 | reserved for future unmet-requires checks (`add` with unmet `requires` warns and exits 0) |
-| 6 | reserved for data repo not configured |
+| 6 | no data repo configured for this project (pass `--data`, set `.capshelf/local.json`, or `$CAPSHELF_HOME`) |
 | 7 | required dependency missing (`git` not found on `PATH`) |
 
 Initializing with no portable data repo origin:

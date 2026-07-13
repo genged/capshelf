@@ -166,7 +166,7 @@ describe("cli integration", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    expect(fromOutside.exitCode).toBe(1);
+    expect(fromOutside.exitCode).toBe(3);
     expect(fromOutside.stderr.toString()).toContain("not a capshelf project");
   });
 
@@ -887,7 +887,7 @@ describe("cli integration", () => {
       stderr: "pipe",
     });
 
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(6);
     const stderr = result.stderr.toString();
     expect(stderr).toContain(
       "upstream (per .capshelf/capshelf.json): https://github.com/acme/agent-config",
@@ -933,7 +933,7 @@ describe("cli integration", () => {
       stderr: "pipe",
     });
 
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(6);
     const stderr = result.stderr.toString();
     expect(stderr).toContain(
       ".capshelf/capshelf.json does not declare dataRepoUpstream",
