@@ -13,11 +13,11 @@
       "sourceCommit": "a1aaddd6a5bef2ed1968ef2882c0bb29c21859a3",
       "appliedAt": "2026-06-04T15:40:02.347Z"
     },
-    "data/skills/extract-generic-repo-patterns": {
+    "data/pi-extensions/exa-mcp": {
       "source": "data",
-      "sha": "c149a52a10c1",
-      "sourceCommit": "3946d73fa658bd12b81cae232d5f52e14d5e508a",
-      "appliedAt": "2026-06-18T09:30:31.023Z"
+      "sha": "c44a9d925352",
+      "sourceCommit": "df9cda3341fb2c22374b93d9ce0492f3a563c94b",
+      "appliedAt": "2026-07-15T09:03:11.826Z"
     }
   }
 }

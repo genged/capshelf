@@ -1,5 +1,5 @@
 {
-  "domains": [
+  "hosts": [
     "api.anthropic.com",
     "api.github.com",
     "api.npmjs.org",
@@ -10,6 +10,7 @@
     "files.pythonhosted.org",
     "generativelanguage.googleapis.com",
     "github.com",
+    "mcp.exa.ai",
     "mcp.posthog.com",
     "objects.githubusercontent.com",
     "platform.claude.com",
@@ -50,6 +51,14 @@
           "scheme": "raw"
         }
       ]
+    }
+  },
+  "requests": {
+    "api.anthropic.com": {
+      "writeAction": "allow"
+    },
+    "platform.claude.com": {
+      "writeAction": "allow"
     }
   }
 }

@@ -1,12 +1,13 @@
 {
   "installMode": "codex-compatible",
   "dataRepoUpstream": "https://github.com/genged/agent-shared",
-  "skills": [
-    "extract-generic-repo-patterns"
-  ],
+  "skills": [],
   "settings": [
     "generic"
   ],
   "mcp": [],
-  "codexConfig": []
+  "codexConfig": [],
+  "piExtensions": [
+    "exa-mcp"
+  ]
 }

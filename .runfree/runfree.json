@@ -16,5 +16,11 @@
         "dockerfile": ".runfree/image/Dockerfile"
       }
     }
+  },
+  "services": {
+    "agent-claude": {
+      "revision": 1,
+      "writeMode": "allow-write"
+    }
   }
 }
