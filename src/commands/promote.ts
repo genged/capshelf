@@ -345,6 +345,7 @@ export async function promoteFragmentSource(
         sourceCommit: entry.sourceCommit,
         upstreamSha: headCommittedSha,
         logPathspec: canonicalPaths.join(" "),
+        scope: "project",
       });
     }
     staleOverride = true;
@@ -520,6 +521,7 @@ export async function syncTrackedIntoDataRepo(
         sourceCommit: entry.sourceCommit,
         upstreamSha: upstream.upstreamSha,
         logPathspec: repoRelPath,
+        scope: opts.scope ?? "project",
       });
     }
     staleOverride = true;
@@ -592,21 +594,27 @@ function stalePromoteError(input: {
   sourceCommit: string;
   upstreamSha: string;
   logPathspec: string;
+  scope: Scope;
 }): PreconditionError {
   const item = `${input.kind}/${input.name}`;
   const shortCommit = input.sourceCommit.slice(0, 7);
   const repo = homeRelative(input.dataRepo);
+  const scopeFlag = input.scope === "local" ? " --local" : "";
+  const preserveHint =
+    input.scope === "local"
+      ? "  (preserve your current edits first; local-scope files are excluded from this project's Git):\n"
+      : "  (preserve your current edits first; update replaces the installed copy):\n";
   return new PreconditionError(
     `${item} changed in the data repo since this project last updated; promoting would overwrite the newer upstream version.\n\n` +
       `  locked:   ${input.lockedSha}  (sourceCommit ${shortCommit})\n` +
       `  upstream: ${input.upstreamSha}  (data repo HEAD)\n\n` +
       "  inspect before deciding:\n" +
-      `    capshelf status ${item} --diff\n` +
+      `    capshelf status ${item} --diff${scopeFlag}\n` +
       `    git -C ${repo} log --oneline ${shortCommit}..HEAD -- ${input.logPathspec}\n\n` +
       "  to take the upstream version and redo your edit on top of it\n" +
-      "  (your current edits stay recoverable in this project's own git diff):\n" +
-      `    capshelf update ${item}\n\n` +
-      "  to overwrite upstream with this project's version on purpose:\n" +
-      `    capshelf promote ${item} --stale-ok -m "..."`,
+      preserveHint +
+      `    capshelf update ${item}${scopeFlag}\n\n` +
+      "  to overwrite upstream with this installed version on purpose:\n" +
+      `    capshelf promote ${item}${scopeFlag} --stale-ok -m "..."`,
   );
 }

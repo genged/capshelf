@@ -42,12 +42,15 @@ version of it, `promote` refuses instead of silently clobbering:
   updated; promoting would overwrite the newer upstream version.
 ```
 
-Bob inspects the upstream diff, then either takes the upstream version first
-(`capshelf update security-review` — his edits stay recoverable in the
-project's own git diff) or overwrites on purpose with
-`capshelf promote security-review --stale-ok -m "..."`. If his edit turned out
-to be byte-identical to what upstream already has, promote converges on its
-own: it re-pins the lock without a commit and reports `already-upstream`.
+Bob inspects the upstream diff, then either preserves his current edit and
+takes the upstream version first (`capshelf update security-review` replaces
+the installed copy), or overwrites on purpose with `capshelf promote
+security-review --stale-ok -m "..."`. For a local-scope skill, he copies the
+edit outside the managed target first because local-scope files are excluded
+from the project's Git repository, and uses `--local` on each recovery
+command. If his edit turned out to be byte-identical to what upstream already
+has, promote converges on its own: it re-pins the lock without a commit and
+reports `already-upstream`.
 
 ## Proposing a change upstream (review required, or branch-protected main)
 

@@ -604,7 +604,11 @@ project's lock (exit 3): if the item changed upstream since the project last
 updated, the error shows the locked vs upstream shas, a scoped `git log` of
 the upstream advance, and the two ways out — `capshelf update <item>` to take
 the upstream version first, or `capshelf promote <item> --stale-ok` to
-overwrite on purpose. Two related behaviors:
+overwrite on purpose. The suggested commands preserve `--local` when the
+refusal came from a local-scope promote. Preserve the current edit before
+running `update`, which replaces the installed copy; local-scope skills are
+excluded from the project's Git repository and cannot be recovered from its
+diff. Two related behaviors:
 
 - **Uncommitted data-repo edits inside the item's path always block** (exit
   3) and are *not* bypassable by `--stale-ok`: they have no commit

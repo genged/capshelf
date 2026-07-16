@@ -494,6 +494,35 @@ describe("stale-promote guard (copy items)", () => {
     expect(f.lock.items[dataKey("skills", "hello")]?.sha).toBe(f.lockedSha);
   });
 
+  test("local-scope refusals preserve scope and warn that update replaces untracked edits", async () => {
+    const f = await staleFixture();
+    let error: unknown;
+    try {
+      await syncTrackedIntoDataRepo(
+        f.project,
+        f.dataRepo,
+        "skills",
+        "hello",
+        f.lock,
+        { scope: "local" },
+      );
+    } catch (err) {
+      error = err;
+    }
+
+    expect(error).toBeInstanceOf(PreconditionError);
+    const message = (error as Error).message;
+    expect(message).toContain("capshelf status skills/hello --diff --local");
+    expect(message).toContain("capshelf update skills/hello --local");
+    expect(message).toContain(
+      'capshelf promote skills/hello --local --stale-ok -m "..."',
+    );
+    expect(message).toContain(
+      "local-scope files are excluded from this project's Git",
+    );
+    expect(message).not.toContain("stay recoverable");
+  });
+
   test("--stale-ok bypasses the committed-advance case and records the override", async () => {
     const f = await staleFixture();
     const result = await syncTrackedIntoDataRepo(
