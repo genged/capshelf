@@ -181,6 +181,7 @@ export function registerApply(program: Command): void {
                   manifest,
                   key,
                   entry: lock.items[key]!,
+                  scope,
                   dryRun: opts.dryRun,
                 }),
               ),

@@ -8,8 +8,8 @@ import type { Lock, LockEntry } from "../lock";
 import { loadManifest } from "../manifest";
 import type { Manifest } from "../manifest";
 import type { ItemKind } from "../master";
-import { isFragmentItemKind, shaOfItem } from "../master";
-import { installedPath, shaOfInstalled, parseLockKey } from "../installed";
+import { isFragmentItemKind } from "../master";
+import { shaOfInstalled, parseLockKey } from "../installed";
 import { PreconditionError, ResultExitError } from "../errors";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
 import { globalOpts } from "../global-options";
@@ -156,7 +156,7 @@ export function registerStatus(program: Command): void {
               ? await commitExists(dataRepo, entry.sourceCommit)
               : null;
           let currentSha = isFragmentItemKind(kind)
-            ? await currentInstalledSha(project, kind, itemName, scope)
+            ? await shaOfInstalled(project, kind, itemName)
             : await currentCopyItemSha({
                 project,
                 dataRepo,
@@ -377,19 +377,6 @@ function filterUserSkillsForRef(
   if (!ref) return skills;
   if (ref.kind !== undefined && ref.kind !== "skills") return [];
   return skills.filter((skill) => skill.name === ref.name);
-}
-
-async function currentInstalledSha(
-  project: string,
-  kind: ItemKind,
-  name: string,
-  scope: "project" | "local",
-): Promise<string | null> {
-  if (scope === "local" && kind === "skills") {
-    const path = installedPath(project, kind, name);
-    return existsSync(path) ? await shaOfItem(path) : null;
-  }
-  return await shaOfInstalled(project, kind, name);
 }
 
 function printDiffs(diffs: StatusDiff[]): void {

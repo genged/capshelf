@@ -1,7 +1,8 @@
 import type { Command } from "commander";
 import { projectRoot } from "../paths";
 import { loadLocalLock, loadLock, saveLocalLock, saveLock } from "../lock";
-import { parseLockKey, shaOfInstalled } from "../installed";
+import { parseLockKey } from "../installed";
+import { shaOfInstalledForScope } from "../item-snapshot";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
 import { isFragmentItemKind } from "../master";
 import type { FragmentItemKind } from "../master";
@@ -73,10 +74,11 @@ export function registerKeepLocal(program: Command): void {
       // non-drifted item silently flips it to "≠ kept local" and suppresses
       // future update signals for no reason — refuse instead of doing that.
       if (!opts.unset && entry.local !== true) {
-        const installedSha = await shaOfInstalled(
+        const installedSha = await shaOfInstalledForScope(
           project,
           parsed.kind,
           parsed.name,
+          opts.local ? "local" : "project",
         );
         if (installedSha === entry.sha) {
           throw new PreconditionError(

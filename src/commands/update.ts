@@ -416,6 +416,7 @@ async function updateDataTarget(
     manifest: ctx.manifest,
     key,
     entry: newEntry,
+    scope,
     dryRun: ctx.dryRun,
   });
   return {
@@ -465,6 +466,7 @@ async function updateSystemTarget(
     key,
     manifest: ctx.manifest,
     entry: newEntry,
+    scope,
     dryRun: ctx.dryRun,
   });
   return {

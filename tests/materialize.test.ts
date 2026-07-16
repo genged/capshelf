@@ -73,6 +73,7 @@ describe("materializeLockEntry", () => {
         sourceCommit,
         appliedAt: new Date().toISOString(),
       },
+      scope: "project",
     });
 
     expect(result.action).toBe("reconciled");
@@ -120,6 +121,7 @@ describe("materializeLockEntry", () => {
       dataRepo,
       key: dataKey("skills", "hello"),
       entry,
+      scope: "project",
     });
 
     expect(result.action).toBe("reconciled");
@@ -133,6 +135,7 @@ describe("materializeLockEntry", () => {
       dataRepo,
       key: dataKey("skills", "hello"),
       entry,
+      scope: "project",
       dryRun: true,
     });
     expect(dryRun.action).toBe("already-current");
@@ -164,6 +167,7 @@ describe("materializeLockEntry", () => {
         sourceCommit,
         appliedAt: new Date().toISOString(),
       },
+      scope: "project",
       dryRun: true,
     });
 
@@ -175,6 +179,57 @@ describe("materializeLockEntry", () => {
     );
     expect(existsSync(join(installed, "stale.txt"))).toBe(true);
     expect(existsSync(join(project, ".claude", "skills", "hello"))).toBe(false);
+  });
+
+  test("local scope verifies git-excluded installs against the filesystem", async () => {
+    const dataRepo = await tempRepo();
+    // The project is itself a Git repo whose info/exclude hides the install
+    // path, exactly how add --local leaves it. Git-visible hashing would see
+    // an empty file list here and fail verification with the empty digest.
+    const project = await tempRepo();
+    const dataItem = join(dataRepo, "skills", "hello");
+    const installed = join(project, ".agents", "skills", "hello");
+
+    await mkdir(dataItem, { recursive: true });
+    await writeFile(join(dataItem, "SKILL.md"), "hello local\n");
+    await commitAll(dataRepo, "hello local");
+    const sourceCommit = await lastTouchingCommit(dataRepo, "skills/hello");
+    const sha = await shaOfItem(dataItem);
+    await writeFile(
+      join(project, ".git", "info", "exclude"),
+      ".agents/skills/hello/\n.claude/skills/hello\n",
+    );
+    const entry = {
+      source: "data" as const,
+      sha,
+      sourceCommit,
+      appliedAt: new Date().toISOString(),
+    };
+
+    const result = await materializeLockEntry({
+      project,
+      dataRepo,
+      key: dataKey("skills", "hello"),
+      entry,
+      scope: "local",
+    });
+
+    expect(result.action).toBe("reconciled");
+    expect(result.sha).toBe(sha);
+    expect(await file(join(installed, "SKILL.md")).text()).toBe(
+      "hello local\n",
+    );
+
+    const dryRun = await materializeLockEntry({
+      project,
+      dataRepo,
+      key: dataKey("skills", "hello"),
+      entry,
+      scope: "local",
+      dryRun: true,
+    });
+    expect(dryRun.action).toBe("already-current");
+    expect(dryRun.currentSha).toBe(sha);
   });
 
   test("does not touch keep-local data items", async () => {
@@ -196,6 +251,7 @@ describe("materializeLockEntry", () => {
         local: true,
         localReason: "project-specific",
       },
+      scope: "project",
     });
 
     expect(result.action).toBe("kept-local");

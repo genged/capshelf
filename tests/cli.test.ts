@@ -1362,6 +1362,174 @@ describe("cli integration", () => {
     ).not.toContain(".agents/skills/local-only/");
   });
 
+  test("update/apply/revert --local verify git-excluded local skills", async () => {
+    const project = await tempRepo("capshelf-local-update-project-");
+    const dataRepo = await tempRepo("capshelf-local-update-data-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+    const run = (args: string[]) =>
+      Bun.spawnSync({
+        cmd: [process.execPath, cli, ...args],
+        cwd: project,
+        env: process.env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+    await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "skills", "hello", "SKILL.md"),
+      "hello v1\n",
+    );
+    await commitAll(dataRepo, "hello v1");
+
+    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    expect(run(["add", "--local", "skills/hello"]).exitCode).toBe(0);
+    // The local install path is git-excluded — the setup that used to make
+    // materialization verification hash an empty file list.
+    expect(
+      await readFile(join(project, ".git", "info", "exclude"), "utf-8"),
+    ).toContain(".agents/skills/hello/");
+    const lockBefore = await file(
+      join(project, ".capshelf", "local.lock.json"),
+    ).json();
+    const oldEntry = lockBefore.items["data/skills/hello"];
+
+    // Advance upstream: edit the skill and add a second file.
+    await writeFile(
+      join(dataRepo, "skills", "hello", "SKILL.md"),
+      "hello v2\n",
+    );
+    await writeFile(join(dataRepo, "skills", "hello", "NEW.md"), "new\n");
+    await commitAll(dataRepo, "hello v2");
+
+    // Dry run reports the real installed hash — not the empty git-visible
+    // digest e3b0c44298fc — and writes nothing.
+    const dry = run([
+      "update",
+      "skills/hello",
+      "--local",
+      "--dry-run",
+      "--json",
+    ]);
+    expect(dry.exitCode).toBe(0);
+    const dryJson = JSON.parse(dry.stdout.toString());
+    expect(dryJson.items[0].action).toBe("would-update");
+    expect(dryJson.items[0].currentSha).toBe(oldEntry.sha);
+    expect(dryJson.items[0].currentSha).not.toBe("e3b0c44298fc");
+    expect(
+      await file(
+        join(project, ".agents", "skills", "hello", "NEW.md"),
+      ).exists(),
+    ).toBe(false);
+    expect(
+      await file(join(project, ".capshelf", "local.lock.json")).json(),
+    ).toEqual(lockBefore);
+
+    const update = run(["update", "skills/hello", "--local", "--json"]);
+    expect(update.exitCode).toBe(0);
+    const updateJson = JSON.parse(update.stdout.toString());
+    expect(updateJson.items[0].action).toBe("updated");
+    expect(
+      await file(
+        join(project, ".agents", "skills", "hello", "SKILL.md"),
+      ).text(),
+    ).toBe("hello v2\n");
+    expect(
+      await file(join(project, ".agents", "skills", "hello", "NEW.md")).text(),
+    ).toBe("new\n");
+    const lockAfter = await file(
+      join(project, ".capshelf", "local.lock.json"),
+    ).json();
+    const newEntry = lockAfter.items["data/skills/hello"];
+    expect(newEntry.sha).not.toBe(oldEntry.sha);
+    expect(newEntry.sourceCommit).not.toBe(oldEntry.sourceCommit);
+    // Local-scope operations never leak into committed project policy.
+    const projectManifest = await file(
+      join(project, ".capshelf", "capshelf.json"),
+    ).json();
+    expect(projectManifest.skills).toEqual([]);
+    const projectLock = await file(
+      join(project, ".capshelf", "capshelf.lock.json"),
+    ).json();
+    expect(projectLock.items["data/skills/hello"]).toBeUndefined();
+    expect(
+      run(["status", "skills/hello", "--local", "--strict"]).exitCode,
+    ).toBe(0);
+
+    // Unchanged apply converges without a verification failure.
+    const apply = run(["apply", "skills/hello", "--local", "--json"]);
+    expect(apply.exitCode).toBe(0);
+    const applyJson = JSON.parse(apply.stdout.toString());
+    expect(applyJson.items[0].action).toBe("already-current");
+
+    // Revert restores locked bytes and exits 0.
+    await writeFile(
+      join(project, ".agents", "skills", "hello", "SKILL.md"),
+      "local edit\n",
+    );
+    const revert = run(["revert", "skills/hello", "--local", "--json"]);
+    expect(revert.exitCode).toBe(0);
+    expect(JSON.parse(revert.stdout.toString()).action).toBe("reconciled");
+    expect(
+      await file(
+        join(project, ".agents", "skills", "hello", "SKILL.md"),
+      ).text(),
+    ).toBe("hello v2\n");
+    expect(
+      run(["status", "skills/hello", "--local", "--strict"]).exitCode,
+    ).toBe(0);
+  });
+
+  test("keep-local --local refuses an unchanged local-scope skill", async () => {
+    const project = await tempRepo("capshelf-local-keeplocal-project-");
+    const dataRepo = await tempRepo("capshelf-local-keeplocal-data-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+    const run = (args: string[]) =>
+      Bun.spawnSync({
+        cmd: [process.execPath, cli, ...args],
+        cwd: project,
+        env: process.env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+    await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
+    await writeFile(join(dataRepo, "skills", "hello", "SKILL.md"), "hello\n");
+    await commitAll(dataRepo, "hello");
+
+    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    expect(run(["add", "--local", "skills/hello"]).exitCode).toBe(0);
+
+    // Freshly added: no divergence, even though the install path is
+    // git-excluded and hashes as empty under git-visible conventions.
+    const lockBefore = await readFile(
+      join(project, ".capshelf", "local.lock.json"),
+      "utf-8",
+    );
+    const kept = run(["keep-local", "skills/hello", "--local"]);
+    expect(kept.exitCode).toBe(3);
+    expect(kept.stderr.toString()).toContain("no local divergence");
+    expect(
+      await readFile(join(project, ".capshelf", "local.lock.json"), "utf-8"),
+    ).toBe(lockBefore);
+    const entry = JSON.parse(lockBefore).items["data/skills/hello"];
+    expect(entry.local).toBeUndefined();
+    expect(entry.localReason).toBeUndefined();
+
+    // Genuine drift is still accepted, proving the refusal above checks
+    // content rather than rejecting local scope outright.
+    await writeFile(
+      join(project, ".agents", "skills", "hello", "SKILL.md"),
+      "edited\n",
+    );
+    const keptAfterEdit = run(["keep-local", "skills/hello", "--local"]);
+    expect(keptAfterEdit.exitCode).toBe(0);
+    const lockAfter = await file(
+      join(project, ".capshelf", "local.lock.json"),
+    ).json();
+    expect(lockAfter.items["data/skills/hello"].local).toBe(true);
+  });
+
   test("share adopts a new skill into local scope by default", async () => {
     const project = await tempRepo("capshelf-share-local-project-");
     const dataRepo = await tempRepo("capshelf-share-local-data-");

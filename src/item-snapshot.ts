@@ -34,6 +34,23 @@ export async function installedSnapshot(
   };
 }
 
+/**
+ * Scope-aware installed-content sha. Local-scope installs are deliberately
+ * listed in `.git/info/exclude`, so the default Git-visible hashing in
+ * `shaOfInstalled` would see an empty file list; this delegates to
+ * `installedSnapshot` so the scope branching and hashing conventions stay
+ * defined in one place.
+ */
+export async function shaOfInstalledForScope(
+  project: string,
+  kind: ItemKind,
+  name: string,
+  scope: Scope,
+): Promise<string | null> {
+  const snapshot = await installedSnapshot(project, kind, name, scope);
+  return snapshot?.sha ?? null;
+}
+
 export async function adoptionSnapshot(
   project: string,
   path: string,

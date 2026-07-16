@@ -131,6 +131,7 @@ export function registerRevert(program: Command): void {
         manifest,
         key,
         entry,
+        scope: opts.local ? "local" : "project",
         ignoreLocal: true,
       });
 

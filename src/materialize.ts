@@ -9,7 +9,6 @@ import {
   ensureInstallAliases,
   parseLockKey,
   installedPath,
-  shaOfInstalled,
 } from "./installed";
 import type { ItemSource } from "./installed";
 import type { ItemKind } from "./master";
@@ -17,7 +16,10 @@ import {
   isFragmentItemKind,
   isMetadataSidecarPath,
   itemRepoRelPath,
+  shaOfItem,
 } from "./master";
+import { shaOfInstalledForScope } from "./item-snapshot";
+import type { Scope } from "./promote-core";
 import { hashNamedContents } from "./content-hash";
 import { findSystemItem, installSystemItem, shaOfSystemItem } from "./bundled";
 import { lsTreeEntriesAtCommit, showAtCommit } from "./git";
@@ -54,6 +56,12 @@ interface MaterializeOptions {
   manifest?: Manifest;
   key: string;
   entry: LockEntry;
+  /**
+   * Lock scope the entry came from — not inferable from `entry.local`, which
+   * records intentional divergence. Local-scope installs are Git-excluded, so
+   * their current-state hashing must not consult project Git visibility.
+   */
+  scope: Scope;
   ignoreLocal?: boolean;
   dryRun?: boolean;
 }
@@ -87,13 +95,18 @@ export async function materializeLockEntry(
       name,
       action: "kept-local",
       path: dst,
-      sha: await shaOfInstalled(opts.project, kind, name),
+      sha: await shaOfInstalledForScope(opts.project, kind, name, opts.scope),
       message: opts.entry.localReason,
       ...runtimeWarningFields(opts.project, kind, name),
     };
   }
 
-  const before = await shaOfInstalled(opts.project, kind, name);
+  const before = await shaOfInstalledForScope(
+    opts.project,
+    kind,
+    name,
+    opts.scope,
+  );
   if (opts.entry.source === "data") {
     if (!opts.dataRepo) {
       throw new Error(`data repo is required to apply ${kind}/${name}`);
@@ -140,9 +153,11 @@ export async function materializeLockEntry(
     }
   }
 
-  const after = opts.dryRun
-    ? before
-    : await shaOfInstalled(opts.project, kind, name);
+  // Post-write verification hashes the just-replaced directory directly: the
+  // materializer owns it and populated it from the expected source file set,
+  // so destination Git ignore policy (project .gitignore, .git/info/exclude,
+  // global excludes) must not decide whether the written bytes count.
+  const after = opts.dryRun ? before : await shaOfItem(dst);
   if (after !== opts.entry.sha) {
     if (opts.dryRun) {
       return {
