@@ -142,7 +142,7 @@ export async function buildStatusDiff(
   if (!expectedFiles) return null;
   const currentFiles = await readInstalledFiles(
     installedPath(opts.project, row.kind, row.name),
-    expectedFiles,
+    expectedFiles.keys(),
   );
   const text = await diffFileMaps(currentFiles, expectedFiles, item);
   return text
@@ -160,11 +160,12 @@ export async function currentCopyItemSha(
   const root = installedPath(opts.project, opts.kind, opts.name);
   if (!existsSync(root)) return null;
 
-  const expectedFiles = await expectedFilesForCopyItem(opts);
-  const currentFiles = await readInstalledFiles(
-    root,
-    expectedFiles ?? new Map(),
-  );
+  // Ordinary status only needs the locked path set so ignored-but-managed
+  // files still participate in the current hash. Loading every locked blob
+  // here used to run one `git show` subprocess per file even though none of
+  // those bytes were used; reserve that work for `status --diff`.
+  const expectedPaths = await expectedFilePathsForCopyItem(opts);
+  const currentFiles = await readInstalledFiles(root, expectedPaths ?? []);
   return shaOfFileMap(currentFiles);
 }
 
@@ -247,6 +248,35 @@ async function expectedFilesForCopyItem(
   if (!opts.dataRepo) return null;
   if (!opts.sourceCommit) return null;
 
+  const paths = await expectedFilePathsForCopyItem(opts);
+  if (!paths) return null;
+  const repoRelPath = itemRepoRelPath(opts.kind, opts.name);
+  const out: FileMap = new Map();
+  for (const rel of paths) {
+    out.set(
+      rel,
+      await showExpectedFile(
+        opts,
+        opts.sourceCommit,
+        posix.join(repoRelPath, rel),
+      ),
+    );
+  }
+  return out;
+}
+
+async function expectedFilePathsForCopyItem(
+  opts: CopyItemFilesOptions,
+): Promise<string[] | null> {
+  if (opts.source === "system") {
+    const item = findSystemItem(opts.name);
+    if (!item || item.kind !== opts.kind) return null;
+    return item.files.map((file) => file.relPath);
+  }
+
+  if (!opts.dataRepo) return null;
+  if (!opts.sourceCommit) return null;
+
   const repoRelPath = itemRepoRelPath(opts.kind, opts.name);
   let files: string[];
   try {
@@ -260,22 +290,17 @@ async function expectedFilesForCopyItem(
       ),
     );
   }
-  const out: FileMap = new Map();
-  for (const file of files) {
-    const rel = posix.relative(repoRelPath, file);
-    if (
-      !rel ||
-      rel.startsWith("..") ||
-      hasIgnoredDotSegment(rel) ||
-      // A committed metadata sidecar is catalog data, not locked content; it
-      // must not appear as a "missing" file in status --diff.
-      isMetadataSidecarPath(rel)
-    ) {
-      continue;
-    }
-    out.set(rel, await showExpectedFile(opts, opts.sourceCommit, file));
-  }
-  return out;
+  return files
+    .map((file) => posix.relative(repoRelPath, file))
+    .filter(
+      (rel) =>
+        rel.length > 0 &&
+        !rel.startsWith("..") &&
+        !hasIgnoredDotSegment(rel) &&
+        // A committed metadata sidecar is catalog data, not locked content;
+        // it must not participate in status hashes or diffs.
+        !isMetadataSidecarPath(rel),
+    );
 }
 
 async function showExpectedFile(
@@ -295,7 +320,7 @@ async function showExpectedFile(
 
 async function readInstalledFiles(
   root: string,
-  expectedFiles: FileMap,
+  expectedPaths: Iterable<string>,
 ): Promise<FileMap> {
   const out: FileMap = new Map();
   if (!existsSync(root)) return out;
@@ -307,7 +332,7 @@ async function readInstalledFiles(
       (rel) => !isMetadataSidecarPath(rel),
     ),
   );
-  for (const rel of expectedFiles.keys()) files.add(rel);
+  for (const rel of expectedPaths) files.add(rel);
   for (const rel of [...files].sort()) {
     const file = join(root, ...rel.split("/"));
     if (existsSync(file) && (await lstat(file)).isFile()) {
