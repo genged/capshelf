@@ -39,8 +39,8 @@ More info: `docs/project-brief.md`,  `docs/architecture.md`, `docs/cli.md`,
   safe fixes and `bun run format` reformats only. Biome is provided in CI by the
   `biomejs/setup-biome` action; locally install it (`bunx @biomejs/biome`,
   Homebrew, or as a devDependency once the lockfile is regenerated).
-- `bun test` runs the unit test suite.
-- `make smoke` runs all smoke tests.
+- `bun run test` runs the unit test suite with four worker processes.
+- `make smoke` runs all smoke tests with four worker processes.
 - `make smoke-modes`, `make smoke-skills`, and `make smoke-settings` run
   focused smoke suites.
 - `make check` runs typecheck, lint, unit tests, plus all smoke tests.
@@ -48,9 +48,9 @@ More info: `docs/project-brief.md`,  `docs/architecture.md`, `docs/cli.md`,
 - `bun run build` or `make build` compiles `dist/capshelf`.
 - `make install` builds and copies the binary to `~/.local/bin/capshelf`
 
-For broad CLI behavior changes, run `bun run typecheck`, `bun test`, and the
-relevant smoke suite at minimum. Run `make check` before treating cross-command
-or layout work as done. For a docs-only change, `git diff --check` is usually
+For broad CLI behavior changes, run `bun run typecheck`, `bun run test`, and
+the relevant smoke suite at minimum. Run `make check` before treating
+cross-command or layout work as done. For a docs-only change, `git diff --check` is usually
 enough.
 
 ## Git

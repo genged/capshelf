@@ -51,7 +51,7 @@ jobs:
         run: bun run typecheck
 
       - name: Run unit tests
-        run: bun test
+        run: bun run test
 
       - name: Run smoke tests
         run: make smoke

@@ -1,6 +1,9 @@
 BIN_DIR ?= $(HOME)/.local/bin
 
-.PHONY: install dev build test typecheck lint check smoke smoke-modes smoke-skills smoke-settings smoke-mcp smoke-codex-config smoke-bootstrap smoke-metadata smoke-team-sync smoke-bundles smoke-pi-extensions clean deps
+SMOKE_JOBS ?= 4
+SMOKE_TARGETS := smoke-modes smoke-skills smoke-settings smoke-mcp smoke-codex-config smoke-bootstrap smoke-metadata smoke-team-sync smoke-bundles smoke-pi-extensions
+
+.PHONY: install dev build test typecheck lint check smoke $(SMOKE_TARGETS) clean deps
 
 deps:
 	bun install
@@ -16,7 +19,7 @@ install: build
 	@echo "  ensure $(BIN_DIR) is on your PATH"
 
 test:
-	bun test
+	bun run test
 
 typecheck: deps
 	bun run typecheck
@@ -29,7 +32,8 @@ check: typecheck lint test smoke
 dev:
 	bun run src/cli.ts
 
-smoke: smoke-modes smoke-skills smoke-settings smoke-mcp smoke-codex-config smoke-bootstrap smoke-metadata smoke-team-sync smoke-bundles smoke-pi-extensions
+smoke:
+	@$(MAKE) --no-print-directory -j$(SMOKE_JOBS) $(SMOKE_TARGETS)
 
 smoke-modes: deps
 	@./scripts/smoke-modes.sh

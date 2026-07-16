@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "bun run src/cli.ts",
-    "test": "bun test",
+    "test": "bun test --parallel=4",
     "coverage": "bun test --coverage",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",

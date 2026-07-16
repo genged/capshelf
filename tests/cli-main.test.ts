@@ -1,0 +1,67 @@
+import { $ } from "bun";
+import { describe, expect, spyOn, test } from "bun:test";
+import { mkdtemp, realpath } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { main } from "../src/cli";
+
+async function tempDir(prefix: string): Promise<string> {
+  return await realpath(await mkdtemp(join(tmpdir(), prefix)));
+}
+
+describe("in-process CLI entry point", () => {
+  test("does not retain global options between main calls", async () => {
+    const cwd = await tempDir("capshelf-main-cwd-");
+    const home = await tempDir("capshelf-main-home-");
+    const dataRepo = await tempDir("capshelf-main-data-");
+    await $`git -C ${dataRepo} init -q`.quiet();
+
+    const previousCwd = process.cwd();
+    const previousEnv = new Map(
+      ["HOME", "CODEX_HOME", "CAPSHELF_HOME", "AGENTSHARE_HOME"].map(
+        (name) => [name, process.env[name]] as const,
+      ),
+    );
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const logSpy = spyOn(console, "log").mockImplementation((...values) => {
+      stdout.push(values.map(String).join(" "));
+    });
+    const errorSpy = spyOn(console, "error").mockImplementation((...values) => {
+      stderr.push(values.map(String).join(" "));
+    });
+
+    try {
+      process.chdir(cwd);
+      process.env.HOME = home;
+      process.env.CODEX_HOME = join(home, ".codex");
+      process.env.CAPSHELF_HOME = "";
+      process.env.AGENTSHARE_HOME = "";
+
+      expect(
+        await main([
+          process.execPath,
+          "capshelf",
+          "--data",
+          dataRepo,
+          "ls",
+          "--json",
+        ]),
+      ).toBe(0);
+      expect(stdout.at(-1)).toContain(`"dataRepo": "${dataRepo}"`);
+
+      expect(await main([process.execPath, "capshelf", "ls", "--json"])).toBe(
+        6,
+      );
+      expect(stderr.at(-1)).toContain("no data repo configured");
+    } finally {
+      process.chdir(previousCwd);
+      for (const [name, value] of previousEnv) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      logSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
+});

@@ -290,8 +290,8 @@ interactive Homebrew installs. Set `CAPSHELF_NO_SELF_UPDATE=1` to disable them.
 ```bash
 bun install
 bun run src/cli.ts <verb> [args]   # run from source
-bun test                            # unit tests
-make smoke                          # smoke suites
+bun run test                        # unit tests (4 workers)
+make smoke                          # smoke suites (4 workers)
 make check                          # tests plus smoke suites
 make build                          # compile dist/capshelf
 ```

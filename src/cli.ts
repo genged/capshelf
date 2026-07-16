@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { Command } from "commander";
+import { Command, CommanderError } from "commander";
 import { CLI_VERSION } from "./bundled";
 import { registerInit } from "./commands/init";
 import { registerLs } from "./commands/ls";
@@ -25,65 +25,80 @@ import { CliError } from "./errors";
 import { HOME_ENV, PRODUCT_NAME } from "./identity";
 import { runStartupSelfUpdate } from "./self-update";
 
-const program = new Command();
+export function createProgram(): Command {
+  const program = new Command();
 
-program
-  .name(PRODUCT_NAME)
-  .description("manage shared coding-agent config across projects")
-  .version(CLI_VERSION)
-  .option(
-    "-d, --data <path>",
-    `override data repo with a local path (resolution: --data > .capshelf/local.json > $${HOME_ENV}, no implicit default); remote data repo URLs are accepted by init only`,
-  );
+  // Commander 12 retains parsed option state. Constructing a fresh command
+  // tree for every main() call keeps the exported entry point reentrant.
+  // Intercept Commander's usage-layer exits so an in-process caller receives
+  // an exit code instead of having its host process terminated.
+  program.exitOverride();
+  program
+    .name(PRODUCT_NAME)
+    .description("manage shared coding-agent config across projects")
+    .version(CLI_VERSION)
+    .option(
+      "-d, --data <path>",
+      `override data repo with a local path (resolution: --data > .capshelf/local.json > $${HOME_ENV}, no implicit default); remote data repo URLs are accepted by init only`,
+    );
 
-registerInit(program);
-registerLs(program);
-registerShow(program);
-registerSearch(program);
-registerStatus(program);
-registerAdd(program);
-registerRm(program);
-registerGetPath(program);
-registerApply(program);
-registerRevert(program);
-registerKeepLocal(program);
-registerUpdate(program);
-registerPromote(program);
-registerShare(program);
-registerMove(program);
-registerSelfUpdate(program);
+  registerInit(program);
+  registerLs(program);
+  registerShow(program);
+  registerSearch(program);
+  registerStatus(program);
+  registerAdd(program);
+  registerRm(program);
+  registerGetPath(program);
+  registerApply(program);
+  registerRevert(program);
+  registerKeepLocal(program);
+  registerUpdate(program);
+  registerPromote(program);
+  registerShare(program);
+  registerMove(program);
+  registerSelfUpdate(program);
 
-// Data-repo commands are grouped under `capshelf data <sub>` for a consistent,
-// scannable surface. The original top-level names (set-data/data-path/
-// sync-data/set-upstream) remain as hidden aliases so existing scripts and
-// muscle memory keep working.
-const data = program
-  .command("data")
-  .description("bind, inspect, sync, or set the upstream of the data repo");
-data.addCommand(buildSetData("bind"));
-data.addCommand(buildDataPath("path"));
-data.addCommand(buildSyncData("sync"));
-data.addCommand(buildSetUpstream("upstream"));
-program.addCommand(buildSetData("set-data"), { hidden: true });
-program.addCommand(buildDataPath("data-path"), { hidden: true });
-program.addCommand(buildSyncData("sync-data"), { hidden: true });
-program.addCommand(buildSetUpstream("set-upstream"), { hidden: true });
+  // Data-repo commands are grouped under `capshelf data <sub>` for a
+  // consistent, scannable surface. The original top-level names
+  // (set-data/data-path/sync-data/set-upstream) remain as hidden aliases so
+  // existing scripts and muscle memory keep working.
+  const data = program
+    .command("data")
+    .description("bind, inspect, sync, or set the upstream of the data repo");
+  data.addCommand(buildSetData("bind"));
+  data.addCommand(buildDataPath("path"));
+  data.addCommand(buildSyncData("sync"));
+  data.addCommand(buildSetUpstream("upstream"));
+  program.addCommand(buildSetData("set-data"), { hidden: true });
+  program.addCommand(buildDataPath("data-path"), { hidden: true });
+  program.addCommand(buildSyncData("sync-data"), { hidden: true });
+  program.addCommand(buildSetUpstream("set-upstream"), { hidden: true });
+
+  return program;
+}
 
 /**
  * Parse argv and run the matched command, returning the process exit code.
  * This is the only place that decides exit codes for domain failures, and it
  * never calls `process.exit`, so it is callable in-process from tests.
  *
- * Commander still owns usage-layer exits (help, --version, unknown command,
- * missing argument); those are not routed through here.
+ * Commander usage-layer exits (help, --version, unknown command, missing
+ * argument) are translated into return codes too.
  */
 export async function main(argv: string[] = process.argv): Promise<number> {
+  const program = createProgram();
   try {
     const selfUpdateExit = await runStartupSelfUpdate(argv);
     if (selfUpdateExit !== null) return selfUpdateExit;
     await program.parseAsync(argv);
     return 0;
   } catch (err) {
+    // Commander already emitted help, version, or a usage diagnostic before
+    // exitOverride() threw. Preserve that output and return its requested code
+    // without printing a second error.
+    if (err instanceof CommanderError) return err.exitCode;
+
     // Options are parsed before the action runs, so by the time an action
     // throws --json (if present) is on argv. Match the command's own output
     // channel: agents that pass --json get a JSON error envelope, not prose.
@@ -130,5 +145,5 @@ function reportError(err: unknown, json: boolean): number {
 }
 
 if (import.meta.main) {
-  process.exit(await main());
+  process.exitCode = await main();
 }
