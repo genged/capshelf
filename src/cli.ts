@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { Command, CommanderError } from "commander";
+import { Command, CommanderError, type CommandOptions } from "commander";
 import { CLI_VERSION } from "./bundled";
 import { registerInit } from "./commands/init";
 import { registerLs } from "./commands/ls";
@@ -66,16 +66,26 @@ export function createProgram(): Command {
   const data = program
     .command("data")
     .description("bind, inspect, sync, or set the upstream of the data repo");
-  data.addCommand(buildSetData("bind"));
-  data.addCommand(buildDataPath("path"));
-  data.addCommand(buildSyncData("sync"));
-  data.addCommand(buildSetUpstream("upstream"));
-  program.addCommand(buildSetData("set-data"), { hidden: true });
-  program.addCommand(buildDataPath("data-path"), { hidden: true });
-  program.addCommand(buildSyncData("sync-data"), { hidden: true });
-  program.addCommand(buildSetUpstream("set-upstream"), { hidden: true });
+  addPreparedCommand(data, buildSetData("bind"));
+  addPreparedCommand(data, buildDataPath("path"));
+  addPreparedCommand(data, buildSyncData("sync"));
+  addPreparedCommand(data, buildSetUpstream("upstream"));
+  addPreparedCommand(program, buildSetData("set-data"), { hidden: true });
+  addPreparedCommand(program, buildDataPath("data-path"), { hidden: true });
+  addPreparedCommand(program, buildSyncData("sync-data"), { hidden: true });
+  addPreparedCommand(program, buildSetUpstream("set-upstream"), {
+    hidden: true,
+  });
 
   return program;
+}
+
+function addPreparedCommand(
+  parent: Command,
+  command: Command,
+  options?: CommandOptions,
+): void {
+  parent.addCommand(command.copyInheritedSettings(parent), options);
 }
 
 /**

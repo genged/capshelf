@@ -10,6 +10,36 @@ async function tempDir(prefix: string): Promise<string> {
 }
 
 describe("in-process CLI entry point", () => {
+  test("prepared data commands return usage exit codes without exiting", async () => {
+    const exitSpy = spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`unexpected process.exit(${String(code)})`);
+    });
+    const stdoutSpy = spyOn(process.stdout, "write").mockImplementation(
+      () => true,
+    );
+    const stderrSpy = spyOn(process.stderr, "write").mockImplementation(
+      () => true,
+    );
+
+    try {
+      for (const [args, exitCode] of [
+        [["data", "bind", "--help"], 0],
+        [["data", "bind"], 1],
+        [["set-data", "--help"], 0],
+        [["set-data"], 1],
+      ] as const) {
+        expect(await main([process.execPath, "capshelf", ...args])).toBe(
+          exitCode,
+        );
+      }
+      expect(exitSpy).not.toHaveBeenCalled();
+    } finally {
+      exitSpy.mockRestore();
+      stdoutSpy.mockRestore();
+      stderrSpy.mockRestore();
+    }
+  });
+
   test("does not retain global options between main calls", async () => {
     const cwd = await tempDir("capshelf-main-cwd-");
     const home = await tempDir("capshelf-main-home-");
