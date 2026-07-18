@@ -47,12 +47,12 @@ export function registerMove(program: Command): void {
       const localConfig = await loadLocalConfig(project);
       const resolved = resolveMoveItem(ref, projectLock, localLock);
       if (!resolved) {
-        if (ref.kind !== undefined && ref.kind !== "skills" && to === "local") {
+        if (ref.kind !== undefined && to === "local") {
           assertLocalScopeSupported(ref.kind, ref.name, "move");
         }
         throw new NotFoundError("not tracked in this project");
       }
-      if (resolved.kind !== "skills" && to === "local") {
+      if (to === "local") {
         assertLocalScopeSupported(resolved.kind, resolved.name, "move");
       }
       const alreadyCurrent = alreadyInDestinationScope(
@@ -87,7 +87,7 @@ export function registerMove(program: Command): void {
         if (result.to === "project") {
           await saveLock(project, projectLock);
           await saveManifest(project, manifest);
-          await removeLocalExcludes(project, result.name);
+          await removeLocalExcludes(project, result.kind, result.name);
           await ensureInstallAliases(
             project,
             result.kind,
@@ -99,7 +99,7 @@ export function registerMove(program: Command): void {
         } else {
           await saveLocalLock(project, localLock);
           if (localConfig) await saveLocalConfig(project, localConfig);
-          await ensureLocalExcludes(project, result.name);
+          await ensureLocalExcludes(project, result.kind, result.name);
           await ensureInstallAliases(
             project,
             result.kind,

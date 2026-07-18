@@ -9,9 +9,10 @@ export HOME="$TMP/home"
 DATA="$TMP/data"
 A="$TMP/project-a"
 B="$TMP/project-b"
+C="$TMP/project-local"
 EXT="$DATA/pi/extensions/path-guard"
 
-mkdir -p "$HOME" "$EXT/src" "$A" "$B"
+mkdir -p "$HOME" "$EXT/src" "$A" "$B" "$C"
 printf '%s\n' "export { rules } from './src/rules';" > "$EXT/index.ts"
 printf '%s\n' "export const rules = ['v1'];" > "$EXT/src/rules.ts"
 printf '%s\n' '{"dependencies":{"minimatch":"^10.0.0"}}' > "$EXT/package.json"
@@ -23,9 +24,11 @@ git -C "$DATA" add -A
 git -C "$DATA" commit -qm baseline
 init_git_repo "$A"
 init_git_repo "$B"
+init_git_repo "$C"
 
 (cd "$A" && "${CLI[@]}" init --data ../data >/dev/null)
 (cd "$B" && "${CLI[@]}" init --data ../data >/dev/null)
+(cd "$C" && "${CLI[@]}" init --data ../data >/dev/null)
 
 # Both projects pin v1 so a promote in A cannot mutate B implicitly.
 (cd "$A" && "${CLI[@]}" add pi-extensions/path-guard --json > "$TMP/add-a.json")
@@ -35,6 +38,20 @@ assert_contains '"type": "pi_extension_dependencies_not_installed"' "$TMP/add-a.
 test -f "$A/.pi/extensions/path-guard/index.ts"
 test -f "$A/.pi/extensions/path-guard/src/rules.ts"
 test ! -e "$A/.pi/extensions/path-guard/.capshelf.yml"
+
+# Copy-directory items share the clone-local lifecycle and Git exclusion rules.
+(cd "$C" && "${CLI[@]}" add pi-extensions/path-guard --local --json > "$TMP/add-local.json")
+assert_contains '"scope": "local"' "$TMP/add-local.json"
+assert_contains '"piExtensions": \[' "$C/.capshelf/local.json"
+assert_contains '"data/pi-extensions/path-guard"' "$C/.capshelf/local.lock.json"
+assert_contains '\.pi/extensions/path-guard/' "$C/.git/info/exclude"
+printf '%s\n' "export const rules = ['kept'];" > "$C/.pi/extensions/path-guard/src/rules.ts"
+(cd "$C" && "${CLI[@]}" keep-local pi-extensions/path-guard --local --reason machine-specific >/dev/null)
+(cd "$C" && "${CLI[@]}" status pi-extensions/path-guard --local --strict --json > "$TMP/status-kept-local.json")
+assert_contains '"state": "kept-local"' "$TMP/status-kept-local.json"
+(cd "$C" && "${CLI[@]}" keep-local pi-extensions/path-guard --local --unset >/dev/null)
+(cd "$C" && "${CLI[@]}" revert pi-extensions/path-guard --local >/dev/null)
+assert_contains "v1" "$C/.pi/extensions/path-guard/src/rules.ts"
 
 (cd "$A" && "${CLI[@]}" status pi-extensions/path-guard --strict --json > "$TMP/status-current.json")
 assert_contains '"state": "ok"' "$TMP/status-current.json"
@@ -58,5 +75,14 @@ assert_contains "v1" "$B/.pi/extensions/path-guard/src/rules.ts"
 (cd "$B" && "${CLI[@]}" update pi-extensions/path-guard --json >/dev/null)
 assert_contains "promoted" "$B/.pi/extensions/path-guard/src/rules.ts"
 (cd "$B" && "${CLI[@]}" status pi-extensions/path-guard --strict --json >/dev/null)
+
+# Local pins also remain on v1 until their explicit scoped update.
+assert_contains "v1" "$C/.pi/extensions/path-guard/src/rules.ts"
+(cd "$C" && "${CLI[@]}" status pi-extensions/path-guard --local --json > "$TMP/status-local-update.json")
+assert_contains '"state": "update_available"' "$TMP/status-local-update.json"
+(cd "$C" && "${CLI[@]}" update pi-extensions/path-guard --local >/dev/null)
+assert_contains "promoted" "$C/.pi/extensions/path-guard/src/rules.ts"
+(cd "$C" && "${CLI[@]}" rm pi-extensions/path-guard --local >/dev/null)
+test ! -e "$C/.pi/extensions/path-guard"
 
 echo "✓ smoke-pi-extensions ok ($TMP)"

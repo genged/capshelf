@@ -284,16 +284,6 @@ describe("pi extension CLI lifecycle", () => {
       "pi_extension_dependencies_not_installed",
     ]);
 
-    const local = runCli(project, home, [
-      "add",
-      "pi-extensions/path-guard",
-      "--local",
-    ]);
-    expect(local.exitCode).toBe(3);
-    expect(local.stderr).toContain(
-      "local scope is not supported for pi extensions",
-    );
-
     const installed = join(project, ".pi", "extensions", "path-guard");
     await mkdir(installed, { recursive: true });
     await writeFile(join(installed, "index.ts"), "unmanaged\n");
@@ -392,11 +382,32 @@ describe("pi extension CLI lifecycle", () => {
     const keepLocal = runCli(project, home, [
       "keep-local",
       "pi-extensions/path-guard",
+      "--reason",
+      "project-specific guard",
+      "--json",
     ]);
-    expect(keepLocal.exitCode).toBe(3);
-    expect(keepLocal.stderr).toContain(
-      "keep-local is not supported for pi extensions",
-    );
+    expect(keepLocal.exitCode).toBe(0);
+    expect(JSON.parse(keepLocal.stdout)).toMatchObject({
+      kind: "pi-extensions",
+      name: "path-guard",
+      local: true,
+      localReason: "project-specific guard",
+    });
+    const keptStatus = runCli(project, home, [
+      "status",
+      "pi-extensions/path-guard",
+      "--strict",
+      "--json",
+    ]);
+    expect(keptStatus.exitCode).toBe(0);
+    expect(JSON.parse(keptStatus.stdout).items[0].state).toBe("kept-local");
+    expect(
+      runCli(project, home, [
+        "keep-local",
+        "pi-extensions/path-guard",
+        "--unset",
+      ]).exitCode,
+    ).toBe(0);
 
     const promoted = runCli(project, home, [
       "promote",
@@ -468,7 +479,7 @@ describe("pi extension CLI lifecycle", () => {
     expect(await file(installed).exists()).toBe(false);
   });
 
-  test("share defaults to project scope, requires index.ts, and does not edit git excludes", async () => {
+  test("share defaults to project scope and supports explicit local scope", async () => {
     const home = await tempDir("capshelf-pi-share-home-");
     const dataRepo = await tempRepo("capshelf-pi-share-data-");
     const project = await tempRepo("capshelf-pi-share-project-");
@@ -534,57 +545,213 @@ describe("pi extension CLI lifecycle", () => {
     );
     expect(await readFile(excludePath, "utf-8")).toBe(excludeBefore);
 
+    const localExtension = join(project, ".pi", "extensions", "local-review");
+    await mkdir(localExtension, { recursive: true });
+    await writeFile(
+      join(localExtension, "index.ts"),
+      "export default function localReview() {}\n",
+    );
+    const sharedLocal = runCli(project, home, [
+      "share",
+      "pi-extensions/local-review",
+      "--to",
+      "local",
+      "--json",
+    ]);
+    expect(sharedLocal.exitCode).toBe(0);
+    expect(JSON.parse(sharedLocal.stdout).scope).toBe("local");
+    expect(
+      (await file(join(project, ".capshelf", "local.json")).json())
+        .piExtensions,
+    ).toEqual(["local-review"]);
+    expect(
+      (await file(join(project, ".capshelf", "local.lock.json")).json()).items[
+        "data/pi-extensions/local-review"
+      ].source,
+    ).toBe("data");
+    expect(await readFile(excludePath, "utf-8")).toContain(
+      ".pi/extensions/local-review/",
+    );
+
     const manifest = await file(
       join(project, ".capshelf", "capshelf.json"),
     ).json();
     expect(manifest.piExtensions).toEqual(["review-tools", "human-review"]);
   });
 
-  test("rejects every local-scope entry point without changing project state", async () => {
+  test("supports the complete clone-local lifecycle", async () => {
     const home = await tempDir("capshelf-pi-scope-home-");
     const dataRepo = await tempRepo("capshelf-pi-scope-data-");
     const project = await tempRepo("capshelf-pi-scope-project-");
     const extension = join(dataRepo, "pi", "extensions", "guard");
     await mkdir(extension, { recursive: true });
-    await writeFile(join(extension, "index.ts"), "export default 1;\n");
+    await writeFile(join(extension, "index.ts"), "export default 'v1';\n");
     await commitAll(dataRepo, "add guard");
 
     expect(
       runCli(project, home, ["init", "--data", dataRepo, "--no-upstream"])
         .exitCode,
     ).toBe(0);
-    expect(runCli(project, home, ["add", "pi-extensions/guard"]).exitCode).toBe(
-      0,
+    const added = runCli(project, home, [
+      "add",
+      "pi-extensions/guard",
+      "--local",
+      "--json",
+    ]);
+    expect(added.exitCode).toBe(0);
+    expect(JSON.parse(added.stdout).scope).toBe("local");
+    expectWarningTypes(JSON.parse(added.stdout), [
+      "pi_extension_executes_code",
+    ]);
+
+    const installed = join(project, ".pi", "extensions", "guard");
+    expect(await file(join(installed, "index.ts")).text()).toContain("v1");
+    expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual(
+      {
+        dataRepo,
+        skills: [],
+        piExtensions: ["guard"],
+        settings: [],
+        mcp: [],
+      },
     );
-
-    const manifestPath = join(project, ".capshelf", "capshelf.json");
-    const lockPath = join(project, ".capshelf", "capshelf.lock.json");
-    const manifestBefore = await readFile(manifestPath, "utf-8");
-    const lockBefore = await readFile(lockPath, "utf-8");
-    const refusals = [
-      ["share", "pi-extensions/unmanaged", "--to", "local"],
-      ["move", "pi-extensions/guard", "--to", "local"],
-      ["apply", "pi-extensions/guard", "--local"],
-      ["update", "pi-extensions/guard", "--local"],
-      ["promote", "pi-extensions/guard", "--local"],
-      ["revert", "pi-extensions/guard", "--local"],
-      ["rm", "pi-extensions/guard", "--local"],
-    ];
-
-    for (const args of refusals) {
-      const result = runCli(project, home, args);
-      expect(result.exitCode).toBe(3);
-      expect(result.stderr).toContain(
-        "local scope is not supported for pi extensions",
-      );
-    }
-    expect(await readFile(manifestPath, "utf-8")).toBe(manifestBefore);
-    expect(await readFile(lockPath, "utf-8")).toBe(lockBefore);
+    const localLockPath = join(project, ".capshelf", "local.lock.json");
     expect(
-      await file(
-        join(project, ".pi", "extensions", "guard", "index.ts"),
-      ).exists(),
-    ).toBe(true);
+      (await file(localLockPath).json()).items["data/pi-extensions/guard"]
+        .source,
+    ).toBe("data");
+    expect(
+      (await file(join(project, ".capshelf", "capshelf.json")).json())
+        .piExtensions,
+    ).toEqual([]);
+    expect(
+      await readFile(join(project, ".git", "info", "exclude"), "utf-8"),
+    ).toContain(".pi/extensions/guard/");
+
+    const status = runCli(project, home, [
+      "status",
+      "pi-extensions/guard",
+      "--local",
+      "--strict",
+      "--json",
+    ]);
+    expect(status.exitCode).toBe(0);
+    expect(JSON.parse(status.stdout).items[0].state).toBe("ok");
+    expect(
+      JSON.parse(
+        runCli(project, home, [
+          "apply",
+          "pi-extensions/guard",
+          "--local",
+          "--json",
+        ]).stdout,
+      ).items[0].action,
+    ).toBe("already-current");
+
+    await writeFile(join(installed, "index.ts"), "export default 'local';\n");
+    const kept = runCli(project, home, [
+      "keep-local",
+      "pi-extensions/guard",
+      "--local",
+      "--reason",
+      "machine-specific guard",
+      "--json",
+    ]);
+    expect(kept.exitCode).toBe(0);
+    expect(JSON.parse(kept.stdout)).toMatchObject({
+      scope: "local",
+      kind: "pi-extensions",
+      local: true,
+    });
+    expect(
+      JSON.parse(
+        runCli(project, home, [
+          "status",
+          "pi-extensions/guard",
+          "--local",
+          "--strict",
+          "--json",
+        ]).stdout,
+      ).items[0].state,
+    ).toBe("kept-local");
+    expect(
+      runCli(project, home, [
+        "keep-local",
+        "pi-extensions/guard",
+        "--local",
+        "--unset",
+      ]).exitCode,
+    ).toBe(0);
+
+    const promoted = runCli(project, home, [
+      "promote",
+      "pi-extensions/guard",
+      "--local",
+      "-m",
+      "promote local guard",
+      "--json",
+    ]);
+    expect(promoted.exitCode).toBe(0);
+    expect(await file(join(extension, "index.ts")).text()).toContain("local");
+
+    await writeFile(join(extension, "index.ts"), "export default 'v2';\n");
+    await commitAll(dataRepo, "guard v2");
+    expect(
+      runCli(project, home, ["update", "pi-extensions/guard", "--local"])
+        .exitCode,
+    ).toBe(0);
+    expect(await file(join(installed, "index.ts")).text()).toContain("v2");
+
+    await writeFile(join(installed, "index.ts"), "drift\n");
+    expect(
+      runCli(project, home, ["revert", "pi-extensions/guard", "--local"])
+        .exitCode,
+    ).toBe(0);
+    expect(await file(join(installed, "index.ts")).text()).toContain("v2");
+
+    expect(
+      runCli(project, home, ["move", "pi-extensions/guard", "--to", "project"])
+        .exitCode,
+    ).toBe(0);
+    expect(
+      (await file(join(project, ".capshelf", "capshelf.json")).json())
+        .piExtensions,
+    ).toEqual(["guard"]);
+    expect(
+      await readFile(join(project, ".git", "info", "exclude"), "utf-8"),
+    ).not.toContain(".pi/extensions/guard/");
+
+    await $`git -C ${project} add .pi/extensions/guard`.quiet();
+    await $`git -C ${project} commit -qm ${"track project extension"}`.quiet();
+    const trackedMove = runCli(project, home, [
+      "move",
+      "pi-extensions/guard",
+      "--to",
+      "local",
+    ]);
+    expect(trackedMove.exitCode).toBe(3);
+    expect(trackedMove.stderr).toContain(
+      "local install path is already tracked by git: .pi/extensions/guard",
+    );
+    await $`git -C ${project} rm --cached -qr .pi/extensions/guard`.quiet();
+    await $`git -C ${project} commit -qm ${"untrack project extension"}`.quiet();
+
+    expect(
+      runCli(project, home, ["move", "pi-extensions/guard", "--to", "local"])
+        .exitCode,
+    ).toBe(0);
+    expect(
+      await readFile(join(project, ".git", "info", "exclude"), "utf-8"),
+    ).toContain(".pi/extensions/guard/");
+
+    expect(
+      runCli(project, home, ["rm", "pi-extensions/guard", "--local"]).exitCode,
+    ).toBe(0);
+    expect(await file(installed).exists()).toBe(false);
+    expect(
+      (await file(join(project, ".capshelf", "local.json")).json())
+        .piExtensions,
+    ).toEqual([]);
   });
 
   test("uses the canonical source path for dirty-add and stale-promote guards", async () => {

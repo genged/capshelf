@@ -51,12 +51,12 @@ When the user asks you to improve a shared (data) item:
 3. `capshelf status <item>` — should report `drifted_local` (or `source_dirty` for fragments).
 4. Decide with the user:
    - `capshelf promote <item> -m "why"` — push to the data repo. Other projects see `update available` next time they check; nothing auto-changes.
-   - `capshelf keep-local <item> --reason "why"` — intentional project-specific skill divergence. Pi extensions reject `keep-local`; keep a one-off extension unmanaged under `.pi/extensions` instead.
+   - `capshelf keep-local <item> --reason "why"` — intentional project-specific divergence for a copy item (skill or Pi extension).
    - `capshelf revert <item>` — discard the edit, restore from the recorded `sourceCommit`.
 
 For Pi extensions, inspect the changed source before promoting and tell the user to run `/reload` or restart Pi after materialization. Never imply that capshelf reviewed, trusted, sandboxed, or dependency-installed the extension.
 
-If `promote` fails with "changed in the data repo since this project last updated" (exit 3), a teammate's newer version is upstream. **Do not retry with `--stale-ok` on your own** — show the user the upstream diff (`capshelf status <item> --diff` plus the scoped `git log` from the error message) and let them choose between preserving the current edit and running `capshelf update <item>`-then-redoing it, or an intentional `capshelf promote <item> --stale-ok` overwrite. `update` replaces the installed copy. For a local-scope skill, copy the edit outside the managed target first because it is excluded from the project's Git repository, and preserve `--local` on all recovery commands. A promote that reports `already-upstream` means someone already promoted identical content; the lock was re-pinned and nothing more is needed.
+If `promote` fails with "changed in the data repo since this project last updated" (exit 3), a teammate's newer version is upstream. **Do not retry with `--stale-ok` on your own** — show the user the upstream diff (`capshelf status <item> --diff` plus the scoped `git log` from the error message) and let them choose between preserving the current edit and running `capshelf update <item>`-then-redoing it, or an intentional `capshelf promote <item> --stale-ok` overwrite. `update` replaces the installed copy. For a local-scope copy item, copy the edit outside the managed target first because it is excluded from the project's Git repository, and preserve `--local` on all recovery commands. A promote that reports `already-upstream` means someone already promoted identical content; the lock was re-pinned and nothing more is needed.
 
 To change **metadata** (tags, description, `requires`/`conflicts-with`), edit the item's canonical data-repo sidecar (`skills/<name>/.capshelf.yml`, `pi/extensions/<name>/.capshelf.yml`, or the fragment path shown by `capshelf show`) and commit it in the data repo — no project `update` is needed afterwards; metadata is catalog data, never hashed into item content. **Commit the sidecar before returning to project work**: an uncommitted sidecar edit blocks `capshelf update` entirely (dirty data repo) and blocks `add` of that item.
 
@@ -76,7 +76,7 @@ For system items (e.g. this `capshelf` skill), the edit loop doesn't apply — t
 - **system** (lock prefix `system/`): bundled into the CLI binary, installed by `init`, read-only from a project's perspective.
 - **data** (lock prefix `data/`): live in your data repo. Added via `add`, removed via `rm`, adopted via `share`, pushed back via `promote`.
 
-Mutating commands only touch files tracked in the lockfiles: `add` refuses to overwrite an existing untracked target, and `rm` deletes only locked data items. For a local-only skill that should become shared, use `capshelf share skills/<name>` (local scope here) or `capshelf share skills/<name> --to project` (committed project policy).
+Mutating commands only touch files tracked in the lockfiles: `add` refuses to overwrite an existing untracked target, and `rm` deletes only locked data items. Copy items can use committed project scope or clone-local scope. `share skills/<name>` defaults to local scope; Pi extensions default to project scope, so pass `--to local` when adopting one as clone-local intent.
 
 ## Command reference
 
@@ -119,7 +119,7 @@ Fork variant (read-only consumers): `gh repo fork <owner/data-repo> --clone=fals
 
 ## Pi extensions
 
-`pi-extensions/<name>` maps `pi/extensions/<name>/index.ts` in the data repo to `.pi/extensions/<name>/index.ts` in the project. Extensions are project-scope only. `add --local`, `share --to local`, `move --to local`, and `keep-local` are rejected; use an unmanaged `.pi/extensions/<name>` for one-off policy.
+`pi-extensions/<name>` maps `pi/extensions/<name>/index.ts` in the data repo to `.pi/extensions/<name>/index.ts` in the project. Extensions support the same project/clone-local lifecycle as skills, including `add --local`, `share --to local`, `move --to local`, and `keep-local`. Both Capshelf scopes materialize to Pi's project-local extension path; Capshelf does not manage user-global extensions.
 
 Pi loads project extensions only after project trust, but then they execute arbitrary TypeScript with full system permissions. Always inspect source before `add`, before `promote`, and before asking the user to `/reload` or restart Pi. Capshelf does not sandbox code, validate TypeScript, edit `.pi/settings.json`, manage Pi packages, invoke package managers, or install `package.json.dependencies`; dependency declarations produce an advisory warning only. Do not run install commands on the user's behalf as part of capshelf reconciliation.
 

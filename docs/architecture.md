@@ -159,7 +159,7 @@ A real user creates their own data repos (`~/code/work-skills/`, `~/code/persona
 ├── .capshelf/
 │   ├── .gitignore            contains local.json and local.lock.json
 │   ├── capshelf.json         committed manifest: install mode, items, optional dataRepoUpstream
-│   ├── local.json            gitignored local binding plus local skill intent
+│   ├── local.json            gitignored binding plus clone-local copy-item intent
 │   ├── capshelf.lock.json    committed lock: pinned sha + sourceCommit, tool-managed
 │   └── local.lock.json       gitignored lock for local-only items
 ├── .agents/skills/<name>/      default real skill directories
@@ -196,17 +196,18 @@ Local manifest:
 {
   "dataRepo": "~/code/work-skills",
   "skills": [],
+  "piExtensions": [],
   "settings": [],
   "mcp": []
 }
 ```
 
-Local scope is skills-only. Pi extensions are executable project policy and
-are project-scope only; fragment kinds preserve project-local values inside
-generated outputs instead of using clone-local manifest entries.
-In Git projects, local-scope skills add their install paths to
-`.git/info/exclude`; non-Git projects skip that step because local ownership is
-already recorded in `.capshelf/local.json` and `.capshelf/local.lock.json`.
+Local scope is available to copy-directory items: skills and Pi extensions.
+Fragment kinds preserve project-local values inside generated outputs instead
+of using clone-local manifest entries. In Git projects, local-scope copy items
+add their install paths to `.git/info/exclude`; non-Git projects skip that step
+because local ownership is already recorded in `.capshelf/local.json` and
+`.capshelf/local.lock.json`.
 
 `dataRepo` resolution order:
 1. `--data <path>` CLI flag (one-shot override)
@@ -262,11 +263,13 @@ CLI-only changes in the data repo (e.g. someone edits `src/foo.ts`) don't bump `
 | codex-config | merge `codex/config/<name>/config.toml` fragments | `.codex/config.toml` |
 | codex/agents | planned copy whole file | `<project>/.codex/agents/<name>.toml` or `~/.codex/agents/` |
 
-Pi extensions are loaded by Pi only after project trust. Capshelf does not
-sandbox their arbitrary TypeScript execution, install `package.json`
-dependencies, edit `.pi/settings.json`, or signal a running Pi process. Review
-source before adding or promoting an extension, then run `/reload` or restart
-Pi after materialization.
+Pi extensions are loaded by Pi only after project trust. Project and
+clone-local Capshelf scope both materialize to the same Pi project path;
+Capshelf scope controls intent and lock ownership, not Pi runtime scope.
+Capshelf does not sandbox their arbitrary TypeScript execution, install
+`package.json` dependencies, edit `.pi/settings.json`, or signal a running Pi
+process. Review source before adding or promoting an extension, then run
+`/reload` or restart Pi after materialization.
 
 Claude custom commands are represented as skills. In the default layout, a skill at `.agents/skills/<name>/SKILL.md` is exposed to Claude through `.claude/skills/<name>`. In Claude-only layout, the skill lives directly at `.claude/skills/<name>/SKILL.md`. capshelf does not manage `.claude/commands/`.
 
@@ -315,7 +318,7 @@ loop built on these guarantees.
 ## Local overrides: two escape hatches
 
 1. **Project-local settings values** — values already present in `.claude/settings.json` and not contributed by a locked settings fragment are preserved when a fragment is added, applied, removed, or updated.
-2. **Untracked files in agent surfaces** — anything not listed in the lock is ignored by the tool forever. In the default layout, project-only skills should live in `.agents/skills/<name>/` if they may later be adopted with `share`; `.claude/skills/<name>` is just the compatibility symlink. `init`, `add`, and `rm` all treat the lock as the ownership boundary.
+2. **Untracked files in agent surfaces** — anything not listed in the lock is ignored by the tool forever. In the default layout, project-only skills should live in `.agents/skills/<name>/` if they may later be adopted with `share`; `.claude/skills/<name>` is just the compatibility symlink. One-off Pi extensions can live under `.pi/extensions/<name>/` and may later be adopted into either scope. `init`, `add`, and `rm` all treat the lock as the ownership boundary.
 
 ## Coexistence with peer tools
 

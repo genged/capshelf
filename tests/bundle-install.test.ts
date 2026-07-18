@@ -251,7 +251,7 @@ describe("planBundleInstall", () => {
 
     // One aggregated list naming every fragment member — never a
     // per-member assertLocalScopeSupported first-violator throw.
-    expect(result.localFragmentMembers).toEqual([
+    expect(result.localUnsupportedMembers).toEqual([
       "settings/base",
       "settings/go",
       "mcp/github",
@@ -261,31 +261,14 @@ describe("planBundleInstall", () => {
     expect(result.members[0]?.status).toBe("install");
   });
 
-  test("--local rejects a Pi extension as a project-only member", () => {
+  test("a mixed copy-directory bundle plans clean under --local", () => {
     const refs = ["skills/a", "pi-extensions/guard"];
     const result = plan({
       bundle: bundleOf(refs),
       master: refs,
       scope: "local",
     });
-
-    expect(result.localUnsupportedMembers).toEqual(["pi-extensions/guard"]);
-    expect(result.localFragmentMembers).toEqual([]);
-    expect(planFailures(result).map((member) => member.ref)).toEqual([
-      "pi-extensions/guard",
-    ]);
-    expect(result.members[0]?.status).toBe("install");
-  });
-
-  test("a skills-only bundle plans clean under --local", () => {
-    const refs = ["skills/a", "skills/b"];
-    const result = plan({
-      bundle: bundleOf(refs),
-      master: refs,
-      scope: "local",
-    });
     expect(planFailures(result)).toEqual([]);
-    expect(result.localFragmentMembers).toEqual([]);
     expect(result.localUnsupportedMembers).toEqual([]);
   });
 });

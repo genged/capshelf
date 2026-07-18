@@ -40,7 +40,7 @@ inventory and does not require a capshelf project or data repo.
 
 Most item arguments accept either a bare unique name (`hello`) or an explicit kind/name ref (`skills/hello`). Lock keys such as `data/skills/hello` are internal and are not accepted as normal item refs.
 
-Mutating commands only touch item files that are tracked in `.capshelf/capshelf.lock.json` or `.capshelf/local.lock.json`. `add` refuses to overwrite an existing untracked target, `init` refuses to overwrite an existing untracked system target, and `rm` deletes only locked data items. For a local-only skill that should become shared, use `share <item>` to keep it local here or `share <item> --to project` to commit it to project policy.
+Mutating commands only touch item files that are tracked in `.capshelf/capshelf.lock.json` or `.capshelf/local.lock.json`. `add` refuses to overwrite an existing untracked target, `init` refuses to overwrite an existing untracked system target, and `rm` deletes only locked data items. Copy-directory items—skills and Pi extensions—can use either committed project scope or clone-local scope. Use `share <item> --to local|project` to choose when adopting an unmanaged copy.
 
 ## Command surface
 
@@ -55,15 +55,15 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
 | `show <item>` | print metadata + content for one item, including `requires`/`conflicts-with` install state; Pi extension warnings precede source content; `--json` always carries a `metadata` object and applicable `runtimeWarnings`; `show bundles/<name>` previews bundle membership with per-member install state | implemented |
 | `search <query...>` | search available items (data repo + system) and bundles by name, tags, description, and content; supports `--kind` and `--json`; zero matches exit 0 | implemented |
 | `status [<item>]` | drift / update report for this project plus user-level runtime skill inventory by default; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` explains local drift; reports `missing_source_commit` when a locked `sourceCommit` is unreachable in the data repo | implemented |
-| `add <item>` | install an item from the bound data repo; `--local` installs a clone-local skill (Pi extensions are project-only); warns on unmet `requires`, refuses on `conflicts-with` (exit 3); `add bundles/<name>` expands a bundle (see Bundles) | implemented |
-| `rm <item>` | remove from this project; `--local` removes clone-local skills | implemented |
+| `add <item>` | install an item from the bound data repo; `--local` installs a clone-local copy item (skill or Pi extension); warns on unmet `requires`, refuses on `conflicts-with` (exit 3); `add bundles/<name>` expands a bundle (see Bundles) | implemented |
+| `rm <item>` | remove from this project; `--local` removes clone-local copy items | implemented |
 | `get-path <item>` | print the editable path; skills and Pi extensions return their managed directory, fragments support `--output` for generated output paths, and MCP supports `--target` | implemented |
 | `apply [<item>]` | reconcile project and local files with lockfiles (data items via `git show <sourceCommit>`; system items from bundled content; fragments via merged outputs); supports `--local` and `--dry-run` | implemented |
-| `update [<item>...]` | bump project pins by default; `--local` or an explicit local-only skill ref updates local pins; supports `--dry-run` | implemented |
-| `share <item>` | adopt a not-yet-shared on-disk item into the data repo; Pi extensions default to project scope and require `index.ts`; fragments require project scope plus `--from <file>` or `--pick <path>` | implemented |
+| `update [<item>...]` | bump project pins by default; `--local` updates clone-local copy-item pins; supports `--dry-run` | implemented |
+| `share <item>` | adopt a not-yet-shared on-disk item into the data repo; Pi extensions require `index.ts`, default to project scope, and accept `--to local`; fragments require project scope plus `--from <file>` or `--pick <path>` | implemented |
 | `move <item> --to <scope>` | move an already-tracked data item between local and project scope without changing data-repo content | implemented |
-| `promote <item>` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects local-scope skills; refuses stale promotes unless `--stale-ok` | implemented |
-| `keep-local <item>` | mark drifted skill content as intentional project-local divergence; supports `--local` for skills and rejects fragments and Pi extensions | implemented |
+| `promote <item>` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects clone-local copy items; refuses stale promotes unless `--stale-ok` | implemented |
+| `keep-local <item>` | mark drifted copy-item content as intentional divergence; supports project and clone-local skills/Pi extensions, and rejects fragments | implemented |
 | `revert <item>` | discard local edits, restore locked version; supports `--local` | implemented |
 | `self-update` | check for and install a Homebrew update for the capshelf binary; supports `--check` and `--yes` | implemented |
 | `validate <name>` | lint an item (frontmatter, structure, broken refs) | roadmap |
@@ -220,9 +220,9 @@ Semantics:
   manifest, so bundle authors control fragment merge precedence. Only
   `.yml` is recognized; `.yaml` warns and is ignored. Bundles cannot
   include bundles.
-- **Scope**: `add bundles/<name> --local` works for skills-only bundles;
-  every non-skill member fails preflight with one aggregated error naming all
-  project-only members.
+- **Scope**: `add bundles/<name> --local` works for copy-directory members
+  (skills and Pi extensions); every fragment member fails preflight with one
+  aggregated error naming all unsupported members.
 - **Freshness**: the bundle file is read from the data repo working tree
   and may be uncommitted (nothing pins it); member items still require
   clean, committed paths individually.
@@ -233,16 +233,16 @@ Semantics:
   rejecting `bundles/<name>` — after expansion the members are ordinary
   items, and a traceless macro has nothing for them to operate on.
 
-Bundles can include `pi-extensions` members. They install at project scope like
-standalone extension adds; `add bundles/<name> --local` rejects them together
-with every other non-skill member.
+Bundles can include `pi-extensions` members. Like standalone extension adds,
+they install at project scope by default and in clone-local scope when the
+bundle is added with `--local`.
 
 Bundle exit codes:
 
 | situation | code |
 |---|---|
 | `add bundles/<x>`: bundle file not found | 2 |
-| `add bundles/<x>`: any preflight failure, malformed/unsupported bundle file, or `--local` with non-skill members | 3 (per-member report printed first) |
+| `add bundles/<x>`: any preflight failure, malformed/unsupported bundle file, or `--local` with fragment members | 3 (per-member report printed first) |
 | `add bundles/<x>`: all members already installed, or empty bundle | 0 |
 | `add bundles/<x>`: unmet `requires` across the expanded set | 0 + stderr warning + JSON `missingRequires` |
 | `show bundles/<x>`: bundle not found | 2 |
@@ -263,10 +263,12 @@ pi/extensions/<name>/
 
 `capshelf add pi-extensions/<name>` copies the pinned Git-visible content to
 `.pi/extensions/<name>/`, where Pi auto-discovers `index.ts` after project
-trust. The manifest uses `piExtensions`, and the lock key is
-`data/pi-extensions/<name>`. Extensions are project-scope only: `add --local`,
-`share --to local`, `move --to local`, and `keep-local` are rejected. Use an
-unmanaged `.pi/extensions/<name>` directory for one-off project policy.
+trust. The committed manifest uses `piExtensions`, the clone-local manifest
+uses the same field, and the lock key is `data/pi-extensions/<name>` in the
+selected lock. Extensions support the same project/local lifecycle as skills:
+`add`, `share`, `move`, `apply`, `update`, `promote`, `keep-local`, `revert`, and
+`rm`. Both Capshelf scopes materialize to Pi's project-local extension path;
+Capshelf never writes user-global `~/.pi/agent/extensions`.
 
 Pi extensions execute arbitrary TypeScript with the user's permissions after
 Pi trusts the project. Capshelf emits `pi_extension_executes_code` runtime
@@ -606,7 +608,7 @@ the upstream advance, and the two ways out — `capshelf update <item>` to take
 the upstream version first, or `capshelf promote <item> --stale-ok` to
 overwrite on purpose. The suggested commands preserve `--local` when the
 refusal came from a local-scope promote. Preserve the current edit before
-running `update`, which replaces the installed copy; local-scope skills are
+running `update`, which replaces the installed copy; local-scope copy items are
 excluded from the project's Git repository and cannot be recovered from its
 diff. Two related behaviors:
 

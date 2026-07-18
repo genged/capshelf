@@ -27,10 +27,12 @@ import { assertPathClean, lastTouchingContentCommit } from "../git";
 import { findMasterItemByRef, parseItemRef } from "../item-ref";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import {
+  addLocalConfigName,
   assertLocalInstallPathsUntracked,
   assertLocalScopeSupported,
   ensureLocalExcludes,
   loadLocalConfig,
+  localConfigNamesForKind,
   saveLocalConfig,
 } from "../local-config";
 import type { LocalConfig } from "../local-config";
@@ -210,7 +212,7 @@ export async function installDataItem(
   const lock = ctx.local ? localLock : projectLock;
   const oldLock = structuredClone(lock);
 
-  // One unguarded call suffices: the helper returns early for skills.
+  // One unguarded call suffices: the helper accepts both copy-item kinds.
   if (ctx.local) {
     assertLocalScopeSupported(item.kind, item.name, "add --local");
   }
@@ -233,7 +235,8 @@ export async function installDataItem(
     );
   }
   const alreadyInManifest = ctx.local
-    ? (localConfig?.skills.includes(item.name) ?? false)
+    ? localConfig !== null &&
+      localConfigNamesForKind(localConfig, item.kind).includes(item.name)
     : manifestNamesForKind(manifest, item.kind).includes(item.name);
   const alreadyInLock = lock.items[key] !== undefined;
   const dst = isFragmentItemKind(item.kind)
@@ -265,7 +268,7 @@ export async function installDataItem(
     );
   }
   if (ctx.local) {
-    await assertLocalInstallPathsUntracked(project, item.name);
+    await assertLocalInstallPathsUntracked(project, item.kind, item.name);
   }
 
   const missingRequires =
@@ -286,8 +289,7 @@ export async function installDataItem(
         "no local manifest exists; run capshelf init or capshelf set-data first",
       );
     }
-    if (!localConfig.skills.includes(item.name))
-      localConfig.skills.push(item.name);
+    addLocalConfigName(localConfig, item.kind, item.name);
   } else {
     addToManifest(manifest, item);
   }
@@ -322,7 +324,7 @@ export async function installDataItem(
 
   if (ctx.local) {
     if (!localConfig) throw new Error("expected local manifest");
-    await ensureLocalExcludes(project, item.name);
+    await ensureLocalExcludes(project, item.kind, item.name);
     await saveLocalConfig(project, localConfig);
     await saveLocalLock(project, lock);
   } else {
@@ -560,7 +562,7 @@ function printBundleRefusal(
   failures: MemberPlan[],
   ctx: AddContext,
 ): void {
-  // The --local skills-only rule gets ONE aggregated bundle-level error
+  // The --local copy-item rule gets ONE aggregated bundle-level error
   // naming every fragment member, never the first-violator per-kind message.
   // When it is the only failure kind, it is the headline; mixed with other
   // failures it becomes a block under a single headline whose count covers
@@ -570,10 +572,10 @@ function printBundleRefusal(
     failures.length === plan.localUnsupportedMembers.length
   ) {
     console.log(
-      `✗ not installing bundle ${bundle.name} --local — local scope is skills-only`,
+      `✗ not installing bundle ${bundle.name} --local — local scope supports copy-directory items only`,
     );
     console.log(
-      `  ${localUnsupportedLabel(plan)}: ${plan.localUnsupportedMembers.join(", ")}`,
+      `  fragment members: ${plan.localUnsupportedMembers.join(", ")}`,
     );
     console.log(
       `  install the bundle at project scope instead: capshelf add bundles/${bundle.name}`,
@@ -588,9 +590,9 @@ function printBundleRefusal(
     `✗ not installing bundle ${bundle.name} — ${failures.length} of ${plan.members.length} members failed preflight`,
   );
   if (plan.localUnsupportedMembers.length > 0) {
-    console.log("  ✗ local scope is skills-only");
+    console.log("  ✗ local scope supports copy-directory items only");
     console.log(
-      `    ${localUnsupportedLabel(plan)}: ${plan.localUnsupportedMembers.join(", ")}`,
+      `    fragment members: ${plan.localUnsupportedMembers.join(", ")}`,
     );
     console.log(
       `    install the bundle at project scope instead: capshelf add bundles/${bundle.name}`,
@@ -616,13 +618,6 @@ function printBundleRefusal(
   console.log(
     `  fix the failures above, then re-run: capshelf add bundles/${bundle.name}`,
   );
-}
-
-function localUnsupportedLabel(plan: BundlePlan): string {
-  return plan.localUnsupportedMembers.length ===
-    plan.localFragmentMembers.length
-    ? "fragment members"
-    : "project-only members";
 }
 
 function collectRuntimeWarnings(

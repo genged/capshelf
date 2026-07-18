@@ -26,6 +26,7 @@ import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import {
   assertLocalScopeSupported,
   loadLocalConfig,
+  removeLocalConfigName,
   removeLocalExcludes,
   saveLocalConfig,
 } from "../local-config";
@@ -119,7 +120,7 @@ export function registerRm(program: Command): void {
       if (opts.local) {
         assertLocalScopeSupported(kind, name, "rm --local");
         if (!localConfig) throw new Error("no local manifest exists");
-        localConfig.skills = localConfig.skills.filter((x) => x !== name);
+        removeLocalConfigName(localConfig, kind, name);
       } else {
         removeManifestName(manifest, kind, name);
       }
@@ -177,7 +178,7 @@ export function registerRm(program: Command): void {
 
       if (opts.local) {
         if (!localConfig) throw new Error("expected local manifest");
-        await removeLocalExcludes(project, name);
+        await removeLocalExcludes(project, kind, name);
         await saveLocalConfig(project, localConfig);
         await saveLocalLock(project, lock);
       } else {

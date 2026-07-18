@@ -7,12 +7,13 @@ import { expandTilde } from "./paths";
 import { atomicWriteFile } from "./fs-utils";
 import { hasShelvesKey } from "./manifest";
 import { PreconditionError } from "./errors";
-import type { ItemKind } from "./master";
+import { isCopyItemKind, type ItemKind } from "./master";
 import { gitInfoExcludePath, gitTry, isGitWorkTreeRoot } from "./git";
 
 const LocalConfigSchema = z.object({
   dataRepo: z.string().min(1),
   skills: z.array(z.string()).default([]),
+  piExtensions: z.array(z.string()).default([]),
   settings: z.array(z.string()).default([]),
   mcp: z.array(z.string()).default([]),
 });
@@ -20,6 +21,7 @@ const LocalConfigSchema = z.object({
 export interface LocalConfig {
   dataRepo: string;
   skills: string[];
+  piExtensions: string[];
   settings: string[];
   mcp: string[];
 }
@@ -47,6 +49,7 @@ export async function loadLocalConfig(
   return {
     dataRepo: expandTilde(parsed.dataRepo),
     skills: parsed.skills,
+    piExtensions: parsed.piExtensions,
     settings: parsed.settings,
     mcp: parsed.mcp,
   };
@@ -80,17 +83,50 @@ export async function ensureGitignored(
   await atomicWriteFile(path, `${raw}${separator}${entry}\n`);
 }
 
+export function localConfigNamesForKind(
+  config: LocalConfig,
+  kind: ItemKind,
+): string[] {
+  switch (kind) {
+    case "skills":
+      return config.skills;
+    case "pi-extensions":
+      return config.piExtensions;
+    case "settings":
+    case "mcp":
+    case "codex-config":
+      throw new Error(`local intent is not supported for ${kind}`);
+  }
+}
+
+export function addLocalConfigName(
+  config: LocalConfig,
+  kind: ItemKind,
+  name: string,
+): void {
+  const names = localConfigNamesForKind(config, kind);
+  if (!names.includes(name)) names.push(name);
+}
+
+export function removeLocalConfigName(
+  config: LocalConfig,
+  kind: ItemKind,
+  name: string,
+): void {
+  const names = localConfigNamesForKind(config, kind);
+  const index = names.indexOf(name);
+  if (index !== -1) names.splice(index, 1);
+}
+
 export async function ensureLocalExcludes(
   project: string,
-  skillName: string,
+  kind: ItemKind,
+  name: string,
 ): Promise<void> {
   const excludePath = await gitInfoExcludePath(project);
   if (!excludePath) return;
-  await assertLocalInstallPathsUntracked(project, skillName);
-  const entries = [
-    `.agents/skills/${skillName}/`,
-    `.claude/skills/${skillName}`,
-  ];
+  await assertLocalInstallPathsUntracked(project, kind, name);
+  const entries = localInstallPaths(kind, name, true);
 
   await mkdir(dirname(excludePath), { recursive: true });
   const raw = existsSync(excludePath)
@@ -108,12 +144,10 @@ export async function ensureLocalExcludes(
 
 export async function removeLocalExcludes(
   project: string,
-  skillName: string,
+  kind: ItemKind,
+  name: string,
 ): Promise<void> {
-  const entries = new Set([
-    `.agents/skills/${skillName}/`,
-    `.claude/skills/${skillName}`,
-  ]);
+  const entries = new Set(localInstallPaths(kind, name, true));
   const excludePath = join(project, ".git", "info", "exclude");
   if (!existsSync(excludePath)) return;
 
@@ -126,13 +160,11 @@ export async function removeLocalExcludes(
 
 export async function assertLocalInstallPathsUntracked(
   project: string,
-  skillName: string,
+  kind: ItemKind,
+  name: string,
 ): Promise<void> {
   if (!(await isGitWorkTreeRoot(project))) return;
-  for (const relPath of [
-    `.agents/skills/${skillName}`,
-    `.claude/skills/${skillName}`,
-  ]) {
+  for (const relPath of localInstallPaths(kind, name, false)) {
     const tracked = await trackedPathExists(project, relPath);
     if (tracked) {
       throw new PreconditionError(
@@ -151,12 +183,7 @@ export function assertLocalScopeSupported(
   verb: string,
   mcpMessage = "local scope is not supported for mcp fragments; keep project-local values in .mcp.json or .codex/config.toml",
 ): void {
-  if (kind === "skills") return;
-  if (kind === "pi-extensions") {
-    throw new PreconditionError(
-      "local scope is not supported for pi extensions; keep project-only extensions in .pi/extensions or add them to project scope",
-    );
-  }
+  if (isCopyItemKind(kind)) return;
   if (kind === "settings") {
     throw new PreconditionError(
       `${verb} is not supported for settings fragments; keep project-local values in .claude/settings.json`,
@@ -168,6 +195,24 @@ export function assertLocalScopeSupported(
   throw new PreconditionError(
     `${verb} is not supported for codex-config fragments; keep project-local values in .codex/config.toml`,
   );
+}
+
+function localInstallPaths(
+  kind: ItemKind,
+  name: string,
+  directorySuffix: boolean,
+): string[] {
+  const suffix = directorySuffix ? "/" : "";
+  switch (kind) {
+    case "skills":
+      return [`.agents/skills/${name}${suffix}`, `.claude/skills/${name}`];
+    case "pi-extensions":
+      return [`.pi/extensions/${name}${suffix}`];
+    case "settings":
+    case "mcp":
+    case "codex-config":
+      throw new Error(`local install paths are not supported for ${kind}`);
+  }
 }
 
 async function trackedPathExists(

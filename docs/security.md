@@ -51,11 +51,13 @@ authentication, authorization, and review entirely to git hosting.
 Capshelf's own contribution is reproducibility and tamper-evidence around
 that boundary:
 
-- **Every item is pinned.** The committed lock records a content hash (`sha`)
-  and the data-repo commit that produced it (`sourceCommit`). `apply` and
-  `revert` restore content via `git show <sourceCommit>:<path>`, so what a
-  project runs is auditable back to a specific reviewed commit, and a moved
-  data-repo HEAD changes nothing until a project opts in with `update`.
+- **Every selected version is pinned.** The relevant lock records a content
+  hash (`sha`) and the data-repo commit that produced it (`sourceCommit`).
+  `apply` and `revert` restore content via `git show <sourceCommit>:<path>`, so
+  the converged version is auditable back to a specific reviewed commit, and a
+  moved data-repo HEAD changes nothing until a project opts in with `update`.
+  `keep-local` is an explicit exception: it preserves the pin as a recovery
+  point while allowing installed copy-item bytes to differ.
 - **No implicit network I/O.** Capshelf never pushes — `promote` commits to
   your local clone and prints the `git push` you may choose to run. It never
   fetches behind your back either: the only network operations are the
@@ -65,14 +67,14 @@ that boundary:
   only when provably safe, and only when you run it. Nothing in
   `status`/`apply`/`add`/`update`/`promote` can be made to pull unreviewed
   content onto your machine.
-- **Drift is loud.** `status` reports any divergence between locked content
-  and on-disk files, and it checks that every locked `sourceCommit` is
-  reachable in the bound data repo, reporting `missing_source_commit` when
-  one is not. `status --strict` fails on both, with exit code 4. Run in CI,
-  this catches both local tampering with managed files in a consuming project
-  and locks that pin commits not reachable in the declared upstream — an
-  unpushed or squash-orphaned promote commit surfaces as
-  `missing_source_commit` even when the content hash happens to match.
+- **Drift is loud unless explicitly accepted.** `status` reports divergence
+  between locked content and on-disk files, and it checks that every locked
+  `sourceCommit` is reachable in the bound data repo, reporting
+  `missing_source_commit` when one is not. `status --strict` fails on both,
+  with exit code 4. A copy item marked with `keep-local` instead reports
+  `kept-local` and passes strict status; that marker is a visible waiver, not a
+  security boundary. Run in CI, strict status catches unaccepted tampering and
+  locks that pin commits not reachable in the declared upstream.
 - **Wrong-repo binding fails hard.** When the committed manifest declares
   `dataRepoUpstream`, capshelf refuses to use a clone whose `origin` does not
   normalize to that URL (exit 4). A contributor cannot be silently pointed at
@@ -113,7 +115,10 @@ Concretely, for a team or org data repo:
    `pi/extensions/*` changes as privileged.** They configure or contain things
    that execute. Pi extension changes should be reviewed as application code;
    capshelf does not install their dependencies, validate TypeScript, or reload
-   Pi. Inspect source before `add`/`promote`, then use `/reload` or restart Pi. Consider a stricter
+   Pi. Inspect source before `add`/`promote`, then use `/reload` or restart Pi.
+   `keep-local` can intentionally waive pin convergence for an extension but
+   does not prevent or sandbox execution; teams requiring exact executable
+   provenance should disallow that marker in review. Consider a stricter
    reviewer set (e.g. CODEOWNERS) for those paths than for `skills/*`.
 3. **Gate project PRs in CI** with `capshelf status --strict` against a
    fresh clone of the declared upstream. This blocks unreconciled drift,

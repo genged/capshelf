@@ -205,6 +205,7 @@ export function registerInit(program: Command): void {
       await saveLocalConfig(project, {
         dataRepo,
         skills: [],
+        piExtensions: [],
         settings: [],
         mcp: [],
       });

@@ -39,6 +39,7 @@ describe("cli integration", () => {
       {
         dataRepo,
         skills: ["local-only"],
+        piExtensions: [],
         settings: [],
         mcp: [],
       },
@@ -121,6 +122,7 @@ describe("cli integration", () => {
       {
         dataRepo,
         skills: [],
+        piExtensions: [],
         settings: [],
         mcp: [],
       },
@@ -248,6 +250,7 @@ describe("cli integration", () => {
       {
         dataRepo,
         skills: ["local-only"],
+        piExtensions: [],
         settings: [],
         mcp: [],
       },
@@ -499,6 +502,7 @@ describe("cli integration", () => {
       {
         dataRepo,
         skills: ["draft"],
+        piExtensions: [],
         settings: [],
         mcp: [],
       },
@@ -764,6 +768,7 @@ describe("cli integration", () => {
       {
         dataRepo,
         skills: [],
+        piExtensions: [],
         settings: [],
         mcp: [],
       },
@@ -844,6 +849,7 @@ describe("cli integration", () => {
       {
         dataRepo,
         skills: ["toggle"],
+        piExtensions: [],
         settings: [],
         mcp: [],
       },

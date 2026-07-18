@@ -6,8 +6,10 @@ import { dataKey } from "./lock";
 import type { DataLockEntry } from "./lock";
 import { CheckFailedError, NotFoundError, PreconditionError } from "./errors";
 import {
+  addLocalConfigName,
   assertLocalInstallPathsUntracked,
   assertLocalScopeSupported,
+  removeLocalConfigName,
 } from "./local-config";
 import {
   addToManifest,
@@ -31,7 +33,7 @@ export async function moveScope(
   const key = dataKey(kind, name);
   const projectEntry = state.projectLock.items[key];
   const localEntry = state.localLock.items[key];
-  if (kind !== "skills" && localEntry !== undefined) {
+  if (localEntry !== undefined) {
     assertLocalScopeSupported(kind, name, "move");
   }
   if (to === "local") {
@@ -99,7 +101,7 @@ export async function moveScope(
         "no local manifest exists; run capshelf init or capshelf set-data first",
       );
     }
-    await assertLocalInstallPathsUntracked(project, name);
+    await assertLocalInstallPathsUntracked(project, kind, name);
   }
 
   const nextEntry = { ...sourceEntry };
@@ -113,8 +115,7 @@ export async function moveScope(
       );
     }
     state.localLock.items[key] = nextEntry;
-    if (!state.localConfig.skills.includes(name))
-      state.localConfig.skills.push(name);
+    addLocalConfigName(state.localConfig, kind, name);
   }
 
   if (from === "project") {
@@ -123,9 +124,7 @@ export async function moveScope(
   } else {
     delete state.localLock.items[key];
     if (state.localConfig) {
-      state.localConfig.skills = state.localConfig.skills.filter(
-        (x) => x !== name,
-      );
+      removeLocalConfigName(state.localConfig, kind, name);
     }
   }
 

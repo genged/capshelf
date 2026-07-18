@@ -160,6 +160,8 @@ trust):
 ```bash
 capshelf show pi-extensions/path-guard
 capshelf add pi-extensions/path-guard
+# or keep the selection clone-local:
+capshelf add pi-extensions/path-guard --local
 # then run /reload in Pi or restart Pi
 ```
 
@@ -214,9 +216,11 @@ That works when the project committed `.capshelf/capshelf.json` with a
 | `mcp` | `mcp/<name>/claude.json`, `mcp/<name>/codex.toml` | merged into `.mcp.json` and/or `.codex/config.toml` |
 | `codex-config` | `codex/config/<name>/config.toml` | merged into `.codex/config.toml` |
 
-Pi extensions are project-scope only and execute arbitrary code after Pi
-project trust. Capshelf reports that warning, but does not sandbox extensions,
-install `package.json` dependencies, edit `.pi/settings.json`, or reload Pi.
+Pi extensions can use committed project scope or clone-local Capshelf scope;
+both materialize to Pi's project-local `.pi/extensions/<name>/` path and execute
+arbitrary code after Pi project trust. Capshelf reports that warning, but does
+not sandbox extensions, install `package.json` dependencies, edit
+`.pi/settings.json`, or reload Pi.
 
 Codex only loads project `.codex/config.toml` in trusted projects. Capshelf
 writes the project file and reports a non-failing status warning when Codex
@@ -228,7 +232,7 @@ Each project gets a `.capshelf/` directory:
 .capshelf/
   capshelf.json        committed manifest: install mode, upstream, declared items
   capshelf.lock.json   committed lock: exact content hash and source commit
-  local.json           gitignored: this machine's data repo path
+  local.json           gitignored: data repo path plus clone-local copy-item intent
   local.lock.json      gitignored: clone-local item pins
 ```
 

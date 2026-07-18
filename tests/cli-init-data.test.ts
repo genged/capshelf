@@ -54,6 +54,7 @@ describe("cli integration", () => {
       {
         dataRepo,
         skills: [],
+        piExtensions: [],
         settings: [],
         mcp: [],
       },
@@ -361,7 +362,13 @@ describe("cli integration", () => {
       await file(join(clonePath, "skills", "hello", "SKILL.md")).text(),
     ).toBe("hello\n");
     expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual(
-      { dataRepo: clonePath, skills: [], settings: [], mcp: [] },
+      {
+        dataRepo: clonePath,
+        skills: [],
+        piExtensions: [],
+        settings: [],
+        mcp: [],
+      },
     );
     const manifest = await file(
       join(project, ".capshelf", "capshelf.json"),
@@ -414,7 +421,13 @@ describe("cli integration", () => {
     expect(result.exitCode).toBe(0);
     expect(await file(join(clonePath, "README.md")).text()).toBe("data\n");
     expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual(
-      { dataRepo: clonePath, skills: [], settings: [], mcp: [] },
+      {
+        dataRepo: clonePath,
+        skills: [],
+        piExtensions: [],
+        settings: [],
+        mcp: [],
+      },
     );
   });
 
@@ -466,7 +479,13 @@ describe("cli integration", () => {
       "bound project data repo:\n  .capshelf/local.json",
     );
     expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual(
-      { dataRepo: clonePath, skills: [], settings: [], mcp: [] },
+      {
+        dataRepo: clonePath,
+        skills: [],
+        piExtensions: [],
+        settings: [],
+        mcp: [],
+      },
     );
     const manifest = await file(
       join(project, ".capshelf", "capshelf.json"),
@@ -825,7 +844,13 @@ describe("cli integration", () => {
       dataRepo: otherRepo,
     });
     expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual(
-      { dataRepo: otherRepo, skills: [], settings: [], mcp: [] },
+      {
+        dataRepo: otherRepo,
+        skills: [],
+        piExtensions: [],
+        settings: [],
+        mcp: [],
+      },
     );
 
     const setUpstream = Bun.spawnSync({
@@ -886,7 +911,13 @@ describe("cli integration", () => {
     expect(stderr).toContain(`git clone ${url} <path>`);
     expect(stderr).toContain("capshelf set-data <path>");
     expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual(
-      { dataRepo, skills: [], settings: [], mcp: [] },
+      {
+        dataRepo,
+        skills: [],
+        piExtensions: [],
+        settings: [],
+        mcp: [],
+      },
     );
   });
 
@@ -1032,7 +1063,13 @@ describe("cli integration", () => {
     expect(result.exitCode).toBe(1);
     expect(result.stderr.toString()).toContain("does not contain commit");
     expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual(
-      { dataRepo: originalRepo, skills: [], settings: [], mcp: [] },
+      {
+        dataRepo: originalRepo,
+        skills: [],
+        piExtensions: [],
+        settings: [],
+        mcp: [],
+      },
     );
   });
 });

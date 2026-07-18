@@ -52,6 +52,13 @@ describe("cli integration", () => {
       join(dataRepo, "mcp", "github", "claude.json"),
       JSON.stringify({ mcpServers: { github: { command: "github-mcp" } } }),
     );
+    await mkdir(join(dataRepo, "pi", "extensions", "path-guard"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(dataRepo, "pi", "extensions", "path-guard", "index.ts"),
+      "export default function pathGuard() {}\n",
+    );
     await mkdir(join(dataRepo, "bundles"), { recursive: true });
     await writeFile(
       join(dataRepo, "bundles", "go-backend.yml"),
@@ -279,7 +286,7 @@ describe("cli integration", () => {
     expect(await capshelfState(project)).toBe(before);
   });
 
-  test("add bundles --local is skills-only with one aggregated error", async () => {
+  test("add bundles --local accepts copy items and aggregates fragments", async () => {
     const project = await tempRepo("capshelf-bundle-local-project-");
     const dataRepo = await bundleDataRepo();
     const run = runIn(project);
@@ -289,7 +296,7 @@ describe("cli integration", () => {
     expect(refused.exitCode).toBe(3);
     const out = refused.stdout.toString();
     expect(out).toContain(
-      "✗ not installing bundle go-backend --local — local scope is skills-only",
+      "✗ not installing bundle go-backend --local — local scope supports copy-directory items only",
     );
     // ONE aggregated line naming all fragment members, not just the first.
     expect(out).toContain(
@@ -299,18 +306,34 @@ describe("cli integration", () => {
       "install the bundle at project scope instead: capshelf add bundles/go-backend",
     );
 
-    // A skills-only bundle installs fine with --local.
+    // A bundle containing both copy-directory kinds installs with --local.
     await writeFile(
-      join(dataRepo, "bundles", "skills-only.yml"),
-      "includes:\n  skills: [security-review, go-test-writer]\n",
+      join(dataRepo, "bundles", "copy-items.yml"),
+      [
+        "includes:",
+        "  skills: [security-review, go-test-writer]",
+        "  pi-extensions: [path-guard]",
+        "",
+      ].join("\n"),
     );
-    const local = run(["add", "bundles/skills-only", "--local"]);
+    const local = run(["add", "bundles/copy-items", "--local"]);
     expect(local.exitCode).toBe(0);
     const localLock = await file(
       join(project, ".capshelf", "local.lock.json"),
     ).json();
     expect(localLock.items["data/skills/security-review"]?.source).toBe("data");
     expect(localLock.items["data/skills/go-test-writer"]?.source).toBe("data");
+    expect(localLock.items["data/pi-extensions/path-guard"]?.source).toBe(
+      "data",
+    );
+    expect(
+      await file(
+        join(project, ".pi", "extensions", "path-guard", "index.ts"),
+      ).exists(),
+    ).toBe(true);
+    expect(
+      await readFile(join(project, ".git", "info", "exclude"), "utf-8"),
+    ).toContain(".pi/extensions/path-guard/");
   });
 
   test("mixed --local refusal prints one headline counting every failure", async () => {
@@ -339,7 +362,7 @@ describe("cli integration", () => {
       "✗ not installing bundle mixed-local — 2 of 3 members failed preflight",
     );
     expect(out).not.toContain("not installing bundle mixed-local --local");
-    expect(out).toContain("✗ local scope is skills-only");
+    expect(out).toContain("✗ local scope supports copy-directory items only");
     expect(out).toContain("fragment members: settings/permissions-base");
     expect(out).toMatch(/✗ skills\/nope\s+not found in data repo/);
   });

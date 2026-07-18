@@ -17,8 +17,8 @@ Each project has a `.capshelf/` metadata directory:
 
 - `.capshelf/capshelf.json` records the selected install mode, optional
   `dataRepoUpstream`, and the shared items this project wants.
-- `.capshelf/local.json` records this machine's data repo path plus local-only
-  skill intent and is ignored by `.capshelf/.gitignore`.
+- `.capshelf/local.json` records this machine's data repo path plus clone-local
+  copy-item intent and is ignored by `.capshelf/.gitignore`.
 - `.capshelf/capshelf.lock.json` records the exact applied state for each item.
 - `.capshelf/local.lock.json` records exact pins for local-only items and is
   ignored by `.capshelf/.gitignore`.
@@ -54,8 +54,8 @@ Core commands:
   in local or project scope.
 - `move` changes an already-tracked item's scope between local and project
   without changing data-repo content.
-- `keep-local` marks intentional project-local divergence for skills; it is
-  intentionally unavailable for executable Pi extensions.
+- `keep-local` marks intentional divergence for copy items, including skills
+  and Pi extensions.
 - `revert` restores one item to its locked version.
 - `promote` copies already-tracked local edits or fragment source edits back
   into the data repo, commits them, and updates only the calling project's lock.
@@ -74,10 +74,10 @@ Data repos must be Git repositories. The CLI uses Git to:
 This is what makes parallel project work safe. If project A promotes a new
 version of a shared skill, only project A's lock changes. If project A shares a
 new skill, project B stays unchanged until it explicitly runs `add` or `update`.
-For local-scope skills, filesystem snapshots use the skill's own `.gitignore`
-rules before hashing or copying into the data repo. Git projects also use
-`.git/info/exclude` to keep local-scope install paths untracked; non-Git
-projects skip that Git-only protection.
+For local-scope copy items, filesystem snapshots use the item's own
+`.gitignore` rules before hashing or copying into the data repo. Git projects
+also use `.git/info/exclude` to keep local-scope install paths untracked;
+non-Git projects skip that Git-only protection.
 
 ## Install Layout
 
@@ -90,10 +90,11 @@ Projects can opt into `claude-only` mode, where real skills are installed
 directly under `.claude/skills/<name>/`.
 
 Pi extensions are copied from `pi/extensions/<name>/` in the data repo to
-`.pi/extensions/<name>/` in the project. They are project-scope only and must
-contain `index.ts`. Capshelf does not edit `.pi/settings.json`, install declared
-package dependencies, sandbox extension code, or reload Pi; inspect the source,
-then run `/reload` or restart Pi after materialization.
+`.pi/extensions/<name>/` in the project. Like skills, they can be tracked in
+committed project scope or clone-local scope, and must contain `index.ts`.
+Capshelf does not edit `.pi/settings.json`, install declared package
+dependencies, sandbox extension code, or reload Pi; inspect the source, then run
+`/reload` or restart Pi after materialization.
 
 Fragments from the data repo are merged into project config outputs:
 

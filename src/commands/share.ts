@@ -16,10 +16,12 @@ import { assertRepoClean, commitInRepo, originRemoteUrl } from "../git";
 import { PreconditionError } from "../errors";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import {
+  addLocalConfigName,
   assertLocalInstallPathsUntracked,
   assertLocalScopeSupported,
   ensureLocalExcludes,
   loadLocalConfig,
+  removeLocalConfigName,
   removeLocalExcludes,
   saveLocalConfig,
 } from "../local-config";
@@ -142,7 +144,7 @@ export function registerShare(program: Command): void {
             "no local manifest exists; run capshelf init or capshelf set-data first",
           );
         }
-        await assertLocalInstallPathsUntracked(project, name);
+        await assertLocalInstallPathsUntracked(project, kind, name);
       }
 
       const adopted = await adoptIntoDataRepo(project, dataRepo, kind, name, {
@@ -166,9 +168,9 @@ export function registerShare(program: Command): void {
         if (localKey) {
           delete localLock.items[key];
           if (localConfig) {
-            localConfig.skills = localConfig.skills.filter((x) => x !== name);
+            removeLocalConfigName(localConfig, kind, name);
           }
-          await removeLocalExcludes(project, name);
+          await removeLocalExcludes(project, kind, name);
           localChanged = true;
         }
         await saveManifest(project, manifest);
@@ -179,9 +181,9 @@ export function registerShare(program: Command): void {
         }
       } else {
         if (!localConfig) throw new Error("expected local manifest");
-        if (!localConfig.skills.includes(name)) localConfig.skills.push(name);
+        addLocalConfigName(localConfig, kind, name);
         localLock.items[key] = preserveLabel(entry, localLock, key);
-        await ensureLocalExcludes(project, name);
+        await ensureLocalExcludes(project, kind, name);
         await saveLocalConfig(project, localConfig);
         await saveLocalLock(project, localLock);
       }

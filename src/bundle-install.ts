@@ -31,7 +31,7 @@ import { dataKey } from "./lock";
 import type { Lock } from "./lock";
 import { addManifestName } from "./manifest";
 import type { Manifest } from "./manifest";
-import { ITEM_KINDS, isFragmentItemKind } from "./master";
+import { ITEM_KINDS, isCopyItemKind, isFragmentItemKind } from "./master";
 import type { ItemKind, MasterItem } from "./master";
 import { METADATA_SIDECAR } from "./metadata";
 import type { ItemMetadata } from "./metadata";
@@ -63,12 +63,8 @@ export interface BundlePlan {
   members: MemberPlan[];
   /**
    * Fragment member refs that block `--local`, collected into ONE aggregated
-   * bundle-level refusal — never per-member `assertLocalScopeSupported`,
-   * which throws on the first violator with a per-kind message and would
-   * hide the rest of the list.
+   * bundle-level refusal rather than throwing on the first unsupported member.
    */
-  localFragmentMembers: string[];
-  /** Every non-skill member rejected by local scope, including copy items. */
   localUnsupportedMembers: string[];
   /**
    * Unmet `requires` per member, computed against installed items ∪ the
@@ -129,7 +125,6 @@ export function planBundleInstall(opts: PlanBundleInstallOptions): BundlePlan {
   const plan: BundlePlan = {
     scope,
     members: [],
-    localFragmentMembers: [],
     localUnsupportedMembers: [],
     missingRequiresByMember: new Map(),
   };
@@ -164,13 +159,10 @@ export function planBundleInstall(opts: PlanBundleInstallOptions): BundlePlan {
       m.reason = `already owned by ${otherScope} scope; fix with: capshelf move ${ref} --to ${scope}`;
       continue;
     }
-    if (scope === "local" && member.kind !== "skills") {
+    if (scope === "local" && !isCopyItemKind(member.kind)) {
       plan.localUnsupportedMembers.push(ref);
-      if (isFragmentItemKind(member.kind)) {
-        plan.localFragmentMembers.push(ref);
-      }
       m.status = "refused";
-      m.reason = "local scope is skills-only";
+      m.reason = "local scope supports copy-directory items only";
     }
   }
 
@@ -281,7 +273,11 @@ export async function preflightBundleChecks(
         }
       }
       if (plan.scope === "local") {
-        await assertLocalInstallPathsUntracked(ctx.project, item.name);
+        await assertLocalInstallPathsUntracked(
+          ctx.project,
+          item.kind,
+          item.name,
+        );
       }
     } catch (err) {
       m.status = "refused";

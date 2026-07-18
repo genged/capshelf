@@ -57,11 +57,6 @@ export function registerKeepLocal(program: Command): void {
 
       const key = dataKeys[0]!;
       const parsed = parseLockKey(key);
-      if (parsed.kind === "pi-extensions") {
-        throw new PreconditionError(
-          "keep-local is not supported for pi extensions; promote, revert, or keep an unmanaged project-only extension under .pi/extensions",
-        );
-      }
       if (isFragmentItemKind(parsed.kind)) {
         throw new PreconditionError(keepLocalRejectMessage(parsed.kind));
       }

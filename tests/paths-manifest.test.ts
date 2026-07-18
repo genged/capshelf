@@ -66,6 +66,7 @@ describe("path normalization", () => {
     await saveLocalConfig(project, {
       dataRepo: "../local",
       skills: [],
+      piExtensions: [],
       settings: [],
       mcp: [],
     });
@@ -306,6 +307,7 @@ describe("manifest commands migration", () => {
     expect(await loadLocalConfig(project)).toEqual({
       dataRepo: join(homedir(), "capshelf-data"),
       skills: [],
+      piExtensions: [],
       settings: [],
       mcp: [],
     });
@@ -316,12 +318,14 @@ describe("manifest commands migration", () => {
     await saveLocalConfig(project, {
       dataRepo: "/tmp/data",
       skills: [],
+      piExtensions: [],
       settings: [],
       mcp: [],
     });
     await saveLocalConfig(project, {
       dataRepo: "/tmp/data",
       skills: [],
+      piExtensions: [],
       settings: [],
       mcp: [],
     });
@@ -329,6 +333,7 @@ describe("manifest commands migration", () => {
     expect(await loadLocalConfig(project)).toEqual({
       dataRepo: "/tmp/data",
       skills: [],
+      piExtensions: [],
       settings: [],
       mcp: [],
     });
@@ -469,12 +474,14 @@ describe("manifest commands migration", () => {
     await saveLocalConfig(project, {
       dataRepo: "/tmp/data",
       skills: ["hello"],
+      piExtensions: ["guard"],
       settings: [],
       mcp: [],
     });
     expect(await loadLocalConfig(project)).toEqual({
       dataRepo: "/tmp/data",
       skills: ["hello"],
+      piExtensions: ["guard"],
       settings: [],
       mcp: [],
     });

@@ -54,6 +54,7 @@ export function buildSetData(name: string): Command {
       await saveLocalConfig(project, {
         dataRepo: storedPath,
         skills: existing?.skills ?? [],
+        piExtensions: existing?.piExtensions ?? [],
         settings: existing?.settings ?? [],
         mcp: existing?.mcp ?? [],
       });
