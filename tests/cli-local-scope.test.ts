@@ -1,6 +1,6 @@
 import { $, file } from "bun";
 import { describe, expect, test } from "bun:test";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { commitAll, tempDir, tempRepo } from "./cli-fixtures";
 
@@ -211,6 +211,232 @@ describe("cli integration", () => {
     exclude = await readFile(join(project, ".git", "info", "exclude"), "utf-8");
     expect(exclude).not.toContain(".agents/skills/local-remove/");
     expect(exclude).not.toContain(".claude/skills/local-remove");
+  });
+
+  test("rm without --local points at local scope for a local-only item", async () => {
+    const project = await tempRepo("capshelf-rm-scope-hint-project-");
+    const dataRepo = await tempRepo("capshelf-rm-scope-hint-data-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+
+    await mkdir(join(dataRepo, "skills", "local-hinted"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "skills", "local-hinted", "SKILL.md"),
+      "hint me\n",
+    );
+    await commitAll(dataRepo, "local hinted skill");
+
+    const init = Bun.spawnSync({
+      cmd: [process.execPath, cli, "init", "--data", dataRepo],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(init.exitCode).toBe(0);
+
+    const add = Bun.spawnSync({
+      cmd: [process.execPath, cli, "add", "--local", "skills/local-hinted"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(add.exitCode).toBe(0);
+
+    for (const itemRef of ["skills/local-hinted", "local-hinted"]) {
+      const rm = Bun.spawnSync({
+        cmd: [process.execPath, cli, "rm", itemRef],
+        cwd: project,
+        env: process.env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(rm.exitCode).toBe(3);
+      const stderr = rm.stderr.toString();
+      expect(stderr).toContain(
+        "skills/local-hinted is installed at local scope",
+      );
+      expect(stderr).toContain(
+        "remove it with: capshelf rm --local skills/local-hinted",
+      );
+    }
+    expect(
+      await file(
+        join(project, ".agents", "skills", "local-hinted", "SKILL.md"),
+      ).exists(),
+    ).toBe(true);
+
+    const rmLocal = Bun.spawnSync({
+      cmd: [process.execPath, cli, "rm", "--local", "skills/local-hinted"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(rmLocal.exitCode).toBe(0);
+  });
+
+  test("rm --local points at project scope for a project-only item", async () => {
+    const project = await tempRepo("capshelf-rm-scope-hint-proj-project-");
+    const dataRepo = await tempRepo("capshelf-rm-scope-hint-proj-data-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+
+    await mkdir(join(dataRepo, "skills", "project-hinted"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(dataRepo, "skills", "project-hinted", "SKILL.md"),
+      "hint me\n",
+    );
+    await commitAll(dataRepo, "project hinted skill");
+
+    const init = Bun.spawnSync({
+      cmd: [process.execPath, cli, "init", "--data", dataRepo],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(init.exitCode).toBe(0);
+
+    const add = Bun.spawnSync({
+      cmd: [process.execPath, cli, "add", "skills/project-hinted"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(add.exitCode).toBe(0);
+
+    const rm = Bun.spawnSync({
+      cmd: [process.execPath, cli, "rm", "--local", "skills/project-hinted"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(rm.exitCode).toBe(3);
+    const stderr = rm.stderr.toString();
+    expect(stderr).toContain(
+      "skills/project-hinted is installed at project scope",
+    );
+    expect(stderr).toContain(
+      "remove it with: capshelf rm skills/project-hinted",
+    );
+
+    const rmProject = Bun.spawnSync({
+      cmd: [process.execPath, cli, "rm", "skills/project-hinted"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(rmProject.exitCode).toBe(0);
+  });
+
+  test("rm --local reports an actionable error when the tree cannot be deleted", async () => {
+    const project = await tempRepo("capshelf-rm-eacces-project-");
+    const dataRepo = await tempRepo("capshelf-rm-eacces-data-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+
+    await mkdir(join(dataRepo, "skills", "stuck"), { recursive: true });
+    await writeFile(join(dataRepo, "skills", "stuck", "SKILL.md"), "x\n");
+    await commitAll(dataRepo, "stuck skill");
+
+    const init = Bun.spawnSync({
+      cmd: [process.execPath, cli, "init", "--data", dataRepo],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(init.exitCode).toBe(0);
+
+    const add = Bun.spawnSync({
+      cmd: [process.execPath, cli, "add", "--local", "skills/stuck"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(add.exitCode).toBe(0);
+
+    const skillsDir = join(project, ".agents", "skills");
+    await chmod(skillsDir, 0o555);
+    try {
+      const rm = Bun.spawnSync({
+        cmd: [process.execPath, cli, "rm", "--local", "skills/stuck"],
+        cwd: project,
+        env: process.env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(rm.exitCode).toBe(1);
+      const stderr = rm.stderr.toString();
+      expect(stderr).toContain("could not delete");
+      expect(stderr).toContain("delete the directory manually");
+      // The failed delete must not have untracked the item.
+      const localConfig = await file(
+        join(project, ".capshelf", "local.json"),
+      ).json();
+      expect(localConfig.skills).toEqual(["stuck"]);
+    } finally {
+      await chmod(skillsDir, 0o755);
+    }
+
+    const retry = Bun.spawnSync({
+      cmd: [process.execPath, cli, "rm", "--local", "skills/stuck"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(retry.exitCode).toBe(0);
+  });
+
+  test("rm --local refuses a local-config item with no local lock entry", async () => {
+    const project = await tempRepo("capshelf-rm-local-unlocked-project-");
+    const dataRepo = await tempRepo("capshelf-rm-local-unlocked-data-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+
+    await mkdir(join(dataRepo, "skills", "unlocked"), { recursive: true });
+    await writeFile(join(dataRepo, "skills", "unlocked", "SKILL.md"), "x\n");
+    await commitAll(dataRepo, "unlocked skill");
+
+    const init = Bun.spawnSync({
+      cmd: [process.execPath, cli, "init", "--data", dataRepo],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(init.exitCode).toBe(0);
+
+    const add = Bun.spawnSync({
+      cmd: [process.execPath, cli, "add", "--local", "skills/unlocked"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(add.exitCode).toBe(0);
+
+    const lockPath = join(project, ".capshelf", "local.lock.json");
+    const lock = await file(lockPath).json();
+    delete lock.items["data/skills/unlocked"];
+    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+
+    const rm = Bun.spawnSync({
+      cmd: [process.execPath, cli, "rm", "--local", "skills/unlocked"],
+      cwd: project,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(rm.exitCode).toBe(3);
+    expect(rm.stderr.toString()).toContain(
+      "no data lock entry exists, so installed files are not managed by capshelf",
+    );
   });
 
   test("add --local works in non-git projects without git excludes", async () => {

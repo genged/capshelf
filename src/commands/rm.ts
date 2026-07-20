@@ -1,6 +1,6 @@
 import type { Command } from "commander";
-import { rm as fsRm } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { rmTreeWithRetries } from "../fs-utils";
 import { projectRoot } from "../paths";
 import { resolveProjectDataRepo } from "../command-context";
 import { loadManifest, saveManifest } from "../manifest";
@@ -13,8 +13,9 @@ import {
   dataKey,
 } from "../lock";
 import type { ItemKind } from "../master";
-import { NotFoundError, PreconditionError } from "../errors";
-import { isFragmentItemKind, ITEM_KINDS } from "../master";
+import { CliError, NotFoundError, PreconditionError } from "../errors";
+import { isCopyItemKind, isFragmentItemKind, ITEM_KINDS } from "../master";
+import { PRODUCT_NAME } from "../identity";
 import {
   installedPath,
   parseLockKey,
@@ -26,6 +27,7 @@ import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import {
   assertLocalScopeSupported,
   loadLocalConfig,
+  localConfigNamesForKind,
   removeLocalConfigName,
   removeLocalExcludes,
   saveLocalConfig,
@@ -99,16 +101,42 @@ export function registerRm(program: Command): void {
       }
 
       if (dataKeys.length === 0) {
-        const manifestKinds = ITEM_KINDS.filter(
-          (k) =>
-            (!ref.kind || k === ref.kind) &&
-            manifestNamesForKind(manifest, k).includes(ref.name),
-        );
-        if (manifestKinds.length > 0) {
+        const trackedKinds = ITEM_KINDS.filter((k) => {
+          if (ref.kind && k !== ref.kind) return false;
+          if (opts.local) {
+            return (
+              localConfig !== null &&
+              isCopyItemKind(k) &&
+              localConfigNamesForKind(localConfig, k).includes(ref.name)
+            );
+          }
+          return manifestNamesForKind(manifest, k).includes(ref.name);
+        });
+        if (trackedKinds.length > 0) {
           const label = ref.kind ? `${ref.kind}/${ref.name}` : ref.name;
           throw new PreconditionError(
             `not removing ${label} — no data lock entry exists, so installed files are not managed by capshelf\n` +
               "  remove local-only files manually, or repair the lock before running capshelf rm",
+          );
+        }
+        // The item may be installed at the other scope; a bare "not installed"
+        // would be a lie the user has no way to see through.
+        const otherLock = opts.local
+          ? await loadLock(project)
+          : await loadLocalLock(project);
+        const otherKeys = lockKeysForRef(otherLock, ref).filter(
+          (key) => parseLockKey(key).source === "data",
+        );
+        if (otherKeys.length > 0) {
+          const labels = otherKeys.map((key) => {
+            const parsed = parseLockKey(key);
+            return `${parsed.kind}/${parsed.name}`;
+          });
+          const scope = opts.local ? "project" : "local";
+          const flag = opts.local ? "" : " --local";
+          throw new PreconditionError(
+            `${labels.join(", ")} is installed at ${scope} scope`,
+            { hint: `remove it with: ${PRODUCT_NAME} rm${flag} ${labels[0]}` },
           );
         }
         throw new NotFoundError(`not installed in this project: ${itemRef}`);
@@ -171,7 +199,17 @@ export function registerRm(program: Command): void {
           manifest.installMode,
         );
         if (existsSync(path)) {
-          await fsRm(path, { recursive: true, force: true });
+          try {
+            await rmTreeWithRetries(path);
+          } catch (err) {
+            const detail = err instanceof Error ? err.message : String(err);
+            throw new CliError(`could not delete ${path} (${detail})`, {
+              hint:
+                "another process may be writing to that directory (an agent runtime watching it?) — stop it and retry,\n" +
+                "  or delete the directory manually and re-run this command to finish untracking",
+              cause: err,
+            });
+          }
           removed = true;
         }
       }

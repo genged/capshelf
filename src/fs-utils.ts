@@ -23,6 +23,35 @@ export function lstatOrNull(path: string): ReturnType<typeof lstatSync> | null {
   }
 }
 
+const RM_RETRY_DELAYS_MS = [150, 400];
+
+/**
+ * Remove a file tree, retrying briefly when the failure may be transient.
+ * The runtime already retries ENOTEMPTY internally on most platforms, but on
+ * macOS a directory that a concurrent process repopulates mid-delete (or
+ * otherwise refuses to empty) surfaces as EACCES/EPERM naming the top-level
+ * path (nodejs/node#57095), which is never retried. A short backoff lets a
+ * transient writer finish; a persistent denial still throws the last error.
+ */
+export async function rmTreeWithRetries(path: string): Promise<void> {
+  for (const delay of RM_RETRY_DELAYS_MS) {
+    try {
+      await rm(path, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      if (
+        !isErrno(err, "EACCES") &&
+        !isErrno(err, "EPERM") &&
+        !isErrno(err, "ENOTEMPTY")
+      ) {
+        throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+  await rm(path, { recursive: true, force: true });
+}
+
 let atomicWriteCounter = 0;
 
 /**

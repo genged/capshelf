@@ -1,8 +1,21 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { atomicWriteFile, isErrno, lstatOrNull } from "../src/fs-utils";
+import {
+  atomicWriteFile,
+  isErrno,
+  lstatOrNull,
+  rmTreeWithRetries,
+} from "../src/fs-utils";
 
 describe("isErrno", () => {
   test("matches a Node errno by code", () => {
@@ -35,6 +48,53 @@ describe("lstatOrNull", () => {
     expect(
       lstatOrNull(join(tmpdir(), "definitely-missing-xyz-123")),
     ).toBeNull();
+  });
+});
+
+describe("rmTreeWithRetries", () => {
+  test("removes a populated tree", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "capshelf-rmtree-"));
+    const target = join(dir, "item");
+    await mkdir(join(target, "nested"), { recursive: true });
+    await writeFile(join(target, "nested", "f.txt"), "x");
+    await rmTreeWithRetries(target);
+    expect(existsSync(target)).toBe(false);
+  });
+
+  test("is a no-op for a missing path", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "capshelf-rmtree-"));
+    await rmTreeWithRetries(join(dir, "never-existed"));
+  });
+
+  test("succeeds when a denial clears during the retry window", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "capshelf-rmtree-"));
+    const target = join(dir, "item");
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, "f.txt"), "x");
+    await chmod(dir, 0o555);
+    const unlock = (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      await chmod(dir, 0o755);
+    })();
+    await rmTreeWithRetries(target);
+    await unlock;
+    expect(existsSync(target)).toBe(false);
+  });
+
+  test("throws the underlying error after retries are exhausted", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "capshelf-rmtree-"));
+    const target = join(dir, "item");
+    await mkdir(target, { recursive: true });
+    await writeFile(join(target, "f.txt"), "x");
+    await chmod(dir, 0o555);
+    try {
+      await expect(rmTreeWithRetries(target)).rejects.toMatchObject({
+        code: "EACCES",
+      });
+      expect(existsSync(target)).toBe(true);
+    } finally {
+      await chmod(dir, 0o755);
+    }
   });
 });
 
