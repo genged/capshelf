@@ -14,8 +14,7 @@ export function parseItemRef(input: string): ItemRef {
   const raw = input.trim();
   if (!raw) throw new Error("empty item ref");
   // ":" is reserved for future shelf-qualified refs (<shelf>:<kind>/<name>).
-  // See local/specs/multi-shelf-federation-spec.md, Compatibility
-  // Reservations, Group 2(a) — do not "fix" this restriction away.
+  // Do not "fix" this restriction away.
   if (raw.includes(":")) {
     throw new Error(
       `invalid item ref "${input}" (":" is reserved for future shelf-qualified refs)`,
@@ -111,8 +110,7 @@ function requireName(name: string, input: string): string {
   // refused here too, not just as a bare `..`.
   assertSafeItemName(name, `item ref "${input}"`);
   // Same reservation as the parseItemRef guard: ":" in an item name would
-  // collide with the shelf-qualified ref grammar reserved by
-  // local/specs/multi-shelf-federation-spec.md (Group 2a).
+  // collide with the reserved shelf-qualified ref grammar.
   if (name.includes(":")) {
     throw new Error(
       `invalid item name "${name}" (":" is reserved for future shelf-qualified refs)`,

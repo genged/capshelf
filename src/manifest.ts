@@ -82,9 +82,7 @@ export async function loadManifest(project: string): Promise<Manifest> {
   const parsed = JSON.parse(raw);
   // "shelves" is reserved for multi-shelf federation. Detect it before zod
   // parsing: the non-strict schema would silently strip it and the next
-  // saveManifest would delete the federation config with no error. See
-  // local/specs/multi-shelf-federation-spec.md, Compatibility Reservations,
-  // Group 2(b).
+  // saveManifest would delete the federation config with no error.
   if (hasShelvesKey(parsed)) {
     throw new Error(
       `${p} declares "shelves": this project uses multi-shelf federation, which this capshelf version does not support; upgrade capshelf`,

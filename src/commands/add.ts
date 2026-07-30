@@ -99,7 +99,7 @@ export function registerAdd(program: Command): void {
     .action(async (itemRef: string, opts: AddOptions, cmd: Command) => {
       // Bundle refs branch BEFORE parseItemRef: the parser rejects "bundles"
       // as an item kind, so testing afterwards would be dead code behind an
-      // exit-1 throw (local/specs/bundles-spec.md).
+      // exit-1 throw.
       const bundleName = isBundleRef(itemRef);
       if (bundleName !== null) {
         await addBundle(bundleName, opts, cmd);
@@ -200,7 +200,7 @@ export interface InstallDataItemOptions {
  * `add` re-applies them (recomputes sha/sourceCommit, rewrites the lock
  * entry with a fresh appliedAt) and "re-applied" vs "added" is display-only.
  * The bundle executor never calls this for installed members — the skip
- * lives there, not here (local/specs/bundles-spec.md).
+ * lives there, not here.
  */
 export async function installDataItem(
   ctx: AddContext,

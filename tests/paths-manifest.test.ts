@@ -418,8 +418,7 @@ describe("manifest commands migration", () => {
     });
   });
 
-  // "shelves" is reserved for multi-shelf federation; see
-  // local/specs/multi-shelf-federation-spec.md (Group 2b).
+  // "shelves" is reserved for multi-shelf federation.
   test("loadManifest fails loudly on a reserved shelves key", async () => {
     for (const shelves of [[], null, "team"]) {
       const project = await tempDir();

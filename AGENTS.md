@@ -93,11 +93,11 @@ If rebase conflicts occur:
 - When changing command behavior, update the living docs in `docs/` and the
   relevant tests or smoke scripts in the same change.
 
-## Local only docs
+## Local-only docs
 
-If `local/` exists locally, it is a separate local only directory.
-Read `local/` before large architectural changes.
-Do not create public references that require `local/` to exist.
+- If `local/` exists, treat it as separate, local-only context.
+- Read it before large architectural changes.
+- Never reference files under `local/` from source code, tests, or public docs.
 
 ## User Override
 

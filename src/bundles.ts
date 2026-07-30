@@ -2,7 +2,7 @@
  * Bundles: named sets of items defined as `bundles/<name>.yml` files at the
  * data repo root. A bundle is a manifest macro, not a versioning unit — it is
  * never hashed, locked, or materialized; `add bundles/<name>` expands it into
- * ordinary per-item manifest and lock entries. See local/specs/bundles-spec.md.
+ * ordinary per-item manifest and lock entries.
  *
  * Parsing follows the metadata.ts conventions: read paths warn-and-degrade so
  * a broken bundle stays visible on the shelf, while the install path
@@ -68,8 +68,7 @@ export function isBundleRef(input: string): string | null {
 /**
  * Bundle names follow item-name rules (non-empty, no `/`, not `.`/`..`) plus
  * the federation reservation: `:` is rejected so bundle names stay
- * addressable under a future shelf-qualified ref grammar
- * (local/specs/multi-shelf-federation-spec.md, Group 2a).
+ * addressable under a future shelf-qualified ref grammar.
  */
 export function isValidBundleName(name: string): boolean {
   if (!name || name === "." || name === "..") return false;

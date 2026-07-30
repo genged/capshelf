@@ -952,9 +952,8 @@ describe("cli integration", () => {
     expect(apply.stderr.toString()).toContain("fix it manually");
   });
 
-  // Federation reservations (local/specs/multi-shelf-federation-spec.md,
-  // Group 2): colon refs and the manifest "shelves" key both fail through
-  // the existing generic-error mapping with exit 1.
+  // Federation reservations: colon refs and the manifest "shelves" key both
+  // fail through the existing generic-error mapping with exit 1.
   test("reserved colon refs and shelves keys exit 1 through the CLI", async () => {
     const project = await tempRepo("capshelf-reserved-project-");
     const dataRepo = await tempRepo("capshelf-reserved-data-");

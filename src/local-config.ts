@@ -37,9 +37,7 @@ export async function loadLocalConfig(
   if (!existsSync(path)) return null;
   const raw = JSON.parse(await readFile(path, "utf-8"));
   // "shelves" is reserved for multi-shelf federation. Fail loudly before zod
-  // strips it and a later saveLocalConfig silently deletes it. See
-  // local/specs/multi-shelf-federation-spec.md, Compatibility Reservations,
-  // Group 2(b).
+  // strips it and a later saveLocalConfig silently deletes it.
   if (hasShelvesKey(raw)) {
     throw new Error(
       `${path} declares "shelves": this project uses multi-shelf federation, which this capshelf version does not support; upgrade capshelf`,

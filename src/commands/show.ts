@@ -62,7 +62,7 @@ export function registerShow(program: Command): void {
     .action(async (itemRef: string, opts: ShowOptions, cmd: Command) => {
       // Bundle refs branch BEFORE parseItemRef: the parser rejects "bundles"
       // as an item kind, so testing afterwards would be dead code behind an
-      // exit-1 throw (local/specs/bundles-spec.md).
+      // exit-1 throw.
       const bundleName = isBundleRef(itemRef);
       if (bundleName !== null) {
         await showBundle(bundleName, opts, cmd);

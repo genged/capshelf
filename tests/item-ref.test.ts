@@ -66,8 +66,7 @@ describe("parseItemRef", () => {
     expect(message).toContain("capshelf show bundles/go-backend");
   });
 
-  // ":" is reserved for future shelf-qualified refs; see
-  // local/specs/multi-shelf-federation-spec.md (Group 2a).
+  // ":" is reserved for future shelf-qualified refs.
   test("rejects refs containing the reserved colon", () => {
     for (const ref of [
       "team:security-review",

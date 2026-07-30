@@ -8,7 +8,6 @@
  * `add`'s implicit re-apply (it recomputes the pin and rewrites `appliedAt`),
  * and a bundle that means "ensure these are present" must never bump existing
  * pins — pin movement belongs to `capshelf update`.
- * See local/specs/bundles-spec.md.
  */
 import type { Bundle } from "./bundles";
 import { memberRef } from "./bundles";
