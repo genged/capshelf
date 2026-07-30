@@ -4,7 +4,11 @@ import { loadLocalLock, loadLock, saveLocalLock, saveLock } from "../lock";
 import { parseLockKey } from "../installed";
 import { shaOfInstalledForScope } from "../item-snapshot";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
-import { isFragmentItemKind } from "../master";
+import {
+  isCopyDirectoryItemKind,
+  isCopyTargetFileItemKind,
+  isFragmentItemKind,
+} from "../master";
 import type { FragmentItemKind } from "../master";
 import { NotFoundError, PreconditionError } from "../errors";
 
@@ -59,6 +63,16 @@ export function registerKeepLocal(program: Command): void {
       const parsed = parseLockKey(key);
       if (isFragmentItemKind(parsed.kind)) {
         throw new PreconditionError(keepLocalRejectMessage(parsed.kind));
+      }
+      if (isCopyTargetFileItemKind(parsed.kind)) {
+        throw new PreconditionError(
+          `keep-local is not supported for copy-target-file item ${parsed.kind}/${parsed.name}`,
+        );
+      }
+      if (!isCopyDirectoryItemKind(parsed.kind)) {
+        throw new Error(
+          `no keep-local strategy for ${parsed.kind}/${parsed.name}`,
+        );
       }
       const entry = lock.items[key]!;
       if (entry.source !== "data") {

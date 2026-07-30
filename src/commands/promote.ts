@@ -14,7 +14,11 @@ import {
 } from "../lock";
 import type { Lock } from "../lock";
 import { installedPath, parseLockKey } from "../installed";
-import { itemRepoRelPath } from "../master";
+import {
+  isCopyDirectoryItemKind,
+  isCopyTargetFileItemKind,
+  itemRepoRelPath,
+} from "../master";
 import type { FragmentItemKind, ItemKind } from "../master";
 import { NotFoundError, PreconditionError } from "../errors";
 import {
@@ -206,6 +210,14 @@ async function promoteProjectTracked(
     addToManifest(manifest, parsed.kind, parsed.name);
     return result;
   }
+  if (isCopyTargetFileItemKind(parsed.kind)) {
+    throw new PreconditionError(
+      `promote is not implemented for copy-target-file item ${parsed.kind}/${parsed.name}`,
+    );
+  }
+  if (!isCopyDirectoryItemKind(parsed.kind)) {
+    throw new Error(`no promote strategy for ${parsed.kind}/${parsed.name}`);
+  }
 
   const result = await syncTrackedIntoDataRepo(
     project,
@@ -241,6 +253,11 @@ async function promoteLocalTracked(
 
   const parsed = parseLockKey(key);
   assertLocalScopeSupported(parsed.kind, parsed.name, "promote");
+  if (!isCopyDirectoryItemKind(parsed.kind)) {
+    throw new PreconditionError(
+      `promote --local requires a copy-directory item: ${parsed.kind}/${parsed.name}`,
+    );
+  }
   return await syncTrackedIntoDataRepo(
     project,
     dataRepo,
@@ -426,6 +443,14 @@ export async function syncTrackedIntoDataRepo(
     throw new PreconditionError(
       `promote for ${kind}/${name} must use project-scope fragment source files`,
     );
+  }
+  if (isCopyTargetFileItemKind(kind)) {
+    throw new PreconditionError(
+      `promote is not implemented for copy-target-file item ${kind}/${name}`,
+    );
+  }
+  if (!isCopyDirectoryItemKind(kind)) {
+    throw new Error(`no promotion strategy for ${kind}/${name}`);
   }
 
   if (kind === "skills") {

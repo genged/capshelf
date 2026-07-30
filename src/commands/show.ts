@@ -2,6 +2,8 @@ import type { Command } from "commander";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  isCopyDirectoryItemKind,
+  isCopyTargetFileItemKind,
   isFragmentItemKind,
   isMetadataSidecarPath,
   listMasterItems,
@@ -100,6 +102,17 @@ export function registerShow(program: Command): void {
       const item = await findMasterItemByRef(dataRepo, ref);
       if (!item) {
         throw new NotFoundError(`not found: ${itemRef}`);
+      }
+      if (isCopyTargetFileItemKind(item.kind)) {
+        throw new PreconditionError(
+          `show is not implemented for copy-target-file item ${item.kind}/${item.name}`,
+        );
+      }
+      if (
+        !isCopyDirectoryItemKind(item.kind) &&
+        !isFragmentItemKind(item.kind)
+      ) {
+        throw new Error(`no show strategy for ${item.kind}/${item.name}`);
       }
       const cliTarget = sourceTargetForCli(opts.target);
       if (!isFragmentItemKind(item.kind) && cliTarget) {

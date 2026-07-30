@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isIgnoredDotDirent } from "./dotfiles";
 import { gitVisibleFilesUnderPath, isGitRepo } from "./git";
-import { isCopyItemKind, isMetadataSidecarPath } from "./master";
+import { isCopyDirectoryItemKind, isMetadataSidecarPath } from "./master";
 import type { MasterItem } from "./master";
 import {
   assertCanMaterializeInstalled,
@@ -17,9 +17,9 @@ export function targetDir(
   item: MasterItem,
   mode?: InstallMode,
 ): string {
-  if (!isCopyItemKind(item.kind)) {
+  if (!isCopyDirectoryItemKind(item.kind)) {
     throw new Error(
-      `${item.kind}/${item.name} is a fragment item and has no install directory`,
+      `${item.kind}/${item.name} does not use the copy-directory strategy`,
     );
   }
   return installedPath(project, item.kind, item.name, mode);
@@ -103,9 +103,9 @@ export async function copyItemIntoProject(
   item: MasterItem,
   mode?: InstallMode,
 ): Promise<string> {
-  if (!isCopyItemKind(item.kind)) {
+  if (!isCopyDirectoryItemKind(item.kind)) {
     throw new Error(
-      `${item.kind}/${item.name} is a fragment item and cannot be copied into the project`,
+      `${item.kind}/${item.name} does not use the copy-directory strategy`,
     );
   }
   const dst = targetDir(project, item, mode);

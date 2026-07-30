@@ -11,7 +11,7 @@ import {
   installedPath,
 } from "./installed";
 import type { InstallMode } from "./paths";
-import type { ItemKind } from "./master";
+import type { MaterializedItemKind } from "./master";
 import { SYSTEM_SKILL_NAME } from "./identity";
 
 export const CLI_VERSION = (pkg as { version: string }).version;
@@ -22,7 +22,7 @@ export interface BundledFile {
 }
 
 export interface SystemItem {
-  kind: ItemKind;
+  kind: MaterializedItemKind;
   name: string;
   files: BundledFile[];
 }

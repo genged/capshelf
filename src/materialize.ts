@@ -13,11 +13,14 @@ import {
 import type { ItemSource } from "./installed";
 import type { ItemKind } from "./master";
 import {
+  isCopyDirectoryItemKind,
+  isCopyTargetFileItemKind,
   isFragmentItemKind,
   isMetadataSidecarPath,
   itemRepoRelPath,
   shaOfItem,
 } from "./master";
+import type { CopyDirectoryItemKind } from "./master";
 import { shaOfInstalledForScope } from "./item-snapshot";
 import type { Scope } from "./promote-core";
 import { hashNamedContents } from "./content-hash";
@@ -74,6 +77,14 @@ export async function materializeLockEntry(
     throw new Error(
       `${kind}/${name} is a fragment item and must be reconciled through fragment outputs`,
     );
+  }
+  if (isCopyTargetFileItemKind(kind)) {
+    throw new Error(
+      `${kind}/${name} must be reconciled through copy-target-file outputs`,
+    );
+  }
+  if (!isCopyDirectoryItemKind(kind)) {
+    throw new Error(`no materialization strategy for ${kind}/${name}`);
   }
   const dst = installedPath(opts.project, kind, name);
 
@@ -199,7 +210,7 @@ export async function materializeLockEntry(
 async function shaOfDataAtCommit(
   dataRepo: string,
   manifest: Manifest | undefined,
-  kind: ItemKind,
+  kind: CopyDirectoryItemKind,
   name: string,
   commit: string,
 ): Promise<string> {
@@ -228,7 +239,7 @@ async function materializeDataAtCommit(
   project: string,
   dataRepo: string,
   manifest: Manifest | undefined,
-  kind: ItemKind,
+  kind: CopyDirectoryItemKind,
   name: string,
   commit: string,
 ): Promise<void> {

@@ -15,6 +15,7 @@ import {
 } from "../external";
 import { printRuntimeWarnings } from "../runtime-warnings";
 import { assertLocalScopeSupported } from "../local-config";
+import { isMaterializedItemKind } from "../master";
 import {
   applyFragmentOutput,
   fragmentKindForTarget,
@@ -170,6 +171,11 @@ export function registerApply(program: Command): void {
               });
             }
             continue;
+          }
+          if (!isMaterializedItemKind(parsed.kind)) {
+            throw new Error(
+              `no apply strategy for ${parsed.kind}/${parsed.name}`,
+            );
           }
           try {
             results.push(

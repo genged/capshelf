@@ -8,6 +8,8 @@ import { addManifestName, manifestNamesForKind } from "../manifest";
 import { createDataLockEntry, dataKey, saveLocalLock, saveLock } from "../lock";
 import type { Lock } from "../lock";
 import {
+  isCopyDirectoryItemKind,
+  isCopyTargetFileItemKind,
   isFragmentItemKind,
   listMasterItems,
   shaOfGitVisibleItem,
@@ -217,9 +219,16 @@ export async function installDataItem(
   const lock = ctx.local ? localLock : projectLock;
   const oldLock = structuredClone(lock);
 
-  // One unguarded call suffices: the helper accepts both copy-item kinds.
   if (ctx.local) {
     assertLocalScopeSupported(item.kind, item.name, "add --local");
+  }
+  if (isCopyTargetFileItemKind(item.kind)) {
+    throw new PreconditionError(
+      `add is not implemented for copy-target-file item ${item.kind}/${item.name}`,
+    );
+  }
+  if (!isCopyDirectoryItemKind(item.kind) && !isFragmentItemKind(item.kind)) {
+    throw new Error(`no add strategy for ${item.kind}/${item.name}`);
   }
 
   // Refuse to add from a dirty path. Otherwise the locked sha (hashed from
@@ -227,8 +236,10 @@ export async function installDataItem(
   // touching the path), leaving apply/revert with the wrong content.
   if (isFragmentItemKind(item.kind)) {
     await assertFragmentSourcesClean(dataRepo, item.kind, item.name);
-  } else {
+  } else if (isCopyDirectoryItemKind(item.kind)) {
     await assertPathClean(dataRepo, item.repoRelPath);
+  } else {
+    throw new Error(`no source-cleanliness strategy for ${item.kind}`);
   }
 
   const key = dataKey(item.kind, item.name);
@@ -322,8 +333,10 @@ export async function installDataItem(
         }),
       );
     }
-  } else {
+  } else if (isCopyDirectoryItemKind(item.kind)) {
     await copyItemIntoProject(project, item, manifest.installMode);
+  } else {
+    throw new Error(`no materialization strategy for ${item.kind}`);
   }
   const runtimeWarnings = runtimeWarningsForItem(
     project,

@@ -16,7 +16,11 @@ import {
 } from "../lock";
 import type { DataLockEntry, Lock } from "../lock";
 import { isSystemItemName } from "../bundled";
-import { itemRepoRelPath } from "../master";
+import {
+  isCopyDirectoryItemKind,
+  isCopyTargetFileItemKind,
+  itemRepoRelPath,
+} from "../master";
 import type { FragmentItemKind } from "../master";
 import { assertRepoClean, commitInRepo, originRemoteUrl } from "../git";
 import { PreconditionError } from "../errors";
@@ -117,6 +121,14 @@ export function registerShare(program: Command): void {
       if (isFragmentKind(kind)) {
         await shareFragment(kind, name, scope, opts, cmd);
         return;
+      }
+      if (isCopyTargetFileItemKind(kind)) {
+        throw new PreconditionError(
+          `share is not implemented for copy-target-file item ${kind}/${name}`,
+        );
+      }
+      if (!isCopyDirectoryItemKind(kind)) {
+        throw new Error(`no share strategy for ${kind}/${name}`);
       }
       if (opts.pick !== undefined) {
         throw new PreconditionError(

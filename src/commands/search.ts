@@ -8,6 +8,8 @@ import { loadManifest } from "../manifest";
 import {
   ITEM_KINDS,
   canonicalItemRelPaths,
+  isCopyDirectoryItemKind,
+  isCopyTargetFileItemKind,
   isFragmentItemKind,
   itemRepoRelPath,
   listMasterItems,
@@ -130,9 +132,7 @@ export function registerSearch(program: Command): void {
           source: "data",
           kind: item.kind,
           name: item.name,
-          sha: isFragmentItemKind(item.kind)
-            ? await shaOfFragmentItem(dataRepo, item.kind, item.name)
-            : await shaOfGitVisibleItem(dataRepo, item.repoRelPath),
+          sha: await shaOfSearchItem(dataRepo, item),
           meta,
           ...score,
         });
@@ -308,11 +308,20 @@ async function dataContentFiles(
   item: MasterItem,
 ): Promise<SearchContentFile[]> {
   const itemRoot = itemRepoRelPath(item.kind, item.name);
-  const relPaths = isFragmentItemKind(item.kind)
-    ? (await canonicalItemRelPaths(dataRepo, item.kind, item.name)).map(
-        (repoRel) => posix.relative(itemRoot, repoRel),
-      )
-    : await gitVisibleFilesUnderPath(dataRepo, itemRoot);
+  let relPaths: string[];
+  if (isFragmentItemKind(item.kind)) {
+    relPaths = (
+      await canonicalItemRelPaths(dataRepo, item.kind, item.name)
+    ).map((repoRel) => posix.relative(itemRoot, repoRel));
+  } else if (isCopyDirectoryItemKind(item.kind)) {
+    relPaths = await gitVisibleFilesUnderPath(dataRepo, itemRoot);
+  } else if (isCopyTargetFileItemKind(item.kind)) {
+    throw new Error(
+      `search is not implemented for copy-target-file item ${item.kind}/${item.name}`,
+    );
+  } else {
+    throw new Error(`no search strategy for ${item.kind}/${item.name}`);
+  }
 
   const out: SearchContentFile[] = [];
   for (const relPath of relPaths) {
@@ -324,4 +333,22 @@ async function dataContentFiles(
     out.push({ relPath, content: content.toString("utf-8") });
   }
   return out;
+}
+
+async function shaOfSearchItem(
+  dataRepo: string,
+  item: MasterItem,
+): Promise<string> {
+  if (isFragmentItemKind(item.kind)) {
+    return await shaOfFragmentItem(dataRepo, item.kind, item.name);
+  }
+  if (isCopyDirectoryItemKind(item.kind)) {
+    return await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
+  }
+  if (isCopyTargetFileItemKind(item.kind)) {
+    throw new Error(
+      `search is not implemented for copy-target-file item ${item.kind}/${item.name}`,
+    );
+  }
+  throw new Error(`no search strategy for ${item.kind}/${item.name}`);
 }

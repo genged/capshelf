@@ -30,7 +30,12 @@ import { createDataLockEntry, dataKey } from "./lock";
 import type { Lock } from "./lock";
 import { addManifestName } from "./manifest";
 import type { Manifest } from "./manifest";
-import { ITEM_KINDS, isCopyItemKind, isFragmentItemKind } from "./master";
+import {
+  ITEM_KINDS,
+  isCopyDirectoryItemKind,
+  isCopyTargetFileItemKind,
+  isFragmentItemKind,
+} from "./master";
 import type { ItemKind, MasterItem } from "./master";
 import { METADATA_SIDECAR, captureCommittedItemNeeds } from "./metadata";
 import type { ItemMetadata } from "./metadata";
@@ -158,7 +163,7 @@ export function planBundleInstall(opts: PlanBundleInstallOptions): BundlePlan {
       m.reason = `already owned by ${otherScope} scope; fix with: capshelf move ${ref} --to ${scope}`;
       continue;
     }
-    if (scope === "local" && !isCopyItemKind(member.kind)) {
+    if (scope === "local" && !isCopyDirectoryItemKind(member.kind)) {
       plan.localUnsupportedMembers.push(ref);
       m.status = "refused";
       m.reason = "local scope supports copy-directory items only";
@@ -255,7 +260,7 @@ export async function preflightBundleChecks(
       }
       if (isFragmentItemKind(item.kind)) {
         await assertFragmentSourcesClean(ctx.dataRepo, item.kind, item.name);
-      } else {
+      } else if (isCopyDirectoryItemKind(item.kind)) {
         await assertPathClean(ctx.dataRepo, item.repoRelPath);
         const conflict = findInstallConflict(
           ctx.project,
@@ -270,6 +275,12 @@ export async function preflightBundleChecks(
               `remove it manually, choose a different name, or adopt it with: capshelf share ${m.ref} --to project`,
           );
         }
+      } else if (isCopyTargetFileItemKind(item.kind)) {
+        throw new PreconditionError(
+          `bundle preflight is not implemented for copy-target-file item ${item.kind}/${item.name}`,
+        );
+      } else {
+        throw new Error(`no bundle strategy for ${item.kind}/${item.name}`);
       }
       if (plan.scope === "local") {
         await assertLocalInstallPathsUntracked(

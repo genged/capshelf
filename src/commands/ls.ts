@@ -6,6 +6,8 @@ import { resolveDataRepo, resolveDataRepoOptional } from "../data-repo";
 import { PreconditionError } from "../errors";
 import { CLI_VERSION } from "../bundled";
 import {
+  isCopyDirectoryItemKind,
+  isCopyTargetFileItemKind,
   isFragmentItemKind,
   itemRepoRelPath,
   listMasterItems,
@@ -315,9 +317,18 @@ async function shaOfDataItem(
   dataRepo: string,
   item: { kind: ItemKind; name: string; repoRelPath: string },
 ): Promise<string> {
-  return isFragmentItemKind(item.kind)
-    ? await shaOfFragmentItem(dataRepo, item.kind, item.name)
-    : await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
+  if (isFragmentItemKind(item.kind)) {
+    return await shaOfFragmentItem(dataRepo, item.kind, item.name);
+  }
+  if (isCopyDirectoryItemKind(item.kind)) {
+    return await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
+  }
+  if (isCopyTargetFileItemKind(item.kind)) {
+    throw new Error(
+      `listing is not implemented for copy-target-file item ${item.kind}/${item.name}`,
+    );
+  }
+  throw new Error(`no listing strategy for ${item.kind}/${item.name}`);
 }
 
 /**

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { relative } from "node:path";
-import type { ItemKind } from "./master";
+import type { CopyDirectoryItemKind } from "./master";
 import {
   isMetadataSidecarPath,
   shaOfGitVisibleItem,
@@ -14,7 +14,7 @@ import type { ItemSnapshot, Scope } from "./promote-core";
 
 export async function installedSnapshot(
   project: string,
-  kind: ItemKind,
+  kind: CopyDirectoryItemKind,
   name: string,
   scope: Scope,
 ): Promise<ItemSnapshot | null> {
@@ -43,7 +43,7 @@ export async function installedSnapshot(
  */
 export async function shaOfInstalledForScope(
   project: string,
-  kind: ItemKind,
+  kind: CopyDirectoryItemKind,
   name: string,
   scope: Scope,
 ): Promise<string | null> {

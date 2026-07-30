@@ -14,7 +14,12 @@ import {
 } from "../lock";
 import type { ItemKind } from "../master";
 import { CliError, NotFoundError, PreconditionError } from "../errors";
-import { isCopyItemKind, isFragmentItemKind, ITEM_KINDS } from "../master";
+import {
+  isCopyDirectoryItemKind,
+  isCopyTargetFileItemKind,
+  isFragmentItemKind,
+  ITEM_KINDS,
+} from "../master";
 import { PRODUCT_NAME } from "../identity";
 import {
   installedPath,
@@ -106,7 +111,7 @@ export function registerRm(program: Command): void {
           if (opts.local) {
             return (
               localConfig !== null &&
-              isCopyItemKind(k) &&
+              isCopyDirectoryItemKind(k) &&
               localConfigNamesForKind(localConfig, k).includes(ref.name)
             );
           }
@@ -159,9 +164,7 @@ export function registerRm(program: Command): void {
       }
       delete lock.items[dataKey(kind, name)];
 
-      let path = isFragmentItemKind(kind)
-        ? ""
-        : installedPath(project, kind, name, manifest.installMode);
+      let path = "";
       let removed = false;
       if (isFragmentItemKind(kind)) {
         const dataRepo = await resolveProjectDataRepo(
@@ -190,7 +193,8 @@ export function registerRm(program: Command): void {
           });
           removed = removed || result.action === "reconciled";
         }
-      } else {
+      } else if (isCopyDirectoryItemKind(kind)) {
+        path = installedPath(project, kind, name, manifest.installMode);
         removed = await removeInstallAliases(
           project,
           kind,
@@ -212,6 +216,12 @@ export function registerRm(program: Command): void {
           }
           removed = true;
         }
+      } else if (isCopyTargetFileItemKind(kind)) {
+        throw new PreconditionError(
+          `rm is not implemented for copy-target-file item ${kind}/${name}`,
+        );
+      } else {
+        throw new Error(`no removal strategy for ${kind}/${name}`);
       }
 
       if (opts.local) {

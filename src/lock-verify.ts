@@ -9,11 +9,13 @@ import { hasIgnoredDotSegment } from "./dotfiles";
 import { missingSourceCommitMessage } from "./upstream-check";
 import {
   allCanonicalItemRelPaths,
+  isCopyDirectoryItemKind,
+  isCopyTargetFileItemKind,
   isFragmentItemKind,
   isMetadataSidecarPath,
   itemRepoRelPath,
 } from "./master";
-import type { FragmentItemKind } from "./master";
+import type { CopyDirectoryItemKind, FragmentItemKind } from "./master";
 import { loadCommittedItemNeeds } from "./metadata";
 
 export async function verifyDataLockEntries(
@@ -25,20 +27,32 @@ export async function verifyDataLockEntries(
     if (entry.source !== "data") continue;
     const parsed = parseLockKey(key);
     const relPath = itemRepoRelPath(parsed.kind, parsed.name);
-    const sha = isFragmentItemKind(parsed.kind)
-      ? await shaOfFragmentAtCommit(
-          dataRepo,
-          manifest,
-          parsed.kind,
-          parsed.name,
-          entry.sourceCommit,
-        )
-      : await shaOfDataAtCommit(
-          dataRepo,
-          manifest,
-          relPath,
-          entry.sourceCommit,
-        );
+    let sha: string;
+    if (isFragmentItemKind(parsed.kind)) {
+      sha = await shaOfFragmentAtCommit(
+        dataRepo,
+        manifest,
+        parsed.kind,
+        parsed.name,
+        entry.sourceCommit,
+      );
+    } else if (isCopyDirectoryItemKind(parsed.kind)) {
+      sha = await shaOfDataAtCommit(
+        dataRepo,
+        manifest,
+        parsed.kind,
+        parsed.name,
+        entry.sourceCommit,
+      );
+    } else if (isCopyTargetFileItemKind(parsed.kind)) {
+      throw new Error(
+        `lock verification is not implemented for copy-target-file item ${parsed.kind}/${parsed.name}`,
+      );
+    } else {
+      throw new Error(
+        `lock verification has no strategy for ${parsed.kind}/${parsed.name}`,
+      );
+    }
     if (sha !== entry.sha) {
       throw new Error(
         `source ${relPath} at ${entry.sourceCommit} hashes to ${sha}, but lock expects ${entry.sha}`,
@@ -97,9 +111,11 @@ async function shaOfFragmentAtCommit(
 async function shaOfDataAtCommit(
   dataRepo: string,
   manifest: Manifest,
-  relPath: string,
+  kind: CopyDirectoryItemKind,
+  name: string,
   commit: string,
 ): Promise<string> {
+  const relPath = itemRepoRelPath(kind, name);
   let entries: Awaited<ReturnType<typeof lsTreeEntriesAtCommit>>;
   try {
     entries = await lsTreeEntriesAtCommit(dataRepo, commit, relPath);

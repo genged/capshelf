@@ -4,8 +4,13 @@ import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import type { Lock } from "./lock";
 import type { Manifest } from "./manifest";
-import { isMetadataSidecarPath, itemRepoRelPath } from "./master";
-import type { ItemKind } from "./master";
+import {
+  isCopyDirectoryItemKind,
+  isCopyTargetFileItemKind,
+  isMetadataSidecarPath,
+  itemRepoRelPath,
+} from "./master";
+import type { CopyDirectoryItemKind, ItemKind } from "./master";
 import type { ItemSource } from "./installed";
 import { installedPath } from "./installed";
 import { findSystemItem } from "./bundled";
@@ -46,12 +51,12 @@ interface StatusDiffOptions {
   row: DiffableStatusRow;
 }
 
-interface CopyItemFilesOptions {
+interface CopyDirectoryFilesOptions {
   project: string;
   dataRepo: string | null;
   manifest: Manifest;
   source: ItemSource;
-  kind: ItemKind;
+  kind: CopyDirectoryItemKind;
   name: string;
   sourceCommit?: string;
 }
@@ -138,6 +143,14 @@ export async function buildStatusDiff(
       ? { item: `${row.source}/${row.kind}/${row.name}`, path: firstPath, text }
       : null;
   }
+  if (isCopyTargetFileItemKind(row.kind)) {
+    throw new Error(
+      `status diff is not implemented for copy-target-file item ${row.kind}/${row.name}`,
+    );
+  }
+  if (!isCopyDirectoryItemKind(row.kind)) {
+    throw new Error(`no status diff strategy for ${row.kind}/${row.name}`);
+  }
 
   const item = `${row.source}/${row.kind}/${row.name}`;
   const expectedFiles = await expectedFilesForRow(opts);
@@ -156,8 +169,8 @@ export async function buildStatusDiff(
     : null;
 }
 
-export async function currentCopyItemSha(
-  opts: CopyItemFilesOptions,
+export async function currentCopyDirectoryItemSha(
+  opts: CopyDirectoryFilesOptions,
 ): Promise<string | null> {
   const root = installedPath(opts.project, opts.kind, opts.name);
   if (!existsSync(root)) return null;
@@ -222,6 +235,11 @@ async function untrackedDataRepoFiles(
 async function expectedFilesForRow(
   opts: StatusDiffOptions,
 ): Promise<FileMap | null> {
+  if (!isCopyDirectoryItemKind(opts.row.kind)) {
+    throw new Error(
+      `${opts.row.kind}/${opts.row.name} does not use copy-directory status files`,
+    );
+  }
   return await expectedFilesForCopyItem({
     project: opts.project,
     dataRepo: opts.dataRepo,
@@ -234,7 +252,7 @@ async function expectedFilesForRow(
 }
 
 async function expectedFilesForCopyItem(
-  opts: CopyItemFilesOptions,
+  opts: CopyDirectoryFilesOptions,
 ): Promise<FileMap | null> {
   if (opts.source === "system") {
     const item = findSystemItem(opts.name);
@@ -268,7 +286,7 @@ async function expectedFilesForCopyItem(
 }
 
 async function expectedFilePathsForCopyItem(
-  opts: CopyItemFilesOptions,
+  opts: CopyDirectoryFilesOptions,
 ): Promise<string[] | null> {
   if (opts.source === "system") {
     const item = findSystemItem(opts.name);
@@ -328,7 +346,7 @@ async function readInstalledFiles(
   if (!existsSync(root)) return out;
 
   // A project-side root .capshelf.yml is never managed content: keep it out
-  // of the file-map hash (currentCopyItemSha) and of status --diff output.
+  // of the file-map hash (currentCopyDirectoryItemSha) and status --diff.
   const files = new Set(
     (await gitignoreVisibleFiles(root)).filter(
       (rel) => !isMetadataSidecarPath(rel),

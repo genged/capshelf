@@ -8,8 +8,12 @@ import type { Lock, LockEntry } from "../lock";
 import { loadManifest } from "../manifest";
 import type { Manifest } from "../manifest";
 import type { ItemKind } from "../master";
-import { isFragmentItemKind } from "../master";
-import { shaOfInstalled, parseLockKey } from "../installed";
+import {
+  isCopyDirectoryItemKind,
+  isCopyTargetFileItemKind,
+  isFragmentItemKind,
+} from "../master";
+import { parseLockKey, shaOfInstalled } from "../installed";
 import { PreconditionError, ResultExitError } from "../errors";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
 import { globalOpts } from "../global-options";
@@ -23,7 +27,7 @@ import {
   withUserSkillShadows,
 } from "../external";
 import type { ExternalUserSkill } from "../external";
-import { buildStatusDiff, currentCopyItemSha } from "../status-diff";
+import { buildStatusDiff, currentCopyDirectoryItemSha } from "../status-diff";
 import type { StatusDiff } from "../status-diff";
 import {
   codexProjectTrustWarnings,
@@ -158,20 +162,29 @@ export function registerStatus(program: Command): void {
             entry.source === "data" && dataRepo
               ? await commitExists(dataRepo, entry.sourceCommit)
               : null;
-          let currentSha = isFragmentItemKind(kind)
-            ? await shaOfInstalled(project, kind, itemName)
-            : await currentCopyItemSha({
-                project,
-                dataRepo,
-                manifest,
-                source,
-                kind,
-                name: itemName,
-                sourceCommit:
-                  entry.source === "data" && sourceCommitPresent !== false
-                    ? entry.sourceCommit
-                    : undefined,
-              });
+          let currentSha: string | null;
+          if (isFragmentItemKind(kind)) {
+            currentSha = await shaOfInstalled(project, kind, itemName);
+          } else if (isCopyDirectoryItemKind(kind)) {
+            currentSha = await currentCopyDirectoryItemSha({
+              project,
+              dataRepo,
+              manifest,
+              source,
+              kind,
+              name: itemName,
+              sourceCommit:
+                entry.source === "data" && sourceCommitPresent !== false
+                  ? entry.sourceCommit
+                  : undefined,
+            });
+          } else if (isCopyTargetFileItemKind(kind)) {
+            throw new Error(
+              `status is not implemented for copy-target-file item ${kind}/${itemName}`,
+            );
+          } else {
+            throw new Error(`no status strategy for ${kind}/${itemName}`);
+          }
           let fragmentOutputState: FragmentContributionState | null = null;
           if (source === "data" && isFragmentItemKind(kind)) {
             if (sourceCommitPresent === false) {

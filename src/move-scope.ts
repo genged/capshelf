@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { itemRepoRelPath } from "./master";
+import { isCopyDirectoryItemKind, itemRepoRelPath } from "./master";
 import type { ItemKind } from "./master";
 import { dataKey } from "./lock";
 import type { DataLockEntry } from "./lock";
@@ -83,6 +83,11 @@ export async function moveScope(
     );
   }
 
+  if (!isCopyDirectoryItemKind(kind)) {
+    throw new PreconditionError(
+      `scope transitions are not supported for ${kind}/${name}`,
+    );
+  }
   const repoRelPath = itemRepoRelPath(kind, name);
   if (!existsSync(join(dataRepo, repoRelPath))) {
     throw new PreconditionError(

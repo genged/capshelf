@@ -12,7 +12,7 @@ import {
 } from "../src/fragments";
 import {
   buildStatusDiff,
-  currentCopyItemSha,
+  currentCopyDirectoryItemSha,
   shouldShowLocalDiff,
   unifiedDiff,
 } from "../src/status-diff";
@@ -197,7 +197,7 @@ describe("status diff helpers", () => {
       codexConfig: [],
     };
     await expect(
-      currentCopyItemSha({
+      currentCopyDirectoryItemSha({
         project,
         dataRepo,
         manifest,
@@ -251,7 +251,7 @@ describe("status diff helpers", () => {
     await writeFile(join(installed, "SKILL.md", "nested.txt"), "local dir\n");
 
     await expect(
-      currentCopyItemSha({
+      currentCopyDirectoryItemSha({
         project,
         dataRepo,
         manifest: {

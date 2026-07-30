@@ -7,7 +7,8 @@ import { expandTilde } from "./paths";
 import { atomicWriteFile } from "./fs-utils";
 import { hasShelvesKey } from "./manifest";
 import { PreconditionError } from "./errors";
-import { isCopyItemKind, type ItemKind } from "./master";
+import { assertNever } from "./assert";
+import type { ItemKind } from "./master";
 import { gitInfoExcludePath, gitTry, isGitWorkTreeRoot } from "./git";
 
 const LocalConfigSchema = z.object({
@@ -181,18 +182,23 @@ export function assertLocalScopeSupported(
   verb: string,
   mcpMessage = "local scope is not supported for mcp fragments; keep project-local values in .mcp.json or .codex/config.toml",
 ): void {
-  if (isCopyItemKind(kind)) return;
-  if (kind === "settings") {
-    throw new PreconditionError(
-      `${verb} is not supported for settings fragments; keep project-local values in .claude/settings.json`,
-    );
+  switch (kind) {
+    case "skills":
+    case "pi-extensions":
+      return;
+    case "settings":
+      throw new PreconditionError(
+        `${verb} is not supported for settings fragments; keep project-local values in .claude/settings.json`,
+      );
+    case "mcp":
+      throw new PreconditionError(mcpMessage);
+    case "codex-config":
+      throw new PreconditionError(
+        `${verb} is not supported for codex-config fragments; keep project-local values in .codex/config.toml`,
+      );
+    default:
+      assertNever(kind);
   }
-  if (kind === "mcp") {
-    throw new PreconditionError(mcpMessage);
-  }
-  throw new PreconditionError(
-    `${verb} is not supported for codex-config fragments; keep project-local values in .codex/config.toml`,
-  );
 }
 
 function localInstallPaths(
@@ -210,6 +216,8 @@ function localInstallPaths(
     case "mcp":
     case "codex-config":
       throw new Error(`local install paths are not supported for ${kind}`);
+    default:
+      return assertNever(kind);
   }
 }
 

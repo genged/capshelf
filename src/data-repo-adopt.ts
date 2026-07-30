@@ -1,8 +1,13 @@
 import { existsSync, readlinkSync } from "node:fs";
 import { rm as fsRm } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
-import { itemRepoRelPath } from "./master";
-import type { ItemKind } from "./master";
+import {
+  isCopyDirectoryItemKind,
+  isCopyTargetFileItemKind,
+  isFragmentItemKind,
+  itemRepoRelPath,
+} from "./master";
+import type { CopyDirectoryItemKind, ItemKind } from "./master";
 import type { Manifest } from "./manifest";
 import { NotFoundError, PreconditionError } from "./errors";
 import {
@@ -23,7 +28,6 @@ import { replaceDirFromFiles, replaceDirFromGitVisibleFiles } from "./sync";
 import { findSkillsShSkill, skillsShConflictMessage } from "./external";
 import { runtimeWarningsForItem } from "./runtime-warnings";
 import { privateDotenvFiles } from "./dotfiles";
-import { isFragmentKind } from "./fragments";
 import {
   expectedAdoptionPath,
   type AdoptOptions,
@@ -45,10 +49,18 @@ export async function adoptIntoDataRepo(
   name: string,
   opts: AdoptOptions,
 ): Promise<PromoteResult> {
-  if (isFragmentKind(kind)) {
+  if (isFragmentItemKind(kind)) {
     throw new PreconditionError(
       `share for ${kind}/${name} requires --from <path> --to project`,
     );
+  }
+  if (isCopyTargetFileItemKind(kind)) {
+    throw new PreconditionError(
+      `share is not implemented for copy-target-file item ${kind}/${name}`,
+    );
+  }
+  if (!isCopyDirectoryItemKind(kind)) {
+    throw new Error(`no adoption strategy for ${kind}/${name}`);
   }
   if (kind === "skills") {
     const external = await findSkillsShSkill(project, name);
@@ -141,7 +153,7 @@ export async function adoptIntoDataRepo(
  */
 async function warnAboutAdoptedSidecar(
   dataPath: string,
-  kind: ItemKind,
+  kind: CopyDirectoryItemKind,
   name: string,
 ): Promise<void> {
   const bytes = await readSidecarBytes(dataPath);
@@ -184,7 +196,7 @@ function assertCanNormalizeAdoptedSkill(
 
 function findAdoptionSource(
   project: string,
-  kind: ItemKind,
+  kind: CopyDirectoryItemKind,
   name: string,
   mode: Manifest["installMode"],
 ): AdoptionSource | null {
@@ -228,7 +240,7 @@ function findAdoptionSource(
 function existingItemDir(
   path: string,
   sourceKind: AdoptionSource["kind"],
-  kind: ItemKind,
+  kind: CopyDirectoryItemKind,
 ): AdoptionSource | null {
   const stat = lstatOrNull(path);
   if (!stat) return null;

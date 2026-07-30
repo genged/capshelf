@@ -9,6 +9,7 @@ import { loadManifest } from "../manifest";
 import { globalOpts } from "../global-options";
 import { NotFoundError, PreconditionError } from "../errors";
 import { assertIsGitRepo } from "../git";
+import { isMaterializedItemKind } from "../master";
 import {
   currentFragmentSourcesForItem,
   fragmentOutputPath,
@@ -87,8 +88,12 @@ export function registerGetPath(program: Command): void {
         sourcePath = join(dataRepo, ...source.relPath.split("/"));
         outputPath = fragmentOutputPath(project, source.target);
         path = opts.output ? outputPath : sourcePath;
-      } else {
+      } else if (isMaterializedItemKind(parsed.kind)) {
         path = installedPath(project, parsed.kind, parsed.name);
+      } else {
+        throw new Error(
+          `no installed-path strategy for ${parsed.kind}/${parsed.name}`,
+        );
       }
 
       if (opts.json) {

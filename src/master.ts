@@ -2,6 +2,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, basename } from "node:path";
 import { hashNamedContents } from "./content-hash";
+import { assertNever } from "./assert";
 import { isIgnoredDotDirent } from "./dotfiles";
 import { gitVisibleFilesUnderPath } from "./git";
 import { METADATA_SIDECAR } from "./identity";
@@ -15,22 +16,60 @@ export const ITEM_KINDS = [
 ] as const;
 export type ItemKind = (typeof ITEM_KINDS)[number];
 
-export const COPY_ITEM_KINDS = ["skills", "pi-extensions"] as const;
-export type CopyItemKind = (typeof COPY_ITEM_KINDS)[number];
+export const COPY_DIRECTORY_ITEM_KINDS = ["skills", "pi-extensions"] as const;
+export type CopyDirectoryItemKind = (typeof COPY_DIRECTORY_ITEM_KINDS)[number];
+
+export const COPY_TARGET_FILE_ITEM_KINDS = [] as const;
+export type CopyTargetFileItemKind =
+  (typeof COPY_TARGET_FILE_ITEM_KINDS)[number];
 
 export const FRAGMENT_ITEM_KINDS = ["settings", "mcp", "codex-config"] as const;
 export type FragmentItemKind = (typeof FRAGMENT_ITEM_KINDS)[number];
+
+export type MaterializedItemKind =
+  | CopyDirectoryItemKind
+  | CopyTargetFileItemKind;
+
+export type ItemStrategy = "copy-directory" | "copy-target-file" | "fragment";
 
 export function isItemKind(value: string): value is ItemKind {
   return (ITEM_KINDS as readonly string[]).includes(value);
 }
 
-export function isCopyItemKind(value: ItemKind): value is CopyItemKind {
-  return (COPY_ITEM_KINDS as readonly ItemKind[]).includes(value);
+export function isCopyDirectoryItemKind(
+  value: ItemKind,
+): value is CopyDirectoryItemKind {
+  return (COPY_DIRECTORY_ITEM_KINDS as readonly ItemKind[]).includes(value);
+}
+
+export function isCopyTargetFileItemKind(
+  value: ItemKind,
+): value is CopyTargetFileItemKind {
+  return (COPY_TARGET_FILE_ITEM_KINDS as readonly ItemKind[]).includes(value);
 }
 
 export function isFragmentItemKind(value: ItemKind): value is FragmentItemKind {
   return (FRAGMENT_ITEM_KINDS as readonly ItemKind[]).includes(value);
+}
+
+export function isMaterializedItemKind(
+  value: ItemKind,
+): value is MaterializedItemKind {
+  return isCopyDirectoryItemKind(value) || isCopyTargetFileItemKind(value);
+}
+
+export function itemStrategy(kind: ItemKind): ItemStrategy {
+  switch (kind) {
+    case "skills":
+    case "pi-extensions":
+      return "copy-directory";
+    case "settings":
+    case "mcp":
+    case "codex-config":
+      return "fragment";
+    default:
+      return assertNever(kind);
+  }
 }
 
 export interface MasterItem {
@@ -183,6 +222,8 @@ export function itemRepoRelPath(kind: ItemKind, name: string): string {
       return `mcp/${name}`;
     case "codex-config":
       return `codex/config/${name}`;
+    default:
+      return assertNever(kind);
   }
 }
 
@@ -200,6 +241,8 @@ export function allCanonicalItemRelPaths(
       return [`mcp/${name}/claude.json`, `mcp/${name}/codex.toml`];
     case "codex-config":
       return [`codex/config/${name}/config.toml`];
+    default:
+      return assertNever(kind);
   }
 }
 
@@ -208,7 +251,12 @@ export async function canonicalItemRelPaths(
   kind: ItemKind,
   name: string,
 ): Promise<string[]> {
-  if (isCopyItemKind(kind)) return [itemRepoRelPath(kind, name)];
+  if (isCopyDirectoryItemKind(kind)) return [itemRepoRelPath(kind, name)];
+  if (isCopyTargetFileItemKind(kind)) {
+    return allCanonicalItemRelPaths(kind, name).filter((relPath) =>
+      existsSync(join(dataRepo, ...relPath.split("/"))),
+    );
+  }
   const paths = allCanonicalItemRelPaths(kind, name).filter((relPath) =>
     existsSync(join(dataRepo, ...relPath.split("/"))),
   );
@@ -226,8 +274,12 @@ export function masterListDir(dataRepo: string, kind: ItemKind): string {
       return join(dataRepo, "pi", "extensions");
     case "codex-config":
       return join(dataRepo, "codex", "config");
-    default:
+    case "skills":
+    case "settings":
+    case "mcp":
       return join(dataRepo, kind);
+    default:
+      return assertNever(kind);
   }
 }
 
@@ -236,13 +288,20 @@ async function isInstallableDataItem(
   kind: ItemKind,
   name: string,
 ): Promise<boolean> {
-  if (kind === "skills") return true;
-  if (kind === "pi-extensions") {
-    return existsSync(
-      join(dataRepo, ...itemRepoRelPath(kind, name).split("/"), "index.ts"),
-    );
+  switch (kind) {
+    case "skills":
+      return true;
+    case "pi-extensions":
+      return existsSync(
+        join(dataRepo, ...itemRepoRelPath(kind, name).split("/"), "index.ts"),
+      );
+    case "settings":
+    case "mcp":
+    case "codex-config":
+      return allCanonicalItemRelPaths(kind, name).some((relPath) =>
+        existsSync(join(dataRepo, ...relPath.split("/"))),
+      );
+    default:
+      return assertNever(kind);
   }
-  return allCanonicalItemRelPaths(kind, name).some((relPath) =>
-    existsSync(join(dataRepo, ...relPath.split("/"))),
-  );
 }

@@ -12,6 +12,7 @@ import { lockKeyForRef, parseItemRef } from "../item-ref";
 import { materializeLockEntry } from "../materialize";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import { printRuntimeWarnings } from "../runtime-warnings";
+import { isMaterializedItemKind } from "../master";
 import {
   applyFragmentOutput,
   isFragmentKind,
@@ -123,6 +124,9 @@ export function registerRevert(program: Command): void {
         );
         for (const result of results) console.log(`  ${result.path}`);
         return;
+      }
+      if (!isMaterializedItemKind(parsed.kind)) {
+        throw new Error(`no revert strategy for ${parsed.kind}/${parsed.name}`);
       }
 
       const result = await materializeLockEntry({

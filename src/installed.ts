@@ -3,7 +3,15 @@ import { assertSafeItemName } from "./assert";
 import { lstatOrNull } from "./fs-utils";
 import { mkdir, rm, symlink } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { ITEM_KINDS, isItemKind, type ItemKind } from "./master";
+import { assertNever } from "./assert";
+import {
+  ITEM_KINDS,
+  isItemKind,
+  isMaterializedItemKind,
+  itemRepoRelPath,
+  type ItemKind,
+  type MaterializedItemKind,
+} from "./master";
 import { shaOfGitVisibleItem, shaOfItem } from "./master";
 import { isGitWorkTreeRoot } from "./git";
 import {
@@ -16,13 +24,70 @@ import {
 } from "./paths";
 import type { InstallMode } from "./paths";
 
+export interface ItemOutputTarget {
+  id: string;
+  canonicalRelPath: string;
+  outputPath: string;
+}
+
+export function itemOutputTargets(
+  project: string,
+  kind: MaterializedItemKind,
+  name: string,
+  mode: InstallMode = detectInstallMode(project),
+): ItemOutputTarget[] {
+  switch (kind) {
+    case "skills":
+      return [
+        {
+          id: "directory",
+          canonicalRelPath: itemRepoRelPath(kind, name),
+          outputPath: skillInstalledPath(project, name, mode),
+        },
+      ];
+    case "pi-extensions":
+      return [
+        {
+          id: "directory",
+          canonicalRelPath: itemRepoRelPath(kind, name),
+          outputPath: join(piDir(project), "extensions", name),
+        },
+      ];
+    default:
+      return assertNever(kind);
+  }
+}
+
 export function installedPath(
   project: string,
   kind: ItemKind,
   name: string,
   mode: InstallMode = detectInstallMode(project),
 ): string {
-  const dst = installedPathUnchecked(project, kind, name, mode);
+  let dst: string;
+  if (isMaterializedItemKind(kind)) {
+    const targets = itemOutputTargets(project, kind, name, mode);
+    if (targets.length !== 1) {
+      throw new Error(
+        `${kind}/${name} owns ${targets.length} output targets; select a target explicitly`,
+      );
+    }
+    dst = targets[0]!.outputPath;
+  } else {
+    switch (kind) {
+      case "settings":
+        dst = join(claudeDir(project), "settings.json");
+        break;
+      case "mcp":
+        dst = join(project, ".mcp.json");
+        break;
+      case "codex-config":
+        dst = join(codexProjectConfigDir(project), "config.toml");
+        break;
+      default:
+        return assertNever(kind);
+    }
+  }
   // Root invariant: an install destination is always inside the project. Every
   // destructive caller (materialize/sync rm+rewrite) trusts this path, so a
   // path that escapes — via a `..`/absolute item name or a redirected
@@ -31,26 +96,6 @@ export function installedPath(
   // either alone.
   assertInsideProject(project, dst);
   return dst;
-}
-
-function installedPathUnchecked(
-  project: string,
-  kind: ItemKind,
-  name: string,
-  mode: InstallMode,
-): string {
-  if (kind === "skills") return skillInstalledPath(project, name, mode);
-
-  switch (kind) {
-    case "pi-extensions":
-      return join(piDir(project), "extensions", name);
-    case "settings":
-      return join(claudeDir(project), "settings.json");
-    case "mcp":
-      return join(project, ".mcp.json");
-    case "codex-config":
-      return join(codexProjectConfigDir(project), "config.toml");
-  }
 }
 
 function assertInsideProject(project: string, dst: string): void {
@@ -77,8 +122,15 @@ export function findInstallConflict(
   name: string,
   mode: InstallMode = detectInstallMode(project),
 ): string | null {
-  const dst = installedPath(project, kind, name, mode);
-  if (pathExists(dst)) return dst;
+  if (isMaterializedItemKind(kind)) {
+    for (const target of itemOutputTargets(project, kind, name, mode)) {
+      assertInsideProject(project, target.outputPath);
+      if (pathExists(target.outputPath)) return target.outputPath;
+    }
+  } else {
+    const dst = installedPath(project, kind, name, mode);
+    if (pathExists(dst)) return dst;
+  }
 
   if (kind === "skills" && mode === "codex-compatible") {
     const claudePath = claudeSkillPath(project, name);

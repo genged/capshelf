@@ -9,7 +9,12 @@ import {
 } from "../lock";
 import type { DataLockEntry, LockEntry, SystemLockEntry } from "../lock";
 import { parseLockKey, shaOfInstalled } from "../installed";
-import { isFragmentItemKind, shaOfGitVisibleItem } from "../master";
+import {
+  isCopyDirectoryItemKind,
+  isCopyTargetFileItemKind,
+  isFragmentItemKind,
+  shaOfGitVisibleItem,
+} from "../master";
 import { assertRepoClean, lastTouchingContentCommit } from "../git";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
 import { PreconditionError, ResultExitError } from "../errors";
@@ -366,6 +371,17 @@ async function updateDataTarget(
   });
   if (!item) {
     throw new Error(`missing upstream item: ${parsed.kind}/${parsed.name}`);
+  }
+  if (isCopyTargetFileItemKind(parsed.kind)) {
+    throw new Error(
+      `update is not implemented for copy-target-file item ${parsed.kind}/${parsed.name}`,
+    );
+  }
+  if (
+    !isCopyDirectoryItemKind(parsed.kind) &&
+    !isFragmentItemKind(parsed.kind)
+  ) {
+    throw new Error(`no update strategy for ${parsed.kind}/${parsed.name}`);
   }
 
   const sha = isFragmentItemKind(parsed.kind)

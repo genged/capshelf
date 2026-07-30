@@ -1,5 +1,10 @@
 import { findMasterItemByRef } from "./item-ref";
-import { isFragmentItemKind, shaOfGitVisibleItem } from "./master";
+import {
+  isCopyDirectoryItemKind,
+  isCopyTargetFileItemKind,
+  isFragmentItemKind,
+  shaOfGitVisibleItem,
+} from "./master";
 import type { FragmentItemKind, ItemKind } from "./master";
 import { isPathClean } from "./git";
 import { allCanonicalFragmentRelPaths, shaOfFragmentItem } from "./fragments";
@@ -24,15 +29,33 @@ export async function upstreamFactsForItem(
 ): Promise<UpstreamFacts> {
   const masterItem = await findMasterItemByRef(dataRepo, { kind, name });
   if (!masterItem) return { upstreamSha: null, upstreamDirty: false };
-  const upstreamDirty = isFragmentItemKind(kind)
-    ? await fragmentSourceDirty(dataRepo, kind, name)
-    : !(await isPathClean(dataRepo, masterItem.repoRelPath));
-  const upstreamSha = upstreamDirty
-    ? null
-    : isFragmentItemKind(kind)
-      ? await shaOfFragmentItem(dataRepo, kind, name)
-      : await shaOfGitVisibleItem(dataRepo, masterItem.repoRelPath);
-  return { upstreamSha, upstreamDirty };
+  if (isFragmentItemKind(kind)) {
+    const upstreamDirty = await fragmentSourceDirty(dataRepo, kind, name);
+    return {
+      upstreamSha: upstreamDirty
+        ? null
+        : await shaOfFragmentItem(dataRepo, kind, name),
+      upstreamDirty,
+    };
+  }
+  if (isCopyDirectoryItemKind(kind)) {
+    const upstreamDirty = !(await isPathClean(
+      dataRepo,
+      masterItem.repoRelPath,
+    ));
+    return {
+      upstreamSha: upstreamDirty
+        ? null
+        : await shaOfGitVisibleItem(dataRepo, masterItem.repoRelPath),
+      upstreamDirty,
+    };
+  }
+  if (isCopyTargetFileItemKind(kind)) {
+    throw new Error(
+      `upstream facts are not implemented for copy-target-file item ${kind}/${name}`,
+    );
+  }
+  throw new Error(`no upstream strategy for ${kind}/${name}`);
 }
 
 export async function fragmentSourceDirty(
