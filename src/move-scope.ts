@@ -54,7 +54,15 @@ export async function moveScope(
       );
     }
     from = to === "project" ? "local" : "project";
-    sourceEntry = from === "project" ? projectData : localData;
+    const fromEntry = from === "project" ? projectData : localData;
+    const otherEntry = from === "project" ? localData : projectData;
+    // A partial recovery can pair a migrated v2 entry (unknown needs) with
+    // the same v3 content pin. Preserve the known snapshot when either side
+    // has one instead of degrading it during the scope repair.
+    sourceEntry =
+      fromEntry.needs == null && otherEntry.needs != null
+        ? otherEntry
+        : fromEntry;
   } else {
     from = projectEntry ? "project" : "local";
     if (from === to) {

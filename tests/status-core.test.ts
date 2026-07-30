@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   assertNoScopeCollisions,
   buildStatusRow,
+  deriveNeedsState,
   deriveState,
   personalClaudeExternals,
   statusTargets,
@@ -230,8 +231,25 @@ describe("deriveState", () => {
   });
 });
 
+describe("deriveNeedsState", () => {
+  const locked = {
+    network: ["api.example.com"],
+    env: ["TOKEN"],
+    bin: ["tool"],
+  };
+
+  test("covers current, update, unknown, and unavailable independently", () => {
+    expect(deriveNeedsState(locked, structuredClone(locked))).toBe("current");
+    expect(deriveNeedsState(locked, { ...locked, env: ["OTHER_TOKEN"] })).toBe(
+      "update_available",
+    );
+    expect(deriveNeedsState(null, locked)).toBe("unknown");
+    expect(deriveNeedsState(locked, undefined)).toBe("unavailable");
+  });
+});
+
 function lock(items: Record<string, LockEntry>): Lock {
-  return { version: 2, items };
+  return { version: 3, items };
 }
 
 const dataEntry: LockEntry = {
@@ -336,6 +354,8 @@ describe("buildStatusRow", () => {
       upstreamSha: "U",
       upstreamDirty: true,
       sourceCommit: "c1",
+      needsState: "unavailable",
+      lockedNeeds: null,
       local: true,
       localReason: "why",
       label: "lbl",

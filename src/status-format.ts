@@ -239,8 +239,27 @@ function formatRow(r: StatusRow): string[] {
   return [
     `  ${g} ${id} ${r.lockedSha}${label}  ${describe(r)}`,
     ...missingSourceCommitGuidance(r),
+    ...needsStateGuidance(r),
     ...formatRuntimeWarnings(r.runtimeWarnings, "    "),
   ];
+}
+
+function needsStateGuidance(r: StatusRow): string[] {
+  if (r.source !== "data") return [];
+  if (r.needsState === "update_available") {
+    return [
+      `      requirements update available — run: capshelf update ${r.kind}/${r.name}`,
+    ];
+  }
+  if (r.needsState === "unknown") {
+    return [
+      `      requirements snapshot unknown — run: capshelf update ${r.kind}/${r.name}`,
+    ];
+  }
+  if (r.needsState === "unavailable") {
+    return ["      requirements freshness unavailable"];
+  }
+  return [];
 }
 
 function missingSourceCommitGuidance(r: StatusRow): string[] {

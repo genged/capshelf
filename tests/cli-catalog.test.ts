@@ -219,6 +219,7 @@ describe("cli integration", () => {
       tags: ["security", "review"],
       requires: [{ ref: "settings/permissions-base", installed: true }],
       conflictsWith: [{ ref: "skills/quick-review", installed: false }],
+      needs: { network: [], env: [], bin: [] },
     });
 
     // metadata is always present, even for items without any metadata.
@@ -229,6 +230,7 @@ describe("cli integration", () => {
       tags: [],
       requires: [],
       conflictsWith: [],
+      needs: { network: [], env: [], bin: [] },
     });
 
     // System items report frontmatter metadata the same way.

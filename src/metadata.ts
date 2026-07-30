@@ -17,7 +17,8 @@ import { join } from "node:path";
 import { YAMLParseError, parse as parseYaml } from "yaml";
 import { z } from "zod";
 import type { SystemItem } from "./bundled";
-import { isItemKind } from "./master";
+import { gitTry, headSha } from "./git";
+import { isItemKind, itemRepoRelPath } from "./master";
 import type { MasterItem } from "./master";
 
 // Defined in identity.ts (a leaf) to break the master.ts <-> metadata.ts
@@ -33,12 +34,31 @@ export interface ItemMetadata {
   tags: string[];
   requires: string[];
   conflictsWith: string[];
+  needs: ItemNeeds;
   /** Parse/salvage warnings, already labeled with the item ref. */
   warnings: string[];
 }
 
+export const ItemNeedsSchema = z.object({
+  network: z.array(z.string()),
+  env: z.array(z.string()),
+  bin: z.array(z.string()),
+});
+
+export type ItemNeeds = z.infer<typeof ItemNeedsSchema>;
+
+export function emptyNeeds(): ItemNeeds {
+  return { network: [], env: [], bin: [] };
+}
+
 export function emptyMetadata(warnings: string[] = []): ItemMetadata {
-  return { tags: [], requires: [], conflictsWith: [], warnings };
+  return {
+    tags: [],
+    requires: [],
+    conflictsWith: [],
+    needs: emptyNeeds(),
+    warnings,
+  };
 }
 
 const stringField = z.string();
@@ -75,6 +95,7 @@ export function parseSidecar(
   readTags(raw, meta, itemLabel);
   meta.requires = readRefList(raw, "requires", meta, itemLabel);
   meta.conflictsWith = readRefList(raw, "conflicts-with", meta, itemLabel);
+  meta.needs = readNeeds(raw, meta, itemLabel);
   return meta;
 }
 
@@ -149,6 +170,7 @@ export function mergeItemMetadata(
     tags: sidecar.tags,
     requires: sidecar.requires,
     conflictsWith: sidecar.conflictsWith,
+    needs: sidecar.needs,
     warnings: [...sidecar.warnings, ...frontmatter.warnings],
   };
 }
@@ -179,6 +201,36 @@ export async function loadDataItemMetadata(
       item.name,
     ),
   );
+}
+
+/**
+ * Load the needs declaration from committed Git state. This is deliberately
+ * separate from catalog metadata, which reads the working tree: installed
+ * decisions must be pinned to a commit and never race an uncommitted sidecar.
+ */
+export async function loadCommittedItemNeeds(
+  dataRepo: string,
+  item: Pick<MasterItem, "kind" | "name">,
+  commit: string,
+): Promise<ItemMetadata> {
+  const label = `${item.kind}/${item.name}`;
+  const relPath = `${itemRepoRelPath(item.kind, item.name)}/${METADATA_SIDECAR}`;
+  const result = await gitTry(dataRepo, ["show", `${commit}:${relPath}`]);
+  if (result.exitCode !== 0) return emptyMetadata();
+  return parseSidecar(result.stdout.toString("utf-8"), label, item.name);
+}
+
+export async function captureCommittedItemNeeds(
+  dataRepo: string,
+  item: Pick<MasterItem, "kind" | "name">,
+): Promise<{ needs: ItemNeeds; needsSourceCommit: string }> {
+  const needsSourceCommit = await headSha(dataRepo);
+  const metadata = await loadCommittedItemNeeds(
+    dataRepo,
+    item,
+    needsSourceCommit,
+  );
+  return { needs: metadata.needs, needsSourceCommit };
 }
 
 /** Load catalog metadata for a bundled system item (SKILL.md frontmatter). */
@@ -405,6 +457,84 @@ function readRefList(
     }
   }
   return out;
+}
+
+function readNeeds(
+  raw: Record<string, unknown>,
+  meta: ItemMetadata,
+  itemLabel: string,
+): ItemNeeds {
+  if (!("needs" in raw)) return emptyNeeds();
+  if (
+    raw.needs === null ||
+    typeof raw.needs !== "object" ||
+    Array.isArray(raw.needs)
+  ) {
+    meta.warnings.push(
+      `${itemLabel}: ${METADATA_SIDECAR} "needs" must be a mapping — field ignored`,
+    );
+    return emptyNeeds();
+  }
+
+  const needs = raw.needs as Record<string, unknown>;
+  return {
+    network: readNeedList(needs, "network", meta, itemLabel, (value) => {
+      const lowered = value.toLowerCase();
+      return isBareHostname(lowered) ? lowered : null;
+    }),
+    env: readNeedList(needs, "env", meta, itemLabel, (value) =>
+      value.length > 0 && !/[=\s]/u.test(value) ? value : null,
+    ),
+    bin: readNeedList(needs, "bin", meta, itemLabel, (value) =>
+      value.length > 0 && !/[/\\\s]/u.test(value) ? value : null,
+    ),
+  };
+}
+
+function readNeedList(
+  raw: Record<string, unknown>,
+  field: keyof ItemNeeds,
+  meta: ItemMetadata,
+  itemLabel: string,
+  normalize: (value: string) => string | null,
+): string[] {
+  if (!(field in raw)) return [];
+  const list = listField.safeParse(raw[field]);
+  if (!list.success) {
+    meta.warnings.push(
+      `${itemLabel}: ${METADATA_SIDECAR} "needs.${field}" must be a list of strings — field ignored`,
+    );
+    return [];
+  }
+
+  const values = new Set<string>();
+  for (const entry of list.data) {
+    const parsed = stringField.safeParse(entry);
+    const value = parsed.success ? normalize(parsed.data) : null;
+    if (value !== null) {
+      values.add(value);
+    } else {
+      meta.warnings.push(
+        `${itemLabel}: ${METADATA_SIDECAR} "needs.${field}" entry ${JSON.stringify(entry)} is invalid — entry ignored`,
+      );
+    }
+  }
+  return [...values].sort();
+}
+
+function isBareHostname(value: string): boolean {
+  if (value.length === 0 || value.length > 253) return false;
+  if (value.includes("/") || value.includes(":") || /\s/u.test(value)) {
+    return false;
+  }
+  return value
+    .split(".")
+    .every(
+      (label) =>
+        label.length > 0 &&
+        label.length <= 63 &&
+        /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(label),
+    );
 }
 
 function parseQualifiedRef(ref: string): string | null {

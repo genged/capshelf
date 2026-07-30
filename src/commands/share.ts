@@ -7,7 +7,13 @@ import { homeRelative, projectRoot } from "../paths";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import { loadManifest, saveManifest, type Manifest } from "../manifest";
 import { addManifestName } from "../manifest";
-import { dataKey, loadLock, saveLocalLock, saveLock } from "../lock";
+import {
+  createDataLockEntry,
+  dataKey,
+  loadLock,
+  saveLocalLock,
+  saveLock,
+} from "../lock";
 import type { DataLockEntry, Lock } from "../lock";
 import { isSystemItemName } from "../bundled";
 import { itemRepoRelPath } from "../master";
@@ -28,7 +34,10 @@ import {
 import { addToManifest } from "../promote-core";
 import { adoptIntoDataRepo } from "../data-repo-adopt";
 import { printPrivateDotenvWarnings } from "../dotfiles";
-import { printRuntimeWarnings } from "../runtime-warnings";
+import {
+  printRuntimeWarnings,
+  runtimeWarningsForItem,
+} from "../runtime-warnings";
 import {
   applyFragmentOutput,
   currentFragmentSourcesForItem,
@@ -54,6 +63,7 @@ import {
   mergeConfigObjects,
   type ConfigObject,
 } from "../config-values";
+import { captureCommittedItemNeeds } from "../metadata";
 
 type ShareScope = "project" | "local";
 
@@ -155,12 +165,18 @@ export function registerShare(program: Command): void {
         }),
       });
 
-      const entry = {
-        source: "data" as const,
+      const snapshot = await captureCommittedItemNeeds(dataRepo, {
+        kind,
+        name,
+      });
+      const entry = createDataLockEntry({
         sha: adopted.sha,
         sourceCommit: adopted.sourceCommit,
-        appliedAt: new Date().toISOString(),
-      };
+        ...snapshot,
+      });
+      const runtimeWarnings = runtimeWarningsForItem(project, kind, name, {
+        needs: snapshot.needs,
+      });
       let localChanged = false;
       if (scope === "project") {
         addToManifest(manifest, kind, name);
@@ -200,8 +216,9 @@ export function registerShare(program: Command): void {
               sha: adopted.sha,
               sourceCommit: adopted.sourceCommit,
               committed: adopted.committed,
-              ...(adopted.runtimeWarnings && {
-                runtimeWarnings: adopted.runtimeWarnings,
+              needs: snapshot.needs,
+              ...(runtimeWarnings.length > 0 && {
+                runtimeWarnings,
               }),
               ...(adopted.privateDotenvWarnings && {
                 privateDotenvWarnings: adopted.privateDotenvWarnings,
@@ -216,7 +233,7 @@ export function registerShare(program: Command): void {
 
       console.log(`✓ shared ${scope}/data/${kind}/${name} @ ${adopted.sha}`);
       console.log(`  source commit: ${adopted.sourceCommit}`);
-      printRuntimeWarnings(adopted.runtimeWarnings);
+      printRuntimeWarnings(runtimeWarnings);
       printPrivateDotenvWarnings(adopted.privateDotenvWarnings);
       await printShareUpstreamGuidance(dataRepo);
     });
@@ -310,12 +327,11 @@ async function shareFragment(
   const sha = await shaOfFragmentItem(dataRepo, kind, name);
 
   addManifestName(manifest, kind, name);
-  projectLock.items[dataKey(kind, name)] = {
-    source: "data",
+  projectLock.items[dataKey(kind, name)] = createDataLockEntry({
     sha,
     sourceCommit,
-    appliedAt: new Date().toISOString(),
-  };
+    ...(await captureCommittedItemNeeds(dataRepo, { kind, name })),
+  });
 
   const sources = await currentFragmentSourcesForItem(dataRepo, kind, name);
   const outputResults: Awaited<ReturnType<typeof applyFragmentOutput>>[] = [];

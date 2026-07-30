@@ -26,13 +26,13 @@ import type { FragmentTarget } from "./fragments";
 import { assertPathClean } from "./git";
 import { findInstallConflict } from "./installed";
 import { assertLocalInstallPathsUntracked } from "./local-config";
-import { dataKey } from "./lock";
+import { createDataLockEntry, dataKey } from "./lock";
 import type { Lock } from "./lock";
 import { addManifestName } from "./manifest";
 import type { Manifest } from "./manifest";
 import { ITEM_KINDS, isCopyItemKind, isFragmentItemKind } from "./master";
 import type { ItemKind, MasterItem } from "./master";
-import { METADATA_SIDECAR } from "./metadata";
+import { METADATA_SIDECAR, captureCommittedItemNeeds } from "./metadata";
 import type { ItemMetadata } from "./metadata";
 
 export type BundleScope = "project" | "local";
@@ -315,16 +315,15 @@ async function preflightFragmentCollisions(
     const item = ctx.masterByRef.get(m.ref);
     if (!item || !isFragmentItemKind(item.kind)) continue;
     addManifestName(nextManifest, item.kind, item.name);
-    nextLock.items[dataKey(item.kind, item.name)] = {
-      source: "data",
+    nextLock.items[dataKey(item.kind, item.name)] = createDataLockEntry({
       sha: await shaOfFragmentItem(ctx.dataRepo, item.kind, item.name),
       sourceCommit: await lastTouchingFragmentCommit(
         ctx.dataRepo,
         item.kind,
         item.name,
       ),
-      appliedAt: new Date().toISOString(),
-    };
+      ...(await captureCommittedItemNeeds(ctx.dataRepo, item)),
+    });
     targetsByRef.set(
       m.ref,
       await currentFragmentTargetsForItem(ctx.dataRepo, item.kind, item.name),

@@ -1,8 +1,9 @@
 import { posix } from "node:path";
 import { hashNamedContents } from "./content-hash";
+import { needsEqual } from "./lock";
 import type { Lock } from "./lock";
 import { parseLockKey } from "./installed";
-import { lsTreeEntriesAtCommit, showAtCommit } from "./git";
+import { commitExists, lsTreeEntriesAtCommit, showAtCommit } from "./git";
 import type { Manifest } from "./manifest";
 import { hasIgnoredDotSegment } from "./dotfiles";
 import { missingSourceCommitMessage } from "./upstream-check";
@@ -13,6 +14,7 @@ import {
   itemRepoRelPath,
 } from "./master";
 import type { FragmentItemKind } from "./master";
+import { loadCommittedItemNeeds } from "./metadata";
 
 export async function verifyDataLockEntries(
   dataRepo: string,
@@ -41,6 +43,24 @@ export async function verifyDataLockEntries(
       throw new Error(
         `source ${relPath} at ${entry.sourceCommit} hashes to ${sha}, but lock expects ${entry.sha}`,
       );
+    }
+    if (entry.needs != null && entry.needsSourceCommit != null) {
+      const needsSourceCommit = entry.needsSourceCommit;
+      if (!(await commitExists(dataRepo, needsSourceCommit))) {
+        throw new Error(
+          missingSourceCommitMessage(dataRepo, needsSourceCommit, manifest),
+        );
+      }
+      const metadata = await loadCommittedItemNeeds(
+        dataRepo,
+        { kind: parsed.kind, name: parsed.name },
+        needsSourceCommit,
+      );
+      if (!needsEqual(metadata.needs, entry.needs)) {
+        throw new Error(
+          `needs for ${relPath} at ${needsSourceCommit} do not match the lock snapshot`,
+        );
+      }
     }
   }
 }

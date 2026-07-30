@@ -67,6 +67,13 @@ that boundary:
   only when provably safe, and only when you run it. Nothing in
   `status`/`apply`/`add`/`update`/`promote` can be made to pull unreviewed
   content onto your machine.
+- **Runfree policy stays human-owned.** Declared network needs can make
+  capshelf read `.runfree/network-policy.json` and print the exact
+  `runfree host add <host>` request, but capshelf never invokes Runfree and
+  never writes, widens, or repairs that policy. A data-repo needs change can
+  change what is requested, never what is allowed. Environment and binary
+  declarations are not checked against the host because it may differ from
+  the agent's sandbox.
 - **Drift is loud unless explicitly accepted.** `status` reports divergence
   between locked content and on-disk files, and it checks that every locked
   `sourceCommit` is reachable in the bound data repo, reporting

@@ -8,6 +8,7 @@ import { shaOfGitVisibleItem } from "../src/master";
 import { lastTouchingContentCommit } from "../src/git";
 import { dataKey, type Lock } from "../src/lock";
 import { ManifestSchema, type Manifest } from "../src/manifest";
+import { captureCommittedItemNeeds } from "../src/metadata";
 
 async function tempRepo(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "capshelf-lockverify-"));
@@ -31,13 +32,17 @@ function manifestWith(name: string): Manifest {
 async function lockFromAdd(dataRepo: string, name: string): Promise<Lock> {
   const repoRelPath = `skills/${name}`;
   return {
-    version: 2,
+    version: 3,
     items: {
       [dataKey("skills", name)]: {
         source: "data",
         sha: await shaOfGitVisibleItem(dataRepo, repoRelPath),
         sourceCommit: await lastTouchingContentCommit(dataRepo, repoRelPath),
         appliedAt: "2026-07-02T00:00:00.000Z",
+        ...(await captureCommittedItemNeeds(dataRepo, {
+          kind: "skills",
+          name,
+        })),
       },
     },
   };
@@ -77,5 +82,27 @@ describe("verifyDataLockEntries", () => {
     await expect(
       verifyDataLockEntries(dataRepo, manifestWith("greet"), lock),
     ).rejects.toThrow(/hashes to .* but lock expects/);
+  });
+
+  test("rejects a needs snapshot that does not match its provenance commit", async () => {
+    const dataRepo = await tempRepo();
+    const skill = join(dataRepo, "skills", "greet");
+    await mkdir(skill, { recursive: true });
+    await writeFile(join(skill, "SKILL.md"), "hi\n");
+    await writeFile(
+      join(skill, ".capshelf.yml"),
+      "needs:\n  network: [api.example.com]\n",
+    );
+    await $`git -C ${dataRepo} add -A`.quiet();
+    await $`git -C ${dataRepo} commit -qm init`.quiet();
+
+    const lock = await lockFromAdd(dataRepo, "greet");
+    const entry = lock.items[dataKey("skills", "greet")]!;
+    if (entry.source !== "data") throw new Error("expected data entry");
+    entry.needs = { network: ["other.example.com"], env: [], bin: [] };
+
+    await expect(
+      verifyDataLockEntries(dataRepo, manifestWith("greet"), lock),
+    ).rejects.toThrow(/do not match the lock snapshot/);
   });
 });

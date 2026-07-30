@@ -28,6 +28,7 @@ import {
   printMetadataWarnings,
 } from "../metadata";
 import type { ItemMetadata } from "../metadata";
+import { emptyNeeds } from "../metadata";
 import { assertNoScopeCollisions } from "../status-core";
 import { listBundles, memberCountSummary, memberRef } from "../bundles";
 import type { Bundle } from "../bundles";
@@ -295,6 +296,7 @@ function bundleMeta(bundle: Bundle): ItemMetadata {
     tags: bundle.tags,
     requires: [],
     conflictsWith: [],
+    needs: emptyNeeds(),
     warnings: [],
   };
 }

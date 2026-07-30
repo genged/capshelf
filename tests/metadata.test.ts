@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import {
   METADATA_SIDECAR,
   emptyMetadata,
+  emptyNeeds,
   extractFrontmatter,
   loadDataItemMetadata,
   loadSystemItemMetadata,
@@ -15,6 +16,44 @@ import {
 } from "../src/metadata";
 
 describe("parseSidecar", () => {
+  test("normalizes declared needs and drops invalid entries per field", () => {
+    const meta = parseSidecar(
+      [
+        "needs:",
+        "  network: [MCP.Exa.AI, mcp.exa.ai, https://bad.example, bad/path, 'bad host', 42]",
+        "  env: [EXA_API_KEY, MixedCase, BAD=VALUE, 'BAD VALUE', 42]",
+        "  bin: [agent-browser, bun, ./bad, 'bad command', 42]",
+        "  future: [ignored]",
+      ].join("\n"),
+      "pi-extensions/exa-mcp",
+    );
+
+    expect(meta.needs).toEqual({
+      network: ["mcp.exa.ai"],
+      env: ["EXA_API_KEY", "MixedCase"],
+      bin: ["agent-browser", "bun"],
+    });
+    expect(meta.warnings).toHaveLength(10);
+    expect(meta.warnings.join("\n")).not.toContain("future");
+  });
+
+  test("invalid needs shapes degrade independently", () => {
+    const meta = parseSidecar(
+      "needs:\n  network: example.com\n  env: [OK]\n  bin: null\n",
+      "skills/x",
+    );
+    expect(meta.needs).toEqual({
+      network: [],
+      env: ["OK"],
+      bin: [],
+    });
+    expect(meta.warnings).toHaveLength(2);
+
+    const invalid = parseSidecar("needs: []\n", "skills/x");
+    expect(invalid.needs).toEqual(emptyNeeds());
+    expect(invalid.warnings[0]).toContain('"needs" must be a mapping');
+  });
+
   test("parses the full schema with block lists", () => {
     const meta = parseSidecar(
       [
@@ -272,6 +311,7 @@ describe("mergeItemMetadata", () => {
         tags: ["a"],
         requires: ["settings/base"],
         conflictsWith: ["skills/other"],
+        needs: emptyNeeds(),
         warnings: ["w1"],
       },
       { ...emptyMetadata(["w2"]) },
@@ -280,6 +320,24 @@ describe("mergeItemMetadata", () => {
     expect(merged.requires).toEqual(["settings/base"]);
     expect(merged.conflictsWith).toEqual(["skills/other"]);
     expect(merged.warnings).toEqual(["w1", "w2"]);
+  });
+
+  test("needs come from the sidecar and frontmatter needs are ignored", () => {
+    const sidecar = parseSidecar(
+      "needs:\n  network: [api.example.com]\n",
+      "skills/x",
+    );
+    const frontmatter = parseFrontmatter(
+      "description: x\nneeds:\n  network: [ignored.example.com]\n",
+      "skills/x",
+    );
+
+    expect(mergeItemMetadata(sidecar, frontmatter).needs).toEqual({
+      network: ["api.example.com"],
+      env: [],
+      bin: [],
+    });
+    expect(frontmatter.needs).toEqual(emptyNeeds());
   });
 });
 

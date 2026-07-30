@@ -302,8 +302,8 @@ describe("user skill reader", () => {
     expect(
       withUserSkillShadows(
         skills,
-        { version: 2, items: { "data/skills/alpha": entry } },
-        { version: 2, items: { "data/skills/beta": entry } },
+        { version: 3, items: { "data/skills/alpha": entry } },
+        { version: 3, items: { "data/skills/beta": entry } },
       ),
     ).toEqual([
       {

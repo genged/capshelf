@@ -37,6 +37,7 @@ import {
   type FragmentContributionState,
 } from "../fragments";
 import {
+  deriveNeedsState,
   assertNoScopeCollisions,
   buildStatusRow,
   deriveState,
@@ -45,6 +46,8 @@ import {
   type StatusRow,
 } from "../status-core";
 import { formatStatusHuman, formatUserSkillsHuman } from "../status-format";
+import { captureCommittedItemNeeds } from "../metadata";
+import type { ItemNeeds } from "../metadata";
 
 interface StatusOptions {
   json?: boolean;
@@ -203,6 +206,7 @@ export function registerStatus(program: Command): void {
 
           let upstreamSha: string | null = null;
           let upstreamDirty = false;
+          let currentNeeds: ItemNeeds | undefined;
           if (source === "data") {
             if (dataRepo) {
               const upstream = await upstreamFactsForItem(
@@ -212,6 +216,18 @@ export function registerStatus(program: Command): void {
               );
               upstreamSha = upstream.upstreamSha;
               upstreamDirty = upstream.upstreamDirty;
+              if (upstreamSha !== null || upstreamDirty) {
+                try {
+                  currentNeeds = (
+                    await captureCommittedItemNeeds(dataRepo, {
+                      kind,
+                      name: itemName,
+                    })
+                  ).needs;
+                } catch {
+                  currentNeeds = undefined;
+                }
+              }
             }
           } else {
             const sys = findSystemItem(itemName);
@@ -242,8 +258,15 @@ export function registerStatus(program: Command): void {
               currentSha,
               upstreamSha,
               upstreamDirty,
+              needsState:
+                entry.source === "data"
+                  ? deriveNeedsState(entry.needs ?? null, currentNeeds)
+                  : undefined,
               runtimeWarnings: [
-                ...runtimeWarningsForItem(project, kind, itemName),
+                ...runtimeWarningsForItem(project, kind, itemName, {
+                  ...(entry.source === "data" &&
+                    entry.needs !== null && { needs: entry.needs }),
+                }),
                 ...codexWarningsForItem(project, kind),
               ],
             }),

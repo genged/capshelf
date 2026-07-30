@@ -20,11 +20,13 @@ import {
 import type { Lock } from "../lock";
 import { loadManifest } from "../manifest";
 import {
+  captureCommittedItemNeeds,
+  emptyNeeds,
   loadDataItemMetadata,
   loadSystemItemMetadata,
   printMetadataWarnings,
 } from "../metadata";
-import type { ItemMetadata } from "../metadata";
+import type { ItemMetadata, ItemNeeds } from "../metadata";
 import { findSystemItem, shaOfSystemItem } from "../bundled";
 import { assertIsGitRepo, gitVisibleFilesUnderPath } from "../git";
 import { globalOpts } from "../global-options";
@@ -42,6 +44,8 @@ import {
   printRuntimeWarnings,
   runtimeWarningsForItem,
 } from "../runtime-warnings";
+import { deriveNeedsState } from "../status-core";
+import { formatDeclaredNeeds, needsPolicyForProject } from "../needs";
 
 interface ShowOptions {
   json?: boolean;
@@ -117,15 +121,29 @@ export function registerShow(program: Command): void {
       const masterSha = isFragmentItemKind(item.kind)
         ? await shaOfFragmentItem(dataRepo, item.kind, item.name)
         : await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
+      const projectEntry = lock.items[dataKey(item.kind, item.name)];
+      const lockEntry =
+        projectEntry ?? localLock.items[dataKey(item.kind, item.name)] ?? null;
+      const meta = await loadDataItemMetadata(item);
+      printMetadataWarnings(meta);
+      const committedNeeds = await captureCommittedItemNeeds(dataRepo, item);
+      const lockedNeeds =
+        lockEntry?.source === "data" ? (lockEntry.needs ?? null) : null;
+      const needsState =
+        lockEntry?.source === "data"
+          ? deriveNeedsState(lockEntry.needs ?? null, committedNeeds.needs)
+          : null;
+      const warningNeeds =
+        lockEntry?.source === "data" ? (lockEntry.needs ?? null) : meta.needs;
       const runtimeWarnings = runtimeWarningsForItem(
         project ?? "",
         item.kind,
         item.name,
-        { itemPath: item.path },
+        {
+          itemPath: item.path,
+          ...(project && warningNeeds !== null && { needs: warningNeeds }),
+        },
       );
-      const lockEntry = lock.items[dataKey(item.kind, item.name)] ?? null;
-      const meta = await loadDataItemMetadata(item);
-      printMetadataWarnings(meta);
       const locks = [lock, localLock];
 
       if (opts.json) {
@@ -156,6 +174,8 @@ export function registerShow(program: Command): void {
                 lockEntry?.source === "data" ? (lockEntry.label ?? null) : null,
               appliedAt: lockEntry?.appliedAt ?? null,
               metadata: metadataJson(meta, locks),
+              lockedNeeds,
+              needsState,
               ...(runtimeWarnings.length > 0 && { runtimeWarnings }),
             },
             null,
@@ -179,6 +199,14 @@ export function registerShow(program: Command): void {
         console.log(`  not installed in this project`);
       }
       printMetadataBlock(meta, locks);
+      if (
+        lockEntry?.source === "data" &&
+        (lockEntry.needs === null || needsState === "update_available")
+      ) {
+        console.log(
+          `  locked needs: ${formatNeedsSummary(lockEntry.needs ?? null)}`,
+        );
+      }
       console.log(`  path:       ${item.path}`);
 
       if (runtimeWarnings.length > 0) {
@@ -267,9 +295,18 @@ async function showBundle(
     console.error(`⚠ ${warning}`);
   }
 
-  const available = new Set(
-    (await listMasterItems(dataRepo)).map((i) => `${i.kind}/${i.name}`),
+  const masterItems = await listMasterItems(dataRepo);
+  const available = new Set(masterItems.map((i) => `${i.kind}/${i.name}`));
+  const masterByRef = new Map(
+    masterItems.map((item) => [`${item.kind}/${item.name}`, item]),
   );
+  const bundleNeeds = emptyNeeds();
+  for (const member of bundle.members) {
+    const item = masterByRef.get(memberRef(member));
+    if (!item) continue;
+    const metadata = await loadDataItemMetadata(item);
+    mergeNeedsInto(bundleNeeds, metadata.needs);
+  }
   const rows = bundle.members.map((member) => {
     const ref = memberRef(member);
     const key = dataKey(member.kind, member.name);
@@ -296,6 +333,7 @@ async function showBundle(
             description: bundle.description,
           }),
           tags: bundle.tags,
+          needs: bundleNeeds,
           members: rows,
           ...(bundle.malformed !== undefined && {
             malformed: bundle.malformed,
@@ -315,6 +353,7 @@ async function showBundle(
   if (bundle.tags.length > 0) {
     console.log(`  tags:        ${bundle.tags.join(", ")}`);
   }
+  printNeedsBlock(bundleNeeds, project);
   if (bundle.malformed !== undefined) {
     console.log(`  (bundle file is malformed — members unknown)`);
     return;
@@ -422,12 +461,14 @@ function metadataJson(
   tags: string[];
   requires: RelationState[];
   conflictsWith: RelationState[];
+  needs: ItemNeeds;
 } {
   return {
     ...(meta.description !== undefined && { description: meta.description }),
     tags: meta.tags,
     requires: relationStates(meta.requires, locks),
     conflictsWith: relationStates(meta.conflictsWith, locks),
+    needs: meta.needs,
   };
 }
 
@@ -450,5 +491,37 @@ function printMetadataBlock(meta: ItemMetadata, locks: Lock[]): void {
       )
       .join(", ");
     console.log(`  ${label} ${states}`);
+  }
+  printNeedsBlock(meta.needs, findProjectRoot());
+}
+
+function printNeedsBlock(needs: ItemNeeds, project: string | null): void {
+  const policy = project ? needsPolicyForProject(project) : null;
+  if (needs.network.length > 0) {
+    const hosts = needs.network.map((host) => {
+      if (!policy?.active || !policy.checkable) return host;
+      return `${host} (${policy.allowed.has(host) ? "allowed" : "not allowed"})`;
+    });
+    console.log(`  needs network: ${hosts.join(", ")}`);
+  }
+  const info = formatDeclaredNeeds(needs);
+  if (info) console.log(`  ${info}`);
+}
+
+function formatNeedsSummary(needs: ItemNeeds | null): string {
+  if (needs === null) return "(unknown; run capshelf update)";
+  const parts = [
+    ...(needs.network.length > 0
+      ? [`network: ${needs.network.join(", ")}`]
+      : []),
+    ...(needs.env.length > 0 ? [`env: ${needs.env.join(", ")}`] : []),
+    ...(needs.bin.length > 0 ? [`bin: ${needs.bin.join(", ")}`] : []),
+  ];
+  return parts.length > 0 ? parts.join(" · ") : "(none)";
+}
+
+function mergeNeedsInto(target: ItemNeeds, source: ItemNeeds): void {
+  for (const field of ["network", "env", "bin"] as const) {
+    target[field] = [...new Set([...target[field], ...source[field]])].sort();
   }
 }

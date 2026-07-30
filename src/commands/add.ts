@@ -5,7 +5,7 @@ import { loadProjectContext } from "../command-context";
 import { saveManifest } from "../manifest";
 import type { Manifest } from "../manifest";
 import { addManifestName, manifestNamesForKind } from "../manifest";
-import { saveLocalLock, saveLock, dataKey } from "../lock";
+import { createDataLockEntry, dataKey, saveLocalLock, saveLock } from "../lock";
 import type { Lock } from "../lock";
 import {
   isFragmentItemKind,
@@ -15,10 +15,11 @@ import {
 import type { MasterItem } from "../master";
 import {
   METADATA_SIDECAR,
+  captureCommittedItemNeeds,
   loadDataItemMetadata,
   printMetadataWarnings,
 } from "../metadata";
-import type { ItemMetadata } from "../metadata";
+import type { ItemMetadata, ItemNeeds } from "../metadata";
 import { NotFoundError, PreconditionError, ResultExitError } from "../errors";
 import { copyItemIntoProject, targetDir } from "../sync";
 import { findInstallConflict } from "../installed";
@@ -60,6 +61,7 @@ import {
   preflightBundleChecks,
 } from "../bundle-install";
 import type { BundlePlan, MemberPlan } from "../bundle-install";
+import { formatDeclaredNeeds } from "../needs";
 
 interface AddOptions {
   json?: boolean;
@@ -86,6 +88,7 @@ export interface InstallDataItemResult {
   outputResults: FragmentApplyResult[];
   runtimeWarnings: RuntimeWarning[];
   missingRequires: string[];
+  needs: ItemNeeds;
 }
 
 export function registerAdd(program: Command): void {
@@ -132,6 +135,7 @@ export function registerAdd(program: Command): void {
               scope: ctx.local ? "local" : "project",
               sha: result.sha,
               sourceCommit: result.sourceCommit,
+              needs: result.needs,
               dst: result.dst,
               wasAlreadyInstalled: result.wasAlreadyInstalled,
               ...(result.sources.length > 0 && {
@@ -161,6 +165,7 @@ export function registerAdd(program: Command): void {
       );
       console.log(`  source commit: ${result.sourceCommit}`);
       console.log(`  ${result.dst}`);
+      printDeclaredNeeds(result.needs);
       printRuntimeWarnings(result.runtimeWarnings);
       printMissingRequires(`${item.kind}/${item.name}`, result.missingRequires);
     });
@@ -282,6 +287,7 @@ export async function installDataItem(
   const sourceCommit = isFragmentItemKind(item.kind)
     ? await lastTouchingFragmentCommit(dataRepo, item.kind, item.name)
     : await lastTouchingContentCommit(dataRepo, item.repoRelPath);
+  const snapshot = await captureCommittedItemNeeds(dataRepo, item);
 
   if (ctx.local) {
     if (!localConfig) {
@@ -293,12 +299,11 @@ export async function installDataItem(
   } else {
     addToManifest(manifest, item);
   }
-  lock.items[key] = {
-    source: "data",
+  lock.items[key] = createDataLockEntry({
     sha,
     sourceCommit,
-    appliedAt: new Date().toISOString(),
-  };
+    ...snapshot,
+  });
 
   const sources = isFragmentItemKind(item.kind)
     ? await currentFragmentSourcesForItem(dataRepo, item.kind, item.name)
@@ -320,7 +325,14 @@ export async function installDataItem(
   } else {
     await copyItemIntoProject(project, item, manifest.installMode);
   }
-  const runtimeWarnings = runtimeWarningsForItem(project, item.kind, item.name);
+  const runtimeWarnings = runtimeWarningsForItem(
+    project,
+    item.kind,
+    item.name,
+    {
+      needs: snapshot.needs,
+    },
+  );
 
   if (ctx.local) {
     if (!localConfig) throw new Error("expected local manifest");
@@ -341,6 +353,7 @@ export async function installDataItem(
     outputResults,
     runtimeWarnings,
     missingRequires,
+    needs: snapshot.needs,
   };
 }
 
@@ -415,8 +428,6 @@ async function addBundle(
   } else {
     printBundleSummary(bundle, plan, results);
   }
-  const runtimeWarnings = collectRuntimeWarnings(results);
-  if (!opts.json) printRuntimeWarnings(runtimeWarnings);
   for (const [ref, missing] of plan.missingRequiresByMember) {
     printMissingRequires(ref, missing);
   }
@@ -496,9 +507,13 @@ function printBundleJson(
         result && {
           sha: result.sha,
           sourceCommit: result.sourceCommit,
+          needs: result.needs,
           dst: relativeProjectPath(ctx.project, result.dst),
           ...(result.sources.length > 0 && {
             sources: fragmentSourcesJson(ctx.project, result),
+          }),
+          ...(result.runtimeWarnings.length > 0 && {
+            runtimeWarnings: result.runtimeWarnings,
           }),
         }),
     };
@@ -552,7 +567,11 @@ function printBundleSummary(
       continue;
     }
     const result = results.get(member.ref);
-    if (result) console.log(`  + ${member.ref.padEnd(33)} @ ${result.sha}`);
+    if (result) {
+      console.log(`  + ${member.ref.padEnd(33)} @ ${result.sha}`);
+      printDeclaredNeeds(result.needs, "    ");
+      printRuntimeWarnings(result.runtimeWarnings, "    ");
+    }
   }
 }
 
@@ -634,6 +653,11 @@ function collectRuntimeWarnings(
     }
   }
   return warnings;
+}
+
+function printDeclaredNeeds(needs: ItemNeeds, indent = "  "): void {
+  const line = formatDeclaredNeeds(needs);
+  if (line) console.log(`${indent}${line}`);
 }
 
 function fragmentSourcesJson(

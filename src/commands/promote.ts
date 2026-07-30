@@ -6,7 +6,12 @@ import { homeRelative } from "../paths";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import { saveManifest } from "../manifest";
 import type { Manifest } from "../manifest";
-import { dataKey, saveLocalLock, saveLock } from "../lock";
+import {
+  dataKey,
+  refreshDataLockEntry,
+  saveLocalLock,
+  saveLock,
+} from "../lock";
 import type { Lock } from "../lock";
 import { installedPath, parseLockKey } from "../installed";
 import { itemRepoRelPath } from "../master";
@@ -23,7 +28,11 @@ import {
 import { isSystemItemName } from "../bundled";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import { assertLocalScopeSupported } from "../local-config";
-import { readSidecarBytes, restoreSidecarBytes } from "../metadata";
+import {
+  captureCommittedItemNeeds,
+  readSidecarBytes,
+  restoreSidecarBytes,
+} from "../metadata";
 import { replaceDirFromFiles, replaceDirFromGitVisibleFiles } from "../sync";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import {
@@ -365,13 +374,12 @@ export async function promoteFragmentSource(
     opts.message ?? `capshelf: ${kind}/${name}`,
   );
   const sha = await shaOfFragmentItem(dataRepo, kind, name);
-  const nextEntry = {
-    source: "data" as const,
+  const snapshot = await captureCommittedItemNeeds(dataRepo, { kind, name });
+  const nextEntry = refreshDataLockEntry(entry, {
     sha,
     sourceCommit,
-    appliedAt: new Date().toISOString(),
-    ...(entry.label !== undefined && { label: entry.label }),
-  };
+    ...snapshot,
+  });
   lock.items[key] = nextEntry;
 
   for (const target of await touchedFragmentTargetsForItem(
@@ -452,7 +460,9 @@ export async function syncTrackedIntoDataRepo(
     // Guard-free no-op by design: local content matches the lock, there is
     // nothing to write. If upstream has advanced past the lock here, that is
     // update_available territory and surfacing it is status's job.
-    const runtimeWarnings = runtimeWarningsForItem(project, kind, name);
+    const runtimeWarnings = runtimeWarningsForItem(project, kind, name, {
+      needs: entry.needs ?? undefined,
+    });
     return {
       source: "data",
       kind,
@@ -493,14 +503,18 @@ export async function syncTrackedIntoDataRepo(
         dataRepo,
         repoRelPath,
       );
-      lock.items[key] = {
-        source: "data",
+      const needsSnapshot = await captureCommittedItemNeeds(dataRepo, {
+        kind,
+        name,
+      });
+      lock.items[key] = refreshDataLockEntry(entry, {
         sha,
         sourceCommit,
-        appliedAt: new Date().toISOString(),
-        ...(entry.label !== undefined && { label: entry.label }),
-      };
-      const runtimeWarnings = runtimeWarningsForItem(project, kind, name);
+        ...needsSnapshot,
+      });
+      const runtimeWarnings = runtimeWarningsForItem(project, kind, name, {
+        needs: needsSnapshot.needs,
+      });
       return {
         source: "data",
         kind,
@@ -563,14 +577,18 @@ export async function syncTrackedIntoDataRepo(
       // `git show` at it still yields the locked content.
       await lastTouchingContentCommit(dataRepo, repoRelPath);
 
-  lock.items[key] = {
-    source: "data",
+  const needsSnapshot = await captureCommittedItemNeeds(dataRepo, {
+    kind,
+    name,
+  });
+  lock.items[key] = refreshDataLockEntry(entry, {
     sha,
     sourceCommit,
-    appliedAt: new Date().toISOString(),
-    ...(entry.label !== undefined && { label: entry.label }),
-  };
-  const runtimeWarnings = runtimeWarningsForItem(project, kind, name);
+    ...needsSnapshot,
+  });
+  const runtimeWarnings = runtimeWarningsForItem(project, kind, name, {
+    needs: needsSnapshot.needs,
+  });
 
   return {
     source: "data",

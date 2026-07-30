@@ -112,7 +112,7 @@ async function commitAll(repo: string, message: string): Promise<void> {
 }
 
 function lockWith(entry: DataLockEntry): Lock {
-  return { version: 2, items: { [dataKey("skills", "hello")]: entry } };
+  return { version: 3, items: { [dataKey("skills", "hello")]: entry } };
 }
 
 describe("syncTrackedIntoDataRepo sidecar preservation", () => {
@@ -640,6 +640,8 @@ describe("stale-promote guard (copy items)", () => {
       sourceCommit: f.upstreamCommit,
       appliedAt: expect.any(String),
       label: "v1",
+      needs: { network: [], env: [], bin: [] },
+      needsSourceCommit: f.upstreamCommit,
     });
     expect(entry?.appliedAt).not.toBe("2026-06-01T00:00:00.000Z");
   });
@@ -668,7 +670,7 @@ describe("stale-promote guard (fragments)", () => {
       "theme",
     );
     const lock: Lock = {
-      version: 2,
+      version: 3,
       items: {
         [dataKey("settings", "theme")]: {
           source: "data",

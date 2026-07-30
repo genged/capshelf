@@ -233,12 +233,12 @@ scheme/host URLs all canonicalize to `https://github.com/org/repo`. The scheme
 and host are lowercased, credentials and one trailing `.git` are stripped, and
 path case is preserved.
 
-## Lock schema (v2)
+## Lock schema (v3)
 
 Each entry is a discriminated union on `source`:
 
 ```ts
-data:   { source: "data",   sha, sourceCommit, appliedAt, label? }
+data:   { source: "data",   sha, sourceCommit, needs, needsSourceCommit, appliedAt, label? }
 system: { source: "system", sha, cliVersion,   appliedAt }
 ```
 
@@ -248,6 +248,11 @@ Lock keys are prefixed, for example `data/skills/<name>`,
 
 - `sha` — content hash (identity).
 - `sourceCommit` — for data items, the **last-touching commit** in the data repo (`git log -1 --format=%H -- <path>`). Fragment items use only canonical source files such as `settings/<name>/settings.json`, `mcp/<name>/claude.json`, `mcp/<name>/codex.toml`, and `codex/config/<name>/config.toml`. Lets `apply`/`revert` retrieve historical content via `git show <commit>:<path>` even if the data repo's HEAD has moved past the locked version.
+- `needs` / `needsSourceCommit` — a normalized snapshot of the item's declared
+  runtime requirements and the data-repo commit it came from. This provenance
+  is independent of the sidecar-blind content pin. Version 2 locks load with
+  both fields set to `null` (unknown) and are written as version 3 only by a
+  command already authorized to save the lock.
 - `cliVersion` — for system items, the capshelf binary version that wrote the entry. Drives "update available" detection when the binary upgrades.
 
 CLI-only changes in the data repo (e.g. someone edits `src/foo.ts`) don't bump `sourceCommit` for unaffected data items — `lastTouchingCommit` is path-scoped.
@@ -370,6 +375,10 @@ Items carry catalog metadata from two sources:
    tags: [security, review]
    requires: [settings/permissions-base]
    conflicts-with: [skills/quick-review]
+   needs:
+     network: [api.example.com]
+     env: [EXAMPLE_TOKEN]
+     bin: [example-cli]
    ```
 
    Unknown fields (e.g. a future `targets`) are ignored for forward
@@ -378,7 +387,7 @@ Items carry catalog metadata from two sources:
 
 2. SKILL.md YAML frontmatter (skills only), read for a fallback
    `description`. The merge is per-field with the sidecar winning;
-   `tags`/`requires`/`conflicts-with` are sidecar-only.
+   `tags`/`requires`/`conflicts-with`/`needs` are sidecar-only.
 
    The sidecar keeps its own `description` field despite the overlap:
    fragment kinds have no frontmatter (one schema covers all kinds), the
@@ -395,8 +404,12 @@ exit 3 and no force flag).
 
 **The sidecar is not item content.** The lock pins what the agent runtime
 sees, and the sidecar is never delivered: it is excluded from every hashing
-path and from materialization, so a tag or description edit never flashes
-"update available" across consuming projects. The deliberate asymmetry: a
+path and from materialization, so a tag or description edit never flashes a
+content update across consuming projects. Declared `needs` are the exception
+to live-only catalog metadata: the selected declaration is lock-pinned so
+warnings describe the installed decision, and `status` reports requirements
+freshness separately from content state. A needs-only `update` changes the
+lock without rewriting installed bytes. The deliberate asymmetry: a
 description edit in SKILL.md frontmatter *does* bump the sha, because
 frontmatter ships to Claude and genuinely changes runtime behavior — hashed
 iff delivered. `promote` and `share` cache and restore the data-repo sidecar
@@ -406,12 +419,29 @@ metadata.
 `sourceCommit` is sidecar-blind too: copy-item pins are computed by
 `lastTouchingContentCommit` (`git log -1` with a
 `:(exclude)<item>/.capshelf.yml` pathspec, falling back to the unfiltered
-commit for sidecar-only histories), so a metadata-only data-repo commit
-leaves `update` a true no-op — the lock file is not rewritten. Fragment
+commit for sidecar-only histories), so ordinary catalog-only data-repo
+changes leave `update` a true no-op. A changed `needs` declaration refreshes
+`needs` and `needsSourceCommit` without moving this content pin. Fragment
 items are immune by construction: their `sourceCommit` is computed from
 canonical source paths only. `ls`/`show`/`search` read metadata from the
 data repo **working tree** — a catalog view of the shelf as it is now, not a
 pinned view per `sourceCommit`.
+
+## Declared needs and Runfree
+
+Every item kind may declare normalized `network`, `env`, and `bin` needs in
+its sidecar. `add`, bundle expansion, `update`, `share`, and `promote` capture
+the committed declaration in the selected lock; `apply`, `revert`, `move`,
+and `keep-local` preserve it.
+
+When `<project>/.runfree` is a directory, capshelf reads
+`.runfree/network-policy.json` once per process and compares only the locked
+network hostnames by exact, case-insensitive match. Missing policy means no
+hosts are allowed; malformed policy produces an advisory and skips the check.
+Unmet hosts are non-strict runtime warnings with a
+`runfree host add <host>` request. Capshelf never invokes Runfree or writes its
+policy. Environment variables and commands are displayed but not checked,
+because the host process is not authoritative for the sandbox environment.
 
 ## Bundles
 

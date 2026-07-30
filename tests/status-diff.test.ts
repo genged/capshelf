@@ -132,7 +132,7 @@ describe("status diff helpers", () => {
         codexConfig: [],
       },
       lock: {
-        version: 2,
+        version: 3,
         items: {
           [dataKey("skills", "hello")]: {
             source: "data",
@@ -213,7 +213,7 @@ describe("status diff helpers", () => {
       dataRepo,
       manifest,
       lock: {
-        version: 2,
+        version: 3,
         items: {
           [dataKey("skills", "hello")]: {
             source: "data",
@@ -279,7 +279,7 @@ describe("status diff helpers", () => {
         codexConfig: [],
       },
       lock: {
-        version: 2,
+        version: 3,
         items: {
           [dataKey("skills", "hello")]: {
             source: "data",
@@ -342,7 +342,7 @@ describe("status diff helpers", () => {
         codexConfig: [],
       },
       lock: {
-        version: 2,
+        version: 3,
         items: {
           [dataKey("settings", "security")]: {
             source: "data",
@@ -387,7 +387,7 @@ describe("status diff helpers", () => {
         mcp: [],
         codexConfig: [],
       },
-      lock: { version: 2, items: {} },
+      lock: { version: 3, items: {} },
       row: {
         source: "data",
         kind: "skills",
@@ -441,7 +441,7 @@ describe("status diff helpers", () => {
         codexConfig: [],
       },
       lock: {
-        version: 2,
+        version: 3,
         items: {
           [dataKey("mcp", "server")]: {
             source: "data",
@@ -483,7 +483,7 @@ describe("status diff helpers", () => {
           codexConfig: [],
         },
         lock: {
-          version: 2,
+          version: 3,
           items: {
             [dataKey("skills", "hello")]: {
               source: "data",

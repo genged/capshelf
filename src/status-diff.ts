@@ -91,6 +91,8 @@ export async function buildStatusDiff(
       sha: "",
       sourceCommit: row.sourceCommit,
       appliedAt: "",
+      needs: null,
+      needsSourceCommit: null,
     };
     const targets = await lockedFragmentTargetsForItem(
       opts.dataRepo,

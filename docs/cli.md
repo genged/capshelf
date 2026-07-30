@@ -52,14 +52,14 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
 | `data path` | print the resolved local data repo path; `--json` includes the path and the normalized upstream (`null` when absent) (alias: `data-path`) | implemented |
 | `data sync` | explicitly fetch the bound data repo's `origin` and fast-forward the current branch when provably safe; the only capshelf command that performs network I/O besides the `init --data <url>` bootstrap clone and `self-update` (alias: `sync-data`) | implemented |
 | `ls` | list items in master plus user-level runtime skills by default, in this project (`--here`), or user-level runtime skills only (`--user`); master/project listings show descriptions and `#tags` from item metadata; `--tag` filters master/project listings; appends a `bundles/` section for data-repo bundles | implemented |
-| `show <item>` | print metadata + content for one item, including `requires`/`conflicts-with` install state; Pi extension warnings precede source content; `--json` always carries a `metadata` object and applicable `runtimeWarnings`; `show bundles/<name>` previews bundle membership with per-member install state | implemented |
+| `show <item>` | print metadata + content for one item, including relations and current/locked declared needs; `--json` always carries a `metadata` object and applicable `runtimeWarnings`; bundle previews include the union of member needs | implemented |
 | `search <query...>` | search available items (data repo + system) and bundles by name, tags, description, and content; supports `--kind` and `--json`; zero matches exit 0 | implemented |
-| `status [<item>]` | drift / update report for this project plus user-level runtime skill inventory by default; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` explains local drift; reports `missing_source_commit` when a locked `sourceCommit` is unreachable in the data repo | implemented |
+| `status [<item>]` | drift / update report plus orthogonal `needsState` freshness and locked-needs Runfree warnings; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` explains local drift | implemented |
 | `add <item>` | install an item from the bound data repo; `--local` installs a clone-local copy item (skill or Pi extension); warns on unmet `requires`, refuses on `conflicts-with` (exit 3); `add bundles/<name>` expands a bundle (see Bundles) | implemented |
 | `rm <item>` | remove from this project; `--local` removes clone-local copy items | implemented |
 | `get-path <item>` | print the editable path; skills and Pi extensions return their managed directory, fragments support `--output` for generated output paths, and MCP supports `--target` | implemented |
 | `apply [<item>]` | reconcile project and local files with lockfiles (data items via `git show <sourceCommit>`; system items from bundled content; fragments via merged outputs); supports `--local` and `--dry-run` | implemented |
-| `update [<item>...]` | bump project pins by default; `--local` updates clone-local copy-item pins; supports `--dry-run` | implemented |
+| `update [<item>...]` | bump content and declared-needs pins; needs-only changes do not reinstall unchanged content; `--local` updates clone-local copy-item pins; supports `--dry-run` | implemented |
 | `share <item>` | adopt a not-yet-shared on-disk item into the data repo; Pi extensions require `index.ts`, default to project scope, and accept `--to local`; fragments require project scope plus `--from <file>` or `--pick <path>` | implemented |
 | `move <item> --to <scope>` | move an already-tracked data item between local and project scope without changing data-repo content | implemented |
 | `promote <item>` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects clone-local copy items; refuses stale promotes unless `--stale-ok` | implemented |
@@ -94,8 +94,9 @@ there is no separate `bundle` verb family. See Bundles below.
 Items can carry catalog metadata from two sources: an optional
 `.capshelf.yml` sidecar at the item directory root in the data repo (all
 kinds) and SKILL.md YAML frontmatter (skills only). The sidecar declares
-`description`, `tags`, `requires`, and `conflicts-with` (kind-qualified
-`<kind>/<name>` refs); frontmatter contributes only a fallback `description`.
+`description`, `tags`, `requires`, `conflicts-with` (kind-qualified
+`<kind>/<name>` refs), and `needs`; frontmatter contributes only a fallback
+`description`.
 
 For skills, the sidecar `description` is optional and usually unnecessary —
 frontmatter fills it in. It exists because (a) fragment kinds have no
@@ -120,14 +121,39 @@ nothing fails.
 dump — description, tags, and each `requires`/`conflicts-with` ref with its
 install state (`installed` means present in either `capshelf.lock.json` or
 `local.lock.json`). `show --json` always includes a `metadata` object with
-`tags`, `requires`, and `conflictsWith` (possibly empty) so consumers can
-rely on the key; `description` is included when present.
+`tags`, `requires`, `conflictsWith`, and `needs` (possibly empty) so consumers
+can rely on the keys; `description` is included when present.
 
-The sidecar is catalog data, not item content: it is never hashed, never
-materialized into projects, and a metadata-only data-repo commit never makes
-`status` report drift or `update` rewrite a lock. Edit it in the data repo
-and commit — no project `update` is needed afterwards. Malformed metadata
-warns on stderr and degrades to no-metadata; it never fails a read command.
+The sidecar is catalog data, not item content: it is never hashed or
+materialized into projects. Tags, descriptions, and relations remain live
+catalog data and need no project update. Declared needs are pinned separately
+in lock version 3: `status` can report a requirements update while content
+stays `ok`, and `update` refreshes that snapshot without rewriting unchanged
+installed bytes. Malformed metadata warns and degrades per field.
+
+### declared needs
+
+All item kinds may declare:
+
+```yaml
+needs:
+  network: [api.example.com]
+  env: [EXAMPLE_TOKEN]
+  bin: [example-cli]
+```
+
+`network` values are lowercase bare hostnames; environment-variable and
+command names preserve case. Invalid entries warn and are dropped. `add` and
+`show` display `env`/`bin` declarations but never probe the host environment.
+
+If `.runfree/` exists in the project, capshelf compares network needs with
+`.runfree/network-policy.json` and warns for exact hosts absent from its
+`domains` array. The warning includes `runfree host add <host>`. It is
+advisory, does not affect `status --strict`, and is the only integration:
+Capshelf never runs Runfree or edits its policy. `status --json` includes
+`needsState` and `lockedNeeds` for data items; `show --json` carries current
+metadata needs plus installed `lockedNeeds`. Bundle previews union current
+member needs, while bundle installs pin and warn per member.
 
 ### add enforcement
 

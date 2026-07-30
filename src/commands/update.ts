@@ -1,9 +1,14 @@
 import type { Command } from "commander";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import type { Manifest } from "../manifest";
-import { saveLocalLock, saveLock } from "../lock";
+import {
+  needsEqual,
+  refreshDataLockEntry,
+  saveLocalLock,
+  saveLock,
+} from "../lock";
 import type { DataLockEntry, LockEntry, SystemLockEntry } from "../lock";
-import { parseLockKey } from "../installed";
+import { parseLockKey, shaOfInstalled } from "../installed";
 import { isFragmentItemKind, shaOfGitVisibleItem } from "../master";
 import { assertRepoClean, lastTouchingContentCommit } from "../git";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
@@ -30,6 +35,7 @@ import {
   type FragmentApplyResult,
   type FragmentTarget,
 } from "../fragments";
+import { captureCommittedItemNeeds } from "../metadata";
 
 interface UpdateOptions {
   json?: boolean;
@@ -335,6 +341,9 @@ async function updateDataTarget(
       ctx.project,
       parsed.kind,
       parsed.name,
+      {
+        ...(entry.needs !== null && { needs: entry.needs }),
+      },
     );
     return {
       result: {
@@ -365,14 +374,27 @@ async function updateDataTarget(
   const sourceCommit = isFragmentItemKind(parsed.kind)
     ? await lastTouchingFragmentCommit(ctx.dataRepo, parsed.kind, parsed.name)
     : await lastTouchingContentCommit(ctx.dataRepo, item.repoRelPath);
-  const lockWouldChange =
+  const currentSnapshot = await captureCommittedItemNeeds(ctx.dataRepo, item);
+  const lockedNeeds = entry.needs ?? null;
+  const needsWouldChange =
+    lockedNeeds === null || !needsEqual(lockedNeeds, currentSnapshot.needs);
+  const snapshot = needsWouldChange
+    ? currentSnapshot
+    : {
+        needs: entry.needs ?? currentSnapshot.needs,
+        needsSourceCommit:
+          entry.needsSourceCommit ?? currentSnapshot.needsSourceCommit,
+      };
+  const contentWouldChange =
     sha !== entry.sha || sourceCommit !== entry.sourceCommit;
-  const newEntry: DataLockEntry = {
-    ...entry,
+  const lockWouldChange =
+    contentWouldChange || needsWouldChange || entry.needsSourceCommit === null;
+  const newEntry = refreshDataLockEntry(entry, {
     sha,
     sourceCommit,
-    appliedAt: lockWouldChange ? new Date().toISOString() : entry.appliedAt,
-  };
+    ...snapshot,
+    ...(!lockWouldChange && { appliedAt: entry.appliedAt }),
+  });
   const changedAction: UpdateAction | undefined = lockWouldChange
     ? ctx.dryRun
       ? "would-update"
@@ -410,15 +432,37 @@ async function updateDataTarget(
     };
   }
 
-  const materialized = await materializeLockEntry({
-    project: ctx.project,
-    dataRepo: ctx.dataRepo,
-    manifest: ctx.manifest,
-    key,
-    entry: newEntry,
-    scope,
-    dryRun: ctx.dryRun,
-  });
+  const installedSha = needsWouldChange
+    ? await shaOfInstalled(ctx.project, parsed.kind, parsed.name)
+    : null;
+  const skipMaterialize =
+    needsWouldChange && !contentWouldChange && installedSha === entry.sha;
+  const materialized = skipMaterialize
+    ? {
+        action: "already-current" as const,
+        currentSha: installedSha,
+        runtimeWarnings: runtimeWarningsForItem(
+          ctx.project,
+          parsed.kind,
+          parsed.name,
+          { needs: newEntry.needs ?? undefined },
+        ),
+      }
+    : await materializeLockEntry({
+        project: ctx.project,
+        dataRepo: ctx.dataRepo,
+        manifest: ctx.manifest,
+        key,
+        entry: newEntry,
+        scope,
+        dryRun: ctx.dryRun,
+      });
+  const runtimeWarnings = runtimeWarningsForItem(
+    ctx.project,
+    parsed.kind,
+    parsed.name,
+    { needs: newEntry.needs ?? undefined },
+  );
   return {
     result: {
       key,
@@ -432,7 +476,7 @@ async function updateDataTarget(
       lockedSha: entry.sha,
       plannedSha: sha,
       sourceCommit,
-      runtimeWarnings: materialized.runtimeWarnings,
+      runtimeWarnings,
       ...(ctx.dryRun && { dryRun: true as const }),
     },
     newEntry,

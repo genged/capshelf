@@ -8,6 +8,8 @@ import { matchRefAcrossScopes } from "./targets";
 import type { ScopedTarget } from "./targets";
 import type { RuntimeWarning } from "./runtime-warnings";
 import type { FragmentContributionState } from "./fragments";
+import { needsEqual } from "./lock";
+import type { ItemNeeds } from "./metadata";
 
 export type State =
   | "ok"
@@ -24,6 +26,12 @@ export type State =
   | "output_drift"
   | "source_dirty_and_output_drift"
   | "kept-local";
+
+export type NeedsState =
+  | "current"
+  | "update_available"
+  | "unknown"
+  | "unavailable";
 
 export interface StatusRow {
   scope: "project" | "local";
@@ -45,6 +53,10 @@ export interface StatusRow {
   cliVersion?: string;
   label?: string;
   runtimeWarnings?: RuntimeWarning[];
+  /** Orthogonal freshness of the lock-pinned needs declaration. */
+  needsState?: NeedsState;
+  /** Present for every data row; null means a migrated v2 snapshot. */
+  lockedNeeds?: ItemNeeds | null;
 }
 
 export interface ExternalPersonalClaudeSkill {
@@ -136,6 +148,7 @@ export interface BuildStatusRowInput {
   upstreamSha: string | null;
   upstreamDirty: boolean;
   runtimeWarnings: RuntimeWarning[];
+  needsState?: NeedsState;
 }
 
 /** Pure assembly of a StatusRow from a lock entry and the computed facts. */
@@ -153,6 +166,8 @@ export function buildStatusRow(input: BuildStatusRowInput): StatusRow {
     ...(input.upstreamDirty && { upstreamDirty: input.upstreamDirty }),
     ...(entry.source === "data" && {
       sourceCommit: entry.sourceCommit,
+      needsState: input.needsState ?? "unavailable",
+      lockedNeeds: entry.needs ?? null,
       ...(entry.local === true && { local: true as const }),
       ...(entry.localReason !== undefined && {
         localReason: entry.localReason,
@@ -164,6 +179,15 @@ export function buildStatusRow(input: BuildStatusRowInput): StatusRow {
     }),
     ...runtimeWarningFields(input.runtimeWarnings),
   };
+}
+
+export function deriveNeedsState(
+  locked: ItemNeeds | null,
+  current: ItemNeeds | undefined,
+): NeedsState {
+  if (locked === null) return "unknown";
+  if (current === undefined) return "unavailable";
+  return needsEqual(locked, current) ? "current" : "update_available";
 }
 
 export function statusTargets(

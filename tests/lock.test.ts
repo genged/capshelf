@@ -21,7 +21,7 @@ describe("lock schema", () => {
   test("saveLock writes the canonical lock path and loadLock reads it", async () => {
     const project = await tempDir();
     const lock = {
-      version: 2 as const,
+      version: 3 as const,
       items: {
         [systemKey("skills", "capshelf")]: {
           source: "system" as const,
@@ -38,6 +38,50 @@ describe("lock schema", () => {
       lock,
     );
     expect(await loadLock(project)).toEqual(lock);
+  });
+
+  test("loads v2 in memory as v3 without rewriting the file", async () => {
+    const project = await tempDir();
+    await mkdir(join(project, ".capshelf"), { recursive: true });
+    const legacy = {
+      version: 2,
+      items: {
+        [dataKey("skills", "hello")]: {
+          source: "data",
+          sha: "abc123",
+          sourceCommit: "deadbeef",
+          appliedAt: "2026-05-08T00:00:00.000Z",
+        },
+      },
+    };
+    await writeFile(lockPath(project), `${JSON.stringify(legacy)}\n`);
+
+    expect(await loadLock(project)).toEqual({
+      version: 3,
+      items: {
+        [dataKey("skills", "hello")]: {
+          source: "data",
+          sha: "abc123",
+          sourceCommit: "deadbeef",
+          appliedAt: "2026-05-08T00:00:00.000Z",
+          needs: null,
+          needsSourceCommit: null,
+        },
+      },
+    });
+    expect(JSON.parse(await readFile(lockPath(project), "utf-8"))).toEqual(
+      legacy,
+    );
+  });
+
+  test("rejects future lock versions with upgrade guidance", async () => {
+    const project = await tempDir();
+    await mkdir(join(project, ".capshelf"), { recursive: true });
+    await writeFile(lockPath(project), '{"version":4,"items":{}}\n');
+
+    await expect(loadLock(project)).rejects.toThrow(
+      /lock version 4.*upgrade capshelf/,
+    );
   });
 
   test("loadLock rejects legacy v1 locks", async () => {
@@ -74,7 +118,19 @@ describe("lock schema", () => {
     };
     await writeFile(rootLockPath(project), JSON.stringify(lock));
 
-    expect(await loadLock(project)).toEqual(lock);
+    expect(await loadLock(project)).toEqual({
+      version: 3,
+      items: {
+        [dataKey("skills", "hello")]: {
+          source: "data",
+          sha: "abc123",
+          sourceCommit: "deadbeef",
+          appliedAt: "2026-05-08T00:00:00.000Z",
+          needs: null,
+          needsSourceCommit: null,
+        },
+      },
+    });
   });
 
   test("loadLock prefers .capshelf/capshelf.lock.json over a root-level copy", async () => {
@@ -86,11 +142,11 @@ describe("lock schema", () => {
       appliedAt: "2026-05-08T00:00:00.000Z",
     };
     const metadataLock = {
-      version: 2 as const,
+      version: 3 as const,
       items: { [systemKey("skills", "metadata-skill")]: entry },
     };
     const rootLock = {
-      version: 2 as const,
+      version: 3 as const,
       items: { [systemKey("skills", "root-skill")]: entry },
     };
     await writeFile(rootLockPath(project), JSON.stringify(rootLock));
@@ -169,7 +225,7 @@ describe("local lock", () => {
   test("local lock round-trips via saveLocalLock without touching the shared lock", async () => {
     const project = await tempDir();
     const lock = {
-      version: 2 as const,
+      version: 3 as const,
       items: {
         [dataKey("skills", "hello")]: {
           source: "data" as const,
@@ -178,6 +234,8 @@ describe("local lock", () => {
           appliedAt: "2026-05-08T00:00:00.000Z",
           local: true as const,
           localReason: "added with --local",
+          needs: { network: [], env: [], bin: [] },
+          needsSourceCommit: "deadbeef",
         },
       },
     };
