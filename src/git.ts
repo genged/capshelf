@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, realpath } from "node:fs/promises";
+import { access, lstat, realpath } from "node:fs/promises";
 import { basename, delimiter, join, resolve } from "node:path";
 import { CliError, ExitCode, PreconditionError } from "./errors";
 
@@ -30,6 +30,11 @@ export interface GitInvocation {
   stderr: string;
 }
 
+export interface GitRunOptions {
+  env?: Record<string, string | undefined>;
+  stdin?: string | Uint8Array;
+}
+
 // Execute git with args as an explicit argv array — never a shell string. This
 // is the ONLY way capshelf runs git: Bun's `$` applies a shell-escape layer
 // that also mis-serializes some non-Latin1 strings when building argv,
@@ -40,13 +45,15 @@ export interface GitInvocation {
 export async function gitTry(
   repo: string | null,
   args: string[],
+  options: GitRunOptions = {},
 ): Promise<GitInvocation> {
   await assertGitAvailable();
   const argv = repo === null ? ["git", ...args] : ["git", "-C", repo, ...args];
   const proc = Bun.spawn(argv, {
+    ...(options.env && { env: options.env }),
     stdout: "pipe",
     stderr: "pipe",
-    stdin: "ignore",
+    stdin: options.stdin === undefined ? "ignore" : new Blob([options.stdin]),
   });
   const [stdout, stderr] = await Promise.all([
     new Response(proc.stdout).arrayBuffer().then((b) => Buffer.from(b)),
@@ -61,8 +68,9 @@ export async function gitTry(
 export async function gitBuffer(
   repo: string | null,
   args: string[],
+  options: GitRunOptions = {},
 ): Promise<Buffer> {
-  const r = await gitTry(repo, args);
+  const r = await gitTry(repo, args, options);
   if (r.exitCode !== 0) {
     throw new Error(r.stderr || `git ${args.join(" ")} exited ${r.exitCode}`);
   }
@@ -73,8 +81,9 @@ export async function gitBuffer(
 export async function gitText(
   repo: string | null,
   args: string[],
+  options: GitRunOptions = {},
 ): Promise<string> {
-  return (await gitBuffer(repo, args)).toString("utf-8");
+  return (await gitBuffer(repo, args, options)).toString("utf-8");
 }
 
 export async function assertIsGitRepo(path: string): Promise<void> {
@@ -219,6 +228,46 @@ export async function commitExists(
   }
 }
 
+export async function resolveCommit(
+  repo: string,
+  commit: string,
+): Promise<string | null> {
+  const result = await gitTry(repo, [
+    "rev-parse",
+    "--verify",
+    "--quiet",
+    `${commit}^{commit}`,
+  ]);
+  return result.exitCode === 0 ? result.stdout.toString().trim() || null : null;
+}
+
+export async function isAncestor(
+  repo: string,
+  ancestor: string,
+  descendant: string,
+): Promise<boolean> {
+  const result = await gitTry(repo, [
+    "merge-base",
+    "--is-ancestor",
+    ancestor,
+    descendant,
+  ]);
+  if (result.exitCode === 0) return true;
+  if (result.exitCode === 1) return false;
+  throw new Error(
+    result.stderr || `git merge-base --is-ancestor exited ${result.exitCode}`,
+  );
+}
+
+export async function objectTypeAtCommit(
+  repo: string,
+  commit: string,
+  relPath: string,
+): Promise<string | null> {
+  const result = await gitTry(repo, ["cat-file", "-t", `${commit}:${relPath}`]);
+  return result.exitCode === 0 ? result.stdout.toString().trim() || null : null;
+}
+
 export interface GitTreeEntry {
   mode: string;
   type: string;
@@ -291,9 +340,22 @@ export async function gitVisibleFilesUnderPath(
     "--",
     normalized,
   ]);
-  return out
-    .split("\0")
-    .filter((path) => path.length > 0)
+  const candidates = out.split("\0").filter((path) => path.length > 0);
+  const present = await Promise.all(
+    candidates.map(async (path) => {
+      try {
+        const info = await lstat(join(repo, ...path.split("/")));
+        return info.isFile() || info.isSymbolicLink() ? path : null;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          return null;
+        }
+        throw error;
+      }
+    }),
+  );
+  return present
+    .filter((path): path is string => path !== null)
     .map((path) => relativeToGitPath(path, normalized))
     .sort();
 }

@@ -240,4 +240,74 @@ configure_git_user "$TMP/fresh-2"
 (cd "$PB" && "${CLI[@]}" --data "$TMP/fresh-2" update skills/hello >/dev/null)
 (cd "$PB" && "${CLI[@]}" --data "$TMP/fresh-2" status --strict >/dev/null)
 
+# --- 13. stale promote merge: clean team merge, pinned peer, conflict -------
+MERGE_ORIGIN="$TMP/merge-origin.git"
+MERGE_SEED="$TMP/merge-seed"
+MERGE_A_DATA="$TMP/merge-a-data"
+MERGE_B_DATA="$TMP/merge-b-data"
+MERGE_A="$TMP/merge-project-a"
+MERGE_B="$TMP/merge-project-b"
+MERGE_C="$TMP/merge-project-c"
+git init -q --initial-branch=main --bare "$MERGE_ORIGIN"
+git clone -q "$MERGE_ORIGIN" "$MERGE_SEED" 2>/dev/null
+configure_git_user "$MERGE_SEED"
+mkdir -p "$MERGE_SEED/skills/merge-demo"
+printf 'base\n' > "$MERGE_SEED/skills/merge-demo/SKILL.md"
+printf 'value=base\n' > "$MERGE_SEED/skills/merge-demo/line.txt"
+git -C "$MERGE_SEED" add -A
+git -C "$MERGE_SEED" commit -qm 'merge base'
+git -C "$MERGE_SEED" push -q origin main
+git clone -q "$MERGE_ORIGIN" "$MERGE_A_DATA"
+git clone -q "$MERGE_ORIGIN" "$MERGE_B_DATA"
+configure_git_user "$MERGE_A_DATA"
+configure_git_user "$MERGE_B_DATA"
+for project in "$MERGE_A" "$MERGE_B" "$MERGE_C"; do
+  mkdir -p "$project"
+  git -C "$project" init -q -b main
+done
+(cd "$MERGE_A" && "${CLI[@]}" init --data "$MERGE_A_DATA" --no-upstream >/dev/null)
+(cd "$MERGE_B" && "${CLI[@]}" init --data "$MERGE_B_DATA" --no-upstream >/dev/null)
+(cd "$MERGE_C" && "${CLI[@]}" init --data "$MERGE_B_DATA" --no-upstream >/dev/null)
+for project in "$MERGE_A" "$MERGE_B" "$MERGE_C"; do
+  (cd "$project" && "${CLI[@]}" add skills/merge-demo >/dev/null)
+done
+
+printf 'from alice\n' > "$MERGE_A/.agents/skills/merge-demo/upstream.txt"
+(cd "$MERGE_A" && "${CLI[@]}" promote skills/merge-demo -m 'alice disjoint' >/dev/null)
+git -C "$MERGE_A_DATA" push -q
+(cd "$MERGE_B" && "${CLI[@]}" sync-data >/dev/null)
+printf 'from bob\n' > "$MERGE_B/.agents/skills/merge-demo/local.txt"
+(cd "$MERGE_B" && "${CLI[@]}" promote skills/merge-demo --merge -m 'merge disjoint edits' --json > "$TMP/promote-merge.json")
+assert_valid_json "$TMP/promote-merge.json"
+assert_fixed_contains '"merged": true' "$TMP/promote-merge.json"
+assert_fixed_contains '"mergeBase":' "$TMP/promote-merge.json"
+assert_fixed_contains '"mergedUpstreamCommit":' "$TMP/promote-merge.json"
+assert_fixed_contains 'from alice' "$MERGE_B/.agents/skills/merge-demo/upstream.txt"
+assert_fixed_contains 'from bob' "$MERGE_B_DATA/skills/merge-demo/local.txt"
+test ! -e "$MERGE_C/.agents/skills/merge-demo/upstream.txt"
+(cd "$MERGE_C" && "${CLI[@]}" status --json > "$TMP/merge-third-status.json")
+assert_fixed_contains '"state": "update_available"' "$TMP/merge-third-status.json"
+
+git -C "$MERGE_B_DATA" push -q
+(cd "$MERGE_A" && "${CLI[@]}" sync-data >/dev/null)
+(cd "$MERGE_A" && "${CLI[@]}" update skills/merge-demo >/dev/null)
+printf 'value=alice\n' > "$MERGE_A/.agents/skills/merge-demo/line.txt"
+(cd "$MERGE_A" && "${CLI[@]}" promote skills/merge-demo -m 'alice conflict side' >/dev/null)
+git -C "$MERGE_A_DATA" push -q
+(cd "$MERGE_B" && "${CLI[@]}" sync-data >/dev/null)
+printf 'value=bob\n' > "$MERGE_B/.agents/skills/merge-demo/line.txt"
+MERGE_CONFLICT_HEAD="$(git -C "$MERGE_B_DATA" rev-parse HEAD)"
+MERGE_CONFLICT_LOCK="$(git hash-object "$MERGE_B/.capshelf/capshelf.lock.json")"
+MERGE_CONFLICT_LOCAL="$(git hash-object "$MERGE_B/.agents/skills/merge-demo/line.txt")"
+MERGE_CONFLICT_UPSTREAM="$(git hash-object "$MERGE_B_DATA/skills/merge-demo/line.txt")"
+run_expect_exit 3 "$TMP/promote-merge-conflict.txt" \
+  env -C "$MERGE_B" "${CLI[@]}" promote skills/merge-demo --merge -m 'bob conflict side'
+assert_fixed_contains 'merge conflicts' "$TMP/promote-merge-conflict.txt"
+assert_fixed_contains 'line.txt' "$TMP/promote-merge-conflict.txt"
+test "$(git -C "$MERGE_B_DATA" rev-parse HEAD)" = "$MERGE_CONFLICT_HEAD"
+test "$(git hash-object "$MERGE_B/.capshelf/capshelf.lock.json")" = "$MERGE_CONFLICT_LOCK"
+test "$(git hash-object "$MERGE_B/.agents/skills/merge-demo/line.txt")" = "$MERGE_CONFLICT_LOCAL"
+test "$(git hash-object "$MERGE_B_DATA/skills/merge-demo/line.txt")" = "$MERGE_CONFLICT_UPSTREAM"
+test ! -e "$MERGE_C/.agents/skills/merge-demo/upstream.txt"
+
 echo "✓ smoke-team-sync ok ($TMP)"

@@ -1,6 +1,6 @@
 import { $, file } from "bun";
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -161,6 +161,26 @@ describe("git cleanliness helpers", () => {
       ".env.1password",
       "SKILL.md",
       "notes.md",
+    ]);
+  });
+
+  test("gitVisibleFilesUnderPath excludes deleted tracked files from the working snapshot", async () => {
+    const repo = await tempRepo();
+    const item = join(repo, "skills", "hello");
+    await mkdir(item, { recursive: true });
+    await writeFile(join(repo, ".gitignore"), "*.ignored\n");
+    await writeFile(join(item, "keep.txt"), "base\n");
+    await writeFile(join(item, "deleted.txt"), "delete me\n");
+    await commitAll(repo, "baseline");
+
+    await writeFile(join(item, "keep.txt"), "modified\n");
+    await rm(join(item, "deleted.txt"));
+    await writeFile(join(item, "new.txt"), "untracked\n");
+    await writeFile(join(item, "secret.ignored"), "ignored\n");
+
+    expect(await gitVisibleFilesUnderPath(repo, "skills/hello")).toEqual([
+      "keep.txt",
+      "new.txt",
     ]);
   });
 });

@@ -1,5 +1,10 @@
-import { existsSync } from "node:fs";
-import { relative } from "node:path";
+import { constants, existsSync } from "node:fs";
+import { lstat, readFile } from "node:fs/promises";
+import { join, relative } from "node:path";
+import { hashNamedContents } from "./content-hash";
+import { lsTreeEntriesAtCommit, showAtCommit } from "./git";
+import type { GitFileMode, NamedFile } from "./merge-tree";
+import { METADATA_SIDECAR } from "./metadata";
 import type { CopyDirectoryItemKind } from "./master";
 import {
   isMetadataSidecarPath,
@@ -84,4 +89,75 @@ async function filesystemSnapshot(path: string): Promise<ItemSnapshot> {
     ),
     files,
   };
+}
+
+export async function namedFilesFromInstalledSnapshot(
+  snapshot: ItemSnapshot,
+): Promise<NamedFile[]> {
+  const files: NamedFile[] = [];
+  for (const path of snapshot.files) {
+    if (path === METADATA_SIDECAR) continue;
+    const fullPath = join(snapshot.localPath, ...path.split("/"));
+    const stats = await lstat(fullPath);
+    if (!stats.isFile()) continue;
+    files.push({
+      path,
+      content: await readFile(fullPath),
+      mode: fileMode(stats.mode),
+    });
+  }
+  return files.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+export async function sidecarFromInstalledSnapshot(
+  snapshot: ItemSnapshot,
+): Promise<Buffer | null> {
+  if (!snapshot.files.includes(METADATA_SIDECAR)) return null;
+  return await readFile(join(snapshot.localPath, METADATA_SIDECAR));
+}
+
+export async function namedFilesAtCommit(
+  dataRepo: string,
+  repoRelPath: string,
+  commit: string,
+): Promise<NamedFile[]> {
+  const prefix = `${repoRelPath}/`;
+  const files: NamedFile[] = [];
+  for (const entry of await lsTreeEntriesAtCommit(
+    dataRepo,
+    commit,
+    repoRelPath,
+  )) {
+    if (entry.type !== "blob" || !entry.path.startsWith(prefix)) continue;
+    const path = entry.path.slice(prefix.length);
+    if (path === METADATA_SIDECAR) continue;
+    files.push({
+      path,
+      content: await showAtCommit(dataRepo, commit, entry.path),
+      mode: entry.mode === "100755" ? "100755" : "100644",
+    });
+  }
+  return files.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+export async function sidecarAtCommit(
+  dataRepo: string,
+  repoRelPath: string,
+  commit: string,
+): Promise<Buffer | null> {
+  const path = `${repoRelPath}/${METADATA_SIDECAR}`;
+  const entry = (
+    await lsTreeEntriesAtCommit(dataRepo, commit, repoRelPath)
+  ).find((candidate) => candidate.path === path && candidate.type === "blob");
+  return entry ? await showAtCommit(dataRepo, commit, path) : null;
+}
+
+export function shaOfNamedFiles(files: NamedFile[]): string {
+  return hashNamedContents(
+    files.map((file) => ({ name: file.path, content: file.content })),
+  );
+}
+
+function fileMode(mode: number): GitFileMode {
+  return (mode & constants.S_IXUSR) !== 0 ? "100755" : "100644";
 }

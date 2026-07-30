@@ -25,8 +25,12 @@ import {
   assertRepoCleanOutsidePath,
   assertRepoCleanOutsidePaths,
   commitInRepo,
+  headSha,
+  isAncestor,
   lastTouchingContentCommit,
+  objectTypeAtCommit,
   originRemoteUrl,
+  resolveCommit,
   statusPorcelain,
 } from "../git";
 import { isSystemItemName } from "../bundled";
@@ -62,19 +66,40 @@ import {
   type PromoteResult,
   type Scope,
 } from "../promote-core";
-import { installedSnapshot } from "../item-snapshot";
+import {
+  installedSnapshot,
+  namedFilesAtCommit,
+  namedFilesFromInstalledSnapshot,
+  shaOfNamedFiles,
+  sidecarAtCommit,
+  sidecarFromInstalledSnapshot,
+} from "../item-snapshot";
+import { mergeNamedTrees, namedFilesEqual } from "../merge-tree";
+import {
+  beginInstalledReconciliation,
+  commitNamedFilesTransaction,
+} from "../promote-transaction";
+import type { PromoteTransactionHooks } from "../promote-transaction";
 
 interface PromoteOptions {
   message?: string;
   json?: boolean;
   local?: boolean;
   staleOk?: boolean;
+  merge?: boolean;
+  persistLock?: () => Promise<void>;
+  afterMergePlan?: () => Promise<void>;
+  transactionHooks?: PromoteTransactionHooks;
 }
 
 interface SyncOptions {
   message?: string;
   scope?: Scope;
   staleOk?: boolean;
+  merge?: boolean;
+  persistLock?: () => Promise<void>;
+  afterMergePlan?: () => Promise<void>;
+  transactionHooks?: PromoteTransactionHooks;
 }
 
 export function registerPromote(program: Command): void {
@@ -88,9 +113,18 @@ export function registerPromote(program: Command): void {
       "--stale-ok",
       "intentionally overwrite data-repo content newer than this project's lock",
     )
+    .option(
+      "--merge",
+      "merge newer upstream content with this installed edit when clean",
+    )
     .option("-m, --message <msg>", "git commit message")
     .option("--json", "output JSON")
     .action(async (itemRef: string, opts: PromoteOptions, cmd: Command) => {
+      if (opts.merge && opts.staleOk) {
+        throw new PreconditionError(
+          "--merge and --stale-ok cannot be combined; choose merge or overwrite",
+        );
+      }
       const ref = parseItemRef(itemRef);
       if (opts.local && ref.kind) {
         assertLocalScopeSupported(ref.kind, ref.name, "promote --local");
@@ -112,14 +146,15 @@ export function registerPromote(program: Command): void {
       let result: PromoteResult;
       let saveProject = false;
       let saveLocal = false;
+      let lockPersisted = false;
       if (opts.local) {
-        result = await promoteLocalTracked(
-          project,
-          dataRepo,
-          localLock,
-          ref,
-          opts,
-        );
+        result = await promoteLocalTracked(project, dataRepo, localLock, ref, {
+          ...opts,
+          persistLock: async () => {
+            await saveLocalLock(project, localLock);
+            lockPersisted = true;
+          },
+        });
         saveLocal = true;
       } else {
         result = await promoteProjectTracked(
@@ -129,16 +164,22 @@ export function registerPromote(program: Command): void {
           lock,
           localLock,
           ref,
-          opts,
+          {
+            ...opts,
+            persistLock: async () => {
+              await saveLock(project, lock);
+              lockPersisted = true;
+            },
+          },
         );
         saveProject = true;
       }
 
       if (saveProject) {
         await saveManifest(project, manifest);
-        await saveLock(project, lock);
+        if (!lockPersisted) await saveLock(project, lock);
       }
-      if (saveLocal) {
+      if (saveLocal && !lockPersisted) {
         await saveLocalLock(project, localLock);
       }
 
@@ -153,9 +194,18 @@ export function registerPromote(program: Command): void {
         );
         return;
       }
-      console.log(
-        `✓ ${result.action} data/${result.kind}/${result.name} @ ${result.sha}`,
-      );
+      if (result.merged) {
+        const action = result.committed
+          ? "merged upstream and promoted"
+          : "merged result already upstream for";
+        console.log(
+          `✓ ${action} data/${result.kind}/${result.name} @ ${result.sha}`,
+        );
+      } else {
+        console.log(
+          `✓ ${result.action} data/${result.kind}/${result.name} @ ${result.sha}`,
+        );
+      }
       console.log(`  source commit: ${result.sourceCommit}`);
       printRuntimeWarnings(result.runtimeWarnings);
       printPrivateDotenvWarnings(result.privateDotenvWarnings);
@@ -198,6 +248,11 @@ async function promoteProjectTracked(
 
   const parsed = parseLockKey(key);
   if (isFragmentKind(parsed.kind)) {
+    if (opts.merge) {
+      throw new PreconditionError(
+        `promote --merge requires a copy-directory item; ${parsed.kind}/${parsed.name} is a fragment`,
+      );
+    }
     const result = await promoteFragmentSource(
       project,
       dataRepo,
@@ -253,6 +308,11 @@ async function promoteLocalTracked(
 
   const parsed = parseLockKey(key);
   assertLocalScopeSupported(parsed.kind, parsed.name, "promote");
+  if (opts.merge && parsed.kind === "pi-extensions") {
+    throw new PreconditionError(
+      "promote --merge for pi-extensions is supported only in project scope",
+    );
+  }
   if (!isCopyDirectoryItemKind(parsed.kind)) {
     throw new PreconditionError(
       `promote --local requires a copy-directory item: ${parsed.kind}/${parsed.name}`,
@@ -551,6 +611,20 @@ export async function syncTrackedIntoDataRepo(
         ...(runtimeWarnings.length > 0 && { runtimeWarnings }),
       };
     }
+    if (opts.merge) {
+      return await mergeStalePromote({
+        project,
+        dataRepo,
+        kind,
+        name,
+        lock,
+        key,
+        entry,
+        snapshot,
+        upstreamSha: upstream.upstreamSha,
+        opts,
+      });
+    }
     if (!opts.staleOk) {
       throw stalePromoteError({
         dataRepo,
@@ -627,6 +701,231 @@ export async function syncTrackedIntoDataRepo(
     ...(runtimeWarnings.length > 0 && { runtimeWarnings }),
     ...(privateDotenvWarnings.length > 0 && { privateDotenvWarnings }),
   };
+}
+
+async function mergeStalePromote(input: {
+  project: string;
+  dataRepo: string;
+  kind: "skills" | "pi-extensions";
+  name: string;
+  lock: Lock;
+  key: string;
+  entry: ReturnType<typeof dataEntryOrThrow>;
+  snapshot: NonNullable<Awaited<ReturnType<typeof installedSnapshot>>>;
+  upstreamSha: string;
+  opts: SyncOptions;
+}): Promise<PromoteResult> {
+  const {
+    project,
+    dataRepo,
+    kind,
+    name,
+    lock,
+    key,
+    entry,
+    snapshot,
+    upstreamSha,
+    opts,
+  } = input;
+  const scope = opts.scope ?? "project";
+  if (kind === "pi-extensions" && scope === "local") {
+    throw new PreconditionError(
+      "promote --merge for pi-extensions is supported only in project scope",
+    );
+  }
+
+  const repoRelPath = itemRepoRelPath(kind, name);
+  await assertRepoCleanOutsidePath(dataRepo, repoRelPath);
+  const plannedHead = await headSha(dataRepo);
+  const mergeBase = await resolveCommit(dataRepo, entry.sourceCommit);
+  if (mergeBase === null) {
+    throw mergeProvenanceError(
+      kind,
+      name,
+      "the locked source commit is not available in the data repo",
+      scope,
+    );
+  }
+  if (!(await isAncestor(dataRepo, mergeBase, plannedHead))) {
+    throw mergeProvenanceError(
+      kind,
+      name,
+      "the locked source commit is not an ancestor of data-repo HEAD",
+      scope,
+    );
+  }
+  if ((await objectTypeAtCommit(dataRepo, mergeBase, repoRelPath)) !== "tree") {
+    throw mergeProvenanceError(
+      kind,
+      name,
+      "the locked source commit does not contain the item directory",
+      scope,
+    );
+  }
+
+  const [baseFiles, localFiles, upstreamFiles, localSidecar, upstreamSidecar] =
+    await Promise.all([
+      namedFilesAtCommit(dataRepo, repoRelPath, mergeBase),
+      namedFilesFromInstalledSnapshot(snapshot),
+      namedFilesAtCommit(dataRepo, repoRelPath, plannedHead),
+      sidecarFromInstalledSnapshot(snapshot),
+      sidecarAtCommit(dataRepo, repoRelPath, plannedHead),
+    ]);
+  if (shaOfNamedFiles(baseFiles) !== entry.sha) {
+    throw mergeProvenanceError(
+      kind,
+      name,
+      "the locked source commit does not reproduce the locked item content",
+      scope,
+    );
+  }
+
+  const merged = await mergeNamedTrees(baseFiles, localFiles, upstreamFiles);
+  if (!merged.ok) {
+    const scopeFlag = scope === "local" ? " --local" : "";
+    const localWarning =
+      scope === "local"
+        ? "  local-scope files are excluded from project Git; copy the edit somewhere safe first.\n\n"
+        : "";
+    throw new PreconditionError(
+      `automatic merge conflicts in ${kind}/${name}; nothing changed.\n\n` +
+        `  conflicting paths:\n${merged.conflicts.map((path) => `    ${path}`).join("\n")}\n\n` +
+        "  preserve your edit before taking upstream, then reapply it:\n" +
+        localWarning +
+        `    capshelf update ${kind}/${name}${scopeFlag}\n\n` +
+        "  to replace upstream on purpose:\n" +
+        `    capshelf promote ${kind}/${name}${scopeFlag} --stale-ok -m "..."`,
+    );
+  }
+  await opts.afterMergePlan?.();
+
+  const revalidateInputs = async (): Promise<void> => {
+    const revalidated = await installedSnapshot(project, kind, name, scope);
+    if (revalidated === null) {
+      throw new PreconditionError(
+        `installed files changed while preparing the merge: ${installedPath(project, kind, name)}`,
+      );
+    }
+    const [revalidatedFiles, revalidatedSidecar] = await Promise.all([
+      namedFilesFromInstalledSnapshot(revalidated),
+      sidecarFromInstalledSnapshot(revalidated),
+    ]);
+    const latestUpstream = await upstreamFactsForItem(dataRepo, kind, name);
+    await assertRepoCleanOutsidePath(dataRepo, repoRelPath);
+    if (
+      (await headSha(dataRepo)) !== plannedHead ||
+      latestUpstream.upstreamDirty ||
+      latestUpstream.upstreamSha !== upstreamSha ||
+      !namedFilesEqual(localFiles, revalidatedFiles) ||
+      !buffersEqual(localSidecar, revalidatedSidecar)
+    ) {
+      throw new PreconditionError(
+        `${kind}/${name} changed while preparing the merge; nothing was committed. Retry promote --merge.`,
+      );
+    }
+  };
+  await revalidateInputs();
+
+  const mergedFiles = merged.files;
+  const mergedSha = shaOfNamedFiles(mergedFiles);
+  const mergedSidecar = localSidecar ?? upstreamSidecar;
+  const noDataCommit =
+    namedFilesEqual(mergedFiles, upstreamFiles) &&
+    buffersEqual(mergedSidecar, upstreamSidecar);
+
+  let sourceCommit: string;
+  let needsSnapshot: Awaited<ReturnType<typeof captureCommittedItemNeeds>>;
+  if (noDataCommit) {
+    sourceCommit = await lastTouchingContentCommit(dataRepo, repoRelPath);
+    needsSnapshot = await captureCommittedItemNeeds(dataRepo, { kind, name });
+    await revalidateInputs();
+    const installedTransaction = await beginInstalledReconciliation(
+      snapshot.localPath,
+      localFiles,
+      mergedFiles,
+    );
+    const previous = lock.items[key];
+    lock.items[key] = refreshDataLockEntry(entry, {
+      sha: mergedSha,
+      sourceCommit,
+      ...needsSnapshot,
+    });
+    try {
+      await opts.persistLock?.();
+      await installedTransaction.commit();
+    } catch (error) {
+      if (previous === undefined) {
+        delete lock.items[key];
+      } else {
+        lock.items[key] = previous;
+      }
+      await installedTransaction.rollback();
+      throw error;
+    }
+  } else {
+    await commitNamedFilesTransaction({
+      repo: dataRepo,
+      repoRelPath,
+      files: mergedFiles,
+      sidecar: mergedSidecar,
+      expectedHead: plannedHead,
+      message: opts.message ?? `capshelf: ${kind}/${name}`,
+      beforePersistentMutation: revalidateInputs,
+      hooks: opts.transactionHooks,
+    });
+    const installedTransaction = await beginInstalledReconciliation(
+      snapshot.localPath,
+      localFiles,
+      mergedFiles,
+    );
+    await installedTransaction.commit();
+    sourceCommit = await lastTouchingContentCommit(dataRepo, repoRelPath);
+    needsSnapshot = await captureCommittedItemNeeds(dataRepo, { kind, name });
+    lock.items[key] = refreshDataLockEntry(entry, {
+      sha: mergedSha,
+      sourceCommit,
+      ...needsSnapshot,
+    });
+  }
+
+  const runtimeWarnings = runtimeWarningsForItem(project, kind, name, {
+    needs: needsSnapshot.needs,
+  });
+  const privateDotenvWarnings = privateDotenvFiles(
+    mergedFiles.map((file) => file.path),
+  );
+  return {
+    source: "data",
+    kind,
+    name,
+    action: noDataCommit ? "already-upstream" : "promoted",
+    sha: mergedSha,
+    sourceCommit,
+    committed: !noDataCommit,
+    merged: true,
+    mergeBase,
+    mergedUpstreamCommit: plannedHead,
+    ...(runtimeWarnings.length > 0 && { runtimeWarnings }),
+    ...(privateDotenvWarnings.length > 0 && { privateDotenvWarnings }),
+  };
+}
+
+function buffersEqual(a: Buffer | null, b: Buffer | null): boolean {
+  return a === null ? b === null : b !== null && a.equals(b);
+}
+
+function mergeProvenanceError(
+  kind: ItemKind,
+  name: string,
+  reason: string,
+  scope: Scope,
+): PreconditionError {
+  const scopeFlag = scope === "local" ? " --local" : "";
+  return new PreconditionError(
+    `cannot safely merge ${kind}/${name}: ${reason}.\n` +
+      "  restore the locked data-repo history, or preserve your edits and refresh the item:\n" +
+      `    capshelf update ${kind}/${name}${scopeFlag}`,
+  );
 }
 
 function stalePromoteError(input: {

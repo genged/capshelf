@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { $, file } from "bun";
 import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -11,7 +11,11 @@ import {
 } from "../src/promote-core";
 import { dataKey } from "../src/lock";
 import type { DataLockEntry, Lock, LockEntry } from "../src/lock";
-import { lastTouchingCommit, lastTouchingContentCommit } from "../src/git";
+import {
+  headSha,
+  lastTouchingCommit,
+  lastTouchingContentCommit,
+} from "../src/git";
 import { shaOfGitVisibleItem } from "../src/master";
 import { shaOfInstalled } from "../src/installed";
 import {
@@ -458,7 +462,657 @@ async function staleFixture(): Promise<{
   return { dataRepo, project, lock, lockedSha, upstreamCommit, upstreamSha };
 }
 
+async function subsumedMergeFixture(): Promise<{
+  dataRepo: string;
+  project: string;
+  lock: Lock;
+  installed: string;
+  lockedCommit: string;
+  upstreamCommit: string;
+  upstreamSha: string;
+}> {
+  const dataRepo = await tempRepo("capshelf-subsumed-data-");
+  const project = await tempRepo("capshelf-subsumed-project-");
+  const dataItem = join(dataRepo, "skills", "hello");
+  await mkdir(dataItem, { recursive: true });
+  await writeFile(join(dataItem, "SKILL.md"), "base\n");
+  await writeFile(join(dataItem, "local.txt"), "value=base\n");
+  await writeFile(join(dataItem, "upstream.txt"), "value=base\n");
+  await commitAll(dataRepo, "base");
+  const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+  const lockedCommit = await lastTouchingContentCommit(
+    dataRepo,
+    "skills/hello",
+  );
+  await writeFile(join(dataItem, "local.txt"), "value=local\n");
+  await writeFile(join(dataItem, "upstream.txt"), "value=upstream\n");
+  await commitAll(dataRepo, "upstream subsumes local");
+  const upstreamCommit = await lastTouchingContentCommit(
+    dataRepo,
+    "skills/hello",
+  );
+  const upstreamSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+  const installedDir = join(project, ".agents", "skills", "hello");
+  const installed = join(installedDir, "local.txt");
+  await mkdir(installedDir, {
+    recursive: true,
+  });
+  await writeFile(join(installedDir, "SKILL.md"), "base\n");
+  await writeFile(installed, "value=local\n");
+  await writeFile(join(installedDir, "upstream.txt"), "value=base\n");
+  return {
+    dataRepo,
+    project,
+    lock: lockWith({
+      source: "data",
+      sha: lockedSha,
+      sourceCommit: lockedCommit,
+      appliedAt: "2026-06-01T00:00:00.000Z",
+      label: "v1",
+    }),
+    installed,
+    lockedCommit,
+    upstreamCommit,
+    upstreamSha,
+  };
+}
+
+async function disjointMergeFixture(prefix: string): Promise<{
+  dataRepo: string;
+  project: string;
+  dataItem: string;
+  installed: string;
+  lock: Lock;
+  lockedCommit: string;
+  upstreamHead: string;
+}> {
+  const dataRepo = await tempRepo(`${prefix}-data-`);
+  const project = await tempRepo(`${prefix}-project-`);
+  const dataItem = join(dataRepo, "skills", "hello");
+  await mkdir(dataItem, { recursive: true });
+  await writeFile(join(dataItem, "SKILL.md"), "base\n");
+  await commitAll(dataRepo, "base");
+  const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+  const lockedCommit = await lastTouchingContentCommit(
+    dataRepo,
+    "skills/hello",
+  );
+  await writeFile(join(dataItem, "upstream.txt"), "upstream\n");
+  await commitAll(dataRepo, "upstream");
+  const upstreamHead = await headSha(dataRepo);
+  const installed = join(project, ".agents", "skills", "hello");
+  await mkdir(installed, { recursive: true });
+  await writeFile(join(installed, "SKILL.md"), "base\n");
+  await writeFile(join(installed, "local.txt"), "local\n");
+  return {
+    dataRepo,
+    project,
+    dataItem,
+    installed,
+    lock: lockWith({
+      source: "data",
+      sha: lockedSha,
+      sourceCommit: lockedCommit,
+      appliedAt: "2026-06-01T00:00:00.000Z",
+    }),
+    lockedCommit,
+    upstreamHead,
+  };
+}
+
 describe("stale-promote guard (copy items)", () => {
+  test("--merge carries a tracked local deletion into data and installed trees", async () => {
+    const dataRepo = await tempRepo("capshelf-merge-delete-data-");
+    const project = await tempRepo("capshelf-merge-delete-project-");
+    const dataItem = join(dataRepo, "skills", "hello");
+    await mkdir(dataItem, { recursive: true });
+    await writeFile(join(dataItem, "SKILL.md"), "base\n");
+    await writeFile(join(dataItem, "delete.txt"), "remove me\n");
+    await commitAll(dataRepo, "base");
+    const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+    const lockedCommit = await lastTouchingContentCommit(
+      dataRepo,
+      "skills/hello",
+    );
+    await writeFile(join(dataItem, "upstream.txt"), "upstream\n");
+    await commitAll(dataRepo, "upstream add");
+
+    const installed = join(project, ".agents", "skills", "hello");
+    await mkdir(installed, { recursive: true });
+    await writeFile(join(installed, "SKILL.md"), "base\n");
+    await writeFile(join(installed, "delete.txt"), "remove me\n");
+    await commitAll(project, "installed base");
+    await rm(join(installed, "delete.txt"));
+    const lock = lockWith({
+      source: "data",
+      sha: lockedSha,
+      sourceCommit: lockedCommit,
+      appliedAt: "2026-06-01T00:00:00.000Z",
+    });
+
+    const result = await syncTrackedIntoDataRepo(
+      project,
+      dataRepo,
+      "skills",
+      "hello",
+      lock,
+      { merge: true },
+    );
+
+    expect(result.merged).toBe(true);
+    expect(result.committed).toBe(true);
+    expect(existsSync(join(dataItem, "delete.txt"))).toBe(false);
+    expect(existsSync(join(installed, "delete.txt"))).toBe(false);
+    expect(await file(join(dataItem, "upstream.txt")).text()).toBe(
+      "upstream\n",
+    );
+    expect(await file(join(installed, "upstream.txt")).text()).toBe(
+      "upstream\n",
+    );
+  });
+
+  test("--merge combines disjoint local and upstream edits into one commit", async () => {
+    const dataRepo = await tempRepo("capshelf-merge-data-");
+    const project = await tempRepo("capshelf-merge-project-");
+    const dataItem = join(dataRepo, "skills", "hello");
+    await mkdir(dataItem, { recursive: true });
+    await writeFile(join(dataItem, "SKILL.md"), "base\n");
+    await writeFile(join(dataItem, ".capshelf.yml"), "tags: [base]\n");
+    await commitAll(dataRepo, "base");
+    const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+    const lockedCommit = await lastTouchingContentCommit(
+      dataRepo,
+      "skills/hello",
+    );
+    await writeFile(join(dataItem, "upstream.txt"), "upstream\n");
+    await writeFile(join(dataItem, ".capshelf.yml"), "tags: [upstream]\n");
+    await commitAll(dataRepo, "upstream");
+    const upstreamHead = await headSha(dataRepo);
+
+    const installed = join(project, ".agents", "skills", "hello");
+    await mkdir(installed, { recursive: true });
+    await writeFile(join(installed, "SKILL.md"), "base\n");
+    await writeFile(join(installed, "local.txt"), "local\n");
+    await writeFile(join(installed, ".capshelf.yml"), "tags: [local]\n");
+    await writeFile(join(project, ".gitignore"), ".venv/\n");
+    await mkdir(join(installed, ".venv"));
+    await writeFile(join(installed, ".venv", "generated.txt"), "generated\n");
+    const lock = lockWith({
+      source: "data",
+      sha: lockedSha,
+      sourceCommit: lockedCommit,
+      appliedAt: "2026-06-01T00:00:00.000Z",
+      label: "v1",
+    });
+    const originalEntry = structuredClone(
+      lock.items[dataKey("skills", "hello")]!,
+    );
+
+    const result = await syncTrackedIntoDataRepo(
+      project,
+      dataRepo,
+      "skills",
+      "hello",
+      lock,
+      { merge: true },
+    );
+
+    expect(result.merged).toBe(true);
+    expect(result.mergeBase).toBe(lockedCommit);
+    expect(result.mergedUpstreamCommit).toBe(upstreamHead);
+    expect(result.committed).toBe(true);
+    expect(result.staleOverride).toBeUndefined();
+    expect(await file(join(dataItem, "local.txt")).text()).toBe("local\n");
+    expect(await file(join(dataItem, "upstream.txt")).text()).toBe(
+      "upstream\n",
+    );
+    expect(await file(join(dataItem, ".capshelf.yml")).text()).toBe(
+      "tags: [local]\n",
+    );
+    expect(await file(join(installed, "upstream.txt")).text()).toBe(
+      "upstream\n",
+    );
+    expect(await file(join(installed, ".venv", "generated.txt")).text()).toBe(
+      "generated\n",
+    );
+    expect(existsSync(join(dataItem, ".venv"))).toBe(false);
+    expect((await $`git -C ${dataRepo} status --porcelain`.text()).trim()).toBe(
+      "",
+    );
+    expect(
+      (await $`git -C ${dataRepo} rev-list --parents -n 1 HEAD`.text())
+        .trim()
+        .split(" "),
+    ).toHaveLength(2);
+    expect(lock.items[dataKey("skills", "hello")]?.sha).toBe(result.sha);
+
+    const mergedHead = await headSha(dataRepo);
+    lock.items[dataKey("skills", "hello")] = originalEntry;
+    await rm(join(installed, "upstream.txt"));
+    const retry = await syncTrackedIntoDataRepo(
+      project,
+      dataRepo,
+      "skills",
+      "hello",
+      lock,
+      { merge: true, persistLock: async () => {} },
+    );
+    expect(retry.action).toBe("already-upstream");
+    expect(retry.merged).toBe(true);
+    expect(retry.committed).toBe(false);
+    expect(await headSha(dataRepo)).toBe(mergedHead);
+  });
+
+  test("--merge preserves an upstream sidecar without copying it into the installed item", async () => {
+    const f = await disjointMergeFixture("capshelf-merge-sidecar");
+    await writeFile(join(f.dataItem, ".capshelf.yml"), "tags: [upstream]\n");
+    await commitAll(f.dataRepo, "upstream metadata");
+
+    const result = await syncTrackedIntoDataRepo(
+      f.project,
+      f.dataRepo,
+      "skills",
+      "hello",
+      f.lock,
+      { merge: true },
+    );
+
+    expect(result.merged).toBe(true);
+    expect(await file(join(f.dataItem, ".capshelf.yml")).text()).toBe(
+      "tags: [upstream]\n",
+    );
+    expect(existsSync(join(f.installed, ".capshelf.yml"))).toBe(false);
+  });
+
+  test("--merge conflicts leave the data repo, installed files, and lock untouched", async () => {
+    const f = await staleFixture();
+    const headBefore = await headSha(f.dataRepo);
+    const lockBefore = structuredClone(f.lock);
+
+    await expect(
+      syncTrackedIntoDataRepo(
+        f.project,
+        f.dataRepo,
+        "skills",
+        "hello",
+        f.lock,
+        { merge: true },
+      ),
+    ).rejects.toThrow(/merge conflicts[\s\S]*SKILL\.md/);
+
+    expect(await headSha(f.dataRepo)).toBe(headBefore);
+    expect(f.lock).toEqual(lockBefore);
+    expect(
+      await file(join(f.dataRepo, "skills", "hello", "SKILL.md")).text(),
+    ).toBe("hello v2 from teammate\n");
+    expect(
+      await file(
+        join(f.project, ".agents", "skills", "hello", "SKILL.md"),
+      ).text(),
+    ).toBe("hello v2 local edit\n");
+  });
+
+  test("--merge conflict guidance preserves local scope and recoverability warning", async () => {
+    const f = await staleFixture();
+
+    await expect(
+      syncTrackedIntoDataRepo(
+        f.project,
+        f.dataRepo,
+        "skills",
+        "hello",
+        f.lock,
+        { scope: "local", merge: true },
+      ),
+    ).rejects.toThrow(
+      /local-scope files are excluded[\s\S]*capshelf update skills\/hello --local[\s\S]*capshelf promote skills\/hello --local --stale-ok/,
+    );
+  });
+
+  test("--merge pre-merge convergence keeps the existing no-merge result", async () => {
+    const f = await staleFixture();
+    await writeFile(
+      join(f.project, ".agents", "skills", "hello", "SKILL.md"),
+      "hello v2 from teammate\n",
+    );
+    const headBefore = await headSha(f.dataRepo);
+    let persisted = 0;
+
+    const result = await syncTrackedIntoDataRepo(
+      f.project,
+      f.dataRepo,
+      "skills",
+      "hello",
+      f.lock,
+      {
+        merge: true,
+        persistLock: async () => {
+          persisted++;
+        },
+      },
+    );
+
+    expect(result.merged).toBeUndefined();
+    expect(result.action).toBe("already-upstream");
+    expect(result.committed).toBe(false);
+    expect(await headSha(f.dataRepo)).toBe(headBefore);
+    expect(persisted).toBe(0);
+    expect(f.lock.items[dataKey("skills", "hello")]?.sha).toBe(f.upstreamSha);
+  });
+
+  test("--merge convergence reconciles and persists the lock without a commit", async () => {
+    const f = await subsumedMergeFixture();
+    const headBefore = await headSha(f.dataRepo);
+    let persisted = 0;
+
+    const result = await syncTrackedIntoDataRepo(
+      f.project,
+      f.dataRepo,
+      "skills",
+      "hello",
+      f.lock,
+      {
+        merge: true,
+        persistLock: async () => {
+          persisted++;
+        },
+      },
+    );
+
+    expect(result.merged).toBe(true);
+    expect(result.mergeBase).toBe(f.lockedCommit);
+    expect(result.mergedUpstreamCommit).toBe(f.upstreamCommit);
+    expect(result.action).toBe("already-upstream");
+    expect(result.committed).toBe(false);
+    expect(await headSha(f.dataRepo)).toBe(headBefore);
+    expect(persisted).toBe(1);
+    expect(
+      await file(
+        join(f.project, ".agents", "skills", "hello", "upstream.txt"),
+      ).text(),
+    ).toBe("value=upstream\n");
+    expect(f.lock.items[dataKey("skills", "hello")]?.sha).toBe(f.upstreamSha);
+  });
+
+  test("--merge convergence rolls installed content and lock state back when persistence fails", async () => {
+    const f = await subsumedMergeFixture();
+    const lockBefore = structuredClone(f.lock);
+    const headBefore = await headSha(f.dataRepo);
+
+    await expect(
+      syncTrackedIntoDataRepo(
+        f.project,
+        f.dataRepo,
+        "skills",
+        "hello",
+        f.lock,
+        {
+          merge: true,
+          persistLock: async () => {
+            throw new Error("lock write failed");
+          },
+        },
+      ),
+    ).rejects.toThrow("lock write failed");
+
+    expect(f.lock).toEqual(lockBefore);
+    expect(await headSha(f.dataRepo)).toBe(headBefore);
+    expect(await file(f.installed).text()).toBe("value=local\n");
+    expect(
+      await file(
+        join(f.project, ".agents", "skills", "hello", "upstream.txt"),
+      ).text(),
+    ).toBe("value=base\n");
+  });
+
+  test("--merge rejects inconsistent base provenance without writes", async () => {
+    const f = await staleFixture();
+    const entry = f.lock.items[dataKey("skills", "hello")];
+    if (entry?.source !== "data") throw new Error("expected data entry");
+    entry.sourceCommit = f.upstreamCommit;
+    const headBefore = await headSha(f.dataRepo);
+    const localBefore = await file(
+      join(f.project, ".agents", "skills", "hello", "SKILL.md"),
+    ).text();
+
+    await expect(
+      syncTrackedIntoDataRepo(
+        f.project,
+        f.dataRepo,
+        "skills",
+        "hello",
+        f.lock,
+        { merge: true },
+      ),
+    ).rejects.toThrow(/does not reproduce the locked item content/);
+
+    expect(await headSha(f.dataRepo)).toBe(headBefore);
+    expect(
+      await file(
+        join(f.project, ".agents", "skills", "hello", "SKILL.md"),
+      ).text(),
+    ).toBe(localBefore);
+  });
+
+  test("--merge rejects missing and non-ancestor base commits without writes", async () => {
+    const missing = await staleFixture();
+    const missingEntry = missing.lock.items[dataKey("skills", "hello")];
+    if (missingEntry?.source !== "data") throw new Error("expected data entry");
+    missingEntry.sourceCommit = "a".repeat(40);
+    const missingHead = await headSha(missing.dataRepo);
+    await expect(
+      syncTrackedIntoDataRepo(
+        missing.project,
+        missing.dataRepo,
+        "skills",
+        "hello",
+        missing.lock,
+        { merge: true },
+      ),
+    ).rejects.toThrow(/locked source commit is not available/);
+    expect(await headSha(missing.dataRepo)).toBe(missingHead);
+
+    const nonAncestor = await staleFixture();
+    const treeish = "HEAD^{tree}";
+    const tree = (
+      await $`git -C ${nonAncestor.dataRepo} rev-parse ${treeish}`.text()
+    ).trim();
+    const orphan = (
+      await $`git -C ${nonAncestor.dataRepo} commit-tree ${tree} -m orphan`.text()
+    ).trim();
+    const nonAncestorEntry = nonAncestor.lock.items[dataKey("skills", "hello")];
+    if (nonAncestorEntry?.source !== "data") {
+      throw new Error("expected data entry");
+    }
+    nonAncestorEntry.sourceCommit = orphan;
+    const nonAncestorHead = await headSha(nonAncestor.dataRepo);
+    await expect(
+      syncTrackedIntoDataRepo(
+        nonAncestor.project,
+        nonAncestor.dataRepo,
+        "skills",
+        "hello",
+        nonAncestor.lock,
+        { merge: true },
+      ),
+    ).rejects.toThrow(/not an ancestor/);
+    expect(await headSha(nonAncestor.dataRepo)).toBe(nonAncestorHead);
+  });
+
+  test("--merge rejects an ancestor base that lacks the item directory", async () => {
+    const dataRepo = await tempRepo("capshelf-missing-base-item-data-");
+    const project = await tempRepo("capshelf-missing-base-item-project-");
+    await writeFile(join(dataRepo, "README.md"), "before item\n");
+    await commitAll(dataRepo, "before item");
+    const missingItemCommit = await headSha(dataRepo);
+    const dataItem = join(dataRepo, "skills", "hello");
+    await mkdir(dataItem, { recursive: true });
+    await writeFile(join(dataItem, "SKILL.md"), "base\n");
+    await commitAll(dataRepo, "item base");
+    const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+    await writeFile(join(dataItem, "upstream.txt"), "upstream\n");
+    await commitAll(dataRepo, "upstream");
+    const installed = join(project, ".agents", "skills", "hello");
+    await mkdir(installed, { recursive: true });
+    await writeFile(join(installed, "SKILL.md"), "local\n");
+    const lock = lockWith({
+      source: "data",
+      sha: lockedSha,
+      sourceCommit: missingItemCommit,
+      appliedAt: "2026-06-01T00:00:00.000Z",
+    });
+    const headBefore = await headSha(dataRepo);
+
+    await expect(
+      syncTrackedIntoDataRepo(project, dataRepo, "skills", "hello", lock, {
+        merge: true,
+      }),
+    ).rejects.toThrow(/does not contain the item directory/);
+
+    expect(await headSha(dataRepo)).toBe(headBefore);
+    expect(existsSync(join(dataItem, "local.txt"))).toBe(false);
+  });
+
+  test("--merge resolves an abbreviated locked commit to a full merge base", async () => {
+    const f = await subsumedMergeFixture();
+    const entry = f.lock.items[dataKey("skills", "hello")];
+    if (entry?.source !== "data") throw new Error("expected data entry");
+    entry.sourceCommit = f.lockedCommit.slice(0, 9);
+
+    const result = await syncTrackedIntoDataRepo(
+      f.project,
+      f.dataRepo,
+      "skills",
+      "hello",
+      f.lock,
+      { merge: true, persistLock: async () => {} },
+    );
+
+    expect(result.merged).toBe(true);
+    expect(result.mergeBase).toBe(f.lockedCommit);
+    expect(result.mergeBase).toMatch(/^[0-9a-f]{40}$/);
+  });
+
+  test("--merge revalidates the installed snapshot after planning", async () => {
+    const f = await subsumedMergeFixture();
+    const headBefore = await headSha(f.dataRepo);
+    const lockBefore = structuredClone(f.lock);
+
+    await expect(
+      syncTrackedIntoDataRepo(
+        f.project,
+        f.dataRepo,
+        "skills",
+        "hello",
+        f.lock,
+        {
+          merge: true,
+          afterMergePlan: async () => {
+            await writeFile(f.installed, "changed during planning\n");
+          },
+        },
+      ),
+    ).rejects.toThrow(/changed while preparing the merge/);
+
+    expect(await headSha(f.dataRepo)).toBe(headBefore);
+    expect(f.lock).toEqual(lockBefore);
+    expect(await file(f.installed).text()).toBe("changed during planning\n");
+  });
+
+  test("--merge aborts when data HEAD or the installed sidecar changes during planning", async () => {
+    const headChange = await disjointMergeFixture("capshelf-head-race");
+    const lockBeforeHeadChange = structuredClone(headChange.lock);
+    let externalHead = "";
+    await expect(
+      syncTrackedIntoDataRepo(
+        headChange.project,
+        headChange.dataRepo,
+        "skills",
+        "hello",
+        headChange.lock,
+        {
+          merge: true,
+          afterMergePlan: async () => {
+            await writeFile(
+              join(headChange.dataRepo, "README.md"),
+              "external commit\n",
+            );
+            await commitAll(headChange.dataRepo, "external commit");
+            externalHead = await headSha(headChange.dataRepo);
+          },
+        },
+      ),
+    ).rejects.toThrow(/changed while preparing the merge/);
+    expect(await headSha(headChange.dataRepo)).toBe(externalHead);
+    expect(headChange.lock).toEqual(lockBeforeHeadChange);
+    expect(existsSync(join(headChange.dataItem, "local.txt"))).toBe(false);
+
+    const sidecarChange = await disjointMergeFixture("capshelf-sidecar-race");
+    const sidecarHead = await headSha(sidecarChange.dataRepo);
+    const sidecarLock = structuredClone(sidecarChange.lock);
+    await expect(
+      syncTrackedIntoDataRepo(
+        sidecarChange.project,
+        sidecarChange.dataRepo,
+        "skills",
+        "hello",
+        sidecarChange.lock,
+        {
+          merge: true,
+          afterMergePlan: async () => {
+            await writeFile(
+              join(sidecarChange.installed, ".capshelf.yml"),
+              "tags: [changed]\n",
+            );
+          },
+        },
+      ),
+    ).rejects.toThrow(/changed while preparing the merge/);
+    expect(await headSha(sidecarChange.dataRepo)).toBe(sidecarHead);
+    expect(sidecarChange.lock).toEqual(sidecarLock);
+    expect(existsSync(join(sidecarChange.dataItem, "local.txt"))).toBe(false);
+  });
+
+  test("--merge transaction failure restores path, index, HEAD, installed content, and lock", async () => {
+    const f = await disjointMergeFixture("capshelf-merge-failure");
+    const headBefore = await headSha(f.dataRepo);
+    const lockBefore = structuredClone(f.lock);
+    const installedBefore = await file(join(f.installed, "local.txt")).text();
+    const indexPath = (
+      await $`git -C ${f.dataRepo} rev-parse --git-path index`.text()
+    ).trim();
+    const indexBefore = await readFile(join(f.dataRepo, indexPath));
+
+    await expect(
+      syncTrackedIntoDataRepo(
+        f.project,
+        f.dataRepo,
+        "skills",
+        "hello",
+        f.lock,
+        {
+          merge: true,
+          transactionHooks: {
+            beforeHeadAdvance: async () => {
+              throw new Error("injected commit failure");
+            },
+          },
+        },
+      ),
+    ).rejects.toThrow("injected commit failure");
+
+    expect(await headSha(f.dataRepo)).toBe(headBefore);
+    expect(await readFile(join(f.dataRepo, indexPath))).toEqual(indexBefore);
+    expect(f.lock).toEqual(lockBefore);
+    expect(await file(join(f.installed, "local.txt")).text()).toBe(
+      installedBefore,
+    );
+    expect(existsSync(join(f.dataItem, "local.txt"))).toBe(false);
+    expect(
+      (await $`git -C ${f.dataRepo} status --porcelain`.text()).trim(),
+    ).toBe("");
+  });
+
   test("blocks when upstream is clean and advanced past the lock", async () => {
     const f = await staleFixture();
     const headBefore = await $`git -C ${f.dataRepo} rev-parse HEAD`
@@ -571,13 +1225,13 @@ describe("stale-promote guard (copy items)", () => {
     expect(result.staleOverride).toBeUndefined();
   });
 
-  test("a dirty data-repo item path blocks even with --stale-ok and survives", async () => {
+  test("a dirty data-repo item path blocks plain, overwrite, and merge promotion", async () => {
     const f = await staleFixture();
     await writeFile(
       join(f.dataRepo, "skills", "hello", "SKILL.md"),
       "uncommitted upstream edit\n",
     );
-    for (const staleOk of [false, true]) {
+    for (const options of [{}, { staleOk: true }, { merge: true }]) {
       let error: unknown;
       try {
         await syncTrackedIntoDataRepo(
@@ -586,7 +1240,7 @@ describe("stale-promote guard (copy items)", () => {
           "skills",
           "hello",
           f.lock,
-          { staleOk },
+          options,
         );
       } catch (err) {
         error = err;

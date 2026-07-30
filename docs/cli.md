@@ -62,7 +62,7 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
 | `update [<item>...]` | bump content and declared-needs pins; needs-only changes do not reinstall unchanged content; `--local` updates clone-local copy-item pins; supports `--dry-run` | implemented |
 | `share <item>` | adopt a not-yet-shared on-disk item into the data repo; Pi extensions require `index.ts`, default to project scope, and accept `--to local`; fragments require project scope plus `--from <file>` or `--pick <path>` | implemented |
 | `move <item> --to <scope>` | move an already-tracked data item between local and project scope without changing data-repo content | implemented |
-| `promote <item>` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects clone-local copy items; refuses stale promotes unless `--stale-ok` | implemented |
+| `promote <item>` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects clone-local copy items; stale copy items can use `--merge` or intentional overwrite with `--stale-ok` | implemented |
 | `keep-local <item>` | mark drifted copy-item content as intentional divergence; supports project and clone-local skills/Pi extensions, and rejects fragments | implemented |
 | `revert <item>` | discard local edits, restore locked version; supports `--local` | implemented |
 | `self-update` | check for and install a Homebrew update for the capshelf binary; supports `--check` and `--yes` | implemented |
@@ -630,13 +630,29 @@ Capshelf never pushes implicitly. `promote --json` includes the resolved
 `promote` refuses to overwrite data-repo content that is newer than this
 project's lock (exit 3): if the item changed upstream since the project last
 updated, the error shows the locked vs upstream shas, a scoped `git log` of
-the upstream advance, and the two ways out — `capshelf update <item>` to take
-the upstream version first, or `capshelf promote <item> --stale-ok` to
-overwrite on purpose. The suggested commands preserve `--local` when the
-refusal came from a local-scope promote. Preserve the current edit before
-running `update`, which replaces the installed copy; local-scope copy items are
-excluded from the project's Git repository and cannot be recovered from its
-diff. Two related behaviors:
+the upstream advance, and the safe choices: merge the two committed lines of
+work with `capshelf promote <item> --merge`, take upstream with
+`capshelf update <item>`, or overwrite on purpose with
+`capshelf promote <item> --stale-ok`. `--merge` and `--stale-ok` are mutually
+exclusive. The suggested commands preserve `--local` when the refusal came
+from a local-scope promote. Preserve the current edit before running `update`,
+which replaces the installed copy; local-scope copy items are excluded from
+the project's Git repository and cannot be recovered from its diff.
+
+`--merge` performs a standard Git three-way content merge from the locked
+`sourceCommit`: base = locked content, local = the installed managed snapshot,
+and upstream = the item at current data-repo HEAD. It is supported for
+project- and local-scope skills and for project-scope Pi extensions. Local Pi
+extensions, fragments, system items, missing or non-ancestral base history,
+and a base tree that does not reproduce the lock are refused. A conflict lists
+sorted item-relative paths and changes no data-repo, installed, manifest, or
+lock state. On a clean result, capshelf makes at most one ordinary
+single-parent data-repo commit and reconciles the calling project's installed
+copy while preserving ignored/generated files outside its managed snapshot.
+The root `.capshelf.yml` remains outside content identity; an installed
+sidecar wins over upstream when the merged item is committed.
+
+Two related behaviors:
 
 - **Uncommitted data-repo edits inside the item's path always block** (exit
   3) and are *not* bypassable by `--stale-ok`: they have no commit
@@ -648,7 +664,14 @@ diff. Two related behaviors:
 `promote --json` notes: `action` may be `"already-upstream"` (consumers must
 tolerate new action values), and `staleOverride: true` appears only when
 `--stale-ok` actually bypassed a stale check (absent otherwise, including
-when the flag was passed but nothing was stale).
+when the flag was passed but nothing was stale). An actual successful
+`--merge` adds `merged: true`, the full `mergeBase`, and the full
+`mergedUpstreamCommit`; those fields are absent when `--merge` was supplied
+but no stale merge was needed. If the merged tree already equals upstream,
+capshelf creates no data commit, reconciles the installed copy, and persists
+the new lock pin as one rollback-coordinated operation. Retrying after a
+post-commit lock persistence failure converges without creating a second
+content commit.
 
 ### missing_source_commit
 

@@ -25,6 +25,12 @@ export interface PromoteResult {
   committed: boolean;
   /** present only when --stale-ok actually bypassed a stale check */
   staleOverride?: true;
+  /** present only when --merge performed a stale three-way merge */
+  merged?: true;
+  /** full locked base commit used by an actual merge */
+  mergeBase?: string;
+  /** full data-repo HEAD merged into the installed item */
+  mergedUpstreamCommit?: string;
   runtimeWarnings?: RuntimeWarning[];
   privateDotenvWarnings?: string[];
 }

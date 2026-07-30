@@ -316,9 +316,23 @@ Network sync is equally explicit: only `sync-data` fetches the data repo's
 fast-forward (diverged, dirty, and detached states stop with git guidance).
 In the other direction, `promote` refuses to overwrite data-repo content
 newer than the calling project's lock — a stale promote is a conflict (exit
-3) bypassed only by an explicit `--stale-ok`, and uncommitted data-repo edits
-under the item's path always block. See `docs/team-workflow.md` for the team
-loop built on these guarantees.
+3) resolved by an explicit three-way `--merge` for supported copy items or
+bypassed by an intentional `--stale-ok`; the flags are mutually exclusive.
+Uncommitted data-repo edits under the item's path always block.
+
+The merge engine reconstructs raw-byte trees and executable modes for the
+locked base, installed local snapshot, and current upstream commit, then runs
+standard Git merge behavior in a disposable synthetic repository. That
+process receives no inherited system/global Git configuration, templates,
+hooks, filters, merge drivers, fsmonitor, or signing commands. Before writing,
+promote revalidates data-repo HEAD and cleanliness plus the local snapshot and
+sidecar. Conflicts are read-only. A clean content result is installed through
+a path transaction and committed by a conditional HEAD update with an
+alternate index, producing at most one normal single-parent commit; a
+pre-commit failure restores the exact item path and index. Other projects'
+files and locks remain pinned until their own `update`.
+
+See `docs/team-workflow.md` for the team loop built on these guarantees.
 
 ## Local overrides: two escape hatches
 
