@@ -310,6 +310,7 @@ Codex custom agent copy items are on the roadmap.
 
 ## Further Reading
 
+- [`docs/whats-new-0.5.md`](docs/whats-new-0.5.md) - what's new: Pi extensions, user skill inventory, safer CLI behavior
 - [`docs/whats-new-0.4.md`](docs/whats-new-0.4.md) - what's new: remote bootstrap, metadata + search, team sync, bundles
 - [`docs/project-brief.md`](docs/project-brief.md) - one-page overview
 - [`docs/architecture.md`](docs/architecture.md) - data model and rationale
