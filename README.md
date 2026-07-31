@@ -22,6 +22,8 @@ settings overlays, the same MCP servers. Keeping them in sync by hand, or by
 whole-directory symlinks, is fragile.
 
 ```bash
+# Run from the root of the project that will use the shared skill.
+cd ~/code/my-app
 capshelf init --data https://github.com/acme/agent-config
 capshelf add security-review
 $EDITOR "$(capshelf get-path security-review)/SKILL.md"
