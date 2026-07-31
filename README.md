@@ -64,36 +64,49 @@ capshelf self-update
 
 Source installs update manually with `git pull && make install`.
 
-### 2. Create a data repo
+### 2. Choose a data repo
 
-A data repo is a normal Git repo that stores shared agent config.
+A data repo is a normal Git repo that stores shared agent config. If your team
+already has one with skills under `skills/<name>/`, use it directly and skip
+to the next step.
+
+If your skills currently live inside project repositories, start with an empty
+data repo. Capshelf can adopt the existing skills after you connect a project.
 
 ```bash
-mkdir -p ~/code/agent-config/skills/security-review
+mkdir -p ~/code/agent-config
 cd ~/code/agent-config
 git init
-
-printf '%s\n' \
-  '---' \
-  'name: security-review' \
-  '---' \
-  '' \
-  'Review this change for security issues, risky shell commands, and unsafe data handling.' \
-  > skills/security-review/SKILL.md
-
-git add skills/security-review/SKILL.md
-git commit -m "add security-review skill"
 git remote add origin https://github.com/acme/agent-config
+git commit --allow-empty -m "initialize shared agent config"
 ```
 
-### 3. Use it in a project
+### 3. Connect a project
+
+To install a skill that is already in the data repo:
 
 ```bash
 cd ~/code/my-app
 capshelf init --data ~/code/agent-config
+capshelf ls
 capshelf add security-review
 capshelf status
 ```
+
+If the skill already lives in this project under
+`.agents/skills/security-review/` or `.claude/skills/security-review/`, adopt it
+instead:
+
+```bash
+cd ~/code/my-app
+capshelf init --data ~/code/agent-config
+capshelf share skills/security-review --to project \
+  -m "share existing security-review skill"
+capshelf status
+```
+
+Repeat the `share` command from each repository that contains skills you want
+to centralize.
 
 `init` records the data repo's `origin` as `dataRepoUpstream` so future clones
 can discover the same source. For a machine-local sandbox, use
