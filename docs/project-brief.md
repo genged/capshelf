@@ -7,9 +7,10 @@ configuration across projects.
 
 The CLI lets a user keep reusable agent/project assets in a Git-backed data
 repo, then materialize selected items into individual code repositories. The
-supported item kinds are `skills`, `pi-extensions`, `settings`, `mcp`, and
-`codex-config`. Skills and Pi extensions are copy items; the other kinds are
-JSON/TOML fragments merged into project config outputs.
+supported item kinds are `skills`, `pi-extensions`, `subagents`, `settings`,
+`mcp`, and `codex-config`. Skills and Pi extensions are copy directories;
+subagents are copy-target files; the other kinds are JSON/TOML fragments
+merged into project config outputs.
 
 ## What It Manages
 
@@ -95,6 +96,12 @@ committed project scope or clone-local scope, and must contain `index.ts`.
 Capshelf does not edit `.pi/settings.json`, install declared package
 dependencies, sandbox extension code, or reload Pi; inspect the source, then run
 `/reload` or restart Pi after materialization.
+
+Subagents are one logical project-scoped item with runtime-specific sources:
+`subagents/<name>/claude.md` materializes to `.claude/agents/<name>.md`, and
+`subagents/<name>/codex.toml` materializes to
+`.codex/agents/<name>.toml`. Either target or both may be present; one lock
+entry pins their combined content.
 
 Fragments from the data repo are merged into project config outputs:
 

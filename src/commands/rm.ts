@@ -42,6 +42,7 @@ import {
   fragmentOutputPath,
   lockedFragmentTargetsForItem,
 } from "../fragments";
+import { removeSubagentOutputs } from "../subagents";
 
 interface RmOptions {
   json?: boolean;
@@ -217,9 +218,19 @@ export function registerRm(program: Command): void {
           removed = true;
         }
       } else if (isCopyTargetFileItemKind(kind)) {
-        throw new PreconditionError(
-          `rm is not implemented for copy-target-file item ${kind}/${name}`,
+        const dataRepo = await resolveProjectDataRepo(
+          project,
+          oldManifest,
+          cmd,
         );
+        const paths = await removeSubagentOutputs(
+          project,
+          dataRepo,
+          name,
+          entry,
+        );
+        path = paths.join(", ");
+        removed = paths.length > 0;
       } else {
         throw new Error(`no removal strategy for ${kind}/${name}`);
       }

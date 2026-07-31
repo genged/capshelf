@@ -8,6 +8,7 @@ import {
 import type { FragmentItemKind, ItemKind } from "./master";
 import { isPathClean } from "./git";
 import { allCanonicalFragmentRelPaths, shaOfFragmentItem } from "./fragments";
+import { shaOfCurrentSubagent, subagentSourceCandidates } from "./subagents";
 
 export interface UpstreamFacts {
   /** worktree content sha of the data-repo item; null when dirty or missing */
@@ -51,9 +52,18 @@ export async function upstreamFactsForItem(
     };
   }
   if (isCopyTargetFileItemKind(kind)) {
-    throw new Error(
-      `upstream facts are not implemented for copy-target-file item ${kind}/${name}`,
-    );
+    const sources = subagentSourceCandidates("", name);
+    const upstreamDirty = (
+      await Promise.all(
+        sources.map((source) => isPathClean(dataRepo, source.relPath)),
+      )
+    ).some((clean) => !clean);
+    return {
+      upstreamSha: upstreamDirty
+        ? null
+        : await shaOfCurrentSubagent("", dataRepo, name),
+      upstreamDirty,
+    };
   }
   throw new Error(`no upstream strategy for ${kind}/${name}`);
 }

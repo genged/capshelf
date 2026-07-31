@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import type { Command as CmdType } from "commander";
 import { existsSync } from "node:fs";
+import { relative } from "node:path";
 import { findProjectRoot, projectRoot } from "../paths";
 import { resolveDataRepoOptional } from "../data-repo";
 import { loadLocalLock, loadLock } from "../lock";
@@ -13,7 +14,7 @@ import {
   isCopyTargetFileItemKind,
   isFragmentItemKind,
 } from "../master";
-import { parseLockKey, shaOfInstalled } from "../installed";
+import { itemOutputTargets, parseLockKey, shaOfInstalled } from "../installed";
 import { PreconditionError, ResultExitError } from "../errors";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
 import { globalOpts } from "../global-options";
@@ -52,6 +53,10 @@ import {
 import { formatStatusHuman, formatUserSkillsHuman } from "../status-format";
 import { captureCommittedItemNeeds } from "../metadata";
 import type { ItemNeeds } from "../metadata";
+import {
+  shaOfInstalledSubagent,
+  subagentTargetStatusAtCommit,
+} from "../subagents";
 
 interface StatusOptions {
   json?: boolean;
@@ -179,9 +184,17 @@ export function registerStatus(program: Command): void {
                   : undefined,
             });
           } else if (isCopyTargetFileItemKind(kind)) {
-            throw new Error(
-              `status is not implemented for copy-target-file item ${kind}/${itemName}`,
-            );
+            currentSha =
+              entry.source === "data" &&
+              dataRepo &&
+              sourceCommitPresent !== false
+                ? await shaOfInstalledSubagent(
+                    project,
+                    dataRepo,
+                    itemName,
+                    entry.sourceCommit,
+                  )
+                : entry.sha;
           } else {
             throw new Error(`no status strategy for ${kind}/${itemName}`);
           }
@@ -259,6 +272,23 @@ export function registerStatus(program: Command): void {
             fragmentOutputState,
             sourceCommitPresent,
           });
+          const subagentTargets =
+            kind === "subagents" &&
+            entry.source === "data" &&
+            dataRepo &&
+            sourceCommitPresent !== false
+              ? (
+                  await subagentTargetStatusAtCommit(
+                    project,
+                    dataRepo,
+                    itemName,
+                    entry.sourceCommit,
+                  )
+                ).map((detail) => ({
+                  ...detail,
+                  outputPath: relative(project, detail.outputPath),
+                }))
+              : undefined;
 
           rows.push(
             buildStatusRow({
@@ -275,12 +305,13 @@ export function registerStatus(program: Command): void {
                 entry.source === "data"
                   ? deriveNeedsState(entry.needs ?? null, currentNeeds)
                   : undefined,
+              targets: subagentTargets,
               runtimeWarnings: [
                 ...runtimeWarningsForItem(project, kind, itemName, {
                   ...(entry.source === "data" &&
                     entry.needs !== null && { needs: entry.needs }),
                 }),
-                ...codexWarningsForItem(project, kind),
+                ...codexWarningsForItem(project, kind, itemName),
               ],
             }),
           );
@@ -432,8 +463,17 @@ function printDiffs(diffs: StatusDiff[]): void {
 function codexWarningsForItem(
   project: string,
   kind: ItemKind,
+  name: string,
 ): RuntimeWarning[] {
-  if (kind !== "mcp" && kind !== "codex-config") return [];
+  if (kind === "subagents") {
+    const hasCodexTarget = itemOutputTargets(project, kind, name).some(
+      ({ id, outputPath }) => id === "codex" && existsSync(outputPath),
+    );
+    return hasCodexTarget ? codexProjectTrustWarnings(project) : [];
+  }
+  if (kind !== "mcp" && kind !== "codex-config") {
+    return [];
+  }
   return codexProjectTrustWarnings(project);
 }
 

@@ -24,6 +24,8 @@ import {
   lockedFragmentTargetsForItem,
   planFragmentOutput,
 } from "./fragments";
+import { subagentSourcesAtCommit } from "./subagents";
+import { lstatOrNull } from "./fs-utils";
 
 type LocalDiffState =
   | "drifted_local"
@@ -144,9 +146,41 @@ export async function buildStatusDiff(
       : null;
   }
   if (isCopyTargetFileItemKind(row.kind)) {
-    throw new Error(
-      `status diff is not implemented for copy-target-file item ${row.kind}/${row.name}`,
+    if (!opts.dataRepo || !row.sourceCommit) return null;
+    const sources = await subagentSourcesAtCommit(
+      opts.project,
+      opts.dataRepo,
+      row.name,
+      row.sourceCommit,
     );
+    const parts: string[] = [];
+    for (const source of sources) {
+      const expected = await showAtCommit(
+        opts.dataRepo,
+        row.sourceCommit,
+        source.relPath,
+      );
+      const currentStat = lstatOrNull(source.outputPath);
+      const current =
+        currentStat?.isFile() && !currentStat.isSymbolicLink()
+          ? await readFile(source.outputPath)
+          : Buffer.alloc(0);
+      const text = await unifiedDiff(
+        `${source.outputPath} (locked)`,
+        `${source.outputPath} (current)`,
+        expected.toString("utf-8"),
+        current.toString("utf-8"),
+      );
+      if (text) parts.push(text);
+    }
+    const text = parts.join("\n");
+    return text
+      ? {
+          item: `${row.source}/${row.kind}/${row.name}`,
+          path: sources[0]!.outputPath,
+          text,
+        }
+      : null;
   }
   if (!isCopyDirectoryItemKind(row.kind)) {
     throw new Error(`no status diff strategy for ${row.kind}/${row.name}`);

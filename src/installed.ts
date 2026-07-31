@@ -53,6 +53,23 @@ export function itemOutputTargets(
           outputPath: join(piDir(project), "extensions", name),
         },
       ];
+    case "subagents":
+      return [
+        {
+          id: "claude",
+          canonicalRelPath: `subagents/${name}/claude.md`,
+          outputPath: join(claudeDir(project), "agents", `${name}.md`),
+        },
+        {
+          id: "codex",
+          canonicalRelPath: `subagents/${name}/codex.toml`,
+          outputPath: join(
+            codexProjectConfigDir(project),
+            "agents",
+            `${name}.toml`,
+          ),
+        },
+      ];
     default:
       return assertNever(kind);
   }

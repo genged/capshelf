@@ -1,11 +1,11 @@
 ---
 name: capshelf
-description: Use the capshelf CLI to manage shared skills, Pi extensions, settings, and MCP configs across multiple projects from a user-owned data repo.
+description: Use the capshelf CLI to manage shared skills, Pi extensions, subagents, settings, and MCP configs across multiple projects from a user-owned data repo.
 ---
 
 # capshelf
 
-This project uses **capshelf** to track shared coding-agent config (skills, project-local Pi extensions, settings fragments, MCP configs) pulled from a **data repo**. When the user asks to add, remove, discover, edit, or update shared config, use the `capshelf` CLI. **Do not hand-edit** `.capshelf/capshelf.json` or `.capshelf/capshelf.lock.json` — they are tool-managed.
+This project uses **capshelf** to track shared coding-agent config (skills, project-local Pi extensions, Claude/Codex subagents, settings fragments, MCP configs) pulled from a **data repo**. When the user asks to add, remove, discover, edit, or update shared config, use the `capshelf` CLI. **Do not hand-edit** `.capshelf/capshelf.json` or `.capshelf/capshelf.lock.json` — they are tool-managed.
 
 Run project commands from anywhere inside a capshelf project — the directory containing `.capshelf/capshelf.json`, or any subdirectory of it (capshelf walks upward to find the root, like git). `init` acts on the current directory, not a discovered parent.
 
@@ -66,9 +66,10 @@ For system items (e.g. this `capshelf` skill), the edit loop doesn't apply — t
 
 ## How it works
 
-- **Data repo** (e.g. `~/code/work-skills/`) holds canonical versions of every shared item under `skills/`, `pi/extensions/`, `settings/`, `mcp/`, and `codex/config/`. It must be a git repo. Resolution order: `--data <path>` flag > gitignored `.capshelf/local.json` > `$CAPSHELF_HOME`. There is no implicit default.
+- **Data repo** (e.g. `~/code/work-skills/`) holds canonical versions of every shared item under `skills/`, `pi/extensions/`, `subagents/`, `settings/`, `mcp/`, and `codex/config/`. It must be a git repo. Resolution order: `--data <path>` flag > gitignored `.capshelf/local.json` > `$CAPSHELF_HOME`. There is no implicit default.
 - **This project** pins the exact content hash + source commit of each item in `.capshelf/capshelf.lock.json` (clone-local pins in gitignored `.capshelf/local.lock.json`). Data-repo updates do NOT propagate until this project runs `capshelf update`.
 - **Installed copies** live under `.agents/skills/<name>/` by default with `.claude/skills/<name>` symlinks (Claude-only projects install directly under `.claude/skills/<name>/`). Pi extensions live under `.pi/extensions/<name>/`. Claude custom commands are modeled as skills.
+- **Subagents** are project-scoped logical items. `subagents/<name>/claude.md` installs to `.claude/agents/<name>.md`; `subagents/<name>/codex.toml` installs to `.codex/agents/<name>.toml`. Either target or both may exist under one lock.
 - **Item metadata** (optional `<item>/.capshelf.yml` in the data repo: `description`, `tags`, `requires`, `conflicts-with`, `needs`) feeds discovery and checks. It is never copied into projects. Needs are pinned separately from content so requirements freshness never changes content drift.
 
 ## Two kinds of items
@@ -76,7 +77,7 @@ For system items (e.g. this `capshelf` skill), the edit loop doesn't apply — t
 - **system** (lock prefix `system/`): bundled into the CLI binary, installed by `init`, read-only from a project's perspective.
 - **data** (lock prefix `data/`): live in your data repo. Added via `add`, removed via `rm`, adopted via `share`, pushed back via `promote`.
 
-Mutating commands only touch files tracked in the lockfiles: `add` refuses to overwrite an existing untracked target, and `rm` deletes only locked data items. Copy items can use committed project scope or clone-local scope. `share skills/<name>` defaults to local scope; Pi extensions default to project scope, so pass `--to local` when adopting one as clone-local intent.
+Mutating commands only touch files tracked in the lockfiles: `add` refuses to overwrite an existing untracked target, and `rm` deletes only locked data items. Copy-directory items can use committed project scope or clone-local scope; subagents are project-only. `share skills/<name>` defaults to local scope; Pi extensions default to project scope, so pass `--to local` when adopting one as clone-local intent.
 
 ## Command reference
 
@@ -89,7 +90,7 @@ Always check the current surface with `capshelf --help` and `capshelf <verb> --h
 | `add` / `rm` / `apply` / `update` / `revert` | converge the project on its locks |
 | `share` / `move` / `promote` / `keep-local` | flow content and intent between project and data repo |
 | `data sync [--json]` | explicitly fetch the bound data repo's origin and fast-forward when safe; the **only** capshelf command that touches the network besides the `init` bootstrap clone and `self-update`. Run it when the user asks to pick up teammates' changes, then `capshelf status` to see `update_available` |
-| `get-path` | print the editable path for an item; Pi extensions return `.pi/extensions/<name>` |
+| `get-path` | print the editable path for an item; use `--target claude|codex` for multi-target subagents |
 | `self-update` | update the Homebrew-installed binary (not project pins) |
 
 ## Proposing changes upstream (review required, or no direct push access)
@@ -122,6 +123,19 @@ Fork variant (read-only consumers): `gh repo fork <owner/data-repo> --clone=fals
 `pi-extensions/<name>` maps `pi/extensions/<name>/index.ts` in the data repo to `.pi/extensions/<name>/index.ts` in the project. Extensions support the same project/clone-local lifecycle as skills, including `add --local`, `share --to local`, `move --to local`, and `keep-local`. Both Capshelf scopes materialize to Pi's project-local extension path; Capshelf does not manage user-global extensions.
 
 Pi loads project extensions only after project trust, but then they execute arbitrary TypeScript with full system permissions. Always inspect source before `add`, before `promote`, and before asking the user to `/reload` or restart Pi. Capshelf does not sandbox code, validate TypeScript, edit `.pi/settings.json`, manage Pi packages, invoke package managers, or install `package.json.dependencies`; dependency declarations produce an advisory warning only. Do not run install commands on the user's behalf as part of capshelf reconciliation.
+
+## Subagents
+
+`capshelf add subagents/<name>` installs every available Claude/Codex target
+under one lock. Use `show --target` or `get-path --target`; add never accepts a
+partial target. `share subagents/<name> --to project` adopts every matching
+unmanaged project runtime file, while `--from` requires `--target`.
+
+Subagents are project-scope only. Do not use `--local`, `keep-local`, or
+`promote --merge`; the supported stale overwrite escape hatch is
+`promote --stale-ok` with explicit user direction. Review subagents like
+privileged runtime policy because they can combine instructions with tools,
+models, permissions, MCP servers, and sandbox controls.
 
 ## Config fragments
 

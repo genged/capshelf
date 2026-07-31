@@ -8,6 +8,7 @@ import { addManifestName, manifestNamesForKind } from "../manifest";
 import { createDataLockEntry, dataKey, saveLocalLock, saveLock } from "../lock";
 import type { Lock } from "../lock";
 import {
+  allCanonicalItemRelPaths,
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
   isFragmentItemKind,
@@ -64,10 +65,19 @@ import {
 } from "../bundle-install";
 import type { BundlePlan, MemberPlan } from "../bundle-install";
 import { formatDeclaredNeeds } from "../needs";
+import {
+  assertSubagentOutputAvailable,
+  currentSubagentSources,
+  lastTouchingSubagentCommit,
+  materializeSubagent,
+  shaOfCurrentSubagent,
+  validateCurrentSubagent,
+} from "../subagents";
 
 interface AddOptions {
   json?: boolean;
   local?: boolean;
+  target?: string;
 }
 
 /** Everything the single-item installer needs; loaded once per command. */
@@ -100,6 +110,10 @@ export function registerAdd(program: Command): void {
       "install an item (or expand a bundles/<name> bundle) from the data repo into the current project",
     )
     .option("--local", "install as clone-local project state")
+    .option(
+      "--target <target>",
+      "target selection is not supported for add; subagents install all targets",
+    )
     .option("--json", "output JSON")
     .action(async (itemRef: string, opts: AddOptions, cmd: Command) => {
       // Bundle refs branch BEFORE parseItemRef: the parser rejects "bundles"
@@ -107,11 +121,21 @@ export function registerAdd(program: Command): void {
       // exit-1 throw.
       const bundleName = isBundleRef(itemRef);
       if (bundleName !== null) {
+        if (opts.target) {
+          throw new PreconditionError(
+            "add --target is not supported; subagents and bundles install all available targets",
+          );
+        }
         await addBundle(bundleName, opts, cmd);
         return;
       }
 
       const ref = parseItemRef(itemRef);
+      if (opts.target) {
+        throw new PreconditionError(
+          "add --target is not supported; subagents install all available targets",
+        );
+      }
       if (isSystemItemName(ref.name)) {
         throw new PreconditionError(
           `"${ref.name}" is a system item — managed by the CLI, not addable from a data repo. It is installed automatically by 'capshelf init'.`,
@@ -222,12 +246,11 @@ export async function installDataItem(
   if (ctx.local) {
     assertLocalScopeSupported(item.kind, item.name, "add --local");
   }
-  if (isCopyTargetFileItemKind(item.kind)) {
-    throw new PreconditionError(
-      `add is not implemented for copy-target-file item ${item.kind}/${item.name}`,
-    );
-  }
-  if (!isCopyDirectoryItemKind(item.kind) && !isFragmentItemKind(item.kind)) {
+  if (
+    !isCopyDirectoryItemKind(item.kind) &&
+    !isCopyTargetFileItemKind(item.kind) &&
+    !isFragmentItemKind(item.kind)
+  ) {
     throw new Error(`no add strategy for ${item.kind}/${item.name}`);
   }
 
@@ -236,6 +259,17 @@ export async function installDataItem(
   // touching the path), leaving apply/revert with the wrong content.
   if (isFragmentItemKind(item.kind)) {
     await assertFragmentSourcesClean(dataRepo, item.kind, item.name);
+  } else if (item.kind === "subagents") {
+    for (const relPath of allCanonicalItemRelPaths(item.kind, item.name)) {
+      await assertPathClean(dataRepo, relPath);
+    }
+    for (const warning of await validateCurrentSubagent(
+      project,
+      dataRepo,
+      item.name,
+    )) {
+      console.error(`⚠ ${warning}`);
+    }
   } else if (isCopyDirectoryItemKind(item.kind)) {
     await assertPathClean(dataRepo, item.repoRelPath);
   } else {
@@ -255,6 +289,10 @@ export async function installDataItem(
       localConfigNamesForKind(localConfig, item.kind).includes(item.name)
     : manifestNamesForKind(manifest, item.kind).includes(item.name);
   const alreadyInLock = lock.items[key] !== undefined;
+  const subagentSources =
+    item.kind === "subagents"
+      ? await currentSubagentSources(project, dataRepo, item.name)
+      : [];
   const dst = isFragmentItemKind(item.kind)
     ? fragmentOutputPath(
         project,
@@ -262,7 +300,9 @@ export async function installDataItem(
           await currentFragmentTargetsForItem(dataRepo, item.kind, item.name)
         )[0]!,
       )
-    : targetDir(project, item, manifest.installMode);
+    : item.kind === "subagents"
+      ? subagentSources[0]!.outputPath
+      : targetDir(project, item, manifest.installMode);
 
   if (item.kind === "skills") {
     const external = await findSkillsShSkill(project, item.name);
@@ -273,15 +313,24 @@ export async function installDataItem(
     }
   }
 
-  const conflict = isFragmentItemKind(item.kind)
-    ? null
-    : findInstallConflict(project, item.kind, item.name, manifest.installMode);
+  const conflict =
+    isFragmentItemKind(item.kind) || item.kind === "subagents"
+      ? null
+      : findInstallConflict(
+          project,
+          item.kind,
+          item.name,
+          manifest.installMode,
+        );
   if (!alreadyInLock && conflict) {
     throw new PreconditionError(
       `not installing ${item.kind}/${item.name} — target already exists but is not managed by capshelf\n` +
         `  existing path: ${conflict}\n` +
         `  remove it manually, choose a different name, or adopt it with: capshelf share ${item.kind}/${item.name} --to project`,
     );
+  }
+  if (!alreadyInLock && item.kind === "subagents") {
+    await assertSubagentOutputAvailable(project, dataRepo, item.name);
   }
   if (ctx.local) {
     await assertLocalInstallPathsUntracked(project, item.kind, item.name);
@@ -294,10 +343,14 @@ export async function installDataItem(
 
   const sha = isFragmentItemKind(item.kind)
     ? await shaOfFragmentItem(dataRepo, item.kind, item.name)
-    : await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
+    : item.kind === "subagents"
+      ? await shaOfCurrentSubagent(project, dataRepo, item.name)
+      : await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
   const sourceCommit = isFragmentItemKind(item.kind)
     ? await lastTouchingFragmentCommit(dataRepo, item.kind, item.name)
-    : await lastTouchingContentCommit(dataRepo, item.repoRelPath);
+    : item.kind === "subagents"
+      ? await lastTouchingSubagentCommit(project, dataRepo, item.name)
+      : await lastTouchingContentCommit(dataRepo, item.repoRelPath);
   const snapshot = await captureCommittedItemNeeds(dataRepo, item);
 
   if (ctx.local) {
@@ -310,6 +363,7 @@ export async function installDataItem(
   } else {
     addToManifest(manifest, item);
   }
+  const previousEntry = lock.items[key];
   lock.items[key] = createDataLockEntry({
     sha,
     sourceCommit,
@@ -335,6 +389,18 @@ export async function installDataItem(
     }
   } else if (isCopyDirectoryItemKind(item.kind)) {
     await copyItemIntoProject(project, item, manifest.installMode);
+  } else if (item.kind === "subagents") {
+    const entry = lock.items[key];
+    if (entry?.source !== "data")
+      throw new Error(`expected data lock for ${key}`);
+    const result = await materializeSubagent({
+      project,
+      dataRepo,
+      name: item.name,
+      entry,
+      ...(previousEntry?.source === "data" && { previousEntry }),
+    });
+    for (const warning of result.warnings) console.error(`⚠ ${warning}`);
   } else {
     throw new Error(`no materialization strategy for ${item.kind}`);
   }
@@ -607,7 +673,7 @@ function printBundleRefusal(
       `✗ not installing bundle ${bundle.name} --local — local scope supports copy-directory items only`,
     );
     console.log(
-      `  fragment members: ${plan.localUnsupportedMembers.join(", ")}`,
+      `  ${localUnsupportedLabel(plan)}: ${plan.localUnsupportedMembers.join(", ")}`,
     );
     console.log(
       `  install the bundle at project scope instead: capshelf add bundles/${bundle.name}`,
@@ -624,7 +690,7 @@ function printBundleRefusal(
   if (plan.localUnsupportedMembers.length > 0) {
     console.log("  ✗ local scope supports copy-directory items only");
     console.log(
-      `    fragment members: ${plan.localUnsupportedMembers.join(", ")}`,
+      `    ${localUnsupportedLabel(plan)}: ${plan.localUnsupportedMembers.join(", ")}`,
     );
     console.log(
       `    install the bundle at project scope instead: capshelf add bundles/${bundle.name}`,
@@ -650,6 +716,17 @@ function printBundleRefusal(
   console.log(
     `  fix the failures above, then re-run: capshelf add bundles/${bundle.name}`,
   );
+}
+
+function localUnsupportedLabel(plan: BundlePlan): string {
+  return plan.localUnsupportedMembers.every(
+    (ref) =>
+      ref.startsWith("settings/") ||
+      ref.startsWith("mcp/") ||
+      ref.startsWith("codex-config/"),
+  )
+    ? "fragment members"
+    : "project-only members";
 }
 
 function collectRuntimeWarnings(

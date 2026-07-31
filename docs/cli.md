@@ -8,7 +8,7 @@
 4. **Read-only by default for foreign projects.** `update` in project A cannot affect project B. `share` and `promote` write only the bound data repo and the calling project; B only changes when it runs `update` or `add`.
 5. **No silent writes.** Mutating commands show what they touched; use `--json` where scripts need structured output.
 
-Claude custom commands are modeled as skills. capshelf does not manage `.claude/commands/`; create `skills/<name>/SKILL.md` for a reusable `/<name>` entry. Project-local Pi extensions are modeled as `pi-extensions/<name>` copy items.
+Claude custom commands are modeled as skills. capshelf does not manage `.claude/commands/`; create `skills/<name>/SKILL.md` for a reusable `/<name>` entry. Project-local Pi extensions are modeled as `pi-extensions/<name>` copy items. Claude and Codex custom agents are one project-scoped `subagents/<name>` item.
 
 Capshelf metadata lives under `.capshelf/` at the project root. `.capshelf/capshelf.json` and `.capshelf/capshelf.lock.json` are committed; `.capshelf/local.json` and `.capshelf/local.lock.json` are gitignored by `.capshelf/.gitignore` and store the per-machine data repo path plus local-only item intent and pins. By default, skills are installed as real directories under `.agents/skills/<name>` and exposed to Claude through per-skill symlinks at `.claude/skills/<name>`. Use `capshelf init --claude-only` only when a project should install directly under `.claude/` without `.agents` symlinks.
 
@@ -52,15 +52,15 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
 | `data path` | print the resolved local data repo path; `--json` includes the path and the normalized upstream (`null` when absent) (alias: `data-path`) | implemented |
 | `data sync` | explicitly fetch the bound data repo's `origin` and fast-forward the current branch when provably safe; the only capshelf command that performs network I/O besides the `init --data <url>` bootstrap clone and `self-update` (alias: `sync-data`) | implemented |
 | `ls` | list items in master plus user-level runtime skills by default, in this project (`--here`), or user-level runtime skills only (`--user`); master/project listings show descriptions and `#tags` from item metadata; `--tag` filters master/project listings; appends a `bundles/` section for data-repo bundles | implemented |
-| `show <item>` | print metadata + content for one item, including relations and current/locked declared needs; `--json` always carries a `metadata` object and applicable `runtimeWarnings`; bundle previews include the union of member needs | implemented |
+| `show <item>` | print metadata + content for one item, including relations and current/locked declared needs; `--target` narrows MCP or subagent runtime content | implemented |
 | `search <query...>` | search available items (data repo + system) and bundles by name, tags, description, and content; supports `--kind` and `--json`; zero matches exit 0 | implemented |
-| `status [<item>]` | drift / update report plus orthogonal `needsState` freshness and locked-needs Runfree warnings; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` explains local drift | implemented |
+| `status [<item>]` | drift / update report plus orthogonal `needsState` freshness and locked-needs Runfree warnings; subagent JSON includes deterministic per-target state; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` explains local drift | implemented |
 | `add <item>` | install an item from the bound data repo; `--local` installs a clone-local copy item (skill or Pi extension); warns on unmet `requires`, refuses on `conflicts-with` (exit 3); `add bundles/<name>` expands a bundle (see Bundles) | implemented |
 | `rm <item>` | remove from this project; `--local` removes clone-local copy items | implemented |
-| `get-path <item>` | print the editable path; skills and Pi extensions return their managed directory, fragments support `--output` for generated output paths, and MCP supports `--target` | implemented |
+| `get-path <item>` | print the editable path; subagents and MCP support `--target`, while `--output` returns the corresponding runtime output | implemented |
 | `apply [<item>]` | reconcile project and local files with lockfiles (data items via `git show <sourceCommit>`; system items from bundled content; fragments via merged outputs); supports `--local` and `--dry-run` | implemented |
 | `update [<item>...]` | bump content and declared-needs pins; needs-only changes do not reinstall unchanged content; `--local` updates clone-local copy-item pins; supports `--dry-run` | implemented |
-| `share <item>` | adopt a not-yet-shared on-disk item into the data repo; Pi extensions require `index.ts`, default to project scope, and accept `--to local`; fragments require project scope plus `--from <file>` or `--pick <path>` | implemented |
+| `share <item>` | adopt a not-yet-shared on-disk item into the data repo; subagents scan both runtime outputs by default and require `--target` with `--from` | implemented |
 | `move <item> --to <scope>` | move an already-tracked data item between local and project scope without changing data-repo content | implemented |
 | `promote <item>` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects clone-local copy items; stale copy items can use `--merge` or intentional overwrite with `--stale-ok` | implemented |
 | `keep-local <item>` | mark drifted copy-item content as intentional divergence; supports project and clone-local skills/Pi extensions, and rejects fragments | implemented |
@@ -84,7 +84,7 @@ there is no separate `bundle` verb family. See Bundles below.
 - `--diff` — supported by `status`; shows local drift against the locked
   content without changing files. For copy items, extra current files are
   filtered through `.gitignore` files inside the installed item.
-- `--target claude|codex` — used by multi-target MCP fragment commands such as `show`, `get-path`, and `share`
+- `--target claude|codex` — used by multi-target MCP and subagent commands such as `show`, `get-path`, and `share`
 - `--tag <tag>` — supported by `ls` (including `--here`); repeatable, and
   repeated tags narrow with AND. Comparison is case-insensitive; combine with
   `--kind` to narrow further. Use `search` or two invocations for OR.
@@ -247,8 +247,9 @@ Semantics:
   `.yml` is recognized; `.yaml` warns and is ignored. Bundles cannot
   include bundles.
 - **Scope**: `add bundles/<name> --local` works for copy-directory members
-  (skills and Pi extensions); every fragment member fails preflight with one
-  aggregated error naming all unsupported members.
+  (skills and Pi extensions); every project-only member (fragments and
+  subagents) fails preflight with one aggregated error naming all unsupported
+  members.
 - **Freshness**: the bundle file is read from the data repo working tree
   and may be uncommitted (nothing pins it); member items still require
   clean, committed paths individually.
@@ -263,12 +264,52 @@ Bundles can include `pi-extensions` members. Like standalone extension adds,
 they install at project scope by default and in clone-local scope when the
 bundle is added with `--local`.
 
+Bundles can also include `subagents` members. Subagents are project-scope only,
+so a bundle containing one is rejected as a unit when added with `--local`.
+
+## Subagents
+
+One `subagents/<name>` item can carry a Claude definition, a Codex definition,
+or both:
+
+| Target | Canonical source | Project runtime output |
+|---|---|---|
+| Claude | `subagents/<name>/claude.md` | `.claude/agents/<name>.md` |
+| Codex | `subagents/<name>/codex.toml` | `.codex/agents/<name>.toml` |
+
+`add` always installs every available target under one manifest selection and
+one `data/subagents/<name>` lock. `apply`, `update`, `revert`, `status`, and
+`rm` reconcile that combined identity; when an update removes a canonical
+target, its formerly managed runtime file is removed too.
+
+Use `show --target` and `get-path --target` to select a runtime. If only one
+canonical target exists, `get-path` can infer it; when both exist, it requires
+`--target`. `get-path --output` returns the runtime file instead of the data
+repo source.
+
+`share subagents/<name> --to project` adopts every matching unmanaged runtime
+output it finds. The explicit `--from <file>` form requires `--target`.
+`promote` compares every managed output and commits only changed canonical
+siblings. It preserves untouched target sources and applies the normal stale
+guard; `--stale-ok` is the explicit overwrite escape hatch. A missing,
+symlinked, or non-regular managed output refuses promotion with recovery
+guidance. The complete projected canonical target set is validated before any
+source is written.
+
+Subagents do not support local scope, partial `add --target`, `keep-local`,
+user-global installation, format translation, or `promote --merge`.
+
+Claude sources require YAML frontmatter with non-empty `name` and
+`description`, plus a non-empty Markdown prompt body. Codex sources require
+non-empty TOML `name`, `description`, and `developer_instructions`. A runtime
+name that differs from the Capshelf item name warns but does not fail.
+
 Bundle exit codes:
 
 | situation | code |
 |---|---|
 | `add bundles/<x>`: bundle file not found | 2 |
-| `add bundles/<x>`: any preflight failure, malformed/unsupported bundle file, or `--local` with fragment members | 3 (per-member report printed first) |
+| `add bundles/<x>`: any preflight failure, malformed/unsupported bundle file, or `--local` with project-only members | 3 (per-member report printed first) |
 | `add bundles/<x>`: all members already installed, or empty bundle | 0 |
 | `add bundles/<x>`: unmet `requires` across the expanded set | 0 + stderr warning + JSON `missingRequires` |
 | `show bundles/<x>`: bundle not found | 2 |

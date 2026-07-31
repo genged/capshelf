@@ -14,9 +14,8 @@
 </p>
 
 A Git-backed CLI for sharing coding-agent configuration — skills, Pi
-extensions, settings, and MCP fragments — across projects, with per-project
-lockfiles so a change in
-one repo never disturbs work in another.
+extensions, subagents, settings, and MCP fragments — across projects, with
+per-project lockfiles so a change in one repo never disturbs work in another.
 
 As you accumulate projects, you accumulate copies of the same skills, the same
 settings overlays, the same MCP servers. Keeping them in sync by hand, or by
@@ -175,6 +174,14 @@ capshelf get-path mcp/github --target codex
 capshelf get-path mcp/github --target codex --output
 ```
 
+Add one logical subagent for every runtime definition it provides:
+
+```bash
+capshelf add subagents/reviewer
+capshelf get-path subagents/reviewer --target claude --output
+capshelf get-path subagents/reviewer --target codex
+```
+
 Set up a whole service from a curated bundle (`bundles/<name>.yml` in the
 data repo) — members install as independent items, all-or-nothing:
 
@@ -212,6 +219,7 @@ That works when the project committed `.capshelf/capshelf.json` with a
 |---|--------------------------------------|---|
 | `skills` | `skills/<name>/SKILL.md` plus assets | `.agents/skills/<name>/` and `.claude/skills/<name>` symlink |
 | `pi-extensions` | `pi/extensions/<name>/index.ts` plus local modules | `.pi/extensions/<name>/` |
+| `subagents` | `subagents/<name>/claude.md`, `subagents/<name>/codex.toml` | `.claude/agents/<name>.md` and/or `.codex/agents/<name>.toml` |
 | `settings` | `settings/<name>/settings.json`      | merged into `.claude/settings.json` |
 | `mcp` | `mcp/<name>/claude.json`, `mcp/<name>/codex.toml` | merged into `.mcp.json` and/or `.codex/config.toml` |
 | `codex-config` | `codex/config/<name>/config.toml` | merged into `.codex/config.toml` |
@@ -278,7 +286,7 @@ reported as external state instead of overwritten.
 | `promote` | commit local edits or fragment source edits for a tracked item back to the data repo |
 | `keep-local` | mark drift as intentional |
 | `revert` | restore one item to its locked version |
-| `get-path` | print the editable path; skills return their directory, fragments return source files, and `--output` returns generated fragment outputs |
+| `get-path` | print the editable path; subagents and multi-target fragments use `--target`, and `--output` returns runtime outputs |
 | `self-update` | check for and install a Homebrew update for the capshelf binary |
 
 Commands support `--json` where useful for agent consumption. Exit codes are
@@ -302,15 +310,16 @@ make build                          # compile dist/capshelf
 
 ## Project Status
 
-Skills, project-local Pi extensions, settings fragments, MCP fragments, and
-project-scoped Codex config fragments are implemented. Fragment outputs preserve project-local values, fragment
+Skills, project-local Pi extensions, Claude/Codex subagents, settings
+fragments, MCP fragments, and project-scoped Codex config fragments are
+implemented. Fragment outputs preserve project-local values, fragment
 promotion commits canonical data repo source files rather than generated
 outputs, and `share` can extract unmanaged fragment values directly from a
 project's generated outputs. Item metadata (`.capshelf.yml` sidecars) drives `ls --tag`, `search`,
 and `add`-time `requires`/`conflicts-with` checks. Bundles
 (`capshelf add bundles/<name>`) expand curated item sets all-or-nothing with
-no project-side bundle state. `validate`, `diff`, `doctor`, `journal`, and
-Codex custom agent copy items are on the roadmap.
+no project-side bundle state. `validate`, `diff`, `doctor`, and `journal`
+remain on the roadmap.
 
 ## Further Reading
 

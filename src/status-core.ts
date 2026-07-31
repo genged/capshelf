@@ -57,6 +57,14 @@ export interface StatusRow {
   needsState?: NeedsState;
   /** Present for every data row; null means a migrated v2 snapshot. */
   lockedNeeds?: ItemNeeds | null;
+  targets?: StatusTargetDetail[];
+}
+
+export interface StatusTargetDetail {
+  target: string;
+  sourcePath: string;
+  outputPath: string;
+  state: "ok" | "missing" | "drifted";
 }
 
 export interface ExternalPersonalClaudeSkill {
@@ -149,6 +157,7 @@ export interface BuildStatusRowInput {
   upstreamDirty: boolean;
   runtimeWarnings: RuntimeWarning[];
   needsState?: NeedsState;
+  targets?: StatusTargetDetail[];
 }
 
 /** Pure assembly of a StatusRow from a lock entry and the computed facts. */
@@ -177,6 +186,7 @@ export function buildStatusRow(input: BuildStatusRowInput): StatusRow {
     ...(entry.source === "system" && {
       cliVersion: entry.cliVersion,
     }),
+    ...(input.targets !== undefined && { targets: input.targets }),
     ...runtimeWarningFields(input.runtimeWarnings),
   };
 }

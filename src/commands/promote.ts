@@ -1,7 +1,8 @@
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { mkdir, readFile, rm } from "node:fs/promises";
+import { dirname, join, relative } from "node:path";
+import { atomicWriteFile, lstatOrNull } from "../fs-utils";
 import { homeRelative } from "../paths";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import { saveManifest } from "../manifest";
@@ -17,6 +18,7 @@ import { installedPath, parseLockKey } from "../installed";
 import {
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
+  allCanonicalItemRelPaths,
   itemRepoRelPath,
 } from "../master";
 import type { FragmentItemKind, ItemKind } from "../master";
@@ -31,6 +33,7 @@ import {
   objectTypeAtCommit,
   originRemoteUrl,
   resolveCommit,
+  showAtCommit,
   statusPorcelain,
 } from "../git";
 import { isSystemItemName } from "../bundled";
@@ -80,6 +83,13 @@ import {
   commitNamedFilesTransaction,
 } from "../promote-transaction";
 import type { PromoteTransactionHooks } from "../promote-transaction";
+import {
+  lastTouchingSubagentCommit,
+  shaOfCurrentSubagent,
+  subagentSourceCandidates,
+  subagentSourcesAtCommit,
+  validateSubagentSource,
+} from "../subagents";
 
 interface PromoteOptions {
   message?: string;
@@ -89,6 +99,7 @@ interface PromoteOptions {
   merge?: boolean;
   persistLock?: () => Promise<void>;
   afterMergePlan?: () => Promise<void>;
+  beforeCanonicalWrite?: () => Promise<void>;
   transactionHooks?: PromoteTransactionHooks;
 }
 
@@ -266,9 +277,20 @@ async function promoteProjectTracked(
     return result;
   }
   if (isCopyTargetFileItemKind(parsed.kind)) {
-    throw new PreconditionError(
-      `promote is not implemented for copy-target-file item ${parsed.kind}/${parsed.name}`,
+    if (opts.merge) {
+      throw new PreconditionError(
+        `promote --merge is not supported for subagents/${parsed.name}; copy-target-file items support --stale-ok only`,
+      );
+    }
+    const result = await promoteSubagent(
+      project,
+      dataRepo,
+      projectLock,
+      parsed.name,
+      opts,
     );
+    addToManifest(manifest, parsed.kind, parsed.name);
+    return result;
   }
   if (!isCopyDirectoryItemKind(parsed.kind)) {
     throw new Error(`no promote strategy for ${parsed.kind}/${parsed.name}`);
@@ -284,6 +306,187 @@ async function promoteProjectTracked(
   );
   addToManifest(manifest, parsed.kind, parsed.name);
   return result;
+}
+
+export async function promoteSubagent(
+  project: string,
+  dataRepo: string,
+  lock: Lock,
+  name: string,
+  opts: PromoteOptions,
+): Promise<PromoteResult> {
+  const key = dataKey("subagents", name);
+  const entry = dataEntryOrThrow(lock.items[key], key);
+  const lockedSources = await subagentSourcesAtCommit(
+    project,
+    dataRepo,
+    name,
+    entry.sourceCommit,
+  );
+  const pending: Array<{
+    relPath: string;
+    raw: Buffer;
+  }> = [];
+  for (const source of lockedSources) {
+    const stat = lstatOrNull(source.outputPath);
+    if (!stat?.isFile() || stat.isSymbolicLink()) {
+      const state = stat ? "not a regular file" : "missing";
+      throw new PreconditionError(
+        `not promoting subagents/${name} — managed runtime target is ${state}: ${source.outputPath}\n` +
+          `  restore locked outputs: capshelf revert subagents/${name}\n` +
+          `  if upstream intentionally changed targets: capshelf update subagents/${name}`,
+      );
+    }
+    const raw = await readFile(source.outputPath);
+    const locked = await showAtCommit(
+      dataRepo,
+      entry.sourceCommit,
+      source.relPath,
+    );
+    if (!raw.equals(locked)) {
+      pending.push({
+        relPath: source.relPath,
+        raw,
+      });
+    }
+  }
+  if (pending.length === 0) {
+    return {
+      source: "data",
+      kind: "subagents",
+      name,
+      action: "already-current",
+      sha: entry.sha,
+      sourceCommit: entry.sourceCommit,
+      committed: false,
+    };
+  }
+
+  const upstream = await upstreamFactsForItem(dataRepo, "subagents", name);
+  if (upstream.upstreamDirty) {
+    throw new PreconditionError(
+      `not promoting subagents/${name} — the data repo canonical sources have uncommitted changes`,
+    );
+  }
+  const pendingByRelPath = new Map(
+    pending.map(({ relPath, raw }) => [relPath, raw]),
+  );
+  const validationWarnings: string[] = [];
+  for (const source of subagentSourceCandidates(project, name)) {
+    const pendingRaw = pendingByRelPath.get(source.relPath);
+    const sourcePath = join(dataRepo, ...source.relPath.split("/"));
+    if (!pendingRaw && !existsSync(sourcePath)) continue;
+    const raw = pendingRaw ?? (await readFile(sourcePath));
+    validationWarnings.push(
+      ...validateSubagentSource(source.target, name, raw.toString("utf-8"))
+        .warnings,
+    );
+  }
+  for (const warning of validationWarnings) console.error(`⚠ ${warning}`);
+  const allAlreadyUpstream = (
+    await Promise.all(
+      pending.map(async ({ relPath, raw }) => {
+        const path = join(dataRepo, ...relPath.split("/"));
+        return existsSync(path) && raw.equals(await readFile(path));
+      }),
+    )
+  ).every(Boolean);
+  if (allAlreadyUpstream && upstream.upstreamSha !== null) {
+    const sourceCommit = await lastTouchingSubagentCommit(
+      project,
+      dataRepo,
+      name,
+    );
+    const snapshot = await captureCommittedItemNeeds(dataRepo, {
+      kind: "subagents",
+      name,
+    });
+    lock.items[key] = refreshDataLockEntry(entry, {
+      sha: upstream.upstreamSha,
+      sourceCommit,
+      ...snapshot,
+    });
+    return {
+      source: "data",
+      kind: "subagents",
+      name,
+      action: "already-upstream",
+      sha: upstream.upstreamSha,
+      sourceCommit,
+      committed: false,
+    };
+  }
+
+  let staleOverride = false;
+  if (upstream.upstreamSha !== null && upstream.upstreamSha !== entry.sha) {
+    if (!opts.staleOk) {
+      throw stalePromoteError({
+        dataRepo,
+        kind: "subagents",
+        name,
+        lockedSha: entry.sha,
+        sourceCommit: entry.sourceCommit,
+        upstreamSha: upstream.upstreamSha,
+        logPathspec: allCanonicalItemRelPaths("subagents", name).join(" "),
+        scope: "project",
+      });
+    }
+    staleOverride = true;
+  }
+  const canonicalPaths = allCanonicalItemRelPaths("subagents", name);
+  await assertRepoCleanOutsidePaths(dataRepo, canonicalPaths);
+  const snapshots = new Map<string, Buffer | null>();
+  for (const { relPath } of pending) {
+    const path = join(dataRepo, ...relPath.split("/"));
+    snapshots.set(path, existsSync(path) ? await readFile(path) : null);
+  }
+  await opts.beforeCanonicalWrite?.();
+  try {
+    for (const { relPath, raw } of pending) {
+      const path = join(dataRepo, ...relPath.split("/"));
+      await mkdir(dirname(path), { recursive: true });
+      await atomicWriteFile(path, raw);
+    }
+    await commitInRepo(
+      dataRepo,
+      pending.map(({ relPath }) => relPath),
+      opts.message ?? `capshelf: subagents/${name}`,
+    );
+  } catch (error) {
+    for (const [path, snapshot] of snapshots) {
+      if (snapshot === null) {
+        await rm(path, { force: true }).catch(() => {});
+      } else {
+        await atomicWriteFile(path, snapshot).catch(() => {});
+      }
+    }
+    throw error;
+  }
+  const sha = await shaOfCurrentSubagent(project, dataRepo, name);
+  const sourceCommit = await lastTouchingSubagentCommit(
+    project,
+    dataRepo,
+    name,
+  );
+  const snapshot = await captureCommittedItemNeeds(dataRepo, {
+    kind: "subagents",
+    name,
+  });
+  lock.items[key] = refreshDataLockEntry(entry, {
+    sha,
+    sourceCommit,
+    ...snapshot,
+  });
+  return {
+    source: "data",
+    kind: "subagents",
+    name,
+    action: "promoted",
+    sha,
+    sourceCommit,
+    committed: true,
+    ...(staleOverride && { staleOverride: true as const }),
+  };
 }
 
 async function promoteLocalTracked(

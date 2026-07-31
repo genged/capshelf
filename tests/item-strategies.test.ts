@@ -17,6 +17,7 @@ describe("item strategies", () => {
     expect(ITEM_KINDS).toEqual([
       "skills",
       "pi-extensions",
+      "subagents",
       "settings",
       "mcp",
       "codex-config",
@@ -46,6 +47,31 @@ describe("item strategies", () => {
         itemStrategy(kind) !== "fragment",
       );
     }
+  });
+
+  test("copy-target-file strategies own all runtime targets", () => {
+    expect(
+      itemOutputTargets(
+        "/project",
+        "subagents",
+        "reviewer",
+        "codex-compatible",
+      ),
+    ).toEqual([
+      {
+        id: "claude",
+        canonicalRelPath: "subagents/reviewer/claude.md",
+        outputPath: "/project/.claude/agents/reviewer.md",
+      },
+      {
+        id: "codex",
+        canonicalRelPath: "subagents/reviewer/codex.toml",
+        outputPath: "/project/.codex/agents/reviewer.toml",
+      },
+    ]);
+    expect(() =>
+      installedPath("/project", "subagents", "reviewer", "codex-compatible"),
+    ).toThrow("select a target explicitly");
   });
 
   test("copy-directory strategies own their canonical source and output", () => {

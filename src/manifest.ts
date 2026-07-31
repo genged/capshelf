@@ -46,6 +46,7 @@ export const ManifestSchema = z
     mcp: itemNameArray,
     codexConfig: itemNameArray,
     piExtensions: itemNameArray,
+    subagents: itemNameArray,
   })
   .superRefine((manifest, ctx) => {
     if ((manifest.commands?.length ?? 0) > 0) {
@@ -63,12 +64,13 @@ export const ManifestSchema = z
 
 type ParsedManifest = z.infer<typeof ManifestSchema>;
 
-// `piExtensions` is optional at the TypeScript boundary so older in-memory
+// New fields stay optional at the TypeScript boundary so older in-memory
 // fixtures and integrations remain source-compatible. ManifestSchema always
-// supplies it when loading persisted state, and mutation initializes it below.
-export type Manifest = Omit<ParsedManifest, "piExtensions"> & {
+// supplies them when loading persisted state, and mutation initializes them.
+export type Manifest = Omit<ParsedManifest, "piExtensions" | "subagents"> & {
   installMode: InstallMode;
   piExtensions?: string[];
+  subagents?: string[];
 };
 
 export function emptyManifest(): Manifest {
@@ -128,6 +130,9 @@ export function manifestNamesForKind(
       return manifest.piExtensions;
     case "settings":
       return manifest.settings;
+    case "subagents":
+      if (!manifest.subagents) manifest.subagents = [];
+      return manifest.subagents;
     case "mcp":
       return manifest.mcp;
     case "codex-config":

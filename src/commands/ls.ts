@@ -14,6 +14,7 @@ import {
   ITEM_KINDS,
   shaOfGitVisibleItem,
 } from "../master";
+import { shaOfCurrentSubagent } from "../subagents";
 import type { ItemKind } from "../master";
 import { loadLocalLock, loadLock } from "../lock";
 import { loadManifest } from "../manifest";
@@ -324,9 +325,7 @@ async function shaOfDataItem(
     return await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
   }
   if (isCopyTargetFileItemKind(item.kind)) {
-    throw new Error(
-      `listing is not implemented for copy-target-file item ${item.kind}/${item.name}`,
-    );
+    return await shaOfCurrentSubagent("", dataRepo, item.name);
   }
   throw new Error(`no listing strategy for ${item.kind}/${item.name}`);
 }

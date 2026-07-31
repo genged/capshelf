@@ -48,6 +48,11 @@ import {
 } from "../runtime-warnings";
 import { deriveNeedsState } from "../status-core";
 import { formatDeclaredNeeds, needsPolicyForProject } from "../needs";
+import {
+  currentSubagentSources,
+  isSubagentTarget,
+  shaOfCurrentSubagent,
+} from "../subagents";
 
 interface ShowOptions {
   json?: boolean;
@@ -61,7 +66,7 @@ export function registerShow(program: Command): void {
     .description("print metadata and content for an item (data or system)")
     .option(
       "--target <target>",
-      "fragment target for mcp items: claude or codex",
+      "runtime target for mcp or subagents: claude or codex",
     )
     .option("--json", "output JSON (no content dump)")
     .option("--no-content", "skip content dump")
@@ -103,20 +108,27 @@ export function registerShow(program: Command): void {
       if (!item) {
         throw new NotFoundError(`not found: ${itemRef}`);
       }
-      if (isCopyTargetFileItemKind(item.kind)) {
-        throw new PreconditionError(
-          `show is not implemented for copy-target-file item ${item.kind}/${item.name}`,
-        );
-      }
       if (
         !isCopyDirectoryItemKind(item.kind) &&
+        !isCopyTargetFileItemKind(item.kind) &&
         !isFragmentItemKind(item.kind)
       ) {
         throw new Error(`no show strategy for ${item.kind}/${item.name}`);
       }
       const cliTarget = sourceTargetForCli(opts.target);
-      if (!isFragmentItemKind(item.kind) && cliTarget) {
-        throw new PreconditionError("--target is only valid for mcp fragments");
+      if (opts.target !== undefined && !isSubagentTarget(opts.target)) {
+        throw new PreconditionError(
+          `invalid target "${opts.target}"; must be claude or codex`,
+        );
+      }
+      if (
+        !isFragmentItemKind(item.kind) &&
+        item.kind !== "subagents" &&
+        cliTarget
+      ) {
+        throw new PreconditionError(
+          "--target is only valid for mcp fragments or subagents",
+        );
       }
       if (isFragmentItemKind(item.kind) && item.kind !== "mcp" && cliTarget) {
         throw new PreconditionError("--target is only valid for mcp fragments");
@@ -126,14 +138,30 @@ export function registerShow(program: Command): void {
             await currentFragmentSourcesForItem(dataRepo, item.kind, item.name)
           ).filter((source) => sourceMatchesCliTarget(source, cliTarget))
         : [];
+      const subagentSources =
+        item.kind === "subagents"
+          ? (
+              await currentSubagentSources(project ?? "", dataRepo, item.name)
+            ).filter(
+              (source) =>
+                opts.target === undefined || source.target === opts.target,
+            )
+          : [];
       if (isFragmentItemKind(item.kind) && fragmentSources.length === 0) {
         throw new PreconditionError(
           `no matching fragment source for ${itemRef}`,
         );
       }
+      if (item.kind === "subagents" && subagentSources.length === 0) {
+        throw new PreconditionError(
+          `no ${opts.target ?? "matching"} target source for ${itemRef}`,
+        );
+      }
       const masterSha = isFragmentItemKind(item.kind)
         ? await shaOfFragmentItem(dataRepo, item.kind, item.name)
-        : await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
+        : item.kind === "subagents"
+          ? await shaOfCurrentSubagent(project ?? "", dataRepo, item.name)
+          : await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
       const projectEntry = lock.items[dataKey(item.kind, item.name)];
       const lockEntry =
         projectEntry ?? localLock.items[dataKey(item.kind, item.name)] ?? null;
@@ -178,6 +206,15 @@ export function registerShow(program: Command): void {
                         project,
                         fragmentOutputPath(project, source.target),
                       )
+                    : null,
+                })),
+              }),
+              ...(subagentSources.length > 0 && {
+                sources: subagentSources.map((source) => ({
+                  target: source.target,
+                  sourcePath: source.relPath,
+                  outputPath: project
+                    ? relativeProjectPath(project, source.outputPath)
                     : null,
                 })),
               }),
@@ -236,6 +273,21 @@ export function registerShow(program: Command): void {
               join(dataRepo, ...source.relPath.split("/")),
               "utf-8",
             ),
+          );
+        }
+        return;
+      }
+      if (item.kind === "subagents") {
+        for (const source of subagentSources) {
+          console.log(`─── ${source.relPath} ─────────────────────`);
+          console.log(
+            await readFile(
+              join(dataRepo, ...source.relPath.split("/")),
+              "utf-8",
+            ),
+          );
+          console.log(
+            `  output: ${project ? relativeProjectPath(project, source.outputPath) : "(project required)"}`,
           );
         }
         return;

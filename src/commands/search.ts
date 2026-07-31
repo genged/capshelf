@@ -15,6 +15,7 @@ import {
   listMasterItems,
   shaOfGitVisibleItem,
 } from "../master";
+import { shaOfCurrentSubagent } from "../subagents";
 import type { ItemKind, MasterItem } from "../master";
 import { SYSTEM_ITEMS, shaOfSystemItem } from "../bundled";
 import type { SystemItem } from "../bundled";
@@ -309,16 +310,12 @@ async function dataContentFiles(
 ): Promise<SearchContentFile[]> {
   const itemRoot = itemRepoRelPath(item.kind, item.name);
   let relPaths: string[];
-  if (isFragmentItemKind(item.kind)) {
+  if (isFragmentItemKind(item.kind) || isCopyTargetFileItemKind(item.kind)) {
     relPaths = (
       await canonicalItemRelPaths(dataRepo, item.kind, item.name)
     ).map((repoRel) => posix.relative(itemRoot, repoRel));
   } else if (isCopyDirectoryItemKind(item.kind)) {
     relPaths = await gitVisibleFilesUnderPath(dataRepo, itemRoot);
-  } else if (isCopyTargetFileItemKind(item.kind)) {
-    throw new Error(
-      `search is not implemented for copy-target-file item ${item.kind}/${item.name}`,
-    );
   } else {
     throw new Error(`no search strategy for ${item.kind}/${item.name}`);
   }
@@ -346,9 +343,7 @@ async function shaOfSearchItem(
     return await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
   }
   if (isCopyTargetFileItemKind(item.kind)) {
-    throw new Error(
-      `search is not implemented for copy-target-file item ${item.kind}/${item.name}`,
-    );
+    return await shaOfCurrentSubagent("", dataRepo, item.name);
   }
   throw new Error(`no search strategy for ${item.kind}/${item.name}`);
 }

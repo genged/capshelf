@@ -10,6 +10,7 @@ import { METADATA_SIDECAR } from "./identity";
 export const ITEM_KINDS = [
   "skills",
   "pi-extensions",
+  "subagents",
   "settings",
   "mcp",
   "codex-config",
@@ -19,7 +20,7 @@ export type ItemKind = (typeof ITEM_KINDS)[number];
 export const COPY_DIRECTORY_ITEM_KINDS = ["skills", "pi-extensions"] as const;
 export type CopyDirectoryItemKind = (typeof COPY_DIRECTORY_ITEM_KINDS)[number];
 
-export const COPY_TARGET_FILE_ITEM_KINDS = [] as const;
+export const COPY_TARGET_FILE_ITEM_KINDS = ["subagents"] as const;
 export type CopyTargetFileItemKind =
   (typeof COPY_TARGET_FILE_ITEM_KINDS)[number];
 
@@ -63,6 +64,8 @@ export function itemStrategy(kind: ItemKind): ItemStrategy {
     case "skills":
     case "pi-extensions":
       return "copy-directory";
+    case "subagents":
+      return "copy-target-file";
     case "settings":
     case "mcp":
     case "codex-config":
@@ -222,6 +225,8 @@ export function itemRepoRelPath(kind: ItemKind, name: string): string {
       return `mcp/${name}`;
     case "codex-config":
       return `codex/config/${name}`;
+    case "subagents":
+      return `subagents/${name}`;
     default:
       return assertNever(kind);
   }
@@ -237,6 +242,8 @@ export function allCanonicalItemRelPaths(
       return [itemRepoRelPath(kind, name)];
     case "settings":
       return [`settings/${name}/settings.json`];
+    case "subagents":
+      return [`subagents/${name}/claude.md`, `subagents/${name}/codex.toml`];
     case "mcp":
       return [`mcp/${name}/claude.json`, `mcp/${name}/codex.toml`];
     case "codex-config":
@@ -274,6 +281,7 @@ export function masterListDir(dataRepo: string, kind: ItemKind): string {
       return join(dataRepo, "pi", "extensions");
     case "codex-config":
       return join(dataRepo, "codex", "config");
+    case "subagents":
     case "skills":
     case "settings":
     case "mcp":
@@ -295,6 +303,7 @@ async function isInstallableDataItem(
       return existsSync(
         join(dataRepo, ...itemRepoRelPath(kind, name).split("/"), "index.ts"),
       );
+    case "subagents":
     case "settings":
     case "mcp":
     case "codex-config":

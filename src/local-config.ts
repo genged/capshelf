@@ -91,6 +91,7 @@ export function localConfigNamesForKind(
       return config.skills;
     case "pi-extensions":
       return config.piExtensions;
+    case "subagents":
     case "settings":
     case "mcp":
     case "codex-config":
@@ -186,6 +187,10 @@ export function assertLocalScopeSupported(
     case "skills":
     case "pi-extensions":
       return;
+    case "subagents":
+      throw new PreconditionError(
+        `${verb} is not supported for subagents; subagents are project scope only`,
+      );
     case "settings":
       throw new PreconditionError(
         `${verb} is not supported for settings fragments; keep project-local values in .claude/settings.json`,
@@ -212,6 +217,7 @@ function localInstallPaths(
       return [`.agents/skills/${name}${suffix}`, `.claude/skills/${name}`];
     case "pi-extensions":
       return [`.pi/extensions/${name}${suffix}`];
+    case "subagents":
     case "settings":
     case "mcp":
     case "codex-config":

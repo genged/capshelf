@@ -17,6 +17,7 @@ import {
   sourceMatchesCliTarget,
   sourceTargetForCli,
 } from "../fragments";
+import { currentSubagentSources, isSubagentTarget } from "../subagents";
 
 interface GetPathOptions {
   json?: boolean;
@@ -30,10 +31,10 @@ export function registerGetPath(program: Command): void {
     .description(
       "print the installed path for a locked item so it can be edited",
     )
-    .option("--output", "print the generated output path for a fragment")
+    .option("--output", "print the generated output path")
     .option(
       "--target <target>",
-      "fragment target for mcp items: claude or codex",
+      "runtime target for mcp or subagents: claude or codex",
     )
     .option("--json", "output JSON")
     .action(async (itemRef: string, opts: GetPathOptions, cmd: Command) => {
@@ -48,9 +49,18 @@ export function registerGetPath(program: Command): void {
 
       const parsed = parseLockKey(key);
       const cliTarget = sourceTargetForCli(opts.target);
-      if (!isFragmentKind(parsed.kind) && (opts.output || cliTarget)) {
+      if (opts.target !== undefined && !isSubagentTarget(opts.target)) {
         throw new PreconditionError(
-          "--output and --target are only valid for fragment items",
+          `invalid target "${opts.target}"; must be claude or codex`,
+        );
+      }
+      if (
+        !isFragmentKind(parsed.kind) &&
+        parsed.kind !== "subagents" &&
+        (opts.output || cliTarget)
+      ) {
+        throw new PreconditionError(
+          "--output and --target are only valid for fragment items or subagents",
         );
       }
       if (isFragmentKind(parsed.kind) && parsed.kind !== "mcp" && cliTarget) {
@@ -87,6 +97,33 @@ export function registerGetPath(program: Command): void {
         const source = sources[0]!;
         sourcePath = join(dataRepo, ...source.relPath.split("/"));
         outputPath = fragmentOutputPath(project, source.target);
+        path = opts.output ? outputPath : sourcePath;
+      } else if (parsed.kind === "subagents") {
+        const dataRepo = await resolveDataRepo({
+          override: globalOpts(cmd).data,
+          manifest,
+          project,
+        });
+        await assertIsGitRepo(dataRepo);
+        const sources = (
+          await currentSubagentSources(project, dataRepo, parsed.name)
+        ).filter(
+          (source) =>
+            opts.target === undefined || source.target === opts.target,
+        );
+        if (sources.length === 0) {
+          throw new PreconditionError(
+            `subagents/${parsed.name} does not have target ${opts.target ?? ""}`,
+          );
+        }
+        if (sources.length > 1) {
+          throw new PreconditionError(
+            `subagents/${parsed.name} has multiple targets; pass --target claude or --target codex`,
+          );
+        }
+        const source = sources[0]!;
+        sourcePath = join(dataRepo, ...source.relPath.split("/"));
+        outputPath = source.outputPath;
         path = opts.output ? outputPath : sourcePath;
       } else if (isMaterializedItemKind(parsed.kind)) {
         path = installedPath(project, parsed.kind, parsed.name);

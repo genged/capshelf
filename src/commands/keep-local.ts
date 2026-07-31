@@ -66,7 +66,7 @@ export function registerKeepLocal(program: Command): void {
       }
       if (isCopyTargetFileItemKind(parsed.kind)) {
         throw new PreconditionError(
-          `keep-local is not supported for copy-target-file item ${parsed.kind}/${parsed.name}`,
+          `keep-local is not supported for subagents/${parsed.name}; subagents are project scope only`,
         );
       }
       if (!isCopyDirectoryItemKind(parsed.kind)) {

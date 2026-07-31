@@ -41,6 +41,12 @@ import {
   type FragmentTarget,
 } from "../fragments";
 import { captureCommittedItemNeeds } from "../metadata";
+import {
+  lastTouchingSubagentCommit,
+  materializeSubagent,
+  shaOfCurrentSubagent,
+  shaOfInstalledSubagent,
+} from "../subagents";
 
 interface UpdateOptions {
   json?: boolean;
@@ -372,13 +378,9 @@ async function updateDataTarget(
   if (!item) {
     throw new Error(`missing upstream item: ${parsed.kind}/${parsed.name}`);
   }
-  if (isCopyTargetFileItemKind(parsed.kind)) {
-    throw new Error(
-      `update is not implemented for copy-target-file item ${parsed.kind}/${parsed.name}`,
-    );
-  }
   if (
     !isCopyDirectoryItemKind(parsed.kind) &&
+    !isCopyTargetFileItemKind(parsed.kind) &&
     !isFragmentItemKind(parsed.kind)
   ) {
     throw new Error(`no update strategy for ${parsed.kind}/${parsed.name}`);
@@ -386,10 +388,14 @@ async function updateDataTarget(
 
   const sha = isFragmentItemKind(parsed.kind)
     ? await shaOfFragmentItem(ctx.dataRepo, parsed.kind, parsed.name)
-    : await shaOfGitVisibleItem(ctx.dataRepo, item.repoRelPath);
+    : parsed.kind === "subagents"
+      ? await shaOfCurrentSubagent(ctx.project, ctx.dataRepo, parsed.name)
+      : await shaOfGitVisibleItem(ctx.dataRepo, item.repoRelPath);
   const sourceCommit = isFragmentItemKind(parsed.kind)
     ? await lastTouchingFragmentCommit(ctx.dataRepo, parsed.kind, parsed.name)
-    : await lastTouchingContentCommit(ctx.dataRepo, item.repoRelPath);
+    : parsed.kind === "subagents"
+      ? await lastTouchingSubagentCommit(ctx.project, ctx.dataRepo, parsed.name)
+      : await lastTouchingContentCommit(ctx.dataRepo, item.repoRelPath);
   const currentSnapshot = await captureCommittedItemNeeds(ctx.dataRepo, item);
   const lockedNeeds = entry.needs ?? null;
   const needsWouldChange =
@@ -449,7 +455,14 @@ async function updateDataTarget(
   }
 
   const installedSha = needsWouldChange
-    ? await shaOfInstalled(ctx.project, parsed.kind, parsed.name)
+    ? parsed.kind === "subagents"
+      ? await shaOfInstalledSubagent(
+          ctx.project,
+          ctx.dataRepo,
+          parsed.name,
+          entry.sourceCommit,
+        )
+      : await shaOfInstalled(ctx.project, parsed.kind, parsed.name)
     : null;
   const skipMaterialize =
     needsWouldChange && !contentWouldChange && installedSha === entry.sha;
@@ -464,15 +477,47 @@ async function updateDataTarget(
           { needs: newEntry.needs ?? undefined },
         ),
       }
-    : await materializeLockEntry({
-        project: ctx.project,
-        dataRepo: ctx.dataRepo,
-        manifest: ctx.manifest,
-        key,
-        entry: newEntry,
-        scope,
-        dryRun: ctx.dryRun,
-      });
+    : parsed.kind === "subagents"
+      ? await (async () => {
+          const dataRepo = ctx.dataRepo;
+          if (!dataRepo) throw new Error("data repo is required");
+          const before = await shaOfInstalledSubagent(
+            ctx.project,
+            dataRepo,
+            parsed.name,
+            entry.sourceCommit,
+          );
+          const applied = await materializeSubagent({
+            project: ctx.project,
+            dataRepo,
+            name: parsed.name,
+            entry: newEntry,
+            previousEntry: entry,
+            dryRun: ctx.dryRun,
+          });
+          for (const warning of applied.warnings) {
+            console.error(`⚠ ${warning}`);
+          }
+          return {
+            action: ctx.dryRun
+              ? applied.changed
+                ? ("would-reconcile" as const)
+                : ("already-current" as const)
+              : applied.changed
+                ? ("reconciled" as const)
+                : ("already-current" as const),
+            currentSha: before,
+          };
+        })()
+      : await materializeLockEntry({
+          project: ctx.project,
+          dataRepo: ctx.dataRepo,
+          manifest: ctx.manifest,
+          key,
+          entry: newEntry,
+          scope,
+          dryRun: ctx.dryRun,
+        });
   const runtimeWarnings = runtimeWarningsForItem(
     ctx.project,
     parsed.kind,

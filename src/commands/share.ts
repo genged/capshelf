@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
-import { atomicWriteFile } from "../fs-utils";
+import { atomicWriteFile, lstatOrNull } from "../fs-utils";
 import { dirname, join, relative } from "node:path";
 import { homeRelative, projectRoot } from "../paths";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
@@ -16,11 +16,7 @@ import {
 } from "../lock";
 import type { DataLockEntry, Lock } from "../lock";
 import { isSystemItemName } from "../bundled";
-import {
-  isCopyDirectoryItemKind,
-  isCopyTargetFileItemKind,
-  itemRepoRelPath,
-} from "../master";
+import { isCopyDirectoryItemKind, itemRepoRelPath } from "../master";
 import type { FragmentItemKind } from "../master";
 import { assertRepoClean, commitInRepo, originRemoteUrl } from "../git";
 import { PreconditionError } from "../errors";
@@ -68,6 +64,13 @@ import {
   type ConfigObject,
 } from "../config-values";
 import { captureCommittedItemNeeds } from "../metadata";
+import {
+  isSubagentTarget,
+  shaOfCurrentSubagent,
+  subagentSourceCandidates,
+  validateSubagentSource,
+  type SubagentSource,
+} from "../subagents";
 
 type ShareScope = "project" | "local";
 
@@ -86,9 +89,9 @@ export function registerShare(program: Command): void {
     .description("adopt an on-disk item into the data repo and track it here")
     .option(
       "--to <scope>",
-      "resulting scope: local or project (default: local for skills, project for Pi extensions and fragments)",
+      "resulting scope: local or project (default: local for skills, project for Pi extensions, subagents, and fragments)",
     )
-    .option("--from <path>", "source file for fragment items")
+    .option("--from <path>", "source file for fragment or subagent items")
     .option(
       "--pick <path>",
       "extract an unmanaged value from the generated output instead of --from; repeatable (fragment items; mcp picks accept bare server names and default to the item name)",
@@ -96,7 +99,7 @@ export function registerShare(program: Command): void {
     )
     .option(
       "--target <target>",
-      "fragment target for mcp items: claude or codex (default: every output containing the pick)",
+      "runtime target for mcp or subagent items: claude or codex",
     )
     .option("-m, --message <msg>", "git commit message")
     .option("--json", "output JSON")
@@ -122,10 +125,9 @@ export function registerShare(program: Command): void {
         await shareFragment(kind, name, scope, opts, cmd);
         return;
       }
-      if (isCopyTargetFileItemKind(kind)) {
-        throw new PreconditionError(
-          `share is not implemented for copy-target-file item ${kind}/${name}`,
-        );
+      if (kind === "subagents") {
+        await shareSubagent(name, scope, opts, cmd);
+        return;
       }
       if (!isCopyDirectoryItemKind(kind)) {
         throw new Error(`no share strategy for ${kind}/${name}`);
@@ -249,6 +251,138 @@ export function registerShare(program: Command): void {
       printPrivateDotenvWarnings(adopted.privateDotenvWarnings);
       await printShareUpstreamGuidance(dataRepo);
     });
+}
+
+async function shareSubagent(
+  name: string,
+  scope: ShareScope,
+  opts: ShareOptions,
+  cmd: Command,
+): Promise<void> {
+  if (scope !== "project") {
+    assertLocalScopeSupported("subagents", name, "share");
+  }
+  if (opts.pick !== undefined) {
+    throw new PreconditionError("--pick is not supported for subagents");
+  }
+  if (opts.from && !opts.target) {
+    throw new PreconditionError(
+      `share subagents/${name} --from requires --target claude or --target codex`,
+    );
+  }
+  if (opts.target !== undefined && !isSubagentTarget(opts.target)) {
+    throw new PreconditionError(
+      `invalid target "${opts.target}"; must be claude or codex`,
+    );
+  }
+
+  const { project, manifest, projectLock, localLock } =
+    await loadProjectContext({ cmd });
+  const dataRepo = await resolveProjectDataRepo(project, manifest, cmd);
+  await assertRepoClean(dataRepo);
+  const key = dataKey("subagents", name);
+  if (projectLock.items[key] || localLock.items[key]) {
+    throw new PreconditionError(
+      `already tracked in this project: subagents/${name}`,
+    );
+  }
+
+  const allCandidates = subagentSourceCandidates(project, name);
+  for (const candidate of allCandidates) {
+    if (existsSync(join(dataRepo, ...candidate.relPath.split("/")))) {
+      throw new PreconditionError(
+        `data repo already has ${candidate.relPath}; use promote to push edits`,
+      );
+    }
+  }
+  const candidates = allCandidates.filter(
+    (candidate) =>
+      opts.target === undefined || candidate.target === opts.target,
+  );
+  const pending: Array<{ source: SubagentSource; raw: string }> = [];
+  if (opts.from) {
+    pending.push({
+      source: candidates[0]!,
+      raw: await readFile(opts.from, "utf-8"),
+    });
+  } else {
+    for (const source of candidates) {
+      const stat = lstatOrNull(source.outputPath);
+      if (!stat) continue;
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        throw new PreconditionError(
+          `cannot share subagents/${name} — runtime target is not a regular file: ${source.outputPath}`,
+        );
+      }
+      pending.push({
+        source,
+        raw: await readFile(source.outputPath, "utf-8"),
+      });
+    }
+  }
+  if (pending.length === 0) {
+    throw new PreconditionError(
+      `share subagents/${name} found no unmanaged target outputs\n  expected ${candidates.map((source) => relative(project, source.outputPath)).join(" or ")}`,
+    );
+  }
+  for (const { source, raw } of pending) {
+    for (const warning of validateSubagentSource(source.target, name, raw)
+      .warnings) {
+      console.error(`⚠ ${warning}`);
+    }
+  }
+  for (const { source, raw } of pending) {
+    const path = join(dataRepo, ...source.relPath.split("/"));
+    await mkdir(dirname(path), { recursive: true });
+    await atomicWriteFile(path, raw);
+  }
+  const sourceCommit = await commitInRepo(
+    dataRepo,
+    pending.map(({ source }) => source.relPath),
+    opts.message ?? `capshelf: subagents/${name}`,
+  );
+  const sha = await shaOfCurrentSubagent(project, dataRepo, name);
+  const snapshot = await captureCommittedItemNeeds(dataRepo, {
+    kind: "subagents",
+    name,
+  });
+  addManifestName(manifest, "subagents", name);
+  projectLock.items[key] = createDataLockEntry({
+    sha,
+    sourceCommit,
+    ...snapshot,
+  });
+  await saveManifest(project, manifest);
+  await saveLock(project, projectLock);
+
+  if (opts.json) {
+    console.log(
+      JSON.stringify(
+        {
+          verb: "share",
+          kind: "subagents",
+          name,
+          scope: "project",
+          action: "created",
+          sha,
+          sourceCommit,
+          committed: true,
+          sources: pending.map(({ source }) => ({
+            target: source.target,
+            sourcePath: source.relPath,
+            outputPath: source.outputPath,
+          })),
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+  console.log(`✓ shared project/data/subagents/${name} @ ${sha}`);
+  console.log(`  source commit: ${sourceCommit}`);
+  for (const { source } of pending) console.log(`  ${source.relPath}`);
+  await printShareUpstreamGuidance(dataRepo);
 }
 
 async function shareFragment(

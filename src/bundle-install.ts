@@ -39,6 +39,11 @@ import {
 import type { ItemKind, MasterItem } from "./master";
 import { METADATA_SIDECAR, captureCommittedItemNeeds } from "./metadata";
 import type { ItemMetadata } from "./metadata";
+import {
+  assertSubagentOutputAvailable,
+  subagentSourceCandidates,
+  validateCurrentSubagent,
+} from "./subagents";
 
 export type BundleScope = "project" | "local";
 
@@ -276,8 +281,14 @@ export async function preflightBundleChecks(
           );
         }
       } else if (isCopyTargetFileItemKind(item.kind)) {
-        throw new PreconditionError(
-          `bundle preflight is not implemented for copy-target-file item ${item.kind}/${item.name}`,
+        for (const source of subagentSourceCandidates(ctx.project, item.name)) {
+          await assertPathClean(ctx.dataRepo, source.relPath);
+        }
+        await validateCurrentSubagent(ctx.project, ctx.dataRepo, item.name);
+        await assertSubagentOutputAvailable(
+          ctx.project,
+          ctx.dataRepo,
+          item.name,
         );
       } else {
         throw new Error(`no bundle strategy for ${item.kind}/${item.name}`);

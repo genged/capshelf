@@ -17,6 +17,7 @@ import {
 } from "./master";
 import type { CopyDirectoryItemKind, FragmentItemKind } from "./master";
 import { loadCommittedItemNeeds } from "./metadata";
+import { shaOfSubagentAtCommit } from "./subagents";
 
 export async function verifyDataLockEntries(
   dataRepo: string,
@@ -45,8 +46,11 @@ export async function verifyDataLockEntries(
         entry.sourceCommit,
       );
     } else if (isCopyTargetFileItemKind(parsed.kind)) {
-      throw new Error(
-        `lock verification is not implemented for copy-target-file item ${parsed.kind}/${parsed.name}`,
+      sha = await shaOfSubagentAtCommit(
+        "",
+        dataRepo,
+        parsed.name,
+        entry.sourceCommit,
       );
     } else {
       throw new Error(

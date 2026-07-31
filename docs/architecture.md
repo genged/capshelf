@@ -9,7 +9,7 @@ real managed copies per project for copy items and reconciles shared JSON/TOML
 fragments into project config outputs.
 
 Requirements:
-1. Share skills, Pi extensions, settings, and MCPs across repos from one or more user-owned **data repos**.
+1. Share skills, Pi extensions, subagents, settings, and MCPs across repos from one or more user-owned **data repos**.
 2. Updates can stay local or be pushed up to the data repo.
 3. A change to a data repo **must not** disturb in-flight PRs on other projects.
 4. Some items are generic, some are project-specific. Both must coexist.
@@ -92,6 +92,10 @@ A data repo is any directory matching this layout, with its own git history:
 │       └── <name>/
 │           ├── index.ts        required entry point
 │           └── src/…
+├── subagents/
+│   └── <name>/
+│       ├── claude.md           (→ .claude/agents/<name>.md)
+│       └── codex.toml          (→ .codex/agents/<name>.toml)
 ├── settings/                   mergeable fragments (→ settings.json)
 │   └── <name>/
 │       └── settings.json
@@ -110,7 +114,7 @@ A data repo is any directory matching this layout, with its own git history:
 
 Items may carry an optional `.capshelf.yml` metadata sidecar at their
 directory root (see Item Metadata below). The CLI discovers installable
-items only from `skills/`, `pi/extensions/`, `settings/`, `mcp/`, and
+items only from `skills/`, `pi/extensions/`, `subagents/`, `settings/`, `mcp/`, and
 `codex/config/`; `bundles/*.yml` files are catalog data, not items (see Bundles below).
 
 Multiple data repos can coexist on a single machine. Projects pick one in their manifest.
@@ -187,7 +191,8 @@ Manifest:
   "settings": [],
   "mcp":      [],
   "codexConfig": [],
-  "piExtensions": []
+  "piExtensions": [],
+  "subagents": []
 }
 ```
 
@@ -203,6 +208,7 @@ Local manifest:
 ```
 
 Local scope is available to copy-directory items: skills and Pi extensions.
+Subagents are project-scope only.
 Fragment kinds preserve project-local values inside generated outputs instead
 of using clone-local manifest entries. In Git projects, local-scope copy items
 add their install paths to `.git/info/exclude`; non-Git projects skip that step
@@ -244,10 +250,11 @@ system: { source: "system", sha, cliVersion,   appliedAt }
 
 Lock keys are prefixed, for example `data/skills/<name>`,
 `data/pi-extensions/<name>`, `data/settings/<name>`, `data/mcp/<name>`,
-`data/codex-config/<name>`, or `system/skills/<name>`. This avoids collisions and makes the source obvious.
+`data/codex-config/<name>`, `data/subagents/<name>`, or
+`system/skills/<name>`. This avoids collisions and makes the source obvious.
 
 - `sha` — content hash (identity).
-- `sourceCommit` — for data items, the **last-touching commit** in the data repo (`git log -1 --format=%H -- <path>`). Fragment items use only canonical source files such as `settings/<name>/settings.json`, `mcp/<name>/claude.json`, `mcp/<name>/codex.toml`, and `codex/config/<name>/config.toml`. Lets `apply`/`revert` retrieve historical content via `git show <commit>:<path>` even if the data repo's HEAD has moved past the locked version.
+- `sourceCommit` — for data items, the **last-touching commit** in the data repo (`git log -1 --format=%H -- <path>`). Fragment items use only canonical source files such as `settings/<name>/settings.json`, `mcp/<name>/claude.json`, `mcp/<name>/codex.toml`, and `codex/config/<name>/config.toml`. Subagents watch both canonical target pathspecs so a target deletion is pinned while metadata-only commits remain invisible. Lets `apply`/`revert` retrieve historical content via `git show <commit>:<path>` even if the data repo's HEAD has moved past the locked version.
 - `needs` / `needsSourceCommit` — a normalized snapshot of the item's declared
   runtime requirements and the data-repo commit it came from. This provenance
   is independent of the sidecar-blind content pin. Version 2 locks load with
@@ -257,16 +264,16 @@ Lock keys are prefixed, for example `data/skills/<name>`,
 
 CLI-only changes in the data repo (e.g. someone edits `src/foo.ts`) don't bump `sourceCommit` for unaffected data items — `lastTouchingCommit` is path-scoped.
 
-## Two apply strategies
+## Apply strategies
 
 | kind | strategy | output |
 |---|---|---|
 | skills | copy whole directory | default: `.agents/skills/<name>/` plus `.claude/skills/<name>` symlink; `--claude-only`: `.claude/skills/<name>/` |
 | pi-extensions | copy whole directory | `.pi/extensions/<name>/`; requires `index.ts`, no aliases or settings edits |
+| subagents | copy every present canonical target file | `.claude/agents/<name>.md` and/or `.codex/agents/<name>.toml` |
 | settings | merge `settings/<name>/settings.json` fragments in manifest order | `.claude/settings.json` |
 | mcp | merge `mcp/<name>/claude.json` and/or `mcp/<name>/codex.toml` fragments | `.mcp.json` and/or `.codex/config.toml` |
 | codex-config | merge `codex/config/<name>/config.toml` fragments | `.codex/config.toml` |
-| codex/agents | planned copy whole file | `<project>/.codex/agents/<name>.toml` or `~/.codex/agents/` |
 
 Pi extensions are loaded by Pi only after project trust. Project and
 clone-local Capshelf scope both materialize to the same Pi project path;
@@ -382,7 +389,7 @@ Items carry catalog metadata from two sources:
 1. An optional `.capshelf.yml` sidecar at the **item directory root** in the
    data repo (`skills/<name>/.capshelf.yml`,
    `pi/extensions/<name>/.capshelf.yml`, `codex/config/<name>/.capshelf.yml`,
-   …), for all five kinds:
+   …), for all six kinds:
 
    ```yaml
    description: Deep multi-pass security audit of changed files.

@@ -16,6 +16,7 @@ import {
 import { printRuntimeWarnings } from "../runtime-warnings";
 import { assertLocalScopeSupported } from "../local-config";
 import { isMaterializedItemKind } from "../master";
+import { materializeSubagent, shaOfInstalledSubagent } from "../subagents";
 import {
   applyFragmentOutput,
   fragmentKindForTarget,
@@ -178,6 +179,52 @@ export function registerApply(program: Command): void {
             );
           }
           try {
+            if (parsed.kind === "subagents") {
+              if (!dataRepo) throw new Error("data repo is required");
+              const entry = lock.items[key]!;
+              if (entry.source !== "data") {
+                throw new Error(`expected data lock entry for ${key}`);
+              }
+              const before = await shaOfInstalledSubagent(
+                project,
+                dataRepo,
+                parsed.name,
+                entry.sourceCommit,
+              );
+              const applied = await materializeSubagent({
+                project,
+                dataRepo,
+                name: parsed.name,
+                entry,
+                dryRun: opts.dryRun,
+              });
+              for (const warning of applied.warnings) {
+                console.error(`⚠ ${warning}`);
+              }
+              results.push(
+                addScope(scope, {
+                  key,
+                  source: parsed.source,
+                  kind: parsed.kind,
+                  name: parsed.name,
+                  action: opts.dryRun
+                    ? applied.changed
+                      ? "would-reconcile"
+                      : "already-current"
+                    : applied.changed
+                      ? "reconciled"
+                      : "already-current",
+                  path: applied.paths.join(", "),
+                  sha: opts.dryRun ? before : entry.sha,
+                  ...(opts.dryRun && {
+                    currentSha: before,
+                    plannedSha: entry.sha,
+                    dryRun: true as const,
+                  }),
+                }),
+              );
+              continue;
+            }
             results.push(
               addScope(
                 scope,

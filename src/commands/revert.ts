@@ -18,6 +18,7 @@ import {
   isFragmentKind,
   lockedFragmentTargetsForItem,
 } from "../fragments";
+import { materializeSubagent } from "../subagents";
 
 interface RevertOptions {
   json?: boolean;
@@ -129,15 +130,41 @@ export function registerRevert(program: Command): void {
         throw new Error(`no revert strategy for ${parsed.kind}/${parsed.name}`);
       }
 
-      const result = await materializeLockEntry({
-        project,
-        dataRepo,
-        manifest,
-        key,
-        entry,
-        scope: opts.local ? "local" : "project",
-        ignoreLocal: true,
-      });
+      const result =
+        parsed.kind === "subagents" && entry.source === "data"
+          ? await (async () => {
+              if (!dataRepo) throw new Error("data repo is required");
+              const applied = await materializeSubagent({
+                project,
+                dataRepo,
+                name: parsed.name,
+                entry,
+              });
+              for (const warning of applied.warnings) {
+                console.error(`⚠ ${warning}`);
+              }
+              return {
+                key,
+                source: parsed.source,
+                kind: parsed.kind,
+                name: parsed.name,
+                action: applied.changed
+                  ? ("reconciled" as const)
+                  : ("already-current" as const),
+                path: applied.paths.join(", "),
+                sha: entry.sha,
+                runtimeWarnings: undefined,
+              };
+            })()
+          : await materializeLockEntry({
+              project,
+              dataRepo,
+              manifest,
+              key,
+              entry,
+              scope: opts.local ? "local" : "project",
+              ignoreLocal: true,
+            });
 
       if (opts.local) await saveLocalLock(project, lock);
       else await saveLock(project, lock);
