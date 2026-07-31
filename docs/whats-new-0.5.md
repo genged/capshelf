@@ -5,8 +5,7 @@ installed in your user-level Claude and Codex directories, and makes the CLI
 safer to use from scripts and day-to-day project work. It also includes a set
 of path, lockfile, and write-safety fixes found during a focused code review.
 
-This page covers both 0.5.0 and the 0.5.1 maintenance release. Existing
-projects and data repos need no migration.
+This page covers 0.5.0. Existing projects and data repos need no migration.
 
 ## Share project-local Pi extensions
 
@@ -154,18 +153,6 @@ paths.
 Lockfile Git object names and item paths are validated on load. Content hashing
 for add, apply, and data-repo rebinding now shares one implementation, including
 the correct treatment of `.capshelf.yml` sidecars.
-
-## Fixes in 0.5.1
-
-0.5.1 fixes clone-local skill reconciliation. In 0.5.0, project Git excludes
-could make post-write verification see an empty local-scope skill, causing
-`apply --local`, `update --local`, or `revert --local` to fail after writing the
-new files. Verification now hashes the materialized directory directly.
-
-Stale-promote recovery guidance also preserves `--local` for clone-local
-skills and warns you to copy the current edit before running `update --local`.
-Those skills are excluded from the project Git repository, so its diff cannot
-recover an overwritten edit.
 
 ## Upgrading
 

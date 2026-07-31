@@ -95,6 +95,19 @@ jobs:
           package_version="$(bun -e 'const pkg = await Bun.file("package.json").json(); process.stdout.write(pkg.version);')"
           test "${package_version}" = "${VERSION}"
 
+      - name: Resolve release notes
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          notes_file="docs/release-notes/release-notes-${VERSION}.md"
+
+          if [ ! -f "${notes_file}" ]; then
+            printf 'missing release notes: %s\n' "${notes_file}" >&2
+            exit 1
+          fi
+
+          printf 'NOTES_FILE=%s\n' "${notes_file}" >> "${GITHUB_ENV}"
+
       - name: Build Homebrew artifacts
         run: scripts/package-homebrew-artifacts.sh
         env:
@@ -107,6 +120,7 @@ jobs:
           VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release edit "${TAG}" --notes-file "${NOTES_FILE}"
             gh release upload "${TAG}" \
               "dist/homebrew/capshelf-${VERSION}-"*.tar.gz \
               "dist/homebrew/capshelf-${VERSION}.sha256" \
@@ -116,5 +130,5 @@ jobs:
               "dist/homebrew/capshelf-${VERSION}-"*.tar.gz \
               "dist/homebrew/capshelf-${VERSION}.sha256" \
               --verify-tag \
-              --generate-notes
+              --notes-file "${NOTES_FILE}"
           fi
