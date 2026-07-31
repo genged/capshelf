@@ -18,6 +18,8 @@ install: build
 	@echo "✓ installed → $(BIN_DIR)/capshelf"
 	@echo "  ensure $(BIN_DIR) is on your PATH"
 
+test-all: test smoke
+
 test:
 	bun run test
 
