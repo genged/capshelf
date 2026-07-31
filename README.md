@@ -24,9 +24,14 @@ whole-directory symlinks, is fragile.
 ```bash
 capshelf init --data https://github.com/acme/agent-config
 capshelf add security-review
-capshelf status
+$EDITOR "$(capshelf get-path security-review)/SKILL.md"
+capshelf status security-review --diff
 capshelf promote security-review -m "tighten SQLi check"
 ```
+
+`promote` commits the edited skill to the data repo and updates the current
+project's pin. Other projects keep their existing version until they run
+`capshelf update`.
 
 ## Quickstart
 
