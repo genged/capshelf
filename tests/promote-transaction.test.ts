@@ -6,6 +6,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  realpath,
   stat,
   writeFile,
 } from "node:fs/promises";
@@ -62,7 +63,7 @@ describe("commitNamedFilesTransaction", () => {
 
     const locations = await promoteTransactionLocations(repo, "skills/hello");
     expect(locations.itemBackupParent).toBe(join(repo, "skills"));
-    expect(locations.indexReplacementParent).toBe(gitDir);
+    expect(locations.indexReplacementParent).toBe(await realpath(gitDir));
 
     await commitNamedFilesTransaction({
       repo,
