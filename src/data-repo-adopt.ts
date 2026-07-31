@@ -16,7 +16,7 @@ import {
   ensureInstallAliases,
   installedPath,
 } from "./installed";
-import { assertRepoClean, commitInRepo } from "./git";
+import { assertRepoClean, commitInRepo, headSha } from "./git";
 import {
   METADATA_SIDECAR,
   parseSidecar,
@@ -36,6 +36,14 @@ import {
 } from "./promote-core";
 import { adoptionSnapshot } from "./item-snapshot";
 import { lstatOrNull } from "./fs-utils";
+import {
+  CODEX_PROJECTION_ROOTS,
+  commitDataRepoMutation,
+} from "./marketplace-files";
+import {
+  hasCodexMarketplace,
+  refreshCodexProjection,
+} from "./marketplace-integration";
 
 interface AdoptionSource {
   path: string;
@@ -89,7 +97,6 @@ export async function adoptIntoDataRepo(
   if (kind === "skills") {
     assertCanNormalizeAdoptedSkill(project, name, adoption, opts.installMode);
   }
-  await assertRepoClean(dataRepo);
   const adoptionRelPath = relative(project, adoption.path);
   const snapshot = await adoptionSnapshot(
     project,
@@ -102,24 +109,45 @@ export async function adoptIntoDataRepo(
   // above, but recovery flows can encounter a pre-existing target directory
   // whose metadata sidecar must survive the replace.
   const upstreamSidecar = await readSidecarBytes(dataPath);
-  if (snapshot.source === "filesystem") {
-    await replaceDirFromFiles(adoption.path, snapshot.files, dataPath);
+  const projectionRoots =
+    kind === "skills" && hasCodexMarketplace(dataRepo)
+      ? [...CODEX_PROJECTION_ROOTS]
+      : [];
+  const mutateSource = async (): Promise<void> => {
+    if (snapshot.source === "filesystem") {
+      await replaceDirFromFiles(adoption.path, snapshot.files, dataPath);
+    } else {
+      await replaceDirFromGitVisibleFiles(
+        project,
+        adoptionRelPath,
+        adoption.path,
+        dataPath,
+      );
+    }
+    if (!(await restoreSidecarBytes(dataPath, upstreamSidecar))) {
+      await warnAboutAdoptedSidecar(dataPath, kind, name);
+    }
+    if (kind === "skills") await refreshCodexProjection(dataRepo);
+  };
+  let sourceCommit: string;
+  if (projectionRoots.length > 0) {
+    const expectedHead = await headSha(dataRepo);
+    sourceCommit = await commitDataRepoMutation({
+      dataRepo,
+      expectedHead,
+      ownedRoots: [repoRelPath, ...projectionRoots],
+      message: opts.message ?? `capshelf: ${kind}/${name}`,
+      mutate: mutateSource,
+    });
   } else {
-    await replaceDirFromGitVisibleFiles(
-      project,
-      adoptionRelPath,
-      adoption.path,
-      dataPath,
+    await assertRepoClean(dataRepo);
+    await mutateSource();
+    sourceCommit = await commitInRepo(
+      dataRepo,
+      [repoRelPath],
+      opts.message ?? `capshelf: ${kind}/${name}`,
     );
   }
-  if (!(await restoreSidecarBytes(dataPath, upstreamSidecar))) {
-    await warnAboutAdoptedSidecar(dataPath, kind, name);
-  }
-  const sourceCommit = await commitInRepo(
-    dataRepo,
-    [repoRelPath],
-    opts.message ?? `capshelf: ${kind}/${name}`,
-  );
 
   if (kind === "skills") {
     await normalizeAdoptedSkill(

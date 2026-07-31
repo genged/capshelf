@@ -12,6 +12,13 @@ supported item kinds are `skills`, `pi-extensions`, `subagents`, `settings`,
 subagents are copy-target files; the other kinds are JSON/TOML fragments
 merged into project config outputs.
 
+The same data repo can also hold independent Claude/Cowork and Codex plugin
+catalogs. These catalogs group canonical skills for runtime distribution but
+are not project items: they have no project manifest or lock entries.
+Capshelf authors the official Claude marketplace, generates a committed native
+Codex projection, and builds disposable standalone packages. Runtime
+registration and installation remain owned by Claude, Cowork, or Codex.
+
 ## What It Manages
 
 Each project has a `.capshelf/` metadata directory:

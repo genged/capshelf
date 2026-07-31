@@ -84,6 +84,15 @@ import {
 } from "../promote-transaction";
 import type { PromoteTransactionHooks } from "../promote-transaction";
 import {
+  CODEX_PROJECTION_ROOTS,
+  commitDataRepoMutation,
+} from "../marketplace-files";
+import {
+  hasCodexMarketplace,
+  refreshCodexProjection,
+  replaceSkillWithNamedFiles,
+} from "../marketplace-integration";
+import {
   lastTouchingSubagentCommit,
   shaOfCurrentSubagent,
   subagentSourceCandidates,
@@ -851,33 +860,49 @@ export async function syncTrackedIntoDataRepo(
   // unless the project copy supplied its own (the project's wins).
   const dataDir = join(dataRepo, repoRelPath);
   const upstreamSidecar = await readSidecarBytes(dataDir);
-  if (snapshot.source === "filesystem") {
-    await replaceDirFromFiles(localPath, snapshot.files, dataDir);
+  const codexConfigured = kind === "skills" && hasCodexMarketplace(dataRepo);
+  const replaceSource = async (): Promise<void> => {
+    if (snapshot.source === "filesystem") {
+      await replaceDirFromFiles(localPath, snapshot.files, dataDir);
+    } else {
+      await replaceDirFromGitVisibleFiles(
+        project,
+        localRelPath,
+        localPath,
+        dataDir,
+      );
+    }
+    await restoreSidecarBytes(dataDir, upstreamSidecar);
+    if (kind === "skills") await refreshCodexProjection(dataRepo);
+  };
+  let dirty = true;
+  let sourceCommit: string;
+  if (codexConfigured) {
+    const expectedHead = await headSha(dataRepo);
+    sourceCommit = await commitDataRepoMutation({
+      dataRepo,
+      expectedHead,
+      ownedRoots: [repoRelPath, ...CODEX_PROJECTION_ROOTS],
+      message: opts.message ?? `capshelf: ${kind}/${name}`,
+      mutate: replaceSource,
+    });
   } else {
-    await replaceDirFromGitVisibleFiles(
-      project,
-      localRelPath,
-      localPath,
-      dataDir,
-    );
+    await replaceSource();
+    dirty = (await statusPorcelain(dataRepo, repoRelPath)).trim().length > 0;
+    sourceCommit = dirty
+      ? await commitInRepo(
+          dataRepo,
+          [repoRelPath],
+          opts.message ?? `capshelf: ${kind}/${name}`,
+        )
+      : // The not-dirty re-pin must stay sidecar-blind: re-pinning after a
+        // metadata-only upstream commit keeps the old sourceCommit. The dirty
+        // branch usually commits content, but with a stale lock sha plus a
+        // sidecar-only difference the promote commit can be sidecar-only; the
+        // recorded sourceCommit then names that commit, which is harmless —
+        // `git show` at it still yields the locked content.
+        await lastTouchingContentCommit(dataRepo, repoRelPath);
   }
-  await restoreSidecarBytes(dataDir, upstreamSidecar);
-
-  const dirty =
-    (await statusPorcelain(dataRepo, repoRelPath)).trim().length > 0;
-  const sourceCommit = dirty
-    ? await commitInRepo(
-        dataRepo,
-        [repoRelPath],
-        opts.message ?? `capshelf: ${kind}/${name}`,
-      )
-    : // The not-dirty re-pin must stay sidecar-blind: re-pinning after a
-      // metadata-only upstream commit keeps the old sourceCommit. The dirty
-      // branch usually commits content, but with a stale lock sha plus a
-      // sidecar-only difference the promote commit can be sidecar-only; the
-      // recorded sourceCommit then names that commit, which is harmless —
-      // `git show` at it still yields the locked content.
-      await lastTouchingContentCommit(dataRepo, repoRelPath);
 
   const needsSnapshot = await captureCommittedItemNeeds(dataRepo, {
     kind,
@@ -1066,16 +1091,38 @@ async function mergeStalePromote(input: {
       throw error;
     }
   } else {
-    await commitNamedFilesTransaction({
-      repo: dataRepo,
-      repoRelPath,
-      files: mergedFiles,
-      sidecar: mergedSidecar,
-      expectedHead: plannedHead,
-      message: opts.message ?? `capshelf: ${kind}/${name}`,
-      beforePersistentMutation: revalidateInputs,
-      hooks: opts.transactionHooks,
-    });
+    if (kind === "skills" && hasCodexMarketplace(dataRepo)) {
+      await commitDataRepoMutation({
+        dataRepo,
+        expectedHead: plannedHead,
+        ownedRoots: [repoRelPath, ...CODEX_PROJECTION_ROOTS],
+        message: opts.message ?? `capshelf: ${kind}/${name}`,
+        mutate: async () => {
+          await revalidateInputs();
+          await opts.transactionHooks?.afterPrepared?.();
+          await replaceSkillWithNamedFiles(
+            dataRepo,
+            repoRelPath,
+            mergedFiles,
+            mergedSidecar,
+          );
+          await refreshCodexProjection(dataRepo);
+          await opts.transactionHooks?.afterPathReplaced?.();
+          await opts.transactionHooks?.beforeHeadAdvance?.();
+        },
+      });
+    } else {
+      await commitNamedFilesTransaction({
+        repo: dataRepo,
+        repoRelPath,
+        files: mergedFiles,
+        sidecar: mergedSidecar,
+        expectedHead: plannedHead,
+        message: opts.message ?? `capshelf: ${kind}/${name}`,
+        beforePersistentMutation: revalidateInputs,
+        hooks: opts.transactionHooks,
+      });
+    }
     const installedTransaction = await beginInstalledReconciliation(
       snapshot.localPath,
       localFiles,

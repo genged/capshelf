@@ -104,9 +104,15 @@ A data repo is any directory matching this layout, with its own git history:
 │       ├── claude.json         (→ <project>/.mcp.json)
 │       └── codex.toml          (→ <project>/.codex/config.toml)
 ├── codex/
-│   └── config/
-│       └── <name>/
-│           └── config.toml     (→ <project>/.codex/config.toml)
+│   ├── config/
+│   │   └── <name>/
+│   │       └── config.toml     (→ <project>/.codex/config.toml)
+│   ├── plugin-definitions/     authored Codex plugin composition
+│   └── generated/              committed native Codex plugin projection
+├── .claude-plugin/
+│   └── marketplace.json        authored Claude marketplace
+├── .agents/plugins/
+│   └── marketplace.json        generated native Codex marketplace
 ├── bundles/                    optional named item sets (manifest macros)
 │   └── <name>.yml
 └── .git/                       required: a data repo MUST be a git repo
@@ -512,6 +518,45 @@ Properties of the implemented model:
 ## Codex parity
 
 Same model, different output paths. Codex items live under `codex/` in a data repo. A single project manifest can mix Claude and Codex items. One lockfile, one `apply`, both toolchains stay in sync.
+
+## Plugin marketplaces
+
+Marketplace definitions are data-repo catalog state, not Capshelf items.
+They never appear in a project manifest or lock and are never materialized
+into a consuming project.
+
+Claude composition is authored directly in the official
+`.claude-plugin/marketplace.json`. Capshelf-managed entries are skill-only
+root sources (`source: "./"`, `strict: false`) with explicit canonical skill
+paths. Malformed attempted-managed entries are invalid; versioned,
+remote-source, and mixed-component entries are preserved as external state.
+
+Codex composition is authored in `codex/plugin-definitions/`. Capshelf
+projects it into `.agents/plugins/marketplace.json` and self-contained regular
+file copies under `codex/generated/plugins/`. The generated tree is committed
+so the data repo can be registered directly with
+`codex plugin marketplace add <data-repo>`. `marketplace sync --target codex`
+repairs the complete projection after direct edits and never stages or
+commits. Marketplace mutations and Capshelf skill share/promote commits update
+the projection in the same local Git commit.
+
+Package outputs are disposable. Claude packages are deterministic root-content
+ZIP `.plugin` files; detached Codex packages are one-plugin marketplace
+directories. Capshelf stops at the runtime boundary: it does not push,
+register, install, enable, refresh, or inspect plugin caches.
+
+Marketplace source, selected-skill, generated, and package paths are checked
+component-by-component for symlink ancestors before reads, deletion, or
+writes. Package containment compares resolved real paths through the nearest
+existing ancestor. Logical hashes recursively sort JSON object keys, preserve
+array order, and use Git executable intent for tracked files, so unrelated
+commits, host chmod drift, and object-key ordering do not rotate cachebusters.
+
+Canonical skill identity is independent of plugin identity. When renaming a
+skill directly in the data repo, rename its directory and update every Claude
+and Codex membership in the same Git change, then sync and validate. A skill
+cannot be deleted while any plugin still selects it: validation, sync,
+packaging, and marketplace mutations all refuse the dangling reference.
 
 ## What the human does (and doesn't)
 

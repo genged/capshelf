@@ -22,6 +22,7 @@ per kind:
 | `pi-extensions` | copied into `.pi/extensions/<name>`; after Pi project trust, arbitrary TypeScript runs with the user's full system permissions and can register tools, intercept calls, or execute commands. |
 | `subagents` | copied into Claude/Codex agent configuration. Prompt instructions combine with runtime controls such as tools, models, permissions, MCP servers, and sandbox behavior; review them as privileged runtime policy. |
 | `skills` | prose, not executables — but prose that steers an agent which *does* have execution tools. A skill can instruct an agent to exfiltrate data, weaken reviews, or run commands. Subtler than a hook, not safer. |
+| plugin marketplaces | group skills into runtime install units. Claude root-source catalogs may expose repository metadata to the host, while generated Codex roots and standalone packages contain copied skill bytes. Review the selected skills and generated diff like release artifacts. |
 
 There is no meaningful "config-only, therefore safe" tier. Treat
 `capshelf add` the way you treat adding a dependency, and treat write access
@@ -105,6 +106,30 @@ Explicitly out of scope, with the reasoning:
 - **Registries or central distribution.** There is no capshelf server to
   compromise and no namespace to typosquat. A data repo is a git repo you
   chose, with the access controls you configured.
+- **Runtime plugin installation.** Marketplace commands do not register a
+  marketplace, upload a package, install or refresh a plugin, or edit Claude
+  or Codex caches. Those actions remain explicit runtime operations.
+
+## Marketplace package boundary
+
+Claude managed entries use the data-repo root as their official Git source,
+although their explicit `skills` list controls loaded components. Do not keep
+secrets or files inappropriate for marketplace consumers in a hosted data
+repo. Capshelf preserves unsupported Claude entries but does not validate or
+execute them.
+
+The native Codex projection and both package formats contain regular files
+only. Capshelf copies only Git-visible selected skill files, excludes
+`.capshelf.yml` sidecars and ignored content, refuses private dotenv files and
+all symlinks (including symlinked ancestors), and validates generated paths
+remain inside the artifact. Output containment resolves the nearest existing
+ancestor before comparing it with the real data-repo root. Generated relative
+paths reject traversal, absolute and Windows-drive paths, backslashes, NUL
+bytes, duplicates, and file/directory prefix collisions before any owned tree
+or package is written.
+Generated Codex files are derived state: review and commit them with their
+source definitions or skill changes, and gate CI with
+`capshelf marketplace validate --target codex`.
 
 The common thread: at this layer, delegation beats reinvention. Git hosting
 already has identity, permissions, protected branches, required review, and

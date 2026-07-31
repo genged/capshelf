@@ -191,6 +191,25 @@ capshelf show bundles/go-backend     # preview members + install state
 capshelf add bundles/go-backend
 ```
 
+Curate the same canonical skills into independent Claude/Cowork and Codex
+plugins without installing either runtime:
+
+```bash
+capshelf --data ~/code/agent-config marketplace init \
+  --target codex --name company-workflows --owner Engineering
+capshelf --data ~/code/agent-config marketplace plugin create engineering \
+  --target codex --skill skills/security-review
+capshelf --data ~/code/agent-config marketplace validate --target codex
+```
+
+The data repo is then a native local Codex marketplace. Claude entries use
+the official `.claude-plugin/marketplace.json`; `plugin pack --target claude`
+builds a standalone `.plugin` file for Cowork upload. Capshelf creates and
+commits catalog state, but never registers, installs, refreshes, or removes a
+runtime plugin. Identities are kebab-case, plugin creation requires a skill,
+and validation reports target configuration, projection drift, structured
+issues, known Cowork limits, and package/file-byte accounting.
+
 Bootstrap a new project straight from a shared data repo URL (capshelf clones
 it once under `~/.local/share/capshelf/data/...`, or to `--data-dir <path>`,
 and binds the local clone):
@@ -288,6 +307,7 @@ reported as external state instead of overwritten.
 | `revert` | restore one item to its locked version |
 | `get-path` | print the editable path; subagents and multi-target fragments use `--target`, and `--output` returns runtime outputs |
 | `self-update` | check for and install a Homebrew update for the capshelf binary |
+| `marketplace ...` | author, validate, sync, and package Claude/Cowork or Codex plugin catalogs in the data repo |
 
 Commands support `--json` where useful for agent consumption. Exit codes are
 stable: `0` success, `2` not found, `3` conflict, `4` drift or upstream
@@ -319,7 +339,9 @@ project's generated outputs. Item metadata (`.capshelf.yml` sidecars) drives `ls
 and `add`-time `requires`/`conflicts-with` checks. Bundles
 (`capshelf add bundles/<name>`) expand curated item sets all-or-nothing with
 no project-side bundle state. `validate`, `diff`, `doctor`, and `journal`
-remain on the roadmap.
+remain on the roadmap. Data-repo plugin marketplace management is implemented
+for independent Claude/Cowork and Codex catalogs, including deterministic
+packages and a committed native Codex projection.
 
 ## Further Reading
 

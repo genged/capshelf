@@ -563,6 +563,29 @@ export async function commitInRepo(
   return out.trim();
 }
 
+/**
+ * Commit exactly the supplied repository-relative paths with Git pathspec
+ * magic disabled. Marketplace transactions use fixed owned roots plus skill
+ * paths that can originate in user data; literal mode prevents metacharacters
+ * from widening the staged set.
+ */
+export async function commitLiteralPathsInRepo(
+  repo: string,
+  relPaths: string[],
+  message: string,
+): Promise<string> {
+  await gitBuffer(repo, ["--literal-pathspecs", "add", "--", ...relPaths]);
+  await gitBuffer(repo, [
+    "--literal-pathspecs",
+    "commit",
+    "-m",
+    message,
+    "--",
+    ...relPaths,
+  ]);
+  return (await gitText(repo, ["rev-parse", "HEAD"])).trim();
+}
+
 export interface NormalizeRemoteUrlOptions {
   /**
    * Accept file:// URLs. Only the remote bootstrap path opts in, for clone

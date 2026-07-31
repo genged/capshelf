@@ -92,6 +92,43 @@ Always check the current surface with `capshelf --help` and `capshelf <verb> --h
 | `data sync [--json]` | explicitly fetch the bound data repo's origin and fast-forward when safe; the **only** capshelf command that touches the network besides the `init` bootstrap clone and `self-update`. Run it when the user asks to pick up teammates' changes, then `capshelf status` to see `update_available` |
 | `get-path` | print the editable path for an item; use `--target claude|codex` for multi-target subagents |
 | `self-update` | update the Homebrew-installed binary (not project pins) |
+| `marketplace ...` | author, validate, sync, and package data-repo Claude/Cowork or Codex plugin catalogs; never installs runtime plugins |
+
+## Plugin marketplaces
+
+Use `capshelf marketplace` when the user wants to group canonical data-repo
+skills into a Claude/Cowork or Codex plugin. Claude and Codex are independent
+targets: always pass `--target` for mutations and do not mirror membership
+unless the user asks.
+
+Marketplace/plugin identities are kebab-case and `plugin create` requires at
+least one canonical skill. Codex installation policy values are
+`NOT_AVAILABLE`, `AVAILABLE`, and `INSTALLED_BY_DEFAULT`; authentication
+policy values are `ON_INSTALL` and `ON_USE`. Target-inapplicable options are
+errors. Validation JSON contains target-labeled configuration, projection,
+source-path and file/byte accounting, known Cowork limits, and structured issue
+objects. An explicit `--cowork-url` is a user assertion and produces a warning;
+strict validation therefore refuses it unless the support can be classified
+from the repository origin.
+
+Run `marketplace validate` before publication. After direct Codex definition
+or selected-skill edits, run `marketplace sync --target codex`, review source
+and generated diffs together, then commit them together. Sync never stages or
+commits. Marketplace mutations do make one local data-repo commit but never
+push.
+
+For local handoff, `marketplace plugin pack <name> --target claude --output
+<outside-path>.plugin` builds a Cowork upload, while the data repo itself is
+the primary local Codex marketplace. Stop after printing the runtime handoff:
+do not register a marketplace, upload/install/refresh a plugin, restart an
+app, or edit a runtime cache unless the user separately asks for that runtime
+action.
+
+Canonical skills have no Capshelf data-repo rename/delete command. If the user
+renames one directly, update every Claude and Codex membership in the same Git
+change, sync Codex, and validate both targets. Remove every membership before
+deleting a skill; dangling refs intentionally block validation, sync,
+packaging, and further marketplace mutations.
 
 ## Proposing changes upstream (review required, or no direct push access)
 
