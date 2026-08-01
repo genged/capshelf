@@ -5,7 +5,7 @@ committing a lock written by 0.6.
 
 - Manage one logical subagent with Claude Markdown and Codex TOML targets.
 - Build, validate, sync, and package independent Claude/Cowork and Codex plugin catalogs from canonical skills.
-- Declare expected network hosts, environment variables, and commands in `.capshelf.yml`, with advisory Runfree policy checks.
+- Declare and pin expected network hosts, environment variables, and commands in `.capshelf.yml` as runtime-neutral metadata.
 - Resolve supported stale promotes with an isolated three-way merge via `promote --merge`.
 - Use project or clone-local scope for Pi extensions and compatible bundles.
 - Reduce status-time blob loading, improve removal diagnostics, make the exported CLI entry point reentrant, and run tests in parallel.

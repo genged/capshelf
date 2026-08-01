@@ -352,9 +352,6 @@ async function updateDataTarget(
       ctx.project,
       parsed.kind,
       parsed.name,
-      {
-        ...(entry.needs !== null && { needs: entry.needs }),
-      },
     );
     return {
       result: {
@@ -474,7 +471,6 @@ async function updateDataTarget(
           ctx.project,
           parsed.kind,
           parsed.name,
-          { needs: newEntry.needs ?? undefined },
         ),
       }
     : parsed.kind === "subagents"
@@ -522,7 +518,6 @@ async function updateDataTarget(
     ctx.project,
     parsed.kind,
     parsed.name,
-    { needs: newEntry.needs ?? undefined },
   );
   return {
     result: {

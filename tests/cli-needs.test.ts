@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { commitAll, runInProcess, tempRepo } from "./cli-fixtures";
 
 describe("declared needs CLI lifecycle", () => {
-  test("pins, reports, refreshes, and checks needs without rewriting content", async () => {
+  test("pins, displays, and refreshes needs without rewriting content", async () => {
     const project = await tempRepo("capshelf-needs-project-");
     const dataRepo = await tempRepo("capshelf-needs-data-");
     const extension = join(dataRepo, "pi", "extensions", "exa-mcp");
@@ -41,7 +41,6 @@ describe("declared needs CLI lifecycle", () => {
 
     const run = runInProcess(project);
     expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
-    await mkdir(join(project, ".runfree"));
 
     const bundleShow = JSON.parse(
       (await run(["show", "bundles/networked", "--json"])).stdout.toString(),
@@ -56,9 +55,6 @@ describe("declared needs CLI lifecycle", () => {
     expect(add.exitCode).toBe(0);
     expect(add.stdout.toString()).toContain(
       "reads env: EXA_API_KEY · needs on PATH: agent-browser",
-    );
-    expect(add.stdout.toString()).toContain(
-      "mcp.exa.ai — allow with: runfree host add mcp.exa.ai",
     );
 
     const lockPath = join(project, ".capshelf", "capshelf.lock.json");
@@ -80,25 +76,15 @@ describe("declared needs CLI lifecycle", () => {
     );
     expect(beforeRow.needsState).toBe("current");
     expect(beforeRow.lockedNeeds).toEqual(addedEntry.needs);
-    expect(
-      beforeRow.runtimeWarnings.some(
-        (warning: { type: string }) => warning.type === "network_needs_unmet",
-      ),
-    ).toBe(true);
     expect((await run(["status", "--strict"])).exitCode).toBe(0);
 
-    await writeFile(
-      join(project, ".runfree", "network-policy.json"),
-      JSON.stringify({ domains: ["MCP.EXA.AI"] }),
-    );
-    const allowed = JSON.parse(
-      (await run(["status", "--json"])).stdout.toString(),
-    ).items.find((row: { name: string }) => row.name === "exa-mcp");
-    expect(
-      allowed.runtimeWarnings?.some(
-        (warning: { type: string }) => warning.type === "network_needs_unmet",
-      ) ?? false,
-    ).toBe(false);
+    const humanShow = await run([
+      "show",
+      "pi-extensions/exa-mcp",
+      "--no-content",
+    ]);
+    expect(humanShow.exitCode).toBe(0);
+    expect(humanShow.stdout.toString()).toContain("needs network: mcp.exa.ai");
 
     const installedPath = join(project, ".pi", "extensions", "exa-mcp");
     const bytesBefore = await file(
@@ -157,14 +143,11 @@ describe("declared needs CLI lifecycle", () => {
     const bundleProject = await tempRepo("capshelf-needs-bundle-project-");
     const bundleRun = runInProcess(bundleProject);
     expect((await bundleRun(["init", "--data", dataRepo])).exitCode).toBe(0);
-    await mkdir(join(bundleProject, ".runfree"));
     const bundleAdd = await bundleRun(["add", "bundles/networked"]);
     expect(bundleAdd.exitCode).toBe(0);
+    expect(bundleAdd.stdout.toString()).toContain("reads env: HELPER_TOKEN");
     expect(bundleAdd.stdout.toString()).toContain(
-      "skills/network-helper needs network egress",
-    );
-    expect(bundleAdd.stdout.toString()).toContain(
-      "pi-extensions/exa-mcp needs network egress",
+      "reads env: EXA_API_KEY · needs on PATH: agent-browser",
     );
     const bundleLock = await file(
       join(bundleProject, ".capshelf", "capshelf.lock.json"),

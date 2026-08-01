@@ -7,14 +7,12 @@ source "$SCRIPT_DIR/smoke-lib.sh"
 TMP="$(mktemp -d)"
 export HOME="$TMP/home"
 DATA="$TMP/data"
-RUNFREE_PROJECT="$TMP/runfree-project"
-PLAIN_PROJECT="$TMP/plain-project"
+PROJECT="$TMP/project"
 
 mkdir -p \
   "$HOME" \
   "$DATA/pi/extensions/exa-mcp" \
-  "$RUNFREE_PROJECT" \
-  "$PLAIN_PROJECT"
+  "$PROJECT"
 printf '%s\n' 'export default {};' > "$DATA/pi/extensions/exa-mcp/index.ts"
 printf '%s\n' \
   'needs:' \
@@ -27,29 +25,22 @@ configure_git_user "$DATA"
 set_portable_origin "$DATA" smoke-needs-data
 git -C "$DATA" add -A
 git -C "$DATA" commit -qm baseline
-git -C "$RUNFREE_PROJECT" init -q --initial-branch=main
-git -C "$PLAIN_PROJECT" init -q --initial-branch=main
+git -C "$PROJECT" init -q --initial-branch=main
 
-(cd "$RUNFREE_PROJECT" && "${CLI[@]}" init --data "$DATA" >/dev/null)
-mkdir -p "$RUNFREE_PROJECT/.runfree"
-(cd "$RUNFREE_PROJECT" && "${CLI[@]}" add pi-extensions/exa-mcp > "$TMP/add.txt")
-assert_fixed_contains \
-  'mcp.exa.ai — allow with: runfree host add mcp.exa.ai' \
-  "$TMP/add.txt"
+(cd "$PROJECT" && "${CLI[@]}" init --data "$DATA" >/dev/null)
+(cd "$PROJECT" && "${CLI[@]}" add pi-extensions/exa-mcp > "$TMP/add.txt")
 assert_fixed_contains \
   'reads env: EXA_API_KEY · needs on PATH: agent-browser' \
   "$TMP/add.txt"
-
-printf '%s\n' '{"domains":["MCP.EXA.AI"]}' \
-  > "$RUNFREE_PROJECT/.runfree/network-policy.json"
-(cd "$RUNFREE_PROJECT" && "${CLI[@]}" status --strict > "$TMP/status-allowed.txt")
-assert_fixed_not_contains 'runfree host add' "$TMP/status-allowed.txt"
+(cd "$PROJECT" && "${CLI[@]}" show pi-extensions/exa-mcp --no-content > "$TMP/show.txt")
+assert_fixed_contains 'needs network: mcp.exa.ai' "$TMP/show.txt"
+(cd "$PROJECT" && "${CLI[@]}" status --strict >/dev/null)
 
 cp \
-  "$RUNFREE_PROJECT/.pi/extensions/exa-mcp/index.ts" \
+  "$PROJECT/.pi/extensions/exa-mcp/index.ts" \
   "$TMP/index-before.ts"
 cp \
-  "$RUNFREE_PROJECT/.capshelf/capshelf.lock.json" \
+  "$PROJECT/.capshelf/capshelf.lock.json" \
   "$TMP/lock-before.json"
 printf '%s\n' \
   'needs:' \
@@ -60,15 +51,15 @@ printf '%s\n' \
 git -C "$DATA" add pi/extensions/exa-mcp/.capshelf.yml
 git -C "$DATA" commit -qm 'expand declared needs'
 
-(cd "$RUNFREE_PROJECT" && "${CLI[@]}" status > "$TMP/status-stale.txt")
+(cd "$PROJECT" && "${CLI[@]}" status > "$TMP/status-stale.txt")
 assert_fixed_contains 'requirements update available' "$TMP/status-stale.txt"
-(cd "$RUNFREE_PROJECT" && "${CLI[@]}" update pi-extensions/exa-mcp >/dev/null)
+(cd "$PROJECT" && "${CLI[@]}" update pi-extensions/exa-mcp >/dev/null)
 cmp -s \
   "$TMP/index-before.ts" \
-  "$RUNFREE_PROJECT/.pi/extensions/exa-mcp/index.ts"
+  "$PROJECT/.pi/extensions/exa-mcp/index.ts"
 python3 - \
   "$TMP/lock-before.json" \
-  "$RUNFREE_PROJECT/.capshelf/capshelf.lock.json" <<'PY'
+  "$PROJECT/.capshelf/capshelf.lock.json" <<'PY'
 import json
 import sys
 
@@ -83,10 +74,5 @@ assert after["items"][key]["needs"]["network"] == [
 ]
 assert after["version"] == 3
 PY
-
-(cd "$PLAIN_PROJECT" && "${CLI[@]}" init --data "$DATA" >/dev/null)
-(cd "$PLAIN_PROJECT" && "${CLI[@]}" add pi-extensions/exa-mcp > "$TMP/plain-add.txt")
-assert_fixed_not_contains 'needs network egress' "$TMP/plain-add.txt"
-assert_fixed_not_contains 'runfree host add' "$TMP/plain-add.txt"
 
 echo "✓ smoke-needs ok ($TMP)"

@@ -757,9 +757,7 @@ export async function syncTrackedIntoDataRepo(
     // Guard-free no-op by design: local content matches the lock, there is
     // nothing to write. If upstream has advanced past the lock here, that is
     // update_available territory and surfacing it is status's job.
-    const runtimeWarnings = runtimeWarningsForItem(project, kind, name, {
-      needs: entry.needs ?? undefined,
-    });
+    const runtimeWarnings = runtimeWarningsForItem(project, kind, name);
     return {
       source: "data",
       kind,
@@ -809,9 +807,7 @@ export async function syncTrackedIntoDataRepo(
         sourceCommit,
         ...needsSnapshot,
       });
-      const runtimeWarnings = runtimeWarningsForItem(project, kind, name, {
-        needs: needsSnapshot.needs,
-      });
+      const runtimeWarnings = runtimeWarningsForItem(project, kind, name);
       return {
         source: "data",
         kind,
@@ -913,9 +909,7 @@ export async function syncTrackedIntoDataRepo(
     sourceCommit,
     ...needsSnapshot,
   });
-  const runtimeWarnings = runtimeWarningsForItem(project, kind, name, {
-    needs: needsSnapshot.needs,
-  });
+  const runtimeWarnings = runtimeWarningsForItem(project, kind, name);
 
   return {
     source: "data",
@@ -1138,9 +1132,7 @@ async function mergeStalePromote(input: {
     });
   }
 
-  const runtimeWarnings = runtimeWarningsForItem(project, kind, name, {
-    needs: needsSnapshot.needs,
-  });
+  const runtimeWarnings = runtimeWarningsForItem(project, kind, name);
   const privateDotenvWarnings = privateDotenvFiles(
     mergedFiles.map((file) => file.path),
   );

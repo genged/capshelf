@@ -64,7 +64,7 @@ import {
   preflightBundleChecks,
 } from "../bundle-install";
 import type { BundlePlan, MemberPlan } from "../bundle-install";
-import { formatDeclaredNeeds } from "../needs";
+import { formatDeclaredNeeds } from "../needs-format";
 import {
   assertSubagentOutputAvailable,
   currentSubagentSources,
@@ -404,14 +404,7 @@ export async function installDataItem(
   } else {
     throw new Error(`no materialization strategy for ${item.kind}`);
   }
-  const runtimeWarnings = runtimeWarningsForItem(
-    project,
-    item.kind,
-    item.name,
-    {
-      needs: snapshot.needs,
-    },
-  );
+  const runtimeWarnings = runtimeWarningsForItem(project, item.kind, item.name);
 
   if (ctx.local) {
     if (!localConfig) throw new Error("expected local manifest");

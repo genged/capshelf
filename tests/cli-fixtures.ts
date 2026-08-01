@@ -5,7 +5,6 @@ import { mkdtemp, realpath } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { main } from "../src/cli";
-import { clearNeedsPolicyCacheForTests } from "../src/needs";
 
 export async function tempDir(prefix: string): Promise<string> {
   // realpath: on macOS tmpdir() is a symlink (/var -> /private/var); the CLI
@@ -94,7 +93,6 @@ export function runInProcess(project: string) {
         if (value === undefined) delete process.env[name];
         else process.env[name] = value;
       }
-      clearNeedsPolicyCacheForTests();
       const exitCode = await main([process.execPath, "capshelf", ...args]);
       return {
         exitCode,

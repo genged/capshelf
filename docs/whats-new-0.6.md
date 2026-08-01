@@ -135,11 +135,9 @@ files. `show --json` reports current and locked needs; `status --json` reports
 `needsState` and `lockedNeeds`. Bundle previews return the union of their
 members' current declarations.
 
-When a project contains `.runfree/`, Capshelf compares locked network hosts
-with `.runfree/network-policy.json`. Missing hosts produce an advisory with the
-exact `runfree host add <host>` command. Capshelf does not run Runfree, edit its
-policy, probe environment variables or commands, or make these advisories fail
-`status --strict`.
+Capshelf treats these fields as runtime-neutral declarations. It displays and
+pins them, but does not inspect external runtime policy, probe environment
+variables or commands, enforce access, or satisfy requirements.
 
 ## Merge a stale promote
 

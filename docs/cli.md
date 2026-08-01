@@ -54,7 +54,7 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
 | `ls` | list items in master plus user-level runtime skills by default, in this project (`--here`), or user-level runtime skills only (`--user`); master/project listings show descriptions and `#tags` from item metadata; `--tag` filters master/project listings; appends a `bundles/` section for data-repo bundles | implemented |
 | `show <item>` | print metadata + content for one item, including relations and current/locked declared needs; `--target` narrows MCP or subagent runtime content | implemented |
 | `search <query...>` | search available items (data repo + system) and bundles by name, tags, description, and content; supports `--kind` and `--json`; zero matches exit 0 | implemented |
-| `status [<item>]` | drift / update report plus orthogonal `needsState` freshness and locked-needs Runfree warnings; subagent JSON includes deterministic per-target state; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` explains local drift | implemented |
+| `status [<item>]` | drift / update report plus orthogonal `needsState` freshness and locked needs; subagent JSON includes deterministic per-target state; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` explains local drift | implemented |
 | `add <item>` | install an item from the bound data repo; `--local` installs a clone-local copy item (skill or Pi extension); warns on unmet `requires`, refuses on `conflicts-with` (exit 3); `add bundles/<name>` expands a bundle (see Bundles) | implemented |
 | `rm <item>` | remove from this project; `--local` removes clone-local copy items | implemented |
 | `get-path <item>` | print the editable path; subagents and MCP support `--target`, while `--output` returns the corresponding runtime output | implemented |
@@ -232,14 +232,12 @@ needs:
 command names preserve case. Invalid entries warn and are dropped. `add` and
 `show` display `env`/`bin` declarations but never probe the host environment.
 
-If `.runfree/` exists in the project, capshelf compares network needs with
-`.runfree/network-policy.json` and warns for exact hosts absent from its
-`domains` array. The warning includes `runfree host add <host>`. It is
-advisory, does not affect `status --strict`, and is the only integration:
-Capshelf never runs Runfree or edits its policy. `status --json` includes
-`needsState` and `lockedNeeds` for data items; `show --json` carries current
-metadata needs plus installed `lockedNeeds`. Bundle previews union current
-member needs, while bundle installs pin and warn per member.
+Capshelf treats all three fields as runtime-neutral declarations. It does not
+inspect external runtime policy, check whether a requirement is satisfied, or
+change runtime configuration. `status --json` includes `needsState` and
+`lockedNeeds` for data items; `show --json` carries current metadata needs plus
+installed `lockedNeeds`. Bundle previews union current member needs, while
+bundle installs pin each member's declaration.
 
 ### add enforcement
 

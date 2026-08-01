@@ -188,9 +188,7 @@ export function registerShare(program: Command): void {
         sourceCommit: adopted.sourceCommit,
         ...snapshot,
       });
-      const runtimeWarnings = runtimeWarningsForItem(project, kind, name, {
-        needs: snapshot.needs,
-      });
+      const runtimeWarnings = runtimeWarningsForItem(project, kind, name);
       let localChanged = false;
       if (scope === "project") {
         addToManifest(manifest, kind, name);

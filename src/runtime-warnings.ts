@@ -9,8 +9,6 @@ import { delimiter } from "node:path";
 import { join, resolve } from "node:path";
 import { z } from "zod";
 import type { ItemKind } from "./master";
-import { needsWarningsForItem } from "./needs";
-import type { ItemNeeds } from "./metadata";
 import {
   claudeDir,
   codexProjectConfigDir,
@@ -23,9 +21,7 @@ export type RuntimeWarningType =
   | "shadowed_by_personal_claude_skill"
   | "codex_project_untrusted"
   | "pi_extension_executes_code"
-  | "pi_extension_dependencies_not_installed"
-  | "network_needs_unmet"
-  | "needs_check_skipped";
+  | "pi_extension_dependencies_not_installed";
 
 export interface RuntimeWarning {
   type: RuntimeWarningType;
@@ -37,7 +33,6 @@ interface RuntimeWarningOptions {
   personalSkillPath?: string;
   /** Content root to inspect instead of the installed extension directory. */
   itemPath?: string;
-  needs?: ItemNeeds;
 }
 
 const PiExtensionPackageSchema = z.object({
@@ -50,24 +45,17 @@ export function runtimeWarningsForItem(
   name: string,
   opts: RuntimeWarningOptions = {},
 ): RuntimeWarning[] {
-  const needsWarnings =
-    opts.needs === undefined
-      ? []
-      : needsWarningsForItem(project, `${kind}/${name}`, opts.needs);
   if (kind === "pi-extensions") {
-    return [
-      ...piExtensionWarnings(
-        name,
-        opts.itemPath ?? join(project, ".pi", "extensions", name),
-      ),
-      ...needsWarnings,
-    ];
+    return piExtensionWarnings(
+      name,
+      opts.itemPath ?? join(project, ".pi", "extensions", name),
+    );
   }
-  if (kind !== "skills") return needsWarnings;
+  if (kind !== "skills") return [];
 
   const personalPath = opts.personalSkillPath ?? personalClaudeSkillPath(name);
-  if (!existsSync(personalPath)) return needsWarnings;
-  if (isProjectSkillPath(project, name, personalPath)) return needsWarnings;
+  if (!existsSync(personalPath)) return [];
+  if (isProjectSkillPath(project, name, personalPath)) return [];
 
   return [
     {
@@ -75,7 +63,6 @@ export function runtimeWarningsForItem(
       path: personalPath,
       message: `Claude will load ${homeRelative(personalPath)} before this project skill.`,
     },
-    ...needsWarnings,
   ];
 }
 
@@ -118,12 +105,6 @@ export function formatRuntimeWarnings(
       lines.push(
         `${indent}warning: pi extension declares package dependencies; capshelf does not install them. Pi may fail to load this extension until dependencies are installed manually or the extension is packaged for Pi.`,
       );
-    } else if (warning.type === "network_needs_unmet") {
-      const [headline = "", ...detail] = warning.message.split("\n");
-      lines.push(`${indent}⚠ ${headline}`);
-      lines.push(...detail.map((line) => `${indent}${line}`));
-    } else if (warning.type === "needs_check_skipped") {
-      lines.push(`${indent}⚠ ${warning.message}`);
     }
   }
   return lines;
@@ -142,9 +123,7 @@ export function isStrictRuntimeWarning(warning: RuntimeWarning): boolean {
   return (
     warning.type !== "codex_project_untrusted" &&
     warning.type !== "pi_extension_executes_code" &&
-    warning.type !== "pi_extension_dependencies_not_installed" &&
-    warning.type !== "network_needs_unmet" &&
-    warning.type !== "needs_check_skipped"
+    warning.type !== "pi_extension_dependencies_not_installed"
   );
 }
 

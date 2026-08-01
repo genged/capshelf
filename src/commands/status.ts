@@ -307,10 +307,7 @@ export function registerStatus(program: Command): void {
                   : undefined,
               targets: subagentTargets,
               runtimeWarnings: [
-                ...runtimeWarningsForItem(project, kind, itemName, {
-                  ...(entry.source === "data" &&
-                    entry.needs !== null && { needs: entry.needs }),
-                }),
+                ...runtimeWarningsForItem(project, kind, itemName),
                 ...codexWarningsForItem(project, kind, itemName),
               ],
             }),

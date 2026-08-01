@@ -433,10 +433,9 @@ exit 3 and no force flag).
 sees, and the sidecar is never delivered: it is excluded from every hashing
 path and from materialization, so a tag or description edit never flashes a
 content update across consuming projects. Declared `needs` are the exception
-to live-only catalog metadata: the selected declaration is lock-pinned so
-warnings describe the installed decision, and `status` reports requirements
-freshness separately from content state. A needs-only `update` changes the
-lock without rewriting installed bytes. The deliberate asymmetry: a
+to live-only catalog metadata: the selected declaration is lock-pinned, and
+`status` reports requirements freshness separately from content state. A
+needs-only `update` changes the lock without rewriting installed bytes. The deliberate asymmetry: a
 description edit in SKILL.md frontmatter *does* bump the sha, because
 frontmatter ships to Claude and genuinely changes runtime behavior — hashed
 iff delivered. `promote` and `share` cache and restore the data-repo sidecar
@@ -454,21 +453,17 @@ canonical source paths only. `ls`/`show`/`search` read metadata from the
 data repo **working tree** — a catalog view of the shelf as it is now, not a
 pinned view per `sourceCommit`.
 
-## Declared needs and Runfree
+## Declared needs
 
 Every item kind may declare normalized `network`, `env`, and `bin` needs in
 its sidecar. `add`, bundle expansion, `update`, `share`, and `promote` capture
 the committed declaration in the selected lock; `apply`, `revert`, `move`,
 and `keep-local` preserve it.
 
-When `<project>/.runfree` is a directory, capshelf reads
-`.runfree/network-policy.json` once per process and compares only the locked
-network hostnames by exact, case-insensitive match. Missing policy means no
-hosts are allowed; malformed policy produces an advisory and skips the check.
-Unmet hosts are non-strict runtime warnings with a
-`runfree host add <host>` request. Capshelf never invokes Runfree or writes its
-policy. Environment variables and commands are displayed but not checked,
-because the host process is not authoritative for the sandbox environment.
+Capshelf displays declarations and reports their lock freshness, but does not
+probe the host, inspect an external runtime's configuration, enforce access,
+or satisfy requirements. Runtime policy and environment state remain owned by
+the runtime in which the item executes.
 
 ## Bundles
 

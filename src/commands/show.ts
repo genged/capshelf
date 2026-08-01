@@ -47,7 +47,7 @@ import {
   runtimeWarningsForItem,
 } from "../runtime-warnings";
 import { deriveNeedsState } from "../status-core";
-import { formatDeclaredNeeds, needsPolicyForProject } from "../needs";
+import { formatDeclaredNeeds } from "../needs-format";
 import {
   currentSubagentSources,
   isSubagentTarget,
@@ -174,15 +174,12 @@ export function registerShow(program: Command): void {
         lockEntry?.source === "data"
           ? deriveNeedsState(lockEntry.needs ?? null, committedNeeds.needs)
           : null;
-      const warningNeeds =
-        lockEntry?.source === "data" ? (lockEntry.needs ?? null) : meta.needs;
       const runtimeWarnings = runtimeWarningsForItem(
         project ?? "",
         item.kind,
         item.name,
         {
           itemPath: item.path,
-          ...(project && warningNeeds !== null && { needs: warningNeeds }),
         },
       );
       const locks = [lock, localLock];
@@ -418,7 +415,7 @@ async function showBundle(
   if (bundle.tags.length > 0) {
     console.log(`  tags:        ${bundle.tags.join(", ")}`);
   }
-  printNeedsBlock(bundleNeeds, project);
+  printNeedsBlock(bundleNeeds);
   if (bundle.malformed !== undefined) {
     console.log(`  (bundle file is malformed — members unknown)`);
     return;
@@ -557,17 +554,12 @@ function printMetadataBlock(meta: ItemMetadata, locks: Lock[]): void {
       .join(", ");
     console.log(`  ${label} ${states}`);
   }
-  printNeedsBlock(meta.needs, findProjectRoot());
+  printNeedsBlock(meta.needs);
 }
 
-function printNeedsBlock(needs: ItemNeeds, project: string | null): void {
-  const policy = project ? needsPolicyForProject(project) : null;
+function printNeedsBlock(needs: ItemNeeds): void {
   if (needs.network.length > 0) {
-    const hosts = needs.network.map((host) => {
-      if (!policy?.active || !policy.checkable) return host;
-      return `${host} (${policy.allowed.has(host) ? "allowed" : "not allowed"})`;
-    });
-    console.log(`  needs network: ${hosts.join(", ")}`);
+    console.log(`  needs network: ${needs.network.join(", ")}`);
   }
   const info = formatDeclaredNeeds(needs);
   if (info) console.log(`  ${info}`);

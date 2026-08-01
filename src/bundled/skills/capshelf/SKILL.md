@@ -206,10 +206,8 @@ Codex only loads `.codex/config.toml` in trusted projects; `status` warns non-fa
 - **Never pass `promote --stale-ok` without explicit user direction** — it intentionally overwrites a teammate's newer upstream version.
 - **The lock is the source of truth** for what capshelf owns.
 - **Review Pi extension source before adding or promoting it.** The runtime warning is a trust boundary, not proof of safety; capshelf never installs extension dependencies or reloads Pi.
-- **Relay declared-needs warnings to the user.** When capshelf prints
-  `runfree host add <host>`, relay that exact command and let the user decide.
-  Never run it on their behalf and never edit `.runfree/network-policy.json`;
-  Runfree remains the only policy writer.
+- **Treat declared needs as metadata.** Capshelf records expected network,
+  environment, and command requirements but does not satisfy or enforce them.
 - **Use `capshelf self-update` only for Homebrew installs**; source installs update with `git pull && make install`. Set `CAPSHELF_NO_SELF_UPDATE=1` to suppress startup prompts.
 
 ## Troubleshooting
