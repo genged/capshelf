@@ -2,13 +2,12 @@ import { $, file } from "bun";
 import { describe, expect, test } from "bun:test";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { commitAll, tempDir, tempRepo } from "./cli-fixtures";
+import { commitAll, runInProcess, tempDir, tempRepo } from "./cli-fixtures";
 
 describe("cli integration", () => {
   test("add --local writes local manifest, lock, excludes, and status group", async () => {
     const project = await tempRepo("capshelf-local-project-");
     const dataRepo = await tempRepo("capshelf-local-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
     await mkdir(join(dataRepo, "skills", "local-only"), { recursive: true });
     await writeFile(
@@ -17,22 +16,11 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "local skill");
 
-    const init = Bun.spawnSync({
-      cmd: [process.execPath, cli, "init", "--data", dataRepo],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const run = runInProcess(project);
+    const init = await run(["init", "--data", dataRepo]);
     expect(init.exitCode).toBe(0);
 
-    const add = Bun.spawnSync({
-      cmd: [process.execPath, cli, "add", "--local", "skills/local-only"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const add = await run(["add", "--local", "skills/local-only"]);
     expect(add.exitCode).toBe(0);
 
     expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual(
@@ -66,13 +54,7 @@ describe("cli integration", () => {
     expect(exclude).not.toContain(".capshelf/local.lock.json");
     expect(exclude).toContain(".agents/skills/local-only/");
 
-    const status = Bun.spawnSync({
-      cmd: [process.execPath, cli, "status", "--local", "--json"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const status = await run(["status", "--local", "--json"]);
     expect(status.exitCode).toBe(0);
     const statusJson = JSON.parse(status.stdout.toString());
     expect(statusJson.items[0].scope).toBe("local");
@@ -80,13 +62,7 @@ describe("cli integration", () => {
     expect(statusJson.items[0].name).toBe("local-only");
     expect(statusJson.items[0].state).toBe("ok");
 
-    const lsHere = Bun.spawnSync({
-      cmd: [process.execPath, cli, "ls", "--here", "--json"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const lsHere = await run(["ls", "--here", "--json"]);
     expect(lsHere.exitCode).toBe(0);
     const installedItems = JSON.parse(lsHere.stdout.toString()) as Array<{
       scope?: string;
@@ -102,20 +78,7 @@ describe("cli integration", () => {
       ),
     ).toBe(true);
 
-    const move = Bun.spawnSync({
-      cmd: [
-        process.execPath,
-        cli,
-        "move",
-        "skills/local-only",
-        "--to",
-        "project",
-      ],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const move = await run(["move", "skills/local-only", "--to", "project"]);
     expect(move.exitCode).toBe(0);
 
     expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual(
@@ -150,7 +113,6 @@ describe("cli integration", () => {
   test("rm --local removes local skill files and git exclude entries", async () => {
     const project = await tempRepo("capshelf-rm-local-project-");
     const dataRepo = await tempRepo("capshelf-rm-local-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
     await mkdir(join(dataRepo, "skills", "local-remove"), {
       recursive: true,
@@ -161,22 +123,11 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "local removable skill");
 
-    const init = Bun.spawnSync({
-      cmd: [process.execPath, cli, "init", "--data", dataRepo],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const run = runInProcess(project);
+    const init = await run(["init", "--data", dataRepo]);
     expect(init.exitCode).toBe(0);
 
-    const add = Bun.spawnSync({
-      cmd: [process.execPath, cli, "add", "--local", "skills/local-remove"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const add = await run(["add", "--local", "skills/local-remove"]);
     expect(add.exitCode).toBe(0);
     let exclude = await readFile(
       join(project, ".git", "info", "exclude"),
@@ -185,13 +136,7 @@ describe("cli integration", () => {
     expect(exclude).toContain(".agents/skills/local-remove/");
     expect(exclude).toContain(".claude/skills/local-remove");
 
-    const rm = Bun.spawnSync({
-      cmd: [process.execPath, cli, "rm", "--local", "skills/local-remove"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const rm = await run(["rm", "--local", "skills/local-remove"]);
     expect(rm.exitCode).toBe(0);
 
     const localConfig = await file(
@@ -216,7 +161,6 @@ describe("cli integration", () => {
   test("rm without --local points at local scope for a local-only item", async () => {
     const project = await tempRepo("capshelf-rm-scope-hint-project-");
     const dataRepo = await tempRepo("capshelf-rm-scope-hint-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
     await mkdir(join(dataRepo, "skills", "local-hinted"), { recursive: true });
     await writeFile(
@@ -225,32 +169,15 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "local hinted skill");
 
-    const init = Bun.spawnSync({
-      cmd: [process.execPath, cli, "init", "--data", dataRepo],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const run = runInProcess(project);
+    const init = await run(["init", "--data", dataRepo]);
     expect(init.exitCode).toBe(0);
 
-    const add = Bun.spawnSync({
-      cmd: [process.execPath, cli, "add", "--local", "skills/local-hinted"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const add = await run(["add", "--local", "skills/local-hinted"]);
     expect(add.exitCode).toBe(0);
 
     for (const itemRef of ["skills/local-hinted", "local-hinted"]) {
-      const rm = Bun.spawnSync({
-        cmd: [process.execPath, cli, "rm", itemRef],
-        cwd: project,
-        env: process.env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+      const rm = await run(["rm", itemRef]);
       expect(rm.exitCode).toBe(3);
       const stderr = rm.stderr.toString();
       expect(stderr).toContain(
@@ -266,20 +193,13 @@ describe("cli integration", () => {
       ).exists(),
     ).toBe(true);
 
-    const rmLocal = Bun.spawnSync({
-      cmd: [process.execPath, cli, "rm", "--local", "skills/local-hinted"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const rmLocal = await run(["rm", "--local", "skills/local-hinted"]);
     expect(rmLocal.exitCode).toBe(0);
   });
 
   test("rm --local points at project scope for a project-only item", async () => {
     const project = await tempRepo("capshelf-rm-scope-hint-proj-project-");
     const dataRepo = await tempRepo("capshelf-rm-scope-hint-proj-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
     await mkdir(join(dataRepo, "skills", "project-hinted"), {
       recursive: true,
@@ -290,31 +210,14 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "project hinted skill");
 
-    const init = Bun.spawnSync({
-      cmd: [process.execPath, cli, "init", "--data", dataRepo],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const run = runInProcess(project);
+    const init = await run(["init", "--data", dataRepo]);
     expect(init.exitCode).toBe(0);
 
-    const add = Bun.spawnSync({
-      cmd: [process.execPath, cli, "add", "skills/project-hinted"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const add = await run(["add", "skills/project-hinted"]);
     expect(add.exitCode).toBe(0);
 
-    const rm = Bun.spawnSync({
-      cmd: [process.execPath, cli, "rm", "--local", "skills/project-hinted"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const rm = await run(["rm", "--local", "skills/project-hinted"]);
     expect(rm.exitCode).toBe(3);
     const stderr = rm.stderr.toString();
     expect(stderr).toContain(
@@ -324,53 +227,29 @@ describe("cli integration", () => {
       "remove it with: capshelf rm skills/project-hinted",
     );
 
-    const rmProject = Bun.spawnSync({
-      cmd: [process.execPath, cli, "rm", "skills/project-hinted"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const rmProject = await run(["rm", "skills/project-hinted"]);
     expect(rmProject.exitCode).toBe(0);
   });
 
   test("rm --local reports an actionable error when the tree cannot be deleted", async () => {
     const project = await tempRepo("capshelf-rm-eacces-project-");
     const dataRepo = await tempRepo("capshelf-rm-eacces-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
     await mkdir(join(dataRepo, "skills", "stuck"), { recursive: true });
     await writeFile(join(dataRepo, "skills", "stuck", "SKILL.md"), "x\n");
     await commitAll(dataRepo, "stuck skill");
 
-    const init = Bun.spawnSync({
-      cmd: [process.execPath, cli, "init", "--data", dataRepo],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const run = runInProcess(project);
+    const init = await run(["init", "--data", dataRepo]);
     expect(init.exitCode).toBe(0);
 
-    const add = Bun.spawnSync({
-      cmd: [process.execPath, cli, "add", "--local", "skills/stuck"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const add = await run(["add", "--local", "skills/stuck"]);
     expect(add.exitCode).toBe(0);
 
     const skillsDir = join(project, ".agents", "skills");
     await chmod(skillsDir, 0o555);
     try {
-      const rm = Bun.spawnSync({
-        cmd: [process.execPath, cli, "rm", "--local", "skills/stuck"],
-        cwd: project,
-        env: process.env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+      const rm = await run(["rm", "--local", "skills/stuck"]);
       expect(rm.exitCode).toBe(1);
       const stderr = rm.stderr.toString();
       expect(stderr).toContain("could not delete");
@@ -384,41 +263,23 @@ describe("cli integration", () => {
       await chmod(skillsDir, 0o755);
     }
 
-    const retry = Bun.spawnSync({
-      cmd: [process.execPath, cli, "rm", "--local", "skills/stuck"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const retry = await run(["rm", "--local", "skills/stuck"]);
     expect(retry.exitCode).toBe(0);
   });
 
   test("rm --local refuses a local-config item with no local lock entry", async () => {
     const project = await tempRepo("capshelf-rm-local-unlocked-project-");
     const dataRepo = await tempRepo("capshelf-rm-local-unlocked-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
     await mkdir(join(dataRepo, "skills", "unlocked"), { recursive: true });
     await writeFile(join(dataRepo, "skills", "unlocked", "SKILL.md"), "x\n");
     await commitAll(dataRepo, "unlocked skill");
 
-    const init = Bun.spawnSync({
-      cmd: [process.execPath, cli, "init", "--data", dataRepo],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const run = runInProcess(project);
+    const init = await run(["init", "--data", dataRepo]);
     expect(init.exitCode).toBe(0);
 
-    const add = Bun.spawnSync({
-      cmd: [process.execPath, cli, "add", "--local", "skills/unlocked"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const add = await run(["add", "--local", "skills/unlocked"]);
     expect(add.exitCode).toBe(0);
 
     const lockPath = join(project, ".capshelf", "local.lock.json");
@@ -426,13 +287,7 @@ describe("cli integration", () => {
     delete lock.items["data/skills/unlocked"];
     await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
 
-    const rm = Bun.spawnSync({
-      cmd: [process.execPath, cli, "rm", "--local", "skills/unlocked"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const rm = await run(["rm", "--local", "skills/unlocked"]);
     expect(rm.exitCode).toBe(3);
     expect(rm.stderr.toString()).toContain(
       "no data lock entry exists, so installed files are not managed by capshelf",
@@ -442,7 +297,6 @@ describe("cli integration", () => {
   test("add --local works in non-git projects without git excludes", async () => {
     const project = await tempDir("capshelf-local-non-git-project-");
     const dataRepo = await tempRepo("capshelf-local-non-git-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
     await mkdir(join(dataRepo, "skills", "local-only"), { recursive: true });
     await writeFile(
@@ -451,22 +305,11 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "local skill");
 
-    const init = Bun.spawnSync({
-      cmd: [process.execPath, cli, "init", "--data", dataRepo],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const run = runInProcess(project);
+    const init = await run(["init", "--data", dataRepo]);
     expect(init.exitCode).toBe(0);
 
-    const add = Bun.spawnSync({
-      cmd: [process.execPath, cli, "add", "--local", "local-only"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const add = await run(["add", "--local", "local-only"]);
     expect(add.exitCode).toBe(0);
 
     expect(await file(join(project, ".git", "info", "exclude")).exists()).toBe(
@@ -487,7 +330,6 @@ describe("cli integration", () => {
     const parent = await tempRepo("capshelf-local-parent-git-");
     const project = join(parent, "examples", "old-albums");
     const dataRepo = await tempRepo("capshelf-local-nested-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
     await mkdir(join(project), { recursive: true });
     await mkdir(join(dataRepo, "skills", "local-only"), { recursive: true });
@@ -497,22 +339,11 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "local skill");
 
-    const init = Bun.spawnSync({
-      cmd: [process.execPath, cli, "init", "--data", dataRepo],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const run = runInProcess(project);
+    const init = await run(["init", "--data", dataRepo]);
     expect(init.exitCode).toBe(0);
 
-    const add = Bun.spawnSync({
-      cmd: [process.execPath, cli, "add", "--local", "local-only"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const add = await run(["add", "--local", "local-only"]);
     expect(add.exitCode).toBe(0);
     expect(await file(join(project, ".git", "info", "exclude")).exists()).toBe(
       false,
@@ -525,15 +356,7 @@ describe("cli integration", () => {
   test("update/apply/revert --local verify git-excluded local skills", async () => {
     const project = await tempRepo("capshelf-local-update-project-");
     const dataRepo = await tempRepo("capshelf-local-update-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
-    const run = (args: string[]) =>
-      Bun.spawnSync({
-        cmd: [process.execPath, cli, ...args],
-        cwd: project,
-        env: process.env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    const run = runInProcess(project);
 
     await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
     await writeFile(
@@ -542,8 +365,8 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "hello v1");
 
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
-    expect(run(["add", "--local", "skills/hello"]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "--local", "skills/hello"])).exitCode).toBe(0);
     // The local install path is git-excluded — the setup that used to make
     // materialization verification hash an empty file list.
     expect(
@@ -564,7 +387,7 @@ describe("cli integration", () => {
 
     // Dry run reports the real installed hash — not the empty git-visible
     // digest e3b0c44298fc — and writes nothing.
-    const dry = run([
+    const dry = await run([
       "update",
       "skills/hello",
       "--local",
@@ -585,7 +408,7 @@ describe("cli integration", () => {
       await file(join(project, ".capshelf", "local.lock.json")).json(),
     ).toEqual(lockBefore);
 
-    const update = run(["update", "skills/hello", "--local", "--json"]);
+    const update = await run(["update", "skills/hello", "--local", "--json"]);
     expect(update.exitCode).toBe(0);
     const updateJson = JSON.parse(update.stdout.toString());
     expect(updateJson.items[0].action).toBe("updated");
@@ -613,11 +436,11 @@ describe("cli integration", () => {
     ).json();
     expect(projectLock.items["data/skills/hello"]).toBeUndefined();
     expect(
-      run(["status", "skills/hello", "--local", "--strict"]).exitCode,
+      (await run(["status", "skills/hello", "--local", "--strict"])).exitCode,
     ).toBe(0);
 
     // Unchanged apply converges without a verification failure.
-    const apply = run(["apply", "skills/hello", "--local", "--json"]);
+    const apply = await run(["apply", "skills/hello", "--local", "--json"]);
     expect(apply.exitCode).toBe(0);
     const applyJson = JSON.parse(apply.stdout.toString());
     expect(applyJson.items[0].action).toBe("already-current");
@@ -627,7 +450,7 @@ describe("cli integration", () => {
       join(project, ".agents", "skills", "hello", "SKILL.md"),
       "local edit\n",
     );
-    const revert = run(["revert", "skills/hello", "--local", "--json"]);
+    const revert = await run(["revert", "skills/hello", "--local", "--json"]);
     expect(revert.exitCode).toBe(0);
     expect(JSON.parse(revert.stdout.toString()).action).toBe("reconciled");
     expect(
@@ -636,29 +459,21 @@ describe("cli integration", () => {
       ).text(),
     ).toBe("hello v2\n");
     expect(
-      run(["status", "skills/hello", "--local", "--strict"]).exitCode,
+      (await run(["status", "skills/hello", "--local", "--strict"])).exitCode,
     ).toBe(0);
   });
 
   test("keep-local --local refuses an unchanged local-scope skill", async () => {
     const project = await tempRepo("capshelf-local-keeplocal-project-");
     const dataRepo = await tempRepo("capshelf-local-keeplocal-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
-    const run = (args: string[]) =>
-      Bun.spawnSync({
-        cmd: [process.execPath, cli, ...args],
-        cwd: project,
-        env: process.env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    const run = runInProcess(project);
 
     await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
     await writeFile(join(dataRepo, "skills", "hello", "SKILL.md"), "hello\n");
     await commitAll(dataRepo, "hello");
 
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
-    expect(run(["add", "--local", "skills/hello"]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "--local", "skills/hello"])).exitCode).toBe(0);
 
     // Freshly added: no divergence, even though the install path is
     // git-excluded and hashes as empty under git-visible conventions.
@@ -666,7 +481,7 @@ describe("cli integration", () => {
       join(project, ".capshelf", "local.lock.json"),
       "utf-8",
     );
-    const kept = run(["keep-local", "skills/hello", "--local"]);
+    const kept = await run(["keep-local", "skills/hello", "--local"]);
     expect(kept.exitCode).toBe(3);
     expect(kept.stderr.toString()).toContain("no local divergence");
     expect(
@@ -682,7 +497,7 @@ describe("cli integration", () => {
       join(project, ".agents", "skills", "hello", "SKILL.md"),
       "edited\n",
     );
-    const keptAfterEdit = run(["keep-local", "skills/hello", "--local"]);
+    const keptAfterEdit = await run(["keep-local", "skills/hello", "--local"]);
     expect(keptAfterEdit.exitCode).toBe(0);
     const lockAfter = await file(
       join(project, ".capshelf", "local.lock.json"),
@@ -693,15 +508,8 @@ describe("cli integration", () => {
   test("share adopts a new skill into local scope by default", async () => {
     const project = await tempRepo("capshelf-share-local-project-");
     const dataRepo = await tempRepo("capshelf-share-local-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
-
-    const init = Bun.spawnSync({
-      cmd: [process.execPath, cli, "init", "--data", dataRepo],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const run = runInProcess(project);
+    const init = await run(["init", "--data", dataRepo]);
     expect(init.exitCode).toBe(0);
 
     await mkdir(join(project, ".agents", "skills", "draft"), {
@@ -712,13 +520,7 @@ describe("cli integration", () => {
       "draft\n",
     );
 
-    const share = Bun.spawnSync({
-      cmd: [process.execPath, cli, "share", "skills/draft"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const share = await run(["share", "skills/draft"]);
     expect(share.exitCode).toBe(0);
 
     expect(
@@ -751,15 +553,8 @@ describe("cli integration", () => {
   test("share to local copies ignored skill files from the filesystem", async () => {
     const project = await tempRepo("capshelf-share-ignored-project-");
     const dataRepo = await tempRepo("capshelf-share-ignored-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
-
-    const init = Bun.spawnSync({
-      cmd: [process.execPath, cli, "init", "--data", dataRepo],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const run = runInProcess(project);
+    const init = await run(["init", "--data", dataRepo]);
     expect(init.exitCode).toBe(0);
 
     await writeFile(join(project, ".gitignore"), ".agents/skills/ignored/\n");
@@ -772,32 +567,13 @@ describe("cli integration", () => {
       "ignored content\n",
     );
 
-    const share = Bun.spawnSync({
-      cmd: [process.execPath, cli, "share", "skills/ignored"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const share = await run(["share", "skills/ignored"]);
     expect(share.exitCode).toBe(0);
     expect(
       await file(join(dataRepo, "skills", "ignored", "SKILL.md")).text(),
     ).toBe("ignored content\n");
 
-    const status = Bun.spawnSync({
-      cmd: [
-        process.execPath,
-        cli,
-        "status",
-        "--local",
-        "skills/ignored",
-        "--json",
-      ],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const status = await run(["status", "--local", "skills/ignored", "--json"]);
     expect(status.exitCode).toBe(0);
     const statusJson = JSON.parse(status.stdout.toString());
     expect(statusJson.items[0].state).toBe("ok");
@@ -806,15 +582,8 @@ describe("cli integration", () => {
   test("share normalizes real claude skills in non-git projects without generated files", async () => {
     const project = await tempDir("capshelf-share-claude-non-git-project-");
     const dataRepo = await tempRepo("capshelf-share-claude-non-git-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
-
-    const init = Bun.spawnSync({
-      cmd: [process.execPath, cli, "init", "--data", dataRepo],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const run = runInProcess(project);
+    const init = await run(["init", "--data", dataRepo]);
     expect(init.exitCode).toBe(0);
 
     const skillDir = join(project, ".claude", "skills", "from-claude");
@@ -824,20 +593,7 @@ describe("cli integration", () => {
     await writeFile(join(skillDir, "scripts", "run.sh"), "#!/bin/sh\n");
     await writeFile(join(skillDir, "scripts", ".venv", "pyvenv.cfg"), "venv\n");
 
-    const share = Bun.spawnSync({
-      cmd: [
-        process.execPath,
-        cli,
-        "share",
-        "skills/from-claude",
-        "--to",
-        "project",
-      ],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const share = await run(["share", "skills/from-claude", "--to", "project"]);
     expect(share.exitCode).toBe(0);
 
     expect(
@@ -863,15 +619,8 @@ describe("cli integration", () => {
   test("share adopts a new skill into project scope", async () => {
     const project = await tempRepo("capshelf-share-project-project-");
     const dataRepo = await tempRepo("capshelf-share-project-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
-
-    const init = Bun.spawnSync({
-      cmd: [process.execPath, cli, "init", "--data", dataRepo],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const run = runInProcess(project);
+    const init = await run(["init", "--data", dataRepo]);
     expect(init.exitCode).toBe(0);
 
     await mkdir(join(project, ".agents", "skills", "policy"), {
@@ -882,13 +631,7 @@ describe("cli integration", () => {
       "policy\n",
     );
 
-    const share = Bun.spawnSync({
-      cmd: [process.execPath, cli, "share", "skills/policy", "--to", "project"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const share = await run(["share", "skills/policy", "--to", "project"]);
     expect(share.exitCode).toBe(0);
 
     const manifest = await file(
@@ -913,15 +656,8 @@ describe("cli integration", () => {
   test("share to local rejects a project-git-tracked skill path", async () => {
     const project = await tempRepo("capshelf-share-tracked-project-");
     const dataRepo = await tempRepo("capshelf-share-tracked-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
-
-    const init = Bun.spawnSync({
-      cmd: [process.execPath, cli, "init", "--data", dataRepo],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const run = runInProcess(project);
+    const init = await run(["init", "--data", dataRepo]);
     expect(init.exitCode).toBe(0);
 
     await mkdir(join(project, ".agents", "skills", "tracked"), {
@@ -934,13 +670,7 @@ describe("cli integration", () => {
     await $`git -C ${project} add .agents/skills/tracked/SKILL.md`.quiet();
     await $`git -C ${project} commit -qm "track local skill"`.quiet();
 
-    const share = Bun.spawnSync({
-      cmd: [process.execPath, cli, "share", "skills/tracked"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const share = await run(["share", "skills/tracked"]);
     expect(share.exitCode).toBe(3);
     expect(share.stderr.toString()).toContain(
       "local install path is already tracked by git",
@@ -958,37 +688,19 @@ describe("cli integration", () => {
   test("move changes tracked skill scope in both directions", async () => {
     const project = await tempRepo("capshelf-move-project-");
     const dataRepo = await tempRepo("capshelf-move-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
     await mkdir(join(dataRepo, "skills", "toggle"), { recursive: true });
     await writeFile(join(dataRepo, "skills", "toggle", "SKILL.md"), "toggle\n");
     await commitAll(dataRepo, "toggle skill");
 
-    const init = Bun.spawnSync({
-      cmd: [process.execPath, cli, "init", "--data", dataRepo],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const run = runInProcess(project);
+    const init = await run(["init", "--data", dataRepo]);
     expect(init.exitCode).toBe(0);
 
-    const add = Bun.spawnSync({
-      cmd: [process.execPath, cli, "add", "--local", "skills/toggle"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const add = await run(["add", "--local", "skills/toggle"]);
     expect(add.exitCode).toBe(0);
 
-    const toProject = Bun.spawnSync({
-      cmd: [process.execPath, cli, "move", "skills/toggle", "--to", "project"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const toProject = await run(["move", "skills/toggle", "--to", "project"]);
     expect(toProject.exitCode).toBe(0);
     expect(await file(join(project, ".capshelf", "local.json")).json()).toEqual(
       {
@@ -1008,13 +720,7 @@ describe("cli integration", () => {
     ).json();
     expect(localLock.items["data/skills/toggle"]).toBeUndefined();
 
-    const toLocal = Bun.spawnSync({
-      cmd: [process.execPath, cli, "move", "skills/toggle", "--to", "local"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const toLocal = await run(["move", "skills/toggle", "--to", "local"]);
     expect(toLocal.exitCode).toBe(0);
     manifest = await file(join(project, ".capshelf", "capshelf.json")).json();
     expect(manifest.skills).toEqual([]);
@@ -1036,37 +742,19 @@ describe("cli integration", () => {
   test("move to local works in non-git projects without git excludes", async () => {
     const project = await tempDir("capshelf-move-non-git-project-");
     const dataRepo = await tempRepo("capshelf-move-non-git-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
     await mkdir(join(dataRepo, "skills", "toggle"), { recursive: true });
     await writeFile(join(dataRepo, "skills", "toggle", "SKILL.md"), "toggle\n");
     await commitAll(dataRepo, "toggle skill");
 
-    const init = Bun.spawnSync({
-      cmd: [process.execPath, cli, "init", "--data", dataRepo],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const run = runInProcess(project);
+    const init = await run(["init", "--data", dataRepo]);
     expect(init.exitCode).toBe(0);
 
-    const add = Bun.spawnSync({
-      cmd: [process.execPath, cli, "add", "skills/toggle"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const add = await run(["add", "skills/toggle"]);
     expect(add.exitCode).toBe(0);
 
-    const move = Bun.spawnSync({
-      cmd: [process.execPath, cli, "move", "skills/toggle", "--to", "local"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const move = await run(["move", "skills/toggle", "--to", "local"]);
     expect(move.exitCode).toBe(0);
     expect(await file(join(project, ".git", "info", "exclude")).exists()).toBe(
       false,
@@ -1085,7 +773,6 @@ describe("cli integration", () => {
   test("move recovers a partial local-to-project scope change", async () => {
     const project = await tempRepo("capshelf-move-partial-project-");
     const dataRepo = await tempRepo("capshelf-move-partial-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
     await mkdir(join(dataRepo, "skills", "partial"), { recursive: true });
     await writeFile(
@@ -1094,21 +781,10 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "partial skill");
 
-    const init = Bun.spawnSync({
-      cmd: [process.execPath, cli, "init", "--data", dataRepo],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const run = runInProcess(project);
+    const init = await run(["init", "--data", dataRepo]);
     expect(init.exitCode).toBe(0);
-    const add = Bun.spawnSync({
-      cmd: [process.execPath, cli, "add", "--local", "skills/partial"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const add = await run(["add", "--local", "skills/partial"]);
     expect(add.exitCode).toBe(0);
 
     const localLockPath = join(project, ".capshelf", "local.lock.json");
@@ -1126,13 +802,7 @@ describe("cli integration", () => {
     manifest.skills.push("partial");
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
-    const recovered = Bun.spawnSync({
-      cmd: [process.execPath, cli, "move", "skills/partial", "--to", "project"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const recovered = await run(["move", "skills/partial", "--to", "project"]);
     expect(recovered.exitCode).toBe(0);
 
     const nextLocalLock = await file(localLockPath).json();
@@ -1148,7 +818,6 @@ describe("cli integration", () => {
   test("move recovers a partial project-to-local scope change after excludes", async () => {
     const project = await tempRepo("capshelf-move-to-local-partial-project-");
     const dataRepo = await tempRepo("capshelf-move-to-local-partial-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
     await mkdir(join(dataRepo, "skills", "partial-local"), { recursive: true });
     await writeFile(
@@ -1157,21 +826,10 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "partial local skill");
 
-    const init = Bun.spawnSync({
-      cmd: [process.execPath, cli, "init", "--data", dataRepo],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const run = runInProcess(project);
+    const init = await run(["init", "--data", dataRepo]);
     expect(init.exitCode).toBe(0);
-    const add = Bun.spawnSync({
-      cmd: [process.execPath, cli, "add", "skills/partial-local"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const add = await run(["add", "skills/partial-local"]);
     expect(add.exitCode).toBe(0);
 
     const localConfigPath = join(project, ".capshelf", "local.json");
@@ -1197,20 +855,12 @@ describe("cli integration", () => {
       ".agents/skills/partial-local/\n.claude/skills/partial-local\n",
     );
 
-    const recovered = Bun.spawnSync({
-      cmd: [
-        process.execPath,
-        cli,
-        "move",
-        "skills/partial-local",
-        "--to",
-        "local",
-      ],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const recovered = await run([
+      "move",
+      "skills/partial-local",
+      "--to",
+      "local",
+    ]);
     expect(recovered.exitCode).toBe(0);
 
     const nextProjectLock = await file(projectLockPath).json();
@@ -1228,7 +878,6 @@ describe("cli integration", () => {
   test("promote --local syncs a local-scope skill without changing project scope", async () => {
     const project = await tempRepo("capshelf-promote-local-project-");
     const dataRepo = await tempRepo("capshelf-promote-local-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
     await mkdir(join(dataRepo, "skills", "local-edit", "scripts"), {
       recursive: true,
@@ -1243,21 +892,10 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "local edit skill");
 
-    const init = Bun.spawnSync({
-      cmd: [process.execPath, cli, "init", "--data", dataRepo],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const run = runInProcess(project);
+    const init = await run(["init", "--data", dataRepo]);
     expect(init.exitCode).toBe(0);
-    const add = Bun.spawnSync({
-      cmd: [process.execPath, cli, "add", "--local", "skills/local-edit"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const add = await run(["add", "--local", "skills/local-edit"]);
     expect(add.exitCode).toBe(0);
 
     const beforeLock = await file(
@@ -1287,21 +925,13 @@ describe("cli integration", () => {
       ),
       "generated\n",
     );
-    const promote = Bun.spawnSync({
-      cmd: [
-        process.execPath,
-        cli,
-        "promote",
-        "--local",
-        "skills/local-edit",
-        "-m",
-        "promote local edit",
-      ],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const promote = await run([
+      "promote",
+      "--local",
+      "skills/local-edit",
+      "-m",
+      "promote local edit",
+    ]);
     expect(promote.exitCode).toBe(0);
     expect(promote.stderr.toString()).not.toContain("deprecated");
 
@@ -1340,7 +970,6 @@ describe("cli integration", () => {
   test("promote syncs a project-scope skill from a non-git project", async () => {
     const project = await tempDir("capshelf-promote-non-git-project-");
     const dataRepo = await tempRepo("capshelf-promote-non-git-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
     await mkdir(join(dataRepo, "skills", "keyword-research", "scripts"), {
       recursive: true,
@@ -1359,22 +988,11 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "keyword research skill");
 
-    const init = Bun.spawnSync({
-      cmd: [process.execPath, cli, "init", "--data", dataRepo],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const run = runInProcess(project);
+    const init = await run(["init", "--data", dataRepo]);
     expect(init.exitCode).toBe(0);
 
-    const add = Bun.spawnSync({
-      cmd: [process.execPath, cli, "add", "keyword-research"],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const add = await run(["add", "keyword-research"]);
     expect(add.exitCode).toBe(0);
 
     const installed = join(project, ".agents", "skills", "keyword-research");
@@ -1397,20 +1015,12 @@ describe("cli integration", () => {
       "generated\n",
     );
 
-    const promote = Bun.spawnSync({
-      cmd: [
-        process.execPath,
-        cli,
-        "promote",
-        "keyword-research",
-        "-m",
-        "promote keyword research",
-      ],
-      cwd: project,
-      env: process.env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const promote = await run([
+      "promote",
+      "keyword-research",
+      "-m",
+      "promote keyword research",
+    ]);
 
     expect(promote.exitCode).toBe(0);
     expect(

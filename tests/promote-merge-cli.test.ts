@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { commitAll, runIn, tempRepo } from "./cli-fixtures";
+import { commitAll, runInProcess, tempRepo } from "./cli-fixtures";
 
 describe("promote --merge command validation", () => {
   test("rejects --merge with --stale-ok before project or item resolution", async () => {
@@ -34,14 +34,15 @@ describe("promote --merge command validation", () => {
   test("local-scope merge changes only the local lock", async () => {
     const dataRepo = await tempRepo("capshelf-merge-local-data-");
     const project = await tempRepo("capshelf-merge-local-project-");
+    const run = runInProcess(project);
     const dataItem = join(dataRepo, "skills", "hello");
     await mkdir(dataItem, { recursive: true });
     await writeFile(join(dataItem, "SKILL.md"), "base\n");
     await commitAll(dataRepo, "base");
     expect(
-      runIn(project)(["init", "--data", dataRepo, "--no-upstream"]).exitCode,
+      (await run(["init", "--data", dataRepo, "--no-upstream"])).exitCode,
     ).toBe(0);
-    expect(runIn(project)(["add", "skills/hello", "--local"]).exitCode).toBe(0);
+    expect((await run(["add", "skills/hello", "--local"])).exitCode).toBe(0);
     const projectLockPath = join(project, ".capshelf", "capshelf.lock.json");
     const localLockPath = join(project, ".capshelf", "local.lock.json");
     const projectLockBefore = await file(projectLockPath).text();
@@ -51,7 +52,7 @@ describe("promote --merge command validation", () => {
     await commitAll(dataRepo, "upstream");
     const installed = join(project, ".agents", "skills", "hello");
     await writeFile(join(installed, "local.txt"), "local\n");
-    const promoted = runIn(project)([
+    const promoted = await run([
       "promote",
       "skills/hello",
       "--local",
@@ -73,14 +74,15 @@ describe("promote --merge command validation", () => {
   test("project Pi merge retains executable-code warnings", async () => {
     const dataRepo = await tempRepo("capshelf-merge-pi-data-");
     const project = await tempRepo("capshelf-merge-pi-project-");
+    const run = runInProcess(project);
     const extension = join(dataRepo, "pi", "extensions", "guard");
     await mkdir(extension, { recursive: true });
     await writeFile(join(extension, "index.ts"), "export const base = true;\n");
     await commitAll(dataRepo, "base");
     expect(
-      runIn(project)(["init", "--data", dataRepo, "--no-upstream"]).exitCode,
+      (await run(["init", "--data", dataRepo, "--no-upstream"])).exitCode,
     ).toBe(0);
-    expect(runIn(project)(["add", "pi-extensions/guard"]).exitCode).toBe(0);
+    expect((await run(["add", "pi-extensions/guard"])).exitCode).toBe(0);
     const localLockPath = join(project, ".capshelf", "local.lock.json");
     const localLockExistedBefore = await file(localLockPath).exists();
 
@@ -94,7 +96,7 @@ describe("promote --merge command validation", () => {
       join(installed, "local.ts"),
       "export const local = true;\n",
     );
-    const promoted = runIn(project)([
+    const promoted = await run([
       "promote",
       "pi-extensions/guard",
       "--merge",
@@ -113,15 +115,16 @@ describe("promote --merge command validation", () => {
   test("local Pi merge is rejected before data or lock writes", async () => {
     const dataRepo = await tempRepo("capshelf-merge-local-pi-data-");
     const project = await tempRepo("capshelf-merge-local-pi-project-");
+    const run = runInProcess(project);
     const extension = join(dataRepo, "pi", "extensions", "guard");
     await mkdir(extension, { recursive: true });
     await writeFile(join(extension, "index.ts"), "export const base = true;\n");
     await commitAll(dataRepo, "base");
     expect(
-      runIn(project)(["init", "--data", dataRepo, "--no-upstream"]).exitCode,
+      (await run(["init", "--data", dataRepo, "--no-upstream"])).exitCode,
     ).toBe(0);
     expect(
-      runIn(project)(["add", "pi-extensions/guard", "--local"]).exitCode,
+      (await run(["add", "pi-extensions/guard", "--local"])).exitCode,
     ).toBe(0);
     const headBefore = (
       await Bun.$`git -C ${dataRepo} rev-parse HEAD`.text()
@@ -129,7 +132,7 @@ describe("promote --merge command validation", () => {
     const localLockPath = join(project, ".capshelf", "local.lock.json");
     const lockBefore = await file(localLockPath).text();
 
-    const rejected = runIn(project)([
+    const rejected = await run([
       "promote",
       "pi-extensions/guard",
       "--local",
@@ -150,20 +153,21 @@ describe("promote --merge command validation", () => {
   test("non-stale --merge follows normal promotion and omits merge fields", async () => {
     const dataRepo = await tempRepo("capshelf-merge-nonstale-data-");
     const project = await tempRepo("capshelf-merge-nonstale-project-");
+    const run = runInProcess(project);
     const dataItem = join(dataRepo, "skills", "hello");
     await mkdir(dataItem, { recursive: true });
     await writeFile(join(dataItem, "SKILL.md"), "base\n");
     await commitAll(dataRepo, "base");
     expect(
-      runIn(project)(["init", "--data", dataRepo, "--no-upstream"]).exitCode,
+      (await run(["init", "--data", dataRepo, "--no-upstream"])).exitCode,
     ).toBe(0);
-    expect(runIn(project)(["add", "skills/hello"]).exitCode).toBe(0);
+    expect((await run(["add", "skills/hello"])).exitCode).toBe(0);
     await writeFile(
       join(project, ".agents", "skills", "hello", "local.txt"),
       "local\n",
     );
 
-    const promoted = runIn(project)([
+    const promoted = await run([
       "promote",
       "skills/hello",
       "--merge",
@@ -181,6 +185,7 @@ describe("promote --merge command validation", () => {
   test("fragment --merge rejects before changing source, HEAD, or lock", async () => {
     const dataRepo = await tempRepo("capshelf-merge-fragment-data-");
     const project = await tempRepo("capshelf-merge-fragment-project-");
+    const run = runInProcess(project);
     const source = join(dataRepo, "settings", "theme");
     await mkdir(source, { recursive: true });
     await writeFile(
@@ -189,9 +194,9 @@ describe("promote --merge command validation", () => {
     );
     await commitAll(dataRepo, "theme");
     expect(
-      runIn(project)(["init", "--data", dataRepo, "--no-upstream"]).exitCode,
+      (await run(["init", "--data", dataRepo, "--no-upstream"])).exitCode,
     ).toBe(0);
-    expect(runIn(project)(["add", "settings/theme"]).exitCode).toBe(0);
+    expect((await run(["add", "settings/theme"])).exitCode).toBe(0);
     const headBefore = (
       await Bun.$`git -C ${dataRepo} rev-parse HEAD`.text()
     ).trim();
@@ -203,7 +208,7 @@ describe("promote --merge command validation", () => {
     const localLockPath = join(project, ".capshelf", "local.lock.json");
     const localLockExistedBefore = await file(localLockPath).exists();
 
-    const rejected = runIn(project)([
+    const rejected = await run([
       "promote",
       "settings/theme",
       "--merge",
@@ -226,6 +231,7 @@ describe("promote --merge command validation", () => {
   test("JSON conflict envelope has exit 3 and sorted item-relative paths", async () => {
     const dataRepo = await tempRepo("capshelf-merge-conflict-data-");
     const project = await tempRepo("capshelf-merge-conflict-project-");
+    const run = runInProcess(project);
     const dataItem = join(dataRepo, "skills", "hello");
     await mkdir(dataItem, { recursive: true });
     await writeFile(join(dataItem, "SKILL.md"), "base\n");
@@ -233,9 +239,9 @@ describe("promote --merge command validation", () => {
     await writeFile(join(dataItem, "a.txt"), "base\n");
     await commitAll(dataRepo, "base");
     expect(
-      runIn(project)(["init", "--data", dataRepo, "--no-upstream"]).exitCode,
+      (await run(["init", "--data", dataRepo, "--no-upstream"])).exitCode,
     ).toBe(0);
-    expect(runIn(project)(["add", "skills/hello"]).exitCode).toBe(0);
+    expect((await run(["add", "skills/hello"])).exitCode).toBe(0);
 
     await writeFile(join(dataItem, "z.txt"), "upstream\n");
     await writeFile(join(dataItem, "a.txt"), "upstream\n");
@@ -253,7 +259,7 @@ describe("promote --merge command validation", () => {
     const localLockPath = join(project, ".capshelf", "local.lock.json");
     const localLockExistedBefore = await file(localLockPath).exists();
 
-    const conflicted = runIn(project)([
+    const conflicted = await run([
       "promote",
       "skills/hello",
       "--merge",

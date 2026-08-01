@@ -16,7 +16,13 @@ import {
   collectSelectedSkill,
   logicalContentHash,
 } from "../src/plugin-projection";
-import { commitAll, runIn, tempDir, tempRepo } from "./cli-fixtures";
+import {
+  type CliResult,
+  commitAll,
+  runInProcess,
+  tempDir,
+  tempRepo,
+} from "./cli-fixtures";
 
 async function seedSkill(repo: string, name: string): Promise<void> {
   const root = join(repo, "skills", name);
@@ -27,7 +33,7 @@ async function seedSkill(repo: string, name: string): Promise<void> {
   );
 }
 
-function stdout(result: ReturnType<ReturnType<typeof runIn>>): string {
+function stdout(result: CliResult): string {
   return result.stdout.toString();
 }
 
@@ -117,7 +123,7 @@ describe("marketplace hardening", () => {
       const sentinel = join(external, "sentinel");
       await writeFile(sentinel, `${target}:${relRoot}`);
       await symlink(external, join(repo, relRoot));
-      const result = runIn(repo)([
+      const result = await runInProcess(repo)([
         "--data",
         repo,
         "marketplace",
@@ -165,7 +171,7 @@ describe("marketplace hardening", () => {
       await Bun.$`git -C ${repo} rev-parse HEAD`.text()
     ).trim();
 
-    const result = runIn(repo)([
+    const result = await runInProcess(repo)([
       "--data",
       repo,
       "marketplace",
@@ -210,20 +216,22 @@ describe("marketplace hardening", () => {
     });
     await seedSkill(repo, "review");
     await commitAll(repo, "baseline");
-    const run = runIn(repo);
+    const run = runInProcess(repo);
     expect(
-      run([
-        "--data",
-        repo,
-        "marketplace",
-        "init",
-        "--target",
-        "codex",
-        "--name",
-        "company-tools",
-        "--owner",
-        "Engineering",
-      ]).exitCode,
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "init",
+          "--target",
+          "codex",
+          "--name",
+          "company-tools",
+          "--owner",
+          "Engineering",
+        ])
+      ).exitCode,
     ).toBe(0);
     const external = await tempDir("capshelf-marketplace-definition-external-");
     const sentinel = join(external, "definition.json");
@@ -241,41 +249,45 @@ describe("marketplace hardening", () => {
     });
     await seedSkill(repo, "review");
     await commitAll(repo, "skill");
-    const run = runIn(repo);
+    const run = runInProcess(repo);
     expect(
-      run([
-        "--data",
-        repo,
-        "marketplace",
-        "init",
-        "--target",
-        "claude",
-        "--name",
-        "company-tools",
-        "--owner",
-        "Engineering",
-      ]).exitCode,
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "init",
+          "--target",
+          "claude",
+          "--name",
+          "company-tools",
+          "--owner",
+          "Engineering",
+        ])
+      ).exitCode,
     ).toBe(0);
     expect(
-      run([
-        "--data",
-        repo,
-        "marketplace",
-        "plugin",
-        "create",
-        "engineering",
-        "--target",
-        "claude",
-        "--skill",
-        "review",
-      ]).exitCode,
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "plugin",
+          "create",
+          "engineering",
+          "--target",
+          "claude",
+          "--skill",
+          "review",
+        ])
+      ).exitCode,
     ).toBe(0);
     const outside = await tempDir("capshelf-marketplace-output-parent-");
     const link = join(outside, "repo-link");
     await symlink(repo, link);
     const sentinel = join(repo, "protected.plugin");
     await writeFile(sentinel, "keep");
-    const result = run([
+    const result = await run([
       "--data",
       repo,
       "marketplace",
@@ -395,33 +407,37 @@ describe("marketplace hardening", () => {
     });
     await seedSkill(repo, "review");
     await commitAll(repo, "skill");
-    const run = runIn(repo);
+    const run = runInProcess(repo);
     for (const target of ["claude", "codex"]) {
       expect(
-        run([
-          "--data",
-          repo,
-          "marketplace",
-          "init",
-          "--target",
-          target,
-          "--name",
-          `${target}-tools`,
-          "--owner",
-          "Engineering",
-        ]).exitCode,
+        (
+          await run([
+            "--data",
+            repo,
+            "marketplace",
+            "init",
+            "--target",
+            target,
+            "--name",
+            `${target}-tools`,
+            "--owner",
+            "Engineering",
+          ])
+        ).exitCode,
       ).toBe(0);
       expect(
-        run([
-          "--data",
-          repo,
-          "marketplace",
-          "plugin",
-          "create",
-          `empty-${target}`,
-          "--target",
-          target,
-        ]).exitCode,
+        (
+          await run([
+            "--data",
+            repo,
+            "marketplace",
+            "plugin",
+            "create",
+            `empty-${target}`,
+            "--target",
+            target,
+          ])
+        ).exitCode,
       ).toBe(3);
     }
 
@@ -430,7 +446,7 @@ describe("marketplace hardening", () => {
       "AVAILABLE",
       "INSTALLED_BY_DEFAULT",
     ]) {
-      const result = run([
+      const result = await run([
         "--data",
         repo,
         "marketplace",
@@ -450,20 +466,22 @@ describe("marketplace hardening", () => {
     }
     for (const policy of ["RECOMMENDED", "REQUIRED"]) {
       expect(
-        run([
-          "--data",
-          repo,
-          "marketplace",
-          "plugin",
-          "create",
-          `invalid-${policy.toLowerCase()}`,
-          "--target",
-          "codex",
-          "--skill",
-          "review",
-          "--installation",
-          policy,
-        ]).exitCode,
+        (
+          await run([
+            "--data",
+            repo,
+            "marketplace",
+            "plugin",
+            "create",
+            `invalid-${policy.toLowerCase()}`,
+            "--target",
+            "codex",
+            "--skill",
+            "review",
+            "--installation",
+            policy,
+          ])
+        ).exitCode,
       ).toBe(3);
     }
   });
@@ -477,7 +495,7 @@ describe("marketplace hardening", () => {
       const repo = await tempRepo(`capshelf-marketplace-option-${target}-`, {
         origin: null,
       });
-      const result = runIn(repo)([
+      const result = await runInProcess(repo)([
         "--data",
         repo,
         "marketplace",
@@ -502,48 +520,54 @@ describe("marketplace hardening", () => {
     });
     await seedSkill(repo, "review");
     await commitAll(repo, "baseline");
-    const run = runIn(repo);
+    const run = runInProcess(repo);
     expect(
-      run([
-        "--data",
-        repo,
-        "marketplace",
-        "init",
-        "--target",
-        "claude",
-        "--name",
-        "company-tools",
-        "--owner",
-        "Engineering",
-      ]).exitCode,
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "init",
+          "--target",
+          "claude",
+          "--name",
+          "company-tools",
+          "--owner",
+          "Engineering",
+        ])
+      ).exitCode,
     ).toBe(0);
     expect(
-      run([
-        "--data",
-        repo,
-        "marketplace",
-        "plugin",
-        "create",
-        "engineering",
-        "--target",
-        "claude",
-        "--skill",
-        "review",
-      ]).exitCode,
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "plugin",
+          "create",
+          "engineering",
+          "--target",
+          "claude",
+          "--skill",
+          "review",
+        ])
+      ).exitCode,
     ).toBe(0);
     expect(
-      run([
-        "--data",
-        repo,
-        "marketplace",
-        "plugin",
-        "edit",
-        "engineering",
-        "--target",
-        "claude",
-        "--category",
-        "",
-      ]).exitCode,
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "plugin",
+          "edit",
+          "engineering",
+          "--target",
+          "claude",
+          "--category",
+          "",
+        ])
+      ).exitCode,
     ).toBe(3);
   });
 

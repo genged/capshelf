@@ -7,7 +7,13 @@ import {
   canonicalSkillRef,
   type ProjectionFile,
 } from "../src/plugin-projection";
-import { commitAll, runIn, tempDir, tempRepo } from "./cli-fixtures";
+import {
+  type CliResult,
+  commitAll,
+  runInProcess,
+  tempDir,
+  tempRepo,
+} from "./cli-fixtures";
 
 async function seedSkill(
   repo: string,
@@ -22,11 +28,11 @@ async function seedSkill(
   );
 }
 
-function stdout(result: ReturnType<ReturnType<typeof runIn>>): string {
+function stdout(result: CliResult): string {
   return result.stdout.toString();
 }
 
-function stderr(result: ReturnType<ReturnType<typeof runIn>>): string {
+function stderr(result: CliResult): string {
   return result.stderr.toString();
 }
 
@@ -68,9 +74,9 @@ describe("marketplace CLI", () => {
     await seedSkill(repo, "review");
     await seedSkill(repo, "test");
     await commitAll(repo, "skills");
-    const run = runIn(repo);
+    const run = runInProcess(repo);
 
-    const claudeInit = run([
+    const claudeInit = await run([
       "--data",
       repo,
       "marketplace",
@@ -85,7 +91,7 @@ describe("marketplace CLI", () => {
     ]);
     expect(claudeInit.exitCode).toBe(0);
 
-    const codexInit = run([
+    const codexInit = await run([
       "--data",
       repo,
       "marketplace",
@@ -100,7 +106,7 @@ describe("marketplace CLI", () => {
     ]);
     expect(codexInit.exitCode).toBe(0);
 
-    const claudeCreate = run([
+    const claudeCreate = await run([
       "--data",
       repo,
       "marketplace",
@@ -114,7 +120,7 @@ describe("marketplace CLI", () => {
       "--json",
     ]);
     expect(claudeCreate.exitCode).toBe(0);
-    const invalidDryRun = run([
+    const invalidDryRun = await run([
       "--data",
       repo,
       "marketplace",
@@ -130,7 +136,7 @@ describe("marketplace CLI", () => {
     expect(invalidDryRun.exitCode).toBe(3);
     expect(existsSync(join(repo, "engineering.plugin"))).toBe(false);
 
-    const codexCreate = run([
+    const codexCreate = await run([
       "--data",
       repo,
       "marketplace",
@@ -161,7 +167,7 @@ describe("marketplace CLI", () => {
     ) as { version: string };
     expect(manifest.version).toMatch(/^0\.0\.0\+codex\.[0-9a-f]{12}$/);
 
-    const validate = run([
+    const validate = await run([
       "--data",
       repo,
       "marketplace",
@@ -181,34 +187,38 @@ describe("marketplace CLI", () => {
     const repo = await tempRepo("capshelf-marketplace-sync-", { origin: null });
     await seedSkill(repo, "review");
     await commitAll(repo, "skill");
-    const run = runIn(repo);
+    const run = runInProcess(repo);
     expect(
-      run([
-        "--data",
-        repo,
-        "marketplace",
-        "init",
-        "--target",
-        "codex",
-        "--name",
-        "company",
-        "--owner",
-        "Engineering",
-      ]).exitCode,
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "init",
+          "--target",
+          "codex",
+          "--name",
+          "company",
+          "--owner",
+          "Engineering",
+        ])
+      ).exitCode,
     ).toBe(0);
     expect(
-      run([
-        "--data",
-        repo,
-        "marketplace",
-        "plugin",
-        "create",
-        "engineering",
-        "--target",
-        "codex",
-        "--skill",
-        "review",
-      ]).exitCode,
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "plugin",
+          "create",
+          "engineering",
+          "--target",
+          "codex",
+          "--skill",
+          "review",
+        ])
+      ).exitCode,
     ).toBe(0);
     const canonical = join(repo, "skills/review/SKILL.md");
     await writeFile(
@@ -216,7 +226,7 @@ describe("marketplace CLI", () => {
       "---\nname: review\ndescription: changed\n---\n",
     );
     const before = (await Bun.$`git -C ${repo} rev-parse HEAD`.text()).trim();
-    const sync = run([
+    const sync = await run([
       "--data",
       repo,
       "marketplace",
@@ -250,39 +260,43 @@ describe("marketplace CLI", () => {
     });
     await seedSkill(repo, "review");
     await commitAll(repo, "skill");
-    const run = runIn(repo);
+    const run = runInProcess(repo);
     expect(
-      run([
-        "--data",
-        repo,
-        "marketplace",
-        "init",
-        "--target",
-        "codex",
-        "--name",
-        "company",
-        "--owner",
-        "Engineering",
-      ]).exitCode,
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "init",
+          "--target",
+          "codex",
+          "--name",
+          "company",
+          "--owner",
+          "Engineering",
+        ])
+      ).exitCode,
     ).toBe(0);
     expect(
-      run([
-        "--data",
-        repo,
-        "marketplace",
-        "plugin",
-        "create",
-        "engineering",
-        "--target",
-        "codex",
-        "--skill",
-        "review",
-      ]).exitCode,
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "plugin",
+          "create",
+          "engineering",
+          "--target",
+          "codex",
+          "--skill",
+          "review",
+        ])
+      ).exitCode,
     ).toBe(0);
     await Bun.$`git -C ${repo} rm -qr skills/review`;
     await Bun.$`git -C ${repo} commit -qm "remove skill"`;
 
-    const validate = run([
+    const validate = await run([
       "--data",
       repo,
       "marketplace",
@@ -293,25 +307,27 @@ describe("marketplace CLI", () => {
     ]);
     expect(validate.exitCode).toBe(4);
     expect(
-      run(["--data", repo, "marketplace", "sync", "--target", "codex"])
+      (await run(["--data", repo, "marketplace", "sync", "--target", "codex"]))
         .exitCode,
     ).toBe(3);
     const output = join(await tempDir("capshelf-pack-"), "engineering");
     expect(
-      run([
-        "--data",
-        repo,
-        "marketplace",
-        "plugin",
-        "pack",
-        "engineering",
-        "--target",
-        "codex",
-        "--output",
-        output,
-      ]).exitCode,
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "plugin",
+          "pack",
+          "engineering",
+          "--target",
+          "codex",
+          "--output",
+          output,
+        ])
+      ).exitCode,
     ).toBe(3);
-    const edit = run([
+    const edit = await run([
       "--data",
       repo,
       "marketplace",
@@ -332,20 +348,22 @@ describe("marketplace CLI", () => {
     });
     await seedSkill(repo, "review");
     await commitAll(repo, "skill");
-    const run = runIn(repo);
+    const run = runInProcess(repo);
     expect(
-      run([
-        "--data",
-        repo,
-        "marketplace",
-        "init",
-        "--target",
-        "claude",
-        "--name",
-        "company",
-        "--owner",
-        "Engineering",
-      ]).exitCode,
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "init",
+          "--target",
+          "claude",
+          "--name",
+          "company",
+          "--owner",
+          "Engineering",
+        ])
+      ).exitCode,
     ).toBe(0);
     const before = await readFile(
       join(repo, ".claude-plugin/marketplace.json"),
@@ -355,7 +373,7 @@ describe("marketplace CLI", () => {
     const hook = join(repo, ".git/hooks/pre-commit");
     await writeFile(hook, "#!/bin/sh\nexit 1\n");
     await chmod(hook, 0o755);
-    const result = run([
+    const result = await run([
       "--data",
       repo,
       "marketplace",
@@ -386,50 +404,55 @@ describe("marketplace CLI", () => {
     });
     await seedSkill(repo, "review");
     await commitAll(repo, "skill");
-    const runData = runIn(repo);
+    const runData = runInProcess(repo);
     expect(
-      runData([
-        "--data",
-        repo,
-        "marketplace",
-        "init",
-        "--target",
-        "codex",
-        "--name",
-        "company",
-        "--owner",
-        "Engineering",
-      ]).exitCode,
+      (
+        await runData([
+          "--data",
+          repo,
+          "marketplace",
+          "init",
+          "--target",
+          "codex",
+          "--name",
+          "company",
+          "--owner",
+          "Engineering",
+        ])
+      ).exitCode,
     ).toBe(0);
     expect(
-      runData([
-        "--data",
-        repo,
-        "marketplace",
-        "plugin",
-        "create",
-        "engineering",
-        "--target",
-        "codex",
-        "--skill",
-        "review",
-      ]).exitCode,
+      (
+        await runData([
+          "--data",
+          repo,
+          "marketplace",
+          "plugin",
+          "create",
+          "engineering",
+          "--target",
+          "codex",
+          "--skill",
+          "review",
+        ])
+      ).exitCode,
     ).toBe(0);
 
     const project = await tempRepo("capshelf-marketplace-project-", {
       origin: null,
     });
-    const runProject = runIn(project);
-    expect(runProject(["init", "--data", repo, "--no-upstream"]).exitCode).toBe(
-      0,
-    );
-    expect(runProject(["add", "skills/review"]).exitCode).toBe(0);
+    const runProject = runInProcess(project);
+    expect(
+      (await runProject(["init", "--data", repo, "--no-upstream"])).exitCode,
+    ).toBe(0);
+    expect((await runProject(["add", "skills/review"])).exitCode).toBe(0);
     await writeFile(
       join(project, ".agents/skills/review/SKILL.md"),
       "---\nname: review\ndescription: promoted\n---\n",
     );
     expect(
-      runProject(["promote", "skills/review", "-m", "promote review"]).exitCode,
+      (await runProject(["promote", "skills/review", "-m", "promote review"]))
+        .exitCode,
     ).toBe(0);
 
     expect(
@@ -456,20 +479,22 @@ describe("marketplace CLI", () => {
     });
     await seedSkill(repo, "review");
     await commitAll(repo, "skill");
-    const run = runIn(repo);
+    const run = runInProcess(repo);
     expect(
-      run([
-        "--data",
-        repo,
-        "marketplace",
-        "init",
-        "--target",
-        "claude",
-        "--name",
-        "company",
-        "--owner",
-        "Engineering",
-      ]).exitCode,
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "init",
+          "--target",
+          "claude",
+          "--name",
+          "company",
+          "--owner",
+          "Engineering",
+        ])
+      ).exitCode,
     ).toBe(0);
     const path = join(repo, ".claude-plugin/marketplace.json");
     const marketplace = JSON.parse(await readFile(path, "utf8")) as {
@@ -486,62 +511,70 @@ describe("marketplace CLI", () => {
     await commitAll(repo, "external entry");
 
     expect(
-      run([
-        "--data",
-        repo,
-        "marketplace",
-        "plugin",
-        "create",
-        "engineering",
-        "--target",
-        "claude",
-        "--skill",
-        "review",
-      ]).exitCode,
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "plugin",
+          "create",
+          "engineering",
+          "--target",
+          "claude",
+          "--skill",
+          "review",
+        ])
+      ).exitCode,
     ).toBe(0);
     expect(
-      run([
-        "--data",
-        repo,
-        "marketplace",
-        "plugin",
-        "edit",
-        "vendor",
-        "--target",
-        "claude",
-        "--description",
-        "no",
-      ]).exitCode,
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "plugin",
+          "edit",
+          "vendor",
+          "--target",
+          "claude",
+          "--description",
+          "no",
+        ])
+      ).exitCode,
     ).toBe(3);
     for (const [oldName, newName] of [
       ["engineering", "core"],
       ["core", "platform"],
     ] as const) {
       expect(
-        run([
+        (
+          await run([
+            "--data",
+            repo,
+            "marketplace",
+            "plugin",
+            "rename",
+            oldName,
+            newName,
+            "--target",
+            "claude",
+          ])
+        ).exitCode,
+      ).toBe(0);
+    }
+    expect(
+      (
+        await run([
           "--data",
           repo,
           "marketplace",
           "plugin",
-          "rename",
-          oldName,
-          newName,
+          "delete",
+          "platform",
           "--target",
           "claude",
-        ]).exitCode,
-      ).toBe(0);
-    }
-    expect(
-      run([
-        "--data",
-        repo,
-        "marketplace",
-        "plugin",
-        "delete",
-        "platform",
-        "--target",
-        "claude",
-      ]).exitCode,
+        ])
+      ).exitCode,
     ).toBe(0);
 
     const current = JSON.parse(await readFile(path, "utf8")) as {

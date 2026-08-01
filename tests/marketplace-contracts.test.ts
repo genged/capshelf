@@ -6,7 +6,13 @@ import {
   publishClaudePackage,
 } from "../src/plugin-package";
 import type { ProjectionFile } from "../src/plugin-projection";
-import { commitAll, runIn, tempDir, tempRepo } from "./cli-fixtures";
+import {
+  type CliResult,
+  commitAll,
+  runInProcess,
+  tempDir,
+  tempRepo,
+} from "./cli-fixtures";
 
 async function seedSkill(repo: string, name: string): Promise<void> {
   const root = join(repo, "skills", name);
@@ -19,7 +25,7 @@ async function seedSkill(repo: string, name: string): Promise<void> {
 
 async function fixture(): Promise<{
   repo: string;
-  run: ReturnType<typeof runIn>;
+  run: ReturnType<typeof runInProcess>;
 }> {
   const repo = await tempRepo("capshelf-marketplace-contract-", {
     origin: null,
@@ -27,20 +33,18 @@ async function fixture(): Promise<{
   await seedSkill(repo, "review");
   await seedSkill(repo, "testing");
   await commitAll(repo, "skills");
-  return { repo, run: runIn(repo) };
+  return { repo, run: runInProcess(repo) };
 }
 
-function json(
-  result: ReturnType<ReturnType<typeof runIn>>,
-): Record<string, unknown> {
+function json(result: CliResult): Record<string, unknown> {
   return JSON.parse(result.stdout.toString()) as Record<string, unknown>;
 }
 
-function init(
-  run: ReturnType<typeof runIn>,
+async function init(
+  run: ReturnType<typeof runInProcess>,
   repo: string,
   target: "claude" | "codex",
-): ReturnType<ReturnType<typeof runIn>> {
+): Promise<CliResult> {
   return run([
     "--data",
     repo,
@@ -56,13 +60,13 @@ function init(
   ]);
 }
 
-function create(
-  run: ReturnType<typeof runIn>,
+async function create(
+  run: ReturnType<typeof runInProcess>,
   repo: string,
   target: "claude" | "codex",
   name: string,
   skill: string,
-): ReturnType<ReturnType<typeof runIn>> {
+): Promise<CliResult> {
   return run([
     "--data",
     repo,
@@ -103,7 +107,7 @@ describe("marketplace observable contracts", () => {
   test("read commands and mutations expose stable target-specific JSON", async () => {
     const { repo, run } = await fixture();
     for (const target of ["claude", "codex"] as const) {
-      const result = init(run, repo, target);
+      const result = await init(run, repo, target);
       expect(result.exitCode).toBe(0);
       expect(json(result)).toMatchObject({
         verb: "marketplace-init",
@@ -112,14 +116,14 @@ describe("marketplace observable contracts", () => {
         dataRepoHasOrigin: false,
       });
     }
-    expect(create(run, repo, "claude", "engineering", "review").exitCode).toBe(
-      0,
-    );
-    expect(create(run, repo, "codex", "engineering", "testing").exitCode).toBe(
-      0,
-    );
+    expect(
+      (await create(run, repo, "claude", "engineering", "review")).exitCode,
+    ).toBe(0);
+    expect(
+      (await create(run, repo, "codex", "engineering", "testing")).exitCode,
+    ).toBe(0);
 
-    const listing = run(["--data", repo, "marketplace", "ls", "--json"]);
+    const listing = await run(["--data", repo, "marketplace", "ls", "--json"]);
     expect(listing.exitCode).toBe(0);
     const targets = json(listing).targets as Array<Record<string, unknown>>;
     expect(targets).toHaveLength(2);
@@ -134,7 +138,7 @@ describe("marketplace observable contracts", () => {
       nativeMarketplacePath: join(repo, ".agents/plugins/marketplace.json"),
     });
 
-    const shown = run([
+    const shown = await run([
       "--data",
       repo,
       "marketplace",
@@ -148,7 +152,7 @@ describe("marketplace observable contracts", () => {
       ["codex", ["skills/testing"]],
     ]);
 
-    const added = run([
+    const added = await run([
       "--data",
       repo,
       "marketplace",
@@ -168,7 +172,7 @@ describe("marketplace observable contracts", () => {
       skillsAdded: ["skills/review"],
       dataRepoHasOrigin: false,
     });
-    const noOp = run([
+    const noOp = await run([
       "--data",
       repo,
       "marketplace",
@@ -186,7 +190,7 @@ describe("marketplace observable contracts", () => {
       skillsAdded: [],
       committed: false,
     });
-    const removed = run([
+    const removed = await run([
       "--data",
       repo,
       "marketplace",
@@ -203,27 +207,29 @@ describe("marketplace observable contracts", () => {
       skillsRemoved: ["skills/testing"],
     });
     expect(
-      run([
-        "--data",
-        repo,
-        "marketplace",
-        "plugin",
-        "remove-skill",
-        "engineering",
-        "review",
-        "--target",
-        "codex",
-      ]).exitCode,
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "plugin",
+          "remove-skill",
+          "engineering",
+          "review",
+          "--target",
+          "codex",
+        ])
+      ).exitCode,
     ).toBe(3);
   });
 
   test("validation reports configured target details, projection state, and accounting", async () => {
     const { repo, run } = await fixture();
-    expect(init(run, repo, "codex").exitCode).toBe(0);
-    expect(create(run, repo, "codex", "engineering", "review").exitCode).toBe(
-      0,
-    );
-    const result = run([
+    expect((await init(run, repo, "codex")).exitCode).toBe(0);
+    expect(
+      (await create(run, repo, "codex", "engineering", "review")).exitCode,
+    ).toBe(0);
+    const result = await run([
       "--data",
       repo,
       "marketplace",
@@ -256,7 +262,7 @@ describe("marketplace observable contracts", () => {
     expect(Number(codex.generatedBytes)).toBeGreaterThan(0);
     expect(Number(codex.projectionDuplicateBytes)).toBeGreaterThan(0);
 
-    const missingClaude = run([
+    const missingClaude = await run([
       "--data",
       repo,
       "marketplace",
@@ -273,18 +279,20 @@ describe("marketplace observable contracts", () => {
       targets: { claude: { configured: false, valid: false } },
     });
     expect(
-      run([
-        "--data",
-        repo,
-        "marketplace",
-        "validate",
-        "--cowork-url",
-        "https://git.example.test/company/plugins",
-      ]).exitCode,
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "validate",
+          "--cowork-url",
+          "https://git.example.test/company/plugins",
+        ])
+      ).exitCode,
     ).toBe(3);
 
-    expect(init(run, repo, "claude").exitCode).toBe(0);
-    const distribution = run([
+    expect((await init(run, repo, "claude")).exitCode).toBe(0);
+    const distribution = await run([
       "--data",
       repo,
       "marketplace",
@@ -327,7 +335,7 @@ describe("marketplace observable contracts", () => {
       target: "claude",
       url: "https://git.example.test/company/plugins",
     });
-    const strictDistribution = run([
+    const strictDistribution = await run([
       "--data",
       repo,
       "marketplace",
@@ -356,12 +364,21 @@ describe("marketplace observable contracts", () => {
     });
 
     const claudeOnly = await fixture();
-    expect(init(claudeOnly.run, claudeOnly.repo, "claude").exitCode).toBe(0);
     expect(
-      create(claudeOnly.run, claudeOnly.repo, "claude", "engineering", "review")
-        .exitCode,
+      (await init(claudeOnly.run, claudeOnly.repo, "claude")).exitCode,
     ).toBe(0);
-    const claudeOnlyDistribution = claudeOnly.run([
+    expect(
+      (
+        await create(
+          claudeOnly.run,
+          claudeOnly.repo,
+          "claude",
+          "engineering",
+          "review",
+        )
+      ).exitCode,
+    ).toBe(0);
+    const claudeOnlyDistribution = await claudeOnly.run([
       "--data",
       claudeOnly.repo,
       "marketplace",
@@ -379,7 +396,7 @@ describe("marketplace observable contracts", () => {
       },
       errors: [],
     });
-    const invalidUrl = claudeOnly.run([
+    const invalidUrl = await claudeOnly.run([
       "--data",
       claudeOnly.repo,
       "marketplace",
@@ -408,11 +425,15 @@ describe("marketplace observable contracts", () => {
 
   test("overlap warnings are structured and strict validation fails on them", async () => {
     const { repo, run } = await fixture();
-    expect(init(run, repo, "claude").exitCode).toBe(0);
-    expect(create(run, repo, "claude", "zeta", "review").exitCode).toBe(0);
-    expect(create(run, repo, "claude", "alpha", "review").exitCode).toBe(0);
+    expect((await init(run, repo, "claude")).exitCode).toBe(0);
+    expect((await create(run, repo, "claude", "zeta", "review")).exitCode).toBe(
+      0,
+    );
+    expect(
+      (await create(run, repo, "claude", "alpha", "review")).exitCode,
+    ).toBe(0);
 
-    const validation = run([
+    const validation = await run([
       "--data",
       repo,
       "marketplace",
@@ -436,7 +457,7 @@ describe("marketplace observable contracts", () => {
       },
     ]);
 
-    const strict = run([
+    const strict = await run([
       "--data",
       repo,
       "marketplace",
@@ -451,10 +472,10 @@ describe("marketplace observable contracts", () => {
 
   test("sync detects missing, changed, extra, and stale projection files without committing", async () => {
     const { repo, run } = await fixture();
-    expect(init(run, repo, "codex").exitCode).toBe(0);
-    expect(create(run, repo, "codex", "engineering", "review").exitCode).toBe(
-      0,
-    );
+    expect((await init(run, repo, "codex")).exitCode).toBe(0);
+    expect(
+      (await create(run, repo, "codex", "engineering", "review")).exitCode,
+    ).toBe(0);
     const root = join(repo, "codex/generated/plugins/engineering");
     const copied = join(root, "skills/review/SKILL.md");
     const manifest = join(root, ".codex-plugin/plugin.json");
@@ -465,7 +486,7 @@ describe("marketplace observable contracts", () => {
     await writeFile(manifest, "{}\n");
     await writeFile(extra, "extra");
 
-    const validation = run([
+    const validation = await run([
       "--data",
       repo,
       "marketplace",
@@ -485,7 +506,7 @@ describe("marketplace observable contracts", () => {
     const beforeHead = (
       await Bun.$`git -C ${repo} rev-parse HEAD`.text()
     ).trim();
-    const dryRun = run([
+    const dryRun = await run([
       "--data",
       repo,
       "marketplace",
@@ -506,7 +527,7 @@ describe("marketplace observable contracts", () => {
     expect(await readFile(copied, "utf8")).toBe("manually changed");
     expect(await readFile(extra, "utf8")).toBe("extra");
 
-    const synced = run([
+    const synced = await run([
       "--data",
       repo,
       "marketplace",
@@ -532,10 +553,10 @@ describe("marketplace observable contracts", () => {
 
   test("pack distinguishes current and HEAD, is reproducible, and refuses private inputs and overwrite", async () => {
     const { repo, run } = await fixture();
-    expect(init(run, repo, "claude").exitCode).toBe(0);
-    expect(create(run, repo, "claude", "engineering", "review").exitCode).toBe(
-      0,
-    );
+    expect((await init(run, repo, "claude")).exitCode).toBe(0);
+    expect(
+      (await create(run, repo, "claude", "engineering", "review")).exitCode,
+    ).toBe(0);
     await writeFile(
       join(repo, "skills/review/SKILL.md"),
       "---\nname: review\ndescription: dirty\n---\n",
@@ -543,7 +564,7 @@ describe("marketplace observable contracts", () => {
     const artifacts = await tempDir("capshelf-marketplace-artifacts-");
     const currentOutput = join(artifacts, "current.plugin");
     const headOutput = join(artifacts, "head.plugin");
-    const current = run([
+    const current = await run([
       "--data",
       repo,
       "marketplace",
@@ -556,7 +577,7 @@ describe("marketplace observable contracts", () => {
       currentOutput,
       "--json",
     ]);
-    const fromHead = run([
+    const fromHead = await run([
       "--data",
       repo,
       "marketplace",
@@ -573,7 +594,7 @@ describe("marketplace observable contracts", () => {
     expect(current.exitCode).toBe(0);
     expect(fromHead.exitCode).toBe(0);
     expect(json(current).contentSha256).not.toBe(json(fromHead).contentSha256);
-    const identical = run([
+    const identical = await run([
       "--data",
       repo,
       "marketplace",
@@ -588,50 +609,54 @@ describe("marketplace observable contracts", () => {
     ]);
     expect(json(identical).action).toBe("already-built");
     expect(
-      run([
-        "--data",
-        repo,
-        "marketplace",
-        "plugin",
-        "pack",
-        "engineering",
-        "--target",
-        "claude",
-        "--output",
-        headOutput,
-      ]).exitCode,
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "plugin",
+          "pack",
+          "engineering",
+          "--target",
+          "claude",
+          "--output",
+          headOutput,
+        ])
+      ).exitCode,
     ).toBe(3);
 
     await writeFile(join(repo, "skills/review/.env"), "SECRET=nope");
     expect(
-      run([
-        "--data",
-        repo,
-        "marketplace",
-        "plugin",
-        "pack",
-        "engineering",
-        "--target",
-        "claude",
-        "--output",
-        join(artifacts, "private.plugin"),
-      ]).exitCode,
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "plugin",
+          "pack",
+          "engineering",
+          "--target",
+          "claude",
+          "--output",
+          join(artifacts, "private.plugin"),
+        ])
+      ).exitCode,
     ).toBe(3);
   });
 
   test("dirty dry-run is read-only, real mutation refuses, and successful mutation commits exact roots", async () => {
     const { repo, run } = await fixture();
-    expect(init(run, repo, "codex").exitCode).toBe(0);
-    expect(create(run, repo, "codex", "engineering", "review").exitCode).toBe(
-      0,
-    );
+    expect((await init(run, repo, "codex")).exitCode).toBe(0);
+    expect(
+      (await create(run, repo, "codex", "engineering", "review")).exitCode,
+    ).toBe(0);
     const source = join(repo, "codex/plugin-definitions/engineering.json");
     const beforeSource = await readFile(source, "utf8");
     const beforeHead = (
       await Bun.$`git -C ${repo} rev-parse HEAD`.text()
     ).trim();
     await writeFile(join(repo, "unrelated"), "dirty");
-    const dryRun = run([
+    const dryRun = await run([
       "--data",
       repo,
       "marketplace",
@@ -655,33 +680,37 @@ describe("marketplace observable contracts", () => {
       beforeHead,
     );
     expect(
-      run([
-        "--data",
-        repo,
-        "marketplace",
-        "plugin",
-        "add-skill",
-        "engineering",
-        "testing",
-        "--target",
-        "codex",
-      ]).exitCode,
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "plugin",
+          "add-skill",
+          "engineering",
+          "testing",
+          "--target",
+          "codex",
+        ])
+      ).exitCode,
     ).toBe(3);
     expect(await readFile(source, "utf8")).toBe(beforeSource);
     await unlink(join(repo, "unrelated"));
 
     expect(
-      run([
-        "--data",
-        repo,
-        "marketplace",
-        "plugin",
-        "add-skill",
-        "engineering",
-        "testing",
-        "--target",
-        "codex",
-      ]).exitCode,
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "plugin",
+          "add-skill",
+          "engineering",
+          "testing",
+          "--target",
+          "codex",
+        ])
+      ).exitCode,
     ).toBe(0);
     const committed = (
       await Bun.$`git -C ${repo} show --pretty=format: --name-only HEAD`.text()
@@ -698,11 +727,11 @@ describe("marketplace observable contracts", () => {
 
   test("Codex rename and delete atomically replace exact source and generated paths", async () => {
     const { repo, run } = await fixture();
-    expect(init(run, repo, "codex").exitCode).toBe(0);
-    expect(create(run, repo, "codex", "engineering", "review").exitCode).toBe(
-      0,
-    );
-    const renamed = run([
+    expect((await init(run, repo, "codex")).exitCode).toBe(0);
+    expect(
+      (await create(run, repo, "codex", "engineering", "review")).exitCode,
+    ).toBe(0);
+    const renamed = await run([
       "--data",
       repo,
       "marketplace",
@@ -733,7 +762,7 @@ describe("marketplace observable contracts", () => {
       Bun.file(join(repo, "codex/generated/plugins/core-engineering")).size,
     ).toBeGreaterThan(0);
 
-    const deleted = run([
+    const deleted = await run([
       "--data",
       repo,
       "marketplace",
@@ -831,25 +860,27 @@ describe("marketplace observable contracts", () => {
       await seedSkill(repo, "review");
       await commitAll(repo, "baseline");
       expect(
-        runIn(repo)([
-          "--data",
-          repo,
-          "marketplace",
-          "init",
-          "--target",
-          "claude",
-          "--name",
-          name,
-          "--owner",
-          "Engineering",
-        ]).exitCode,
+        (
+          await runInProcess(repo)([
+            "--data",
+            repo,
+            "marketplace",
+            "init",
+            "--target",
+            "claude",
+            "--name",
+            name,
+            "--owner",
+            "Engineering",
+          ])
+        ).exitCode,
       ).toBe(3);
     }
   });
 
   test("attempted managed Claude entries with malformed membership are invalid, while external entries remain visible", async () => {
     const { repo, run } = await fixture();
-    expect(init(run, repo, "claude").exitCode).toBe(0);
+    expect((await init(run, repo, "claude")).exitCode).toBe(0);
     const path = join(repo, ".claude-plugin/marketplace.json");
     const marketplace = JSON.parse(await readFile(path, "utf8")) as {
       plugins: unknown[];
@@ -874,7 +905,7 @@ describe("marketplace observable contracts", () => {
       },
     );
     await writeFile(path, `${JSON.stringify(marketplace, null, 2)}\n`);
-    const listing = run([
+    const listing = await run([
       "--data",
       repo,
       "marketplace",
@@ -892,7 +923,7 @@ describe("marketplace observable contracts", () => {
     expect(
       plugins.find((plugin) => plugin.name === "versioned-root-tool"),
     ).toMatchObject({ managed: false });
-    const result = run([
+    const result = await run([
       "--data",
       repo,
       "marketplace",
@@ -921,7 +952,7 @@ describe("marketplace observable contracts", () => {
       (plugin) => (plugin as { name?: string }).name !== "broken-managed",
     );
     await writeFile(path, `${JSON.stringify(marketplace, null, 2)}\n`);
-    const externalOnly = run([
+    const externalOnly = await run([
       "--data",
       repo,
       "marketplace",

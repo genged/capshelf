@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { file } from "bun";
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { commitAll, runIn, tempRepo } from "./cli-fixtures";
+import { commitAll, runInProcess, tempRepo } from "./cli-fixtures";
 
 describe("declared needs CLI lifecycle", () => {
   test("pins, reports, refreshes, and checks needs without rewriting content", async () => {
@@ -39,12 +39,12 @@ describe("declared needs CLI lifecycle", () => {
     );
     await commitAll(dataRepo, "add extension");
 
-    const run = runIn(project);
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
     await mkdir(join(project, ".runfree"));
 
     const bundleShow = JSON.parse(
-      run(["show", "bundles/networked", "--json"]).stdout.toString(),
+      (await run(["show", "bundles/networked", "--json"])).stdout.toString(),
     );
     expect(bundleShow.needs).toEqual({
       network: ["api.example.com", "mcp.exa.ai"],
@@ -52,7 +52,7 @@ describe("declared needs CLI lifecycle", () => {
       bin: ["agent-browser"],
     });
 
-    const add = run(["add", "pi-extensions/exa-mcp"]);
+    const add = await run(["add", "pi-extensions/exa-mcp"]);
     expect(add.exitCode).toBe(0);
     expect(add.stdout.toString()).toContain(
       "reads env: EXA_API_KEY · needs on PATH: agent-browser",
@@ -73,7 +73,7 @@ describe("declared needs CLI lifecycle", () => {
     expect(addedEntry.needsSourceCommit).toMatch(/^[0-9a-f]{40}$/);
 
     const statusBefore = JSON.parse(
-      run(["status", "--json"]).stdout.toString(),
+      (await run(["status", "--json"])).stdout.toString(),
     );
     const beforeRow = statusBefore.items.find(
       (row: { name: string }) => row.name === "exa-mcp",
@@ -85,14 +85,14 @@ describe("declared needs CLI lifecycle", () => {
         (warning: { type: string }) => warning.type === "network_needs_unmet",
       ),
     ).toBe(true);
-    expect(run(["status", "--strict"]).exitCode).toBe(0);
+    expect((await run(["status", "--strict"])).exitCode).toBe(0);
 
     await writeFile(
       join(project, ".runfree", "network-policy.json"),
       JSON.stringify({ domains: ["MCP.EXA.AI"] }),
     );
     const allowed = JSON.parse(
-      run(["status", "--json"]).stdout.toString(),
+      (await run(["status", "--json"])).stdout.toString(),
     ).items.find((row: { name: string }) => row.name === "exa-mcp");
     expect(
       allowed.runtimeWarnings?.some(
@@ -118,13 +118,13 @@ describe("declared needs CLI lifecycle", () => {
     await commitAll(dataRepo, "expand network needs");
 
     const stale = JSON.parse(
-      run(["status", "--json"]).stdout.toString(),
+      (await run(["status", "--json"])).stdout.toString(),
     ).items.find((row: { name: string }) => row.name === "exa-mcp");
     expect(stale.state).toBe("ok");
     expect(stale.needsState).toBe("update_available");
     expect(stale.lockedNeeds).toEqual(addedEntry.needs);
 
-    const updated = run(["update", "pi-extensions/exa-mcp", "--json"]);
+    const updated = await run(["update", "pi-extensions/exa-mcp", "--json"]);
     expect(updated.exitCode).toBe(0);
     const updatedEntry = (await file(lockPath).json()).items[
       "data/pi-extensions/exa-mcp"
@@ -146,17 +146,19 @@ describe("declared needs CLI lifecycle", () => {
     );
 
     const show = JSON.parse(
-      run(["show", "pi-extensions/exa-mcp", "--json"]).stdout.toString(),
+      (
+        await run(["show", "pi-extensions/exa-mcp", "--json"])
+      ).stdout.toString(),
     );
     expect(show.metadata.needs).toEqual(updatedEntry.needs);
     expect(show.lockedNeeds).toEqual(updatedEntry.needs);
     expect(show.needsState).toBe("current");
 
     const bundleProject = await tempRepo("capshelf-needs-bundle-project-");
-    const bundleRun = runIn(bundleProject);
-    expect(bundleRun(["init", "--data", dataRepo]).exitCode).toBe(0);
+    const bundleRun = runInProcess(bundleProject);
+    expect((await bundleRun(["init", "--data", dataRepo])).exitCode).toBe(0);
     await mkdir(join(bundleProject, ".runfree"));
-    const bundleAdd = bundleRun(["add", "bundles/networked"]);
+    const bundleAdd = await bundleRun(["add", "bundles/networked"]);
     expect(bundleAdd.exitCode).toBe(0);
     expect(bundleAdd.stdout.toString()).toContain(
       "skills/network-helper needs network egress",
@@ -185,9 +187,9 @@ describe("declared needs CLI lifecycle", () => {
       "needs:\n  network: [api.example.com]\n",
     );
     await commitAll(dataRepo, "hello");
-    const run = runIn(project);
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
-    expect(run(["add", "skills/hello"]).exitCode).toBe(0);
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/hello"])).exitCode).toBe(0);
 
     const lockPath = join(project, ".capshelf", "capshelf.lock.json");
     const lock = await file(lockPath).json();
@@ -196,7 +198,7 @@ describe("declared needs CLI lifecycle", () => {
     lock.version = 2;
     await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
 
-    const status = run(["status", "--json"]);
+    const status = await run(["status", "--json"]);
     expect(status.exitCode).toBe(0);
     const row = JSON.parse(status.stdout.toString()).items.find(
       (item: { name: string }) => item.name === "hello",
@@ -205,7 +207,7 @@ describe("declared needs CLI lifecycle", () => {
     expect(row.lockedNeeds).toBeNull();
     expect((await file(lockPath).json()).version).toBe(2);
 
-    expect(run(["update", "skills/hello"]).exitCode).toBe(0);
+    expect((await run(["update", "skills/hello"])).exitCode).toBe(0);
     const refreshed = await file(lockPath).json();
     expect(refreshed.version).toBe(3);
     expect(refreshed.items["data/skills/hello"].needs.network).toEqual([
@@ -218,8 +220,8 @@ describe("declared needs CLI lifecycle", () => {
     const dataRepo = await tempRepo("capshelf-needs-share-data-");
     await writeFile(join(dataRepo, "README.md"), "data\n");
     await commitAll(dataRepo, "baseline");
-    const run = runIn(project);
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
 
     const installed = join(project, ".pi", "extensions", "shared");
     await mkdir(installed, { recursive: true });
@@ -229,7 +231,8 @@ describe("declared needs CLI lifecycle", () => {
       "needs:\n  network: [one.example.com]\n",
     );
     expect(
-      run(["share", "pi-extensions/shared", "-m", "share extension"]).exitCode,
+      (await run(["share", "pi-extensions/shared", "-m", "share extension"]))
+        .exitCode,
     ).toBe(0);
 
     const lockPath = join(project, ".capshelf", "capshelf.lock.json");
@@ -245,8 +248,14 @@ describe("declared needs CLI lifecycle", () => {
       "needs:\n  network: [two.example.com]\n",
     );
     expect(
-      run(["promote", "pi-extensions/shared", "-m", "promote extension"])
-        .exitCode,
+      (
+        await run([
+          "promote",
+          "pi-extensions/shared",
+          "-m",
+          "promote extension",
+        ])
+      ).exitCode,
     ).toBe(0);
 
     entry = (await file(lockPath).json()).items["data/pi-extensions/shared"];

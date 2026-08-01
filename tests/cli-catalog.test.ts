@@ -2,13 +2,12 @@ import { file } from "bun";
 import { describe, expect, test } from "bun:test";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { commitAll, tempDir, tempRepo } from "./cli-fixtures";
+import { commitAll, runInProcess, tempDir, tempRepo } from "./cli-fixtures";
 
 describe("cli integration", () => {
   test("ls renders metadata, filters by --tag, and keeps bare rows unchanged", async () => {
     const project = await tempRepo("capshelf-ls-meta-project-");
     const dataRepo = await tempRepo("capshelf-ls-meta-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
     await mkdir(join(dataRepo, "skills", "security-review"), {
       recursive: true,
     });
@@ -39,18 +38,11 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "baseline");
 
-    const run = (args: string[]) =>
-      Bun.spawnSync({
-        cmd: [process.execPath, cli, ...args],
-        cwd: project,
-        env: process.env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    const run = runInProcess(project);
 
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
 
-    const ls = run(["ls"]);
+    const ls = await run(["ls"]);
     expect(ls.exitCode).toBe(0);
     const out = ls.stdout.toString();
     // 60-char truncation plus ellipsis; tags render as #tag suffixes.
@@ -62,23 +54,23 @@ describe("cli integration", () => {
     expect(out).toMatch(/^ {2}skills\/hello {2,}[0-9a-f]{12}$/m);
 
     // --tag is AND and case-insensitive, and combines with --kind.
-    const tagged = run(["ls", "--tag", "SECURITY"]);
+    const tagged = await run(["ls", "--tag", "SECURITY"]);
     expect(tagged.exitCode).toBe(0);
     expect(tagged.stdout.toString()).toContain("skills/security-review");
     expect(tagged.stdout.toString()).toContain("settings/permissions-base");
     expect(tagged.stdout.toString()).not.toContain("skills/hello");
 
-    const narrowed = run(["ls", "--tag", "security", "--tag", "review"]);
+    const narrowed = await run(["ls", "--tag", "security", "--tag", "review"]);
     expect(narrowed.stdout.toString()).toContain("skills/security-review");
     expect(narrowed.stdout.toString()).not.toContain(
       "settings/permissions-base",
     );
 
-    const kinded = run(["ls", "--tag", "security", "--kind", "settings"]);
+    const kinded = await run(["ls", "--tag", "security", "--kind", "settings"]);
     expect(kinded.stdout.toString()).not.toContain("skills/security-review");
     expect(kinded.stdout.toString()).toContain("settings/permissions-base");
 
-    const json = run(["ls", "--json"]);
+    const json = await run(["ls", "--json"]);
     expect(json.exitCode).toBe(0);
     const parsed = JSON.parse(json.stdout.toString());
     const review = parsed.data.find(
@@ -100,7 +92,6 @@ describe("cli integration", () => {
   test("ls --here enriches installed rows best-effort and filters by --tag", async () => {
     const project = await tempRepo("capshelf-ls-here-meta-project-");
     const dataRepo = await tempRepo("capshelf-ls-here-meta-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
     await mkdir(join(dataRepo, "skills", "security-review"), {
       recursive: true,
     });
@@ -114,20 +105,13 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "baseline");
 
-    const env = { ...process.env, CAPSHELF_HOME: "" };
-    const run = (args: string[]) =>
-      Bun.spawnSync({
-        cmd: [process.execPath, cli, ...args],
-        cwd: project,
-        env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    const invoke = runInProcess(project);
+    const run = (args: string[]) => invoke(args, { CAPSHELF_HOME: "" });
 
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
-    expect(run(["add", "skills/security-review"]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/security-review"])).exitCode).toBe(0);
 
-    const here = run(["ls", "--here", "--json"]);
+    const here = await run(["ls", "--here", "--json"]);
     expect(here.exitCode).toBe(0);
     const rows = JSON.parse(here.stdout.toString());
     const review = rows.find(
@@ -136,12 +120,12 @@ describe("cli integration", () => {
     expect(review.description).toBe("Audit changed files.");
     expect(review.tags).toEqual(["security"]);
 
-    const human = run(["ls", "--here"]);
+    const human = await run(["ls", "--here"]);
     expect(human.stdout.toString()).toContain(
       "Audit changed files.  #security",
     );
 
-    const tagged = run(["ls", "--here", "--tag", "security", "--json"]);
+    const tagged = await run(["ls", "--here", "--tag", "security", "--json"]);
     expect(
       JSON.parse(tagged.stdout.toString()).map(
         (row: { name: string }) => row.name,
@@ -150,7 +134,7 @@ describe("cli integration", () => {
 
     // With no data repo bound, ls --here still works; fields are omitted.
     await rm(join(project, ".capshelf", "local.json"));
-    const unbound = run(["ls", "--here", "--json"]);
+    const unbound = await run(["ls", "--here", "--json"]);
     expect(unbound.exitCode).toBe(0);
     const unboundRows = JSON.parse(unbound.stdout.toString());
     const unboundReview = unboundRows.find(
@@ -163,7 +147,6 @@ describe("cli integration", () => {
   test("show prints a metadata block with relation install state", async () => {
     const project = await tempRepo("capshelf-show-meta-project-");
     const dataRepo = await tempRepo("capshelf-show-meta-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
     await mkdir(join(dataRepo, "skills", "security-review"), {
       recursive: true,
     });
@@ -191,19 +174,12 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "baseline");
 
-    const run = (args: string[]) =>
-      Bun.spawnSync({
-        cmd: [process.execPath, cli, ...args],
-        cwd: project,
-        env: process.env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    const run = runInProcess(project);
 
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
-    expect(run(["add", "settings/permissions-base"]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "settings/permissions-base"])).exitCode).toBe(0);
 
-    const human = run(["show", "skills/security-review", "--no-content"]);
+    const human = await run(["show", "skills/security-review", "--no-content"]);
     expect(human.exitCode).toBe(0);
     const out = human.stdout.toString();
     expect(out).toContain("description: Audit changed files.");
@@ -211,7 +187,7 @@ describe("cli integration", () => {
     expect(out).toContain("settings/permissions-base (installed)");
     expect(out).toContain("skills/quick-review (not installed)");
 
-    const json = run(["show", "skills/security-review", "--json"]);
+    const json = await run(["show", "skills/security-review", "--json"]);
     expect(json.exitCode).toBe(0);
     const parsed = JSON.parse(json.stdout.toString());
     expect(parsed.metadata).toEqual({
@@ -224,7 +200,7 @@ describe("cli integration", () => {
 
     // metadata is always present, even for items without any metadata.
     const bare = JSON.parse(
-      run(["show", "skills/hello", "--json"]).stdout.toString(),
+      (await run(["show", "skills/hello", "--json"])).stdout.toString(),
     );
     expect(bare.metadata).toEqual({
       tags: [],
@@ -235,7 +211,7 @@ describe("cli integration", () => {
 
     // System items report frontmatter metadata the same way.
     const system = JSON.parse(
-      run(["show", "capshelf", "--json"]).stdout.toString(),
+      (await run(["show", "capshelf", "--json"])).stdout.toString(),
     );
     expect(system.metadata.description).toContain("capshelf CLI");
     expect(system.metadata.requires).toEqual([]);
@@ -244,7 +220,6 @@ describe("cli integration", () => {
   test("search ranks matches across fields and includes system items", async () => {
     const project = await tempRepo("capshelf-search-project-");
     const dataRepo = await tempRepo("capshelf-search-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
     await mkdir(join(dataRepo, "skills", "security-review"), {
       recursive: true,
     });
@@ -269,19 +244,12 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "baseline");
 
-    const run = (args: string[]) =>
-      Bun.spawnSync({
-        cmd: [process.execPath, cli, ...args],
-        cwd: project,
-        env: process.env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    const run = runInProcess(project);
 
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
 
     // Name hit (8) outranks the description hit (2).
-    const search = run(["search", "security"]);
+    const search = await run(["search", "security"]);
     expect(search.exitCode).toBe(0);
     const out = search.stdout.toString();
     expect(out).toMatch(/^\d+ matches in .+ \(\+ system\)$/m);
@@ -293,11 +261,11 @@ describe("cli integration", () => {
     expect(out).toContain("Audit changed files.  #security #review");
 
     // Content matching annotates the first matching file.
-    const content = run(["search", "injection"]);
+    const content = await run(["search", "injection"]);
     expect(content.stdout.toString()).toContain("matched: content(SKILL.md)");
 
     // Multi-word queries are AND; quoted and unquoted forms both work.
-    const multi = run(["search", "sql", "injection", "--json"]);
+    const multi = await run(["search", "sql", "injection", "--json"]);
     expect(multi.exitCode).toBe(0);
     const parsed = JSON.parse(multi.stdout.toString());
     expect(parsed.query).toBe("sql injection");
@@ -315,7 +283,13 @@ describe("cli integration", () => {
     ]);
 
     // --kind narrows the searched population.
-    const kinded = run(["search", "security", "--kind", "settings", "--json"]);
+    const kinded = await run([
+      "search",
+      "security",
+      "--kind",
+      "settings",
+      "--json",
+    ]);
     expect(
       JSON.parse(kinded.stdout.toString()).results.map(
         (row: { name: string }) => row.name,
@@ -323,7 +297,7 @@ describe("cli integration", () => {
     ).toEqual(["permissions-base"]);
 
     // Bundled system items are searched too.
-    const system = run(["search", "capshelf", "--json"]);
+    const system = await run(["search", "capshelf", "--json"]);
     const systemRows = JSON.parse(system.stdout.toString()).results;
     expect(
       systemRows.some(
@@ -333,10 +307,14 @@ describe("cli integration", () => {
     ).toBe(true);
 
     // Zero matches: friendly output, empty results, exit 0.
-    const none = run(["search", "definitely-not-on-the-shelf"]);
+    const none = await run(["search", "definitely-not-on-the-shelf"]);
     expect(none.exitCode).toBe(0);
     expect(none.stdout.toString()).toContain("(no matches)");
-    const noneJson = run(["search", "definitely-not-on-the-shelf", "--json"]);
+    const noneJson = await run([
+      "search",
+      "definitely-not-on-the-shelf",
+      "--json",
+    ]);
     expect(noneJson.exitCode).toBe(0);
     expect(JSON.parse(noneJson.stdout.toString()).results).toEqual([]);
   });
@@ -344,7 +322,6 @@ describe("cli integration", () => {
   test("add warns about missing requires and refuses declared conflicts", async () => {
     const project = await tempRepo("capshelf-add-relations-project-");
     const dataRepo = await tempRepo("capshelf-add-relations-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
     for (const skill of ["security-review", "quick-review", "loner"]) {
       await mkdir(join(dataRepo, "skills", skill), { recursive: true });
       await writeFile(
@@ -373,21 +350,14 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "baseline");
 
-    const run = (args: string[]) =>
-      Bun.spawnSync({
-        cmd: [process.execPath, cli, ...args],
-        cwd: project,
-        env: process.env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    const run = runInProcess(project);
 
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
 
     // Missing requires warn with exact fix commands, install succeeds, and
     // --json appends missingRequires. A conflict ref pointing at an item
     // that exists nowhere (skills/deleted-upstream) is ignored.
-    const add = run(["add", "skills/security-review", "--json"]);
+    const add = await run(["add", "skills/security-review", "--json"]);
     expect(add.exitCode).toBe(0);
     const stderr = add.stderr.toString();
     expect(stderr).toContain(
@@ -405,8 +375,8 @@ describe("cli integration", () => {
     ]);
 
     // Installing a declared requirement shrinks the warning on re-add.
-    expect(run(["add", "settings/permissions-base"]).exitCode).toBe(0);
-    const readd = run(["add", "skills/security-review", "--json"]);
+    expect((await run(["add", "settings/permissions-base"])).exitCode).toBe(0);
+    const readd = await run(["add", "skills/security-review", "--json"]);
     expect(readd.exitCode).toBe(0);
     expect(readd.stderr.toString()).not.toContain("settings/permissions-base");
     expect(JSON.parse(readd.stdout.toString()).missingRequires).toEqual([
@@ -414,7 +384,7 @@ describe("cli integration", () => {
     ]);
 
     // Forward conflict: the new item declares it.
-    const conflict = run(["add", "skills/quick-review"]);
+    const conflict = await run(["add", "skills/quick-review"]);
     expect(conflict.exitCode).toBe(3);
     const conflictErr = conflict.stderr.toString();
     expect(conflictErr).toContain(
@@ -431,13 +401,12 @@ describe("cli integration", () => {
     );
 
     // An unrelated item still installs.
-    expect(run(["add", "skills/loner"]).exitCode).toBe(0);
+    expect((await run(["add", "skills/loner"])).exitCode).toBe(0);
   });
 
   test("add refuses the reverse conflict direction and tolerates malformed sidecars", async () => {
     const project = await tempRepo("capshelf-add-reverse-project-");
     const dataRepo = await tempRepo("capshelf-add-reverse-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
     for (const skill of ["quick-review", "security-review", "broken-meta"]) {
       await mkdir(join(dataRepo, "skills", skill), { recursive: true });
       await writeFile(
@@ -456,19 +425,12 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "baseline");
 
-    const run = (args: string[]) =>
-      Bun.spawnSync({
-        cmd: [process.execPath, cli, ...args],
-        cwd: project,
-        env: process.env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    const run = runInProcess(project);
 
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
-    expect(run(["add", "skills/quick-review"]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/quick-review"])).exitCode).toBe(0);
 
-    const reverse = run(["add", "skills/security-review"]);
+    const reverse = await run(["add", "skills/security-review"]);
     expect(reverse.exitCode).toBe(3);
     const err = reverse.stderr.toString();
     expect(err).toContain(
@@ -477,7 +439,7 @@ describe("cli integration", () => {
     expect(err).toContain("declared by: skills/quick-review/.capshelf.yml");
 
     // A malformed sidecar warns but never blocks the install.
-    const malformed = run(["add", "skills/broken-meta"]);
+    const malformed = await run(["add", "skills/broken-meta"]);
     expect(malformed.exitCode).toBe(0);
     expect(malformed.stderr.toString()).toContain(
       "skills/broken-meta: invalid .capshelf.yml",
@@ -487,7 +449,6 @@ describe("cli integration", () => {
   test("search content scanning skips binary and oversize files in real repos", async () => {
     const project = await tempRepo("capshelf-search-skip-project-");
     const dataRepo = await tempRepo("capshelf-search-skip-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
     const skill = join(dataRepo, "skills", "mixed");
     await mkdir(skill, { recursive: true });
     await writeFile(join(skill, "SKILL.md"), "contains textneedle marker\n");
@@ -506,19 +467,12 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "baseline");
 
-    const run = (args: string[]) =>
-      Bun.spawnSync({
-        cmd: [process.execPath, cli, ...args],
-        cwd: project,
-        env: process.env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    const run = runInProcess(project);
 
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
 
     // The fixture is searchable through its text file…
-    const text = run(["search", "textneedle", "--json"]);
+    const text = await run(["search", "textneedle", "--json"]);
     expect(text.exitCode).toBe(0);
     expect(
       JSON.parse(text.stdout.toString()).results.map(
@@ -528,7 +482,7 @@ describe("cli integration", () => {
 
     // …but binary and oversize files are skipped, still exiting 0.
     for (const needle of ["nulneedle", "hugeneedle"]) {
-      const skipped = run(["search", needle, "--json"]);
+      const skipped = await run(["search", needle, "--json"]);
       expect(skipped.exitCode).toBe(0);
       expect(JSON.parse(skipped.stdout.toString()).results).toEqual([]);
     }
@@ -537,7 +491,6 @@ describe("cli integration", () => {
   test("update after a metadata-only data repo commit is a full no-op", async () => {
     const project = await tempRepo("capshelf-meta-noop-project-");
     const dataRepo = await tempRepo("capshelf-meta-noop-data-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
     await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
     await writeFile(
       join(dataRepo, "skills", "hello", "SKILL.md"),
@@ -545,17 +498,10 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "baseline");
 
-    const run = (args: string[]) =>
-      Bun.spawnSync({
-        cmd: [process.execPath, cli, ...args],
-        cwd: project,
-        env: process.env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    const run = runInProcess(project);
 
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
-    expect(run(["add", "skills/hello"]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/hello"])).exitCode).toBe(0);
     const lockPath = join(project, ".capshelf", "capshelf.lock.json");
     const lockBefore = await readFile(lockPath, "utf-8");
 
@@ -567,10 +513,10 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "tag hello");
 
-    const status = run(["status", "skills/hello", "--strict", "--json"]);
+    const status = await run(["status", "skills/hello", "--strict", "--json"]);
     expect(status.exitCode).toBe(0);
 
-    const update = run(["update", "skills/hello", "--json"]);
+    const update = await run(["update", "skills/hello", "--json"]);
     expect(update.exitCode).toBe(0);
     expect(update.stdout.toString()).toContain('"action": "already-current"');
     expect(await readFile(lockPath, "utf-8")).toBe(lockBefore);
@@ -580,22 +526,16 @@ describe("cli integration", () => {
     const project = await tempRepo("capshelf-status-nongit-project-");
     const dataRepo = await tempRepo("capshelf-status-nongit-data-");
     const notARepo = await tempDir("capshelf-status-nongit-dir-");
-    const cli = join(import.meta.dir, "..", "src", "cli.ts");
     await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
     await writeFile(join(dataRepo, "skills", "hello", "SKILL.md"), "hello\n");
     await commitAll(dataRepo, "baseline");
 
-    const run = (args: string[]) =>
-      Bun.spawnSync({
-        cmd: [process.execPath, cli, ...args],
-        cwd: project,
-        env: process.env,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
+    const run = runInProcess(project);
 
-    expect(run(["init", "--data", dataRepo, "--no-upstream"]).exitCode).toBe(0);
-    expect(run(["add", "hello"]).exitCode).toBe(0);
+    expect(
+      (await run(["init", "--data", dataRepo, "--no-upstream"])).exitCode,
+    ).toBe(0);
+    expect((await run(["add", "hello"])).exitCode).toBe(0);
 
     const localPath = join(project, ".capshelf", "local.json");
     const local = await file(localPath).json();
@@ -604,7 +544,7 @@ describe("cli integration", () => {
       JSON.stringify({ ...local, dataRepo: notARepo }, null, 2),
     );
 
-    const status = run(["status", "--json"]);
+    const status = await run(["status", "--json"]);
     expect(status.exitCode).toBe(0);
     const rows = JSON.parse(status.stdout.toString()).items;
     const hello = rows.find(
@@ -613,6 +553,6 @@ describe("cli integration", () => {
     );
     expect(hello.state).toBe("missing_upstream");
 
-    expect(run(["status", "--strict"]).exitCode).toBe(4);
+    expect((await run(["status", "--strict"])).exitCode).toBe(4);
   });
 });

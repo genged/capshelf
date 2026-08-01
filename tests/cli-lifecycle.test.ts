@@ -2,13 +2,13 @@ import { $, file } from "bun";
 import { describe, expect, test } from "bun:test";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { commitAll, runIn, tempRepo } from "./cli-fixtures";
+import { commitAll, runInProcess, tempRepo } from "./cli-fixtures";
 
 describe("cli integration", () => {
   test("update rewrites installed files and bumps the lock to the new data commit", async () => {
     const project = await tempRepo("capshelf-update-real-project-");
     const dataRepo = await tempRepo("capshelf-update-real-data-");
-    const run = runIn(project);
+    const run = runInProcess(project);
     await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
     await writeFile(
       join(dataRepo, "skills", "hello", "SKILL.md"),
@@ -16,8 +16,8 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "hello v1");
 
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
-    expect(run(["add", "skills/hello"]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/hello"])).exitCode).toBe(0);
     const lockPath = join(project, ".capshelf", "capshelf.lock.json");
     const lockedBefore = (await file(lockPath).json()).items[
       "data/skills/hello"
@@ -31,7 +31,7 @@ describe("cli integration", () => {
     await commitAll(dataRepo, "hello v2");
     const newHead = (await $`git -C ${dataRepo} rev-parse HEAD`.text()).trim();
 
-    const update = run(["update", "--json"]);
+    const update = await run(["update", "--json"]);
     expect(update.exitCode).toBe(0);
     const updateJson = JSON.parse(update.stdout.toString());
     const item = updateJson.items.find(
@@ -57,7 +57,7 @@ describe("cli integration", () => {
     expect(lockedAfter.sha).not.toBe(lockedBefore.sha);
     expect(lockedAfter.sha).toBe(item.sha);
 
-    const status = run(["status", "skills/hello", "--json"]);
+    const status = await run(["status", "skills/hello", "--json"]);
     expect(status.exitCode).toBe(0);
     expect(JSON.parse(status.stdout.toString()).items[0].state).toBe("ok");
   });
@@ -65,7 +65,7 @@ describe("cli integration", () => {
   test("update overwrites unpinned local edits with the new upstream content", async () => {
     const project = await tempRepo("capshelf-update-drift-project-");
     const dataRepo = await tempRepo("capshelf-update-drift-data-");
-    const run = runIn(project);
+    const run = runInProcess(project);
     await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
     await writeFile(
       join(dataRepo, "skills", "hello", "SKILL.md"),
@@ -73,8 +73,8 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "hello v1");
 
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
-    expect(run(["add", "skills/hello"]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/hello"])).exitCode).toBe(0);
 
     const installed = join(project, ".agents", "skills", "hello", "SKILL.md");
     await writeFile(installed, "local edit\n");
@@ -87,7 +87,7 @@ describe("cli integration", () => {
     // Contract: update reconciles drifted installs to the new upstream
     // content — local edits are overwritten unless the user has explicitly
     // pinned them with `capshelf keep-local` (covered separately).
-    const update = run(["update", "skills/hello", "--json"]);
+    const update = await run(["update", "skills/hello", "--json"]);
     expect(update.exitCode).toBe(0);
     const item = JSON.parse(update.stdout.toString()).items.find(
       (i: { key: string }) => i.key === "data/skills/hello",
@@ -95,7 +95,7 @@ describe("cli integration", () => {
     expect(item.action).toBe("updated");
     expect(await file(installed).text()).toBe("hello v2\n");
 
-    const status = run(["status", "skills/hello", "--json"]);
+    const status = await run(["status", "skills/hello", "--json"]);
     expect(status.exitCode).toBe(0);
     expect(JSON.parse(status.stdout.toString()).items[0].state).toBe("ok");
   });
@@ -104,14 +104,14 @@ describe("cli integration", () => {
     const original = await tempRepo("capshelf-apply-clone-original-");
     const clone = await tempRepo("capshelf-apply-clone-clone-");
     const dataRepo = await tempRepo("capshelf-apply-clone-data-");
-    const runOriginal = runIn(original);
-    const runClone = runIn(clone);
+    const runOriginal = runInProcess(original);
+    const runClone = runInProcess(clone);
     await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
     await writeFile(join(dataRepo, "skills", "hello", "SKILL.md"), "hello\n");
     await commitAll(dataRepo, "hello");
 
-    expect(runOriginal(["init", "--data", dataRepo]).exitCode).toBe(0);
-    expect(runOriginal(["add", "skills/hello"]).exitCode).toBe(0);
+    expect((await runOriginal(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await runOriginal(["add", "skills/hello"])).exitCode).toBe(0);
 
     // Simulate a fresh clone of the original project: the committed manifest
     // and lock are present, but installed outputs and the gitignored
@@ -124,9 +124,9 @@ describe("cli integration", () => {
       );
     }
 
-    expect(runClone(["set-data", dataRepo]).exitCode).toBe(0);
+    expect((await runClone(["set-data", dataRepo])).exitCode).toBe(0);
 
-    const apply = runClone(["apply", "--json"]);
+    const apply = await runClone(["apply", "--json"]);
     expect(apply.exitCode).toBe(0);
     const applyJson = JSON.parse(apply.stdout.toString());
     expect(applyJson.project).toBe(clone);
@@ -148,7 +148,7 @@ describe("cli integration", () => {
       await file(join(clone, ".claude", "skills", "hello", "SKILL.md")).text(),
     ).toBe("hello\n");
 
-    const status = runClone(["status", "skills/hello", "--json"]);
+    const status = await runClone(["status", "skills/hello", "--json"]);
     expect(status.exitCode).toBe(0);
     expect(JSON.parse(status.stdout.toString()).items[0].state).toBe("ok");
   });
@@ -156,7 +156,7 @@ describe("cli integration", () => {
   test("revert restores a locally edited skill to the locked content", async () => {
     const project = await tempRepo("capshelf-revert-project-");
     const dataRepo = await tempRepo("capshelf-revert-data-");
-    const run = runIn(project);
+    const run = runInProcess(project);
     await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
     await writeFile(
       join(dataRepo, "skills", "hello", "SKILL.md"),
@@ -164,25 +164,25 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "hello v1");
 
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
-    expect(run(["add", "skills/hello"]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/hello"])).exitCode).toBe(0);
 
     const installed = join(project, ".agents", "skills", "hello", "SKILL.md");
     await writeFile(installed, "local edit\n");
-    const drifted = run(["status", "skills/hello", "--json"]);
+    const drifted = await run(["status", "skills/hello", "--json"]);
     expect(drifted.exitCode).toBe(0);
     expect(JSON.parse(drifted.stdout.toString()).items[0].state).toBe(
       "drifted_local",
     );
 
-    const revert = run(["revert", "skills/hello", "--json"]);
+    const revert = await run(["revert", "skills/hello", "--json"]);
     expect(revert.exitCode).toBe(0);
     const result = JSON.parse(revert.stdout.toString());
     expect(result.action).toBe("reconciled");
     expect(result.key).toBe("data/skills/hello");
     expect(await file(installed).text()).toBe("hello v1\n");
 
-    const status = run(["status", "skills/hello", "--json"]);
+    const status = await run(["status", "skills/hello", "--json"]);
     expect(status.exitCode).toBe(0);
     expect(JSON.parse(status.stdout.toString()).items[0].state).toBe("ok");
   });
@@ -190,7 +190,7 @@ describe("cli integration", () => {
   test("keep-local pins drifted edits so update and apply leave them alone", async () => {
     const project = await tempRepo("capshelf-keep-local-project-");
     const dataRepo = await tempRepo("capshelf-keep-local-data-");
-    const run = runIn(project);
+    const run = runInProcess(project);
     await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
     await writeFile(
       join(dataRepo, "skills", "hello", "SKILL.md"),
@@ -198,13 +198,13 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "hello v1");
 
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
-    expect(run(["add", "skills/hello"]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/hello"])).exitCode).toBe(0);
 
     const installed = join(project, ".agents", "skills", "hello", "SKILL.md");
     await writeFile(installed, "local override\n");
 
-    const keep = run([
+    const keep = await run([
       "keep-local",
       "skills/hello",
       "--reason",
@@ -225,7 +225,7 @@ describe("cli integration", () => {
     expect(entry.local).toBe(true);
     expect(entry.localReason).toBe("team override");
 
-    const pinned = run(["status", "skills/hello", "--json"]);
+    const pinned = await run(["status", "skills/hello", "--json"]);
     expect(pinned.exitCode).toBe(0);
     expect(JSON.parse(pinned.stdout.toString()).items[0].state).toBe(
       "kept-local",
@@ -237,7 +237,7 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "hello v2");
 
-    const update = run(["update", "--json"]);
+    const update = await run(["update", "--json"]);
     expect(update.exitCode).toBe(0);
     const updated = JSON.parse(update.stdout.toString()).items.find(
       (i: { key: string }) => i.key === "data/skills/hello",
@@ -250,7 +250,7 @@ describe("cli integration", () => {
     expect(afterUpdate.sha).toBe(entry.sha);
     expect(afterUpdate.sourceCommit).toBe(entry.sourceCommit);
 
-    const apply = run(["apply", "skills/hello", "--json"]);
+    const apply = await run(["apply", "skills/hello", "--json"]);
     expect(apply.exitCode).toBe(0);
     const applied = JSON.parse(apply.stdout.toString()).items.find(
       (i: { key: string }) => i.key === "data/skills/hello",
@@ -258,12 +258,12 @@ describe("cli integration", () => {
     expect(applied.action).toBe("kept-local");
     expect(await file(installed).text()).toBe("local override\n");
 
-    const unset = run(["keep-local", "skills/hello", "--unset"]);
+    const unset = await run(["keep-local", "skills/hello", "--unset"]);
     expect(unset.exitCode).toBe(0);
     const afterUnset = (await file(lockPath).json()).items["data/skills/hello"];
     expect(afterUnset.local).toBeUndefined();
     expect(afterUnset.localReason).toBeUndefined();
-    const unpinned = run(["status", "skills/hello", "--json"]);
+    const unpinned = await run(["status", "skills/hello", "--json"]);
     expect(unpinned.exitCode).toBe(0);
     expect(JSON.parse(unpinned.stdout.toString()).items[0].state).toBe(
       "drifted_and_update",
@@ -273,7 +273,7 @@ describe("cli integration", () => {
   test("rm at project scope deletes skill installs and un-merges settings fragments", async () => {
     const project = await tempRepo("capshelf-rm-project-project-");
     const dataRepo = await tempRepo("capshelf-rm-project-data-");
-    const run = runIn(project);
+    const run = runInProcess(project);
     await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
     await writeFile(join(dataRepo, "skills", "hello", "SKILL.md"), "hello\n");
     await mkdir(join(dataRepo, "settings", "security"), { recursive: true });
@@ -283,9 +283,9 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "skill and settings fragment");
 
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
-    expect(run(["add", "skills/hello"]).exitCode).toBe(0);
-    expect(run(["add", "settings/security"]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/hello"])).exitCode).toBe(0);
+    expect((await run(["add", "settings/security"])).exitCode).toBe(0);
 
     // An unmanaged user key in the merged output must survive rm.
     const settingsPath = join(project, ".claude", "settings.json");
@@ -294,7 +294,7 @@ describe("cli integration", () => {
     settings.model = "opus";
     await writeFile(settingsPath, `${JSON.stringify(settings)}\n`);
 
-    const rmSkill = run(["rm", "skills/hello", "--json"]);
+    const rmSkill = await run(["rm", "skills/hello", "--json"]);
     expect(rmSkill.exitCode).toBe(0);
     const rmSkillJson = JSON.parse(rmSkill.stdout.toString());
     expect(rmSkillJson.kind).toBe("skills");
@@ -307,7 +307,7 @@ describe("cli integration", () => {
       await file(join(project, ".claude", "skills", "hello")).exists(),
     ).toBe(false);
 
-    const rmSettings = run(["rm", "settings/security", "--json"]);
+    const rmSettings = await run(["rm", "settings/security", "--json"]);
     expect(rmSettings.exitCode).toBe(0);
     const rmSettingsJson = JSON.parse(rmSettings.stdout.toString());
     expect(rmSettingsJson.kind).toBe("settings");
@@ -331,13 +331,13 @@ describe("cli integration", () => {
   test("status reports missing_source_commit when the locked commit is unreachable", async () => {
     const project = await tempRepo("capshelf-missing-commit-project-");
     const dataRepo = await tempRepo("capshelf-missing-commit-data-");
-    const run = runIn(project);
+    const run = runInProcess(project);
     await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
     await writeFile(join(dataRepo, "skills", "hello", "SKILL.md"), "hello\n");
     await commitAll(dataRepo, "hello");
 
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
-    expect(run(["add", "skills/hello"]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/hello"])).exitCode).toBe(0);
 
     const lockPath = join(project, ".capshelf", "capshelf.lock.json");
     const lock = await file(lockPath).json();
@@ -345,12 +345,14 @@ describe("cli integration", () => {
     lock.items["data/skills/hello"].sourceCommit = bogus;
     await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
 
-    const status = run(["status", "skills/hello", "--json"]);
+    const status = await run(["status", "skills/hello", "--json"]);
     expect(status.exitCode).toBe(0);
     const row = JSON.parse(status.stdout.toString()).items[0];
     expect(row.state).toBe("missing_source_commit");
     expect(row.sourceCommit).toBe(bogus);
 
-    expect(run(["status", "skills/hello", "--strict"]).exitCode).toBe(4);
+    expect((await run(["status", "skills/hello", "--strict"])).exitCode).toBe(
+      4,
+    );
   });
 });

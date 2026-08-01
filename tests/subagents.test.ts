@@ -12,7 +12,7 @@ import {
 } from "../src/subagents";
 import { createDataLockEntry, loadLock } from "../src/lock";
 import { emptyNeeds } from "../src/metadata";
-import { commitAll, runIn, tempRepo } from "./cli-fixtures";
+import { commitAll, runInProcess, tempRepo } from "./cli-fixtures";
 
 const CLAUDE = `---
 name: reviewer
@@ -276,12 +276,12 @@ describe("subagent CLI lifecycle", () => {
   test("adds, reports drift, reverts, updates target removal, and removes all outputs", async () => {
     const project = await tempRepo("capshelf-subagent-project-");
     const dataRepo = await tempRepo("capshelf-subagent-data-");
-    const run = runIn(project);
+    const run = runInProcess(project);
     await writeSubagent(dataRepo);
     await commitAll(dataRepo, "add reviewer");
 
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
-    expect(run(["add", "subagents/reviewer"]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "subagents/reviewer"])).exitCode).toBe(0);
     const claudeOutput = join(project, ".claude", "agents", "reviewer.md");
     const codexOutput = join(project, ".codex", "agents", "reviewer.toml");
     expect(await file(claudeOutput).text()).toBe(CLAUDE);
@@ -296,10 +296,10 @@ describe("subagent CLI lifecycle", () => {
     ).json();
     expect(manifest.subagents).toEqual(["reviewer"]);
 
-    const humanStatus = run(["status", "subagents/reviewer"]);
+    const humanStatus = await run(["status", "subagents/reviewer"]);
     expect(humanStatus.exitCode).toBe(0);
     expect(humanStatus.stdout.toString()).toContain("subagents/reviewer");
-    const jsonStatus = run(["status", "subagents/reviewer", "--json"]);
+    const jsonStatus = await run(["status", "subagents/reviewer", "--json"]);
     expect(jsonStatus.exitCode).toBe(0);
     expect(JSON.parse(jsonStatus.stdout.toString()).items[0].targets).toEqual([
       {
@@ -317,18 +317,18 @@ describe("subagent CLI lifecycle", () => {
     ]);
 
     await rm(claudeOutput);
-    expect(run(["apply", "subagents/reviewer"]).exitCode).toBe(0);
+    expect((await run(["apply", "subagents/reviewer"])).exitCode).toBe(0);
     expect(await file(claudeOutput).text()).toBe(CLAUDE);
 
     await writeFile(claudeOutput, CLAUDE.replace("carefully", "strictly"));
-    const drifted = run(["status", "subagents/reviewer", "--json"]);
+    const drifted = await run(["status", "subagents/reviewer", "--json"]);
     expect(drifted.exitCode).toBe(0);
     expect(JSON.parse(drifted.stdout.toString()).items[0].state).toBe(
       "drifted_local",
     );
-    expect(run(["revert", "subagents/reviewer"]).exitCode).toBe(0);
+    expect((await run(["revert", "subagents/reviewer"])).exitCode).toBe(0);
     expect(await file(claudeOutput).text()).toBe(CLAUDE);
-    expect(run(["keep-local", "subagents/reviewer"]).exitCode).toBe(3);
+    expect((await run(["keep-local", "subagents/reviewer"])).exitCode).toBe(3);
 
     const canonicalCodex = join(
       dataRepo,
@@ -337,12 +337,12 @@ describe("subagent CLI lifecycle", () => {
       "codex.toml",
     );
     await rm(canonicalCodex);
-    const dirtyDeletion = run(["status", "subagents/reviewer", "--json"]);
+    const dirtyDeletion = await run(["status", "subagents/reviewer", "--json"]);
     expect(dirtyDeletion.exitCode).toBe(0);
     expect(JSON.parse(dirtyDeletion.stdout.toString()).items[0].state).toBe(
       "upstream_dirty",
     );
-    expect(run(["update", "subagents/reviewer"]).exitCode).toBe(3);
+    expect((await run(["update", "subagents/reviewer"])).exitCode).toBe(3);
     await writeFile(canonicalCodex, CODEX);
 
     await rm(join(dataRepo, "subagents", "reviewer", "codex.toml"));
@@ -351,16 +351,16 @@ describe("subagent CLI lifecycle", () => {
       CLAUDE.replace("carefully", "thoroughly"),
     );
     await commitAll(dataRepo, "make reviewer Claude only");
-    expect(run(["update", "subagents/reviewer"]).exitCode).toBe(0);
+    expect((await run(["update", "subagents/reviewer"])).exitCode).toBe(0);
     expect(await file(claudeOutput).text()).toContain("thoroughly");
     expect(existsSync(codexOutput)).toBe(false);
-    const singlePath = run(["get-path", "subagents/reviewer"]);
+    const singlePath = await run(["get-path", "subagents/reviewer"]);
     expect(singlePath.exitCode).toBe(0);
     expect(singlePath.stdout.toString().trim()).toBe(
       join(dataRepo, "subagents", "reviewer", "claude.md"),
     );
 
-    expect(run(["rm", "subagents/reviewer"]).exitCode).toBe(0);
+    expect((await run(["rm", "subagents/reviewer"])).exitCode).toBe(0);
     expect(existsSync(claudeOutput)).toBe(false);
   });
 
@@ -381,8 +381,8 @@ describe("subagent CLI lifecycle", () => {
       },
     ]) {
       const project = await tempRepo("capshelf-subagent-refuse-project-");
-      const run = runIn(project);
-      expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+      const run = runInProcess(project);
+      expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
       const manifestBefore = await file(
         join(project, ".capshelf", "capshelf.json"),
       ).text();
@@ -392,7 +392,7 @@ describe("subagent CLI lifecycle", () => {
       const directory = join(project, ...target.directory);
       await mkdir(directory, { recursive: true });
       await writeFile(join(directory, target.filename), target.content);
-      expect(run(["add", "subagents/reviewer"]).exitCode).toBe(3);
+      expect((await run(["add", "subagents/reviewer"])).exitCode).toBe(3);
       expect(
         await file(join(project, ".capshelf", "capshelf.json")).text(),
       ).toBe(manifestBefore);
@@ -405,10 +405,10 @@ describe("subagent CLI lifecycle", () => {
   test("rejects partial and local lifecycles before writing", async () => {
     const project = await tempRepo("capshelf-subagent-options-project-");
     const dataRepo = await tempRepo("capshelf-subagent-options-data-");
-    const run = runIn(project);
+    const run = runInProcess(project);
     await writeSubagent(dataRepo);
     await commitAll(dataRepo, "add reviewer");
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
     const manifestBefore = await file(
       join(project, ".capshelf", "capshelf.json"),
     ).text();
@@ -417,9 +417,11 @@ describe("subagent CLI lifecycle", () => {
     ).text();
 
     expect(
-      run(["add", "subagents/reviewer", "--target", "codex"]).exitCode,
+      (await run(["add", "subagents/reviewer", "--target", "codex"])).exitCode,
     ).toBe(3);
-    expect(run(["add", "subagents/reviewer", "--local"]).exitCode).toBe(3);
+    expect((await run(["add", "subagents/reviewer", "--local"])).exitCode).toBe(
+      3,
+    );
     expect(await file(join(project, ".capshelf", "capshelf.json")).text()).toBe(
       manifestBefore,
     );
@@ -437,19 +439,19 @@ describe("subagent CLI lifecycle", () => {
   test("rejects malformed sources without changing project state", async () => {
     const project = await tempRepo("capshelf-subagent-invalid-project-");
     const dataRepo = await tempRepo("capshelf-subagent-invalid-data-");
-    const run = runIn(project);
+    const run = runInProcess(project);
     await writeSubagent(dataRepo, {
       claude: "---\nname: reviewer\n---\n\nPrompt\n",
     });
     await commitAll(dataRepo, "add malformed reviewer");
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
     const manifestBefore = await file(
       join(project, ".capshelf", "capshelf.json"),
     ).text();
     const lockBefore = await file(
       join(project, ".capshelf", "capshelf.lock.json"),
     ).text();
-    expect(run(["add", "subagents/reviewer"]).exitCode).toBe(3);
+    expect((await run(["add", "subagents/reviewer"])).exitCode).toBe(3);
     expect(await file(join(project, ".capshelf", "capshelf.json")).text()).toBe(
       manifestBefore,
     );
@@ -464,10 +466,10 @@ describe("subagent CLI lifecycle", () => {
   test("shares both runtime outputs and promotes only the edited sibling", async () => {
     const project = await tempRepo("capshelf-subagent-share-project-");
     const dataRepo = await tempRepo("capshelf-subagent-share-data-");
-    const run = runIn(project);
+    const run = runInProcess(project);
     await writeFile(join(dataRepo, ".gitkeep"), "");
     await commitAll(dataRepo, "baseline");
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
 
     const claudeOutput = join(project, ".claude", "agents", "reviewer.md");
     const codexOutput = join(project, ".codex", "agents", "reviewer.toml");
@@ -477,41 +479,47 @@ describe("subagent CLI lifecycle", () => {
     await writeFile(codexOutput, CODEX);
 
     expect(
-      run([
-        "share",
-        "subagents/reviewer",
-        "--from",
-        claudeOutput,
-        "--to",
-        "project",
-      ]).exitCode,
+      (
+        await run([
+          "share",
+          "subagents/reviewer",
+          "--from",
+          claudeOutput,
+          "--to",
+          "project",
+        ])
+      ).exitCode,
     ).toBe(3);
     expect(
       existsSync(join(dataRepo, "subagents", "reviewer", "claude.md")),
     ).toBe(false);
     await writeFile(codexOutput, 'name = "reviewer"\n');
     expect(
-      run([
-        "share",
-        "subagents/reviewer",
-        "--to",
-        "project",
-        "-m",
-        "invalid reviewer",
-      ]).exitCode,
+      (
+        await run([
+          "share",
+          "subagents/reviewer",
+          "--to",
+          "project",
+          "-m",
+          "invalid reviewer",
+        ])
+      ).exitCode,
     ).toBe(3);
     expect(existsSync(join(dataRepo, "subagents", "reviewer"))).toBe(false);
     await writeFile(codexOutput, CODEX);
 
     expect(
-      run([
-        "share",
-        "subagents/reviewer",
-        "--to",
-        "project",
-        "-m",
-        "share reviewer",
-      ]).exitCode,
+      (
+        await run([
+          "share",
+          "subagents/reviewer",
+          "--to",
+          "project",
+          "-m",
+          "share reviewer",
+        ])
+      ).exitCode,
     ).toBe(0);
     const canonicalClaude = join(
       dataRepo,
@@ -538,7 +546,8 @@ describe("subagent CLI lifecycle", () => {
       await $`git -C ${dataRepo} rev-parse HEAD`.text()
     ).trim();
     expect(
-      run(["promote", "subagents/reviewer", "--merge", "-m", "no"]).exitCode,
+      (await run(["promote", "subagents/reviewer", "--merge", "-m", "no"]))
+        .exitCode,
     ).toBe(3);
     expect(await file(canonicalClaude).text()).toBe(claudeBefore);
     expect((await $`git -C ${dataRepo} rev-parse HEAD`.text()).trim()).toBe(
@@ -546,7 +555,8 @@ describe("subagent CLI lifecycle", () => {
     );
 
     expect(
-      run(["promote", "subagents/reviewer", "-m", "tighten reviewer"]).exitCode,
+      (await run(["promote", "subagents/reviewer", "-m", "tighten reviewer"]))
+        .exitCode,
     ).toBe(0);
     expect(await file(canonicalClaude).text()).toContain("security focus");
     expect(await file(canonicalCodex).text()).toBe(codexBefore);
@@ -554,7 +564,8 @@ describe("subagent CLI lifecycle", () => {
     const validPromotedClaude = await file(canonicalClaude).text();
     await writeFile(claudeOutput, "---\nname: reviewer\n---\n\nPrompt\n");
     expect(
-      run(["promote", "subagents/reviewer", "-m", "invalid reviewer"]).exitCode,
+      (await run(["promote", "subagents/reviewer", "-m", "invalid reviewer"]))
+        .exitCode,
     ).toBe(3);
     expect(await file(canonicalClaude).text()).toBe(validPromotedClaude);
 
@@ -568,17 +579,20 @@ describe("subagent CLI lifecycle", () => {
       CLAUDE.replace("carefully", "with local policy"),
     );
     expect(
-      run(["promote", "subagents/reviewer", "-m", "stale reviewer"]).exitCode,
+      (await run(["promote", "subagents/reviewer", "-m", "stale reviewer"]))
+        .exitCode,
     ).toBe(3);
     expect(await file(canonicalClaude).text()).toContain("upstream policy");
     expect(
-      run([
-        "promote",
-        "subagents/reviewer",
-        "--stale-ok",
-        "-m",
-        "override stale reviewer",
-      ]).exitCode,
+      (
+        await run([
+          "promote",
+          "subagents/reviewer",
+          "--stale-ok",
+          "-m",
+          "override stale reviewer",
+        ])
+      ).exitCode,
     ).toBe(0);
     expect(await file(canonicalClaude).text()).toContain("local policy");
     expect(await file(canonicalCodex).text()).toBe(codexBefore);
@@ -587,11 +601,11 @@ describe("subagent CLI lifecycle", () => {
   test("refuses a missing managed output instead of reporting promote current", async () => {
     const project = await tempRepo("capshelf-subagent-missing-project-");
     const dataRepo = await tempRepo("capshelf-subagent-missing-data-");
-    const run = runIn(project);
+    const run = runInProcess(project);
     await writeSubagent(dataRepo);
     await commitAll(dataRepo, "add reviewer");
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
-    expect(run(["add", "subagents/reviewer"]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "subagents/reviewer"])).exitCode).toBe(0);
 
     const canonicalClaude = join(
       dataRepo,
@@ -614,7 +628,7 @@ describe("subagent CLI lifecycle", () => {
     ).trim();
     await rm(join(project, ".codex", "agents", "reviewer.toml"));
 
-    const result = run(["promote", "subagents/reviewer"]);
+    const result = await run(["promote", "subagents/reviewer"]);
     expect(result.exitCode).toBe(3);
     expect(result.stderr.toString()).toContain(
       "capshelf revert subagents/reviewer",
@@ -633,11 +647,11 @@ describe("subagent CLI lifecycle", () => {
   test("validates the projected canonical sibling set before promote writes", async () => {
     const project = await tempRepo("capshelf-subagent-projection-project-");
     const dataRepo = await tempRepo("capshelf-subagent-projection-data-");
-    const run = runIn(project);
+    const run = runInProcess(project);
     await writeSubagent(dataRepo);
     await commitAll(dataRepo, "add reviewer");
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
-    expect(run(["add", "subagents/reviewer"]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "subagents/reviewer"])).exitCode).toBe(0);
 
     const claudeOutput = join(project, ".claude", "agents", "reviewer.md");
     const canonicalClaude = join(
@@ -693,10 +707,10 @@ describe("subagent CLI lifecycle", () => {
   test("refuses a symlink during default share scanning without writes", async () => {
     const project = await tempRepo("capshelf-subagent-share-link-project-");
     const dataRepo = await tempRepo("capshelf-subagent-share-link-data-");
-    const run = runIn(project);
+    const run = runInProcess(project);
     await writeFile(join(dataRepo, ".gitkeep"), "");
     await commitAll(dataRepo, "baseline");
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
 
     const source = join(project, "reviewer-source.md");
     const output = join(project, ".claude", "agents", "reviewer.md");
@@ -711,7 +725,12 @@ describe("subagent CLI lifecycle", () => {
       await $`git -C ${dataRepo} rev-parse HEAD`.text()
     ).trim();
 
-    const result = run(["share", "subagents/reviewer", "--to", "project"]);
+    const result = await run([
+      "share",
+      "subagents/reviewer",
+      "--to",
+      "project",
+    ]);
     expect(result.exitCode).toBe(3);
     expect(result.stderr.toString()).toContain(
       "runtime target is not a regular file",
@@ -729,7 +748,7 @@ describe("subagent CLI lifecycle", () => {
   test("supports discovery, target-aware paths, and bundle expansion", async () => {
     const project = await tempRepo("capshelf-subagent-bundle-project-");
     const dataRepo = await tempRepo("capshelf-subagent-bundle-data-");
-    const run = runIn(project);
+    const run = runInProcess(project);
     await writeSubagent(dataRepo);
     await mkdir(join(dataRepo, "subagents", "claude-only"), {
       recursive: true,
@@ -756,26 +775,28 @@ describe("subagent CLI lifecycle", () => {
       "includes:\n  subagents: [reviewer]\n",
     );
     await commitAll(dataRepo, "add reviewer bundle");
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
 
-    expect(run(["ls", "--kind", "subagents"]).stdout.toString()).toContain(
-      "subagents/reviewer",
-    );
-    const listing = run(["ls", "--kind", "subagents"]).stdout.toString();
+    expect(
+      (await run(["ls", "--kind", "subagents"])).stdout.toString(),
+    ).toContain("subagents/reviewer");
+    const listing = (
+      await run(["ls", "--kind", "subagents"])
+    ).stdout.toString();
     expect(listing).toContain("subagents/claude-only");
     expect(listing).toContain("subagents/codex-only");
     expect(listing).not.toContain("subagents/empty");
-    expect(run(["search", "carefully"]).stdout.toString()).toContain(
+    expect((await run(["search", "carefully"])).stdout.toString()).toContain(
       "subagents/reviewer",
     );
-    expect(run(["add", "bundles/review", "--local"]).exitCode).toBe(3);
+    expect((await run(["add", "bundles/review", "--local"])).exitCode).toBe(3);
     expect(existsSync(join(project, ".claude", "agents", "reviewer.md"))).toBe(
       false,
     );
-    expect(run(["add", "bundles/review"]).exitCode).toBe(0);
+    expect((await run(["add", "bundles/review"])).exitCode).toBe(0);
 
-    expect(run(["get-path", "subagents/reviewer"]).exitCode).toBe(3);
-    const getPath = run([
+    expect((await run(["get-path", "subagents/reviewer"])).exitCode).toBe(3);
+    const getPath = await run([
       "get-path",
       "subagents/reviewer",
       "--target",
@@ -786,11 +807,16 @@ describe("subagent CLI lifecycle", () => {
     expect(getPath.stdout.toString().trim()).toBe(
       join(project, ".codex", "agents", "reviewer.toml"),
     );
-    const show = run(["show", "subagents/reviewer", "--target", "claude"]);
+    const show = await run([
+      "show",
+      "subagents/reviewer",
+      "--target",
+      "claude",
+    ]);
     expect(show.exitCode).toBe(0);
     expect(show.stdout.toString()).toContain("claude.md");
     expect(show.stdout.toString()).not.toContain("codex.toml");
-    const showJson = run(["show", "subagents/reviewer", "--json"]);
+    const showJson = await run(["show", "subagents/reviewer", "--json"]);
     expect(showJson.exitCode).toBe(0);
     expect(
       JSON.parse(showJson.stdout.toString()).sources.map(

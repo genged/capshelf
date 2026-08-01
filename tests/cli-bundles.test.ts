@@ -2,7 +2,7 @@ import { file } from "bun";
 import { describe, expect, test } from "bun:test";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { commitAll, runIn, tempRepo } from "./cli-fixtures";
+import { commitAll, runInProcess, tempRepo } from "./cli-fixtures";
 
 describe("cli integration", () => {
   /**
@@ -92,10 +92,10 @@ describe("cli integration", () => {
   test("add bundles/<x> expands members traceless and converges on re-run", async () => {
     const project = await tempRepo("capshelf-bundle-add-project-");
     const dataRepo = await bundleDataRepo();
-    const run = runIn(project);
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
 
-    const add = run(["add", "bundles/go-backend"]);
+    const add = await run(["add", "bundles/go-backend"]);
     expect(add.exitCode).toBe(0);
     const out = add.stdout.toString();
     expect(out).toContain("✓ bundle go-backend → 5 added, 0 already installed");
@@ -134,7 +134,7 @@ describe("cli integration", () => {
       join(project, ".claude", "settings.json"),
     ).json();
     expect(settings.env).toEqual({ BASE: "1", GO: "1" });
-    expect(run(["status", "--strict"]).exitCode).toBe(0);
+    expect((await run(["status", "--strict"])).exitCode).toBe(0);
 
     // Re-run: all already-installed, exit 0, lock byte-identical (no pin
     // bump, no appliedAt rewrite) — the skip lives in the bundle executor.
@@ -142,7 +142,7 @@ describe("cli integration", () => {
       join(project, ".capshelf", "capshelf.lock.json"),
       "utf-8",
     );
-    const rerun = run(["add", "bundles/go-backend"]);
+    const rerun = await run(["add", "bundles/go-backend"]);
     expect(rerun.exitCode).toBe(0);
     expect(rerun.stdout.toString()).toContain(
       "✓ bundle go-backend → 0 added, 5 already installed",
@@ -157,7 +157,7 @@ describe("cli integration", () => {
     // …while standalone add of the same installed item still re-applies
     // (fresh appliedAt) — the pair pins the skip gate to the executor.
     await new Promise((resolve) => setTimeout(resolve, 5));
-    const single = run(["add", "skills/security-review"]);
+    const single = await run(["add", "skills/security-review"]);
     expect(single.exitCode).toBe(0);
     expect(single.stdout.toString()).toContain("re-applied");
     expect(
@@ -179,7 +179,7 @@ describe("cli integration", () => {
       ].join("\n"),
     );
     // The bundle file itself may stay uncommitted: nothing pins it.
-    const grown = run(["add", "bundles/go-backend", "--json"]);
+    const grown = await run(["add", "bundles/go-backend", "--json"]);
     expect(grown.exitCode).toBe(0);
     const report = JSON.parse(grown.stdout.toString());
     expect(report.bundle).toBe("go-backend");
@@ -205,9 +205,9 @@ describe("cli integration", () => {
   test("bundle preflight refusals are all-or-nothing with exit 3", async () => {
     const project = await tempRepo("capshelf-bundle-refuse-project-");
     const dataRepo = await bundleDataRepo();
-    const run = runIn(project);
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
-    expect(run(["add", "skills/security-review"]).exitCode).toBe(0);
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/security-review"])).exitCode).toBe(0);
 
     // A second bundle with a conflicting member and a missing member.
     await writeFile(
@@ -221,7 +221,7 @@ describe("cli integration", () => {
     );
 
     const before = await capshelfState(project);
-    const refused = run(["add", "bundles/broken-set"]);
+    const refused = await run(["add", "bundles/broken-set"]);
     expect(refused.exitCode).toBe(3);
     const out = refused.stdout.toString();
     expect(out).toContain(
@@ -239,7 +239,7 @@ describe("cli integration", () => {
     expect(await capshelfState(project)).toBe(before);
 
     // Same refusal as JSON: one envelope for both outcomes.
-    const json = run(["add", "bundles/broken-set", "--json"]);
+    const json = await run(["add", "bundles/broken-set", "--json"]);
     expect(json.exitCode).toBe(3);
     const report = JSON.parse(json.stdout.toString());
     expect(report.applied).toBe(false);
@@ -266,8 +266,8 @@ describe("cli integration", () => {
   test("bundle preflight catches unmanaged fragment collisions without writes", async () => {
     const project = await tempRepo("capshelf-bundle-collision-project-");
     const dataRepo = await bundleDataRepo();
-    const run = runIn(project);
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
 
     // A local scalar in .claude/settings.json colliding with a bundle
     // settings member (env.GO is contributed by settings/permissions-go).
@@ -278,7 +278,7 @@ describe("cli integration", () => {
     );
 
     const before = await capshelfState(project);
-    const refused = run(["add", "bundles/go-backend"]);
+    const refused = await run(["add", "bundles/go-backend"]);
     expect(refused.exitCode).toBe(3);
     const out = refused.stdout.toString();
     expect(out).toMatch(/✗ settings\/permissions-go\s+cannot reconcile/);
@@ -289,10 +289,10 @@ describe("cli integration", () => {
   test("add bundles --local accepts copy items and aggregates fragments", async () => {
     const project = await tempRepo("capshelf-bundle-local-project-");
     const dataRepo = await bundleDataRepo();
-    const run = runIn(project);
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
 
-    const refused = run(["add", "bundles/go-backend", "--local"]);
+    const refused = await run(["add", "bundles/go-backend", "--local"]);
     expect(refused.exitCode).toBe(3);
     const out = refused.stdout.toString();
     expect(out).toContain(
@@ -316,7 +316,7 @@ describe("cli integration", () => {
         "",
       ].join("\n"),
     );
-    const local = run(["add", "bundles/copy-items", "--local"]);
+    const local = await run(["add", "bundles/copy-items", "--local"]);
     expect(local.exitCode).toBe(0);
     const localLock = await file(
       join(project, ".capshelf", "local.lock.json"),
@@ -339,8 +339,8 @@ describe("cli integration", () => {
   test("mixed --local refusal prints one headline counting every failure", async () => {
     const project = await tempRepo("capshelf-bundle-mixed-local-project-");
     const dataRepo = await bundleDataRepo();
-    const run = runIn(project);
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
 
     // One fragment member (local-scope violation) plus one missing member.
     await writeFile(
@@ -353,7 +353,7 @@ describe("cli integration", () => {
       ].join("\n"),
     );
 
-    const refused = run(["add", "bundles/mixed-local", "--local"]);
+    const refused = await run(["add", "bundles/mixed-local", "--local"]);
     expect(refused.exitCode).toBe(3);
     const out = refused.stdout.toString();
     // A single headline whose count covers the fragment member AND the
@@ -370,22 +370,22 @@ describe("cli integration", () => {
   test("missing, empty, and malformed bundles on the install path", async () => {
     const project = await tempRepo("capshelf-bundle-errors-project-");
     const dataRepo = await bundleDataRepo();
-    const run = runIn(project);
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
 
-    const missing = run(["add", "bundles/nope"]);
+    const missing = await run(["add", "bundles/nope"]);
     expect(missing.exitCode).toBe(2);
     expect(missing.stderr.toString()).toContain("bundle not found");
 
     await writeFile(join(dataRepo, "bundles", "empty.yml"), "includes:\n");
-    const empty = run(["add", "bundles/empty"]);
+    const empty = await run(["add", "bundles/empty"]);
     expect(empty.exitCode).toBe(0);
     expect(empty.stdout.toString()).toContain(
       "✓ bundle empty → nothing to install (bundle has no members)",
     );
 
     await writeFile(join(dataRepo, "bundles", "bad.yml"), "[broken\n");
-    const malformed = run(["add", "bundles/bad"]);
+    const malformed = await run(["add", "bundles/bad"]);
     expect(malformed.exitCode).toBe(3);
     expect(malformed.stderr.toString()).toContain("invalid YAML");
 
@@ -393,7 +393,7 @@ describe("cli integration", () => {
       join(dataRepo, "bundles", "newer.yml"),
       "includes:\n  skills: [security-review]\n  agents: [b]\n",
     );
-    const unknownKind = run(["add", "bundles/newer"]);
+    const unknownKind = await run(["add", "bundles/newer"]);
     expect(unknownKind.exitCode).toBe(3);
     expect(unknownKind.stderr.toString()).toContain(
       "upgrade capshelf or edit the bundle",
@@ -403,9 +403,9 @@ describe("cli integration", () => {
   test("show bundles/<x> previews membership and install state", async () => {
     const project = await tempRepo("capshelf-bundle-show-project-");
     const dataRepo = await bundleDataRepo();
-    const run = runIn(project);
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
-    expect(run(["add", "settings/permissions-base"]).exitCode).toBe(0);
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "settings/permissions-base"])).exitCode).toBe(0);
     // A member missing from the data repo is previewed, not fatal.
     await writeFile(
       join(dataRepo, "bundles", "go-backend.yml"),
@@ -420,7 +420,7 @@ describe("cli integration", () => {
       ].join("\n"),
     );
 
-    const human = run(["show", "bundles/go-backend"]);
+    const human = await run(["show", "bundles/go-backend"]);
     expect(human.exitCode).toBe(0);
     const out = human.stdout.toString();
     expect(out).toContain("bundles/go-backend");
@@ -435,7 +435,7 @@ describe("cli integration", () => {
     expect(out).toMatch(/mcp\/postgres-local\s+MISSING from data repo/);
     expect(out).toContain("install:     capshelf add bundles/go-backend");
 
-    const json = run(["show", "bundles/go-backend", "--json"]);
+    const json = await run(["show", "bundles/go-backend", "--json"]);
     expect(json.exitCode).toBe(0);
     const parsed = JSON.parse(json.stdout.toString());
     expect(parsed.bundle).toBe("go-backend");
@@ -453,10 +453,15 @@ describe("cli integration", () => {
       { ref: "mcp/postgres-local", available: false, installed: false },
     ]);
 
-    expect(run(["show", "bundles/nope"]).exitCode).toBe(2);
-    const target = run(["show", "bundles/go-backend", "--target", "claude"]);
+    expect((await run(["show", "bundles/nope"])).exitCode).toBe(2);
+    const target = await run([
+      "show",
+      "bundles/go-backend",
+      "--target",
+      "claude",
+    ]);
     expect(target.exitCode).toBe(3);
-    const noContent = run(["show", "bundles/go-backend", "--no-content"]);
+    const noContent = await run(["show", "bundles/go-backend", "--no-content"]);
     expect(noContent.exitCode).toBe(3);
   });
 
@@ -471,11 +476,11 @@ describe("cli integration", () => {
       "audit\n",
     );
     await commitAll(dataRepo, "baseline");
-    const run = runIn(project);
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
 
     // Snapshot before any bundles/ dir exists.
-    const before = JSON.parse(run(["ls", "--json"]).stdout.toString());
+    const before = JSON.parse((await run(["ls", "--json"])).stdout.toString());
     expect(before.bundles).toBeUndefined();
 
     await mkdir(join(dataRepo, "bundles"), { recursive: true });
@@ -499,7 +504,7 @@ describe("cli integration", () => {
       "includes:\n  skills: [security-review]\n",
     );
 
-    const ls = run(["ls"]);
+    const ls = await run(["ls"]);
     expect(ls.exitCode).toBe(0);
     const out = ls.stdout.toString();
     expect(out).toContain("bundles/  (from");
@@ -515,7 +520,7 @@ describe("cli integration", () => {
     );
 
     // Append-only: the system/data arrays are deep-equal pre/post.
-    const after = JSON.parse(run(["ls", "--json"]).stdout.toString());
+    const after = JSON.parse((await run(["ls", "--json"])).stdout.toString());
     expect(after.system).toEqual(before.system);
     expect(after.data).toEqual(before.data);
     expect(after.bundles.map((b: { name: string }) => b.name)).toEqual([
@@ -535,23 +540,24 @@ describe("cli integration", () => {
     });
 
     // Suppressed under --kind (bundles are not a kind) and filtered by --tag.
-    const kinded = run(["ls", "--kind", "skills"]);
+    const kinded = await run(["ls", "--kind", "skills"]);
     expect(kinded.stdout.toString()).not.toContain("bundles/");
     expect(
-      JSON.parse(run(["ls", "--kind", "skills", "--json"]).stdout.toString())
-        .bundles,
+      JSON.parse(
+        (await run(["ls", "--kind", "skills", "--json"])).stdout.toString(),
+      ).bundles,
     ).toBeUndefined();
-    const tagged = run(["ls", "--tag", "go"]);
+    const tagged = await run(["ls", "--tag", "go"]);
     expect(tagged.stdout.toString()).toContain("go-backend");
     expect(tagged.stdout.toString()).not.toContain("frontend");
 
     // ls --here is lock-derived and bundles are traceless.
-    expect(run(["add", "bundles/go-backend"]).exitCode).toBe(0);
-    const here = run(["ls", "--here"]);
+    expect((await run(["add", "bundles/go-backend"])).exitCode).toBe(0);
+    const here = await run(["ls", "--here"]);
     expect(here.stdout.toString()).not.toContain("go-backend");
     expect(
       JSON.stringify(
-        JSON.parse(run(["ls", "--here", "--json"]).stdout.toString()),
+        JSON.parse((await run(["ls", "--here", "--json"])).stdout.toString()),
       ),
     ).not.toContain("go-backend");
   });
@@ -559,12 +565,12 @@ describe("cli integration", () => {
   test("search ranks bundles alongside items with an appended JSON key", async () => {
     const project = await tempRepo("capshelf-bundle-search-project-");
     const dataRepo = await bundleDataRepo();
-    const run = runIn(project);
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
 
     // Name hits rank the bundle; the detail line carries description and
     // member counts.
-    const search = run(["search", "go", "backend"]);
+    const search = await run(["search", "go", "backend"]);
     expect(search.exitCode).toBe(0);
     const out = search.stdout.toString();
     expect(out).toMatch(/bundles\/go-backend\s+bundle\s+matched: name/);
@@ -572,7 +578,7 @@ describe("cli integration", () => {
     expect(out).toContain("2 skills · 2 settings · 1 mcp");
 
     // Tag-only hits match through the tags field.
-    const tagHit = run(["search", "needs", "backend", "--json"]);
+    const tagHit = await run(["search", "needs", "backend", "--json"]);
     expect(tagHit.exitCode).toBe(0);
     expect(JSON.parse(tagHit.stdout.toString()).bundles[0].matches).toEqual([
       { term: "needs", field: "description" },
@@ -580,7 +586,7 @@ describe("cli integration", () => {
     ]);
 
     // Member refs score through the content field at weight 1.
-    const member = run(["search", "permissions-go", "--json"]);
+    const member = await run(["search", "permissions-go", "--json"]);
     expect(member.exitCode).toBe(0);
     const parsed = JSON.parse(member.stdout.toString());
     expect(parsed.bundles).toHaveLength(1);
@@ -598,11 +604,11 @@ describe("cli integration", () => {
     ).toBe(true);
 
     // --kind narrows to items only.
-    const kinded = run(["search", "go", "--kind", "skills", "--json"]);
+    const kinded = await run(["search", "go", "--kind", "skills", "--json"]);
     expect(JSON.parse(kinded.stdout.toString()).bundles).toBeUndefined();
 
     // A bundle-only hit still counts as a match.
-    const only = run(["search", "backend"]);
+    const only = await run(["search", "backend"]);
     expect(only.exitCode).toBe(0);
     expect(only.stdout.toString()).toContain("1 match in");
   });
@@ -610,8 +616,8 @@ describe("cli integration", () => {
   test("bundle refs stay rejected by every other item command", async () => {
     const project = await tempRepo("capshelf-bundle-reject-project-");
     const dataRepo = await bundleDataRepo();
-    const run = runIn(project);
-    expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
 
     for (const args of [
       ["rm", "bundles/go-backend"],
@@ -620,7 +626,7 @@ describe("cli integration", () => {
       ["update", "bundles/go-backend"],
       ["promote", "bundles/go-backend"],
     ]) {
-      const result = run(args);
+      const result = await run(args);
       expect(result.exitCode).toBe(1);
       const stderr = result.stderr.toString();
       expect(stderr).toContain('invalid item kind "bundles"');

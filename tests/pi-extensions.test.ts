@@ -20,6 +20,7 @@ import {
 } from "../src/runtime-warnings";
 import { listMasterItems, shaOfGitVisibleItem } from "../src/master";
 import { lastTouchingContentCommit, lastTouchingCommit } from "../src/git";
+import { runInProcess } from "./cli-fixtures";
 
 async function tempDir(prefix: string): Promise<string> {
   // macOS exposes tmpdir() through /var, which resolves to /private/var. The
@@ -46,21 +47,13 @@ interface CliResult {
   stderr: string;
 }
 
-const cli = join(import.meta.dir, "..", "src", "cli.ts");
-
-function runCli(
+async function runCli(
   project: string,
   home: string,
   args: string[],
   env: Record<string, string | undefined> = {},
-): CliResult {
-  const result = Bun.spawnSync({
-    cmd: [process.execPath, cli, ...args],
-    cwd: project,
-    env: { ...process.env, HOME: home, ...env },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+): Promise<CliResult> {
+  const result = await runInProcess(project)(args, { HOME: home, ...env });
   return {
     exitCode: result.exitCode,
     stdout: result.stdout.toString(),
@@ -233,11 +226,17 @@ describe("pi extension CLI lifecycle", () => {
     await commitAll(dataRepo, "path guard v1");
 
     expect(
-      runCli(project, home, ["init", "--data", dataRepo, "--no-upstream"])
-        .exitCode,
+      (
+        await runCli(project, home, [
+          "init",
+          "--data",
+          dataRepo,
+          "--no-upstream",
+        ])
+      ).exitCode,
     ).toBe(0);
 
-    const listed = runCli(project, home, ["ls", "--json"]);
+    const listed = await runCli(project, home, ["ls", "--json"]);
     expect(listed.exitCode).toBe(0);
     expect(
       JSON.parse(listed.stdout).data.some(
@@ -245,12 +244,12 @@ describe("pi extension CLI lifecycle", () => {
           item.kind === "pi-extensions" && item.name === "path-guard",
       ),
     ).toBe(true);
-    const listedHuman = runCli(project, home, ["ls"]);
+    const listedHuman = await runCli(project, home, ["ls"]);
     expect(listedHuman.exitCode).toBe(0);
     expect(listedHuman.stdout).not.toContain(
       "Pi extensions execute arbitrary code",
     );
-    const searched = runCli(project, home, ["search", "rules", "--json"]);
+    const searched = await runCli(project, home, ["search", "rules", "--json"]);
     expect(searched.exitCode).toBe(0);
     expect(
       JSON.parse(searched.stdout).results.some(
@@ -259,7 +258,10 @@ describe("pi extension CLI lifecycle", () => {
       ),
     ).toBe(true);
 
-    const shown = runCli(project, home, ["show", "pi-extensions/path-guard"]);
+    const shown = await runCli(project, home, [
+      "show",
+      "pi-extensions/path-guard",
+    ]);
     expect(shown.exitCode).toBe(0);
     expect(shown.stdout).toContain(
       "warning: Pi extensions execute arbitrary code",
@@ -273,7 +275,7 @@ describe("pi extension CLI lifecycle", () => {
     expect(shown.stdout).toContain("─── src/rules.ts");
     expect(shown.stdout).not.toContain("─── .capshelf.yml");
 
-    const shownJson = runCli(project, home, [
+    const shownJson = await runCli(project, home, [
       "show",
       "pi-extensions/path-guard",
       "--json",
@@ -287,14 +289,17 @@ describe("pi extension CLI lifecycle", () => {
     const installed = join(project, ".pi", "extensions", "path-guard");
     await mkdir(installed, { recursive: true });
     await writeFile(join(installed, "index.ts"), "unmanaged\n");
-    const conflict = runCli(project, home, ["add", "pi-extensions/path-guard"]);
+    const conflict = await runCli(project, home, [
+      "add",
+      "pi-extensions/path-guard",
+    ]);
     expect(conflict.exitCode).toBe(3);
     expect(conflict.stderr).toContain(
       "target already exists but is not managed by capshelf",
     );
     await rm(installed, { recursive: true, force: true });
 
-    const added = runCli(project, home, [
+    const added = await runCli(project, home, [
       "add",
       "pi-extensions/path-guard",
       "--json",
@@ -318,7 +323,7 @@ describe("pi extension CLI lifecycle", () => {
     ).json();
     expect(lock.items["data/pi-extensions/path-guard"].source).toBe("data");
 
-    const addedHuman = runCli(project, home, [
+    const addedHuman = await runCli(project, home, [
       "add",
       "pi-extensions/path-guard",
     ]);
@@ -330,7 +335,7 @@ describe("pi extension CLI lifecycle", () => {
       "warning: pi extension declares package dependencies",
     );
 
-    const status = runCli(project, home, [
+    const status = await runCli(project, home, [
       "status",
       "pi-extensions/path-guard",
       "--strict",
@@ -343,7 +348,7 @@ describe("pi extension CLI lifecycle", () => {
       "pi_extension_executes_code",
       "pi_extension_dependencies_not_installed",
     ]);
-    const statusHuman = runCli(project, home, [
+    const statusHuman = await runCli(project, home, [
       "status",
       "pi-extensions/path-guard",
     ]);
@@ -352,7 +357,7 @@ describe("pi extension CLI lifecycle", () => {
       "warning: Pi extensions execute arbitrary code",
     );
 
-    const path = runCli(project, home, [
+    const path = await runCli(project, home, [
       "get-path",
       "pi-extensions/path-guard",
     ]);
@@ -360,7 +365,7 @@ describe("pi extension CLI lifecycle", () => {
     expect(path.stdout.trim()).toBe(installed);
 
     await writeFile(join(installed, "stale.ts"), "stale\n");
-    const applied = runCli(project, home, [
+    const applied = await runCli(project, home, [
       "apply",
       "pi-extensions/path-guard",
       "--json",
@@ -372,14 +377,14 @@ describe("pi extension CLI lifecycle", () => {
       join(installed, "src", "rules.ts"),
       "export const rules = ['local'];\n",
     );
-    const drift = runCli(project, home, [
+    const drift = await runCli(project, home, [
       "status",
       "pi-extensions/path-guard",
       "--json",
     ]);
     expect(JSON.parse(drift.stdout).items[0].state).toBe("drifted_local");
 
-    const keepLocal = runCli(project, home, [
+    const keepLocal = await runCli(project, home, [
       "keep-local",
       "pi-extensions/path-guard",
       "--reason",
@@ -393,7 +398,7 @@ describe("pi extension CLI lifecycle", () => {
       local: true,
       localReason: "project-specific guard",
     });
-    const keptStatus = runCli(project, home, [
+    const keptStatus = await runCli(project, home, [
       "status",
       "pi-extensions/path-guard",
       "--strict",
@@ -402,14 +407,16 @@ describe("pi extension CLI lifecycle", () => {
     expect(keptStatus.exitCode).toBe(0);
     expect(JSON.parse(keptStatus.stdout).items[0].state).toBe("kept-local");
     expect(
-      runCli(project, home, [
-        "keep-local",
-        "pi-extensions/path-guard",
-        "--unset",
-      ]).exitCode,
+      (
+        await runCli(project, home, [
+          "keep-local",
+          "pi-extensions/path-guard",
+          "--unset",
+        ])
+      ).exitCode,
     ).toBe(0);
 
-    const promoted = runCli(project, home, [
+    const promoted = await runCli(project, home, [
       "promote",
       "pi-extensions/path-guard",
       "-m",
@@ -427,7 +434,7 @@ describe("pi extension CLI lifecycle", () => {
     expect(await file(join(extension, ".capshelf.yml")).text()).toContain(
       "safety",
     );
-    const promotedHuman = runCli(project, home, [
+    const promotedHuman = await runCli(project, home, [
       "promote",
       "pi-extensions/path-guard",
     ]);
@@ -441,7 +448,7 @@ describe("pi extension CLI lifecycle", () => {
       "export const rules = ['upstream'];\n",
     );
     await commitAll(dataRepo, "path guard upstream");
-    const updateAvailable = runCli(project, home, [
+    const updateAvailable = await runCli(project, home, [
       "status",
       "pi-extensions/path-guard",
       "--json",
@@ -449,7 +456,7 @@ describe("pi extension CLI lifecycle", () => {
     expect(JSON.parse(updateAvailable.stdout).items[0].state).toBe(
       "update_available",
     );
-    const updated = runCli(project, home, [
+    const updated = await runCli(project, home, [
       "update",
       "pi-extensions/path-guard",
       "--json",
@@ -460,7 +467,7 @@ describe("pi extension CLI lifecycle", () => {
     );
 
     await writeFile(join(installed, "src", "rules.ts"), "drift again\n");
-    const reverted = runCli(project, home, [
+    const reverted = await runCli(project, home, [
       "revert",
       "pi-extensions/path-guard",
       "--json",
@@ -470,7 +477,7 @@ describe("pi extension CLI lifecycle", () => {
       "upstream",
     );
 
-    const removed = runCli(project, home, [
+    const removed = await runCli(project, home, [
       "rm",
       "pi-extensions/path-guard",
       "--json",
@@ -484,14 +491,20 @@ describe("pi extension CLI lifecycle", () => {
     const dataRepo = await tempRepo("capshelf-pi-share-data-");
     const project = await tempRepo("capshelf-pi-share-project-");
     expect(
-      runCli(project, home, ["init", "--data", dataRepo, "--no-upstream"])
-        .exitCode,
+      (
+        await runCli(project, home, [
+          "init",
+          "--data",
+          dataRepo,
+          "--no-upstream",
+        ])
+      ).exitCode,
     ).toBe(0);
 
     const extension = join(project, ".pi", "extensions", "review-tools");
     await mkdir(extension, { recursive: true });
     await writeFile(join(extension, "readme.md"), "draft\n");
-    const missingEntry = runCli(project, home, [
+    const missingEntry = await runCli(project, home, [
       "share",
       "pi-extensions/review-tools",
     ]);
@@ -511,7 +524,7 @@ describe("pi extension CLI lifecycle", () => {
     );
     const excludePath = join(project, ".git", "info", "exclude");
     const excludeBefore = await readFile(excludePath, "utf-8");
-    const shared = runCli(project, home, [
+    const shared = await runCli(project, home, [
       "share",
       "pi-extensions/review-tools",
       "--json",
@@ -535,7 +548,7 @@ describe("pi extension CLI lifecycle", () => {
       join(humanExtension, "index.ts"),
       "export default function review() {}\n",
     );
-    const sharedHuman = runCli(project, home, [
+    const sharedHuman = await runCli(project, home, [
       "share",
       "pi-extensions/human-review",
     ]);
@@ -551,7 +564,7 @@ describe("pi extension CLI lifecycle", () => {
       join(localExtension, "index.ts"),
       "export default function localReview() {}\n",
     );
-    const sharedLocal = runCli(project, home, [
+    const sharedLocal = await runCli(project, home, [
       "share",
       "pi-extensions/local-review",
       "--to",
@@ -589,10 +602,16 @@ describe("pi extension CLI lifecycle", () => {
     await commitAll(dataRepo, "add guard");
 
     expect(
-      runCli(project, home, ["init", "--data", dataRepo, "--no-upstream"])
-        .exitCode,
+      (
+        await runCli(project, home, [
+          "init",
+          "--data",
+          dataRepo,
+          "--no-upstream",
+        ])
+      ).exitCode,
     ).toBe(0);
-    const added = runCli(project, home, [
+    const added = await runCli(project, home, [
       "add",
       "pi-extensions/guard",
       "--local",
@@ -628,7 +647,7 @@ describe("pi extension CLI lifecycle", () => {
       await readFile(join(project, ".git", "info", "exclude"), "utf-8"),
     ).toContain(".pi/extensions/guard/");
 
-    const status = runCli(project, home, [
+    const status = await runCli(project, home, [
       "status",
       "pi-extensions/guard",
       "--local",
@@ -639,17 +658,19 @@ describe("pi extension CLI lifecycle", () => {
     expect(JSON.parse(status.stdout).items[0].state).toBe("ok");
     expect(
       JSON.parse(
-        runCli(project, home, [
-          "apply",
-          "pi-extensions/guard",
-          "--local",
-          "--json",
-        ]).stdout,
+        (
+          await runCli(project, home, [
+            "apply",
+            "pi-extensions/guard",
+            "--local",
+            "--json",
+          ])
+        ).stdout,
       ).items[0].action,
     ).toBe("already-current");
 
     await writeFile(join(installed, "index.ts"), "export default 'local';\n");
-    const kept = runCli(project, home, [
+    const kept = await runCli(project, home, [
       "keep-local",
       "pi-extensions/guard",
       "--local",
@@ -665,25 +686,29 @@ describe("pi extension CLI lifecycle", () => {
     });
     expect(
       JSON.parse(
-        runCli(project, home, [
-          "status",
-          "pi-extensions/guard",
-          "--local",
-          "--strict",
-          "--json",
-        ]).stdout,
+        (
+          await runCli(project, home, [
+            "status",
+            "pi-extensions/guard",
+            "--local",
+            "--strict",
+            "--json",
+          ])
+        ).stdout,
       ).items[0].state,
     ).toBe("kept-local");
     expect(
-      runCli(project, home, [
-        "keep-local",
-        "pi-extensions/guard",
-        "--local",
-        "--unset",
-      ]).exitCode,
+      (
+        await runCli(project, home, [
+          "keep-local",
+          "pi-extensions/guard",
+          "--local",
+          "--unset",
+        ])
+      ).exitCode,
     ).toBe(0);
 
-    const promoted = runCli(project, home, [
+    const promoted = await runCli(project, home, [
       "promote",
       "pi-extensions/guard",
       "--local",
@@ -697,21 +722,37 @@ describe("pi extension CLI lifecycle", () => {
     await writeFile(join(extension, "index.ts"), "export default 'v2';\n");
     await commitAll(dataRepo, "guard v2");
     expect(
-      runCli(project, home, ["update", "pi-extensions/guard", "--local"])
-        .exitCode,
+      (
+        await runCli(project, home, [
+          "update",
+          "pi-extensions/guard",
+          "--local",
+        ])
+      ).exitCode,
     ).toBe(0);
     expect(await file(join(installed, "index.ts")).text()).toContain("v2");
 
     await writeFile(join(installed, "index.ts"), "drift\n");
     expect(
-      runCli(project, home, ["revert", "pi-extensions/guard", "--local"])
-        .exitCode,
+      (
+        await runCli(project, home, [
+          "revert",
+          "pi-extensions/guard",
+          "--local",
+        ])
+      ).exitCode,
     ).toBe(0);
     expect(await file(join(installed, "index.ts")).text()).toContain("v2");
 
     expect(
-      runCli(project, home, ["move", "pi-extensions/guard", "--to", "project"])
-        .exitCode,
+      (
+        await runCli(project, home, [
+          "move",
+          "pi-extensions/guard",
+          "--to",
+          "project",
+        ])
+      ).exitCode,
     ).toBe(0);
     expect(
       (await file(join(project, ".capshelf", "capshelf.json")).json())
@@ -723,7 +764,7 @@ describe("pi extension CLI lifecycle", () => {
 
     await $`git -C ${project} add .pi/extensions/guard`.quiet();
     await $`git -C ${project} commit -qm ${"track project extension"}`.quiet();
-    const trackedMove = runCli(project, home, [
+    const trackedMove = await runCli(project, home, [
       "move",
       "pi-extensions/guard",
       "--to",
@@ -737,15 +778,22 @@ describe("pi extension CLI lifecycle", () => {
     await $`git -C ${project} commit -qm ${"untrack project extension"}`.quiet();
 
     expect(
-      runCli(project, home, ["move", "pi-extensions/guard", "--to", "local"])
-        .exitCode,
+      (
+        await runCli(project, home, [
+          "move",
+          "pi-extensions/guard",
+          "--to",
+          "local",
+        ])
+      ).exitCode,
     ).toBe(0);
     expect(
       await readFile(join(project, ".git", "info", "exclude"), "utf-8"),
     ).toContain(".pi/extensions/guard/");
 
     expect(
-      runCli(project, home, ["rm", "pi-extensions/guard", "--local"]).exitCode,
+      (await runCli(project, home, ["rm", "pi-extensions/guard", "--local"]))
+        .exitCode,
     ).toBe(0);
     expect(await file(installed).exists()).toBe(false);
     expect(
@@ -763,19 +811,28 @@ describe("pi extension CLI lifecycle", () => {
     await writeFile(join(extension, "index.ts"), "export default 'v1';\n");
     await commitAll(dataRepo, "guard v1");
     expect(
-      runCli(project, home, ["init", "--data", dataRepo, "--no-upstream"])
-        .exitCode,
+      (
+        await runCli(project, home, [
+          "init",
+          "--data",
+          dataRepo,
+          "--no-upstream",
+        ])
+      ).exitCode,
     ).toBe(0);
 
     await writeFile(join(extension, "index.ts"), "export default 'dirty';\n");
-    const dirtyAdd = runCli(project, home, ["add", "pi-extensions/guard"]);
+    const dirtyAdd = await runCli(project, home, [
+      "add",
+      "pi-extensions/guard",
+    ]);
     expect(dirtyAdd.exitCode).toBe(3);
     expect(dirtyAdd.stderr).toContain("uncommitted changes");
     await $`git -C ${dataRepo} checkout -- pi/extensions/guard/index.ts`.quiet();
 
-    expect(runCli(project, home, ["add", "pi-extensions/guard"]).exitCode).toBe(
-      0,
-    );
+    expect(
+      (await runCli(project, home, ["add", "pi-extensions/guard"])).exitCode,
+    ).toBe(0);
     const installed = join(project, ".pi", "extensions", "guard", "index.ts");
     await writeFile(installed, "export default 'local';\n");
     await writeFile(
@@ -784,7 +841,10 @@ describe("pi extension CLI lifecycle", () => {
     );
     await commitAll(dataRepo, "guard upstream");
 
-    const stale = runCli(project, home, ["promote", "pi-extensions/guard"]);
+    const stale = await runCli(project, home, [
+      "promote",
+      "pi-extensions/guard",
+    ]);
     expect(stale.exitCode).toBe(3);
     expect(stale.stderr).toContain(
       "changed in the data repo since this project last updated",
@@ -793,7 +853,7 @@ describe("pi extension CLI lifecycle", () => {
       "upstream",
     );
 
-    const overwritten = runCli(project, home, [
+    const overwritten = await runCli(project, home, [
       "promote",
       "pi-extensions/guard",
       "--stale-ok",
@@ -819,8 +879,14 @@ describe("pi extension CLI lifecycle", () => {
     );
     await commitAll(dataRepo, "guard v1");
     expect(
-      runCli(project, home, ["init", "--data", dataRepo, "--no-upstream"])
-        .exitCode,
+      (
+        await runCli(project, home, [
+          "init",
+          "--data",
+          dataRepo,
+          "--no-upstream",
+        ])
+      ).exitCode,
     ).toBe(0);
 
     const settingsPath = join(project, ".pi", "settings.json");
@@ -842,14 +908,14 @@ describe("pi extension CLI lifecycle", () => {
       CAPSHELF_TEST_TOOL_SENTINEL: sentinel,
     };
 
-    const added = runCli(
+    const added = await runCli(
       project,
       home,
       ["add", "pi-extensions/guard"],
       isolatedEnv,
     );
     expect(added.exitCode).toBe(0);
-    const applied = runCli(
+    const applied = await runCli(
       project,
       home,
       ["apply", "pi-extensions/guard"],
@@ -859,7 +925,7 @@ describe("pi extension CLI lifecycle", () => {
 
     await writeFile(join(extension, "index.ts"), "export default 'v2';\n");
     await commitAll(dataRepo, "guard v2");
-    const updated = runCli(
+    const updated = await runCli(
       project,
       home,
       ["update", "pi-extensions/guard"],
