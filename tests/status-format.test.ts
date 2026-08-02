@@ -176,6 +176,28 @@ describe("formatStatusHuman", () => {
     );
   });
 
+  test("renders remediation for every non-current needs state", () => {
+    const lines = formatStatusHuman({
+      project: "/p",
+      dataRepo: "/data",
+      rows: [
+        row({ name: "stale", needsState: "update_available" }),
+        row({ name: "legacy", needsState: "unknown" }),
+        row({ name: "offline", needsState: "unavailable" }),
+        row({ name: "current", needsState: "current" }),
+      ],
+      external: [],
+      externalClaudePlugins: [],
+      personalClaudeExternal: [],
+    });
+
+    expect(lines.filter((line) => line.includes("requirements"))).toEqual([
+      "      requirements update available — run: capshelf update skills/stale",
+      "      requirements snapshot unknown — run: capshelf update skills/legacy",
+      "      requirements freshness unavailable",
+    ]);
+  });
+
   test("renders external skills.sh and Claude plugin sections", () => {
     const lines = formatStatusHuman({
       project: "/p",

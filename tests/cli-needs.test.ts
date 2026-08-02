@@ -198,6 +198,117 @@ describe("declared needs CLI lifecycle", () => {
     ]);
   });
 
+  test("preserves clone-local needs through reconciliation and scope moves", async () => {
+    const project = await tempRepo("capshelf-needs-local-project-");
+    const dataRepo = await tempRepo("capshelf-needs-local-data-");
+    const extension = join(dataRepo, "pi", "extensions", "local-needs");
+    await mkdir(extension, { recursive: true });
+    await writeFile(join(extension, "index.ts"), "export default 1;\n");
+    await writeFile(
+      join(extension, ".capshelf.yml"),
+      [
+        "needs:",
+        "  network: [api.example.com]",
+        "  env: [LOCAL_TOKEN]",
+        "  bin: [local-tool]",
+        "",
+      ].join("\n"),
+    );
+    await commitAll(dataRepo, "add local extension");
+
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    const add = await run([
+      "add",
+      "pi-extensions/local-needs",
+      "--local",
+      "--json",
+    ]);
+    expect(add.exitCode).toBe(0);
+    expect(JSON.parse(add.stdout.toString())).toMatchObject({
+      kind: "pi-extensions",
+      name: "local-needs",
+      scope: "local",
+      needs: {
+        network: ["api.example.com"],
+        env: ["LOCAL_TOKEN"],
+        bin: ["local-tool"],
+      },
+    });
+
+    const key = "data/pi-extensions/local-needs";
+    const projectLockPath = join(project, ".capshelf", "capshelf.lock.json");
+    const localLockPath = join(project, ".capshelf", "local.lock.json");
+    const readSnapshot = async (path: string) => {
+      const entry = (await file(path).json()).items[key];
+      return {
+        needs: entry.needs,
+        needsSourceCommit: entry.needsSourceCommit,
+      };
+    };
+    const pinnedSnapshot = await readSnapshot(localLockPath);
+
+    const installed = join(
+      project,
+      ".pi",
+      "extensions",
+      "local-needs",
+      "index.ts",
+    );
+    await writeFile(installed, "export default 2;\n");
+    expect(
+      (
+        await run([
+          "keep-local",
+          "pi-extensions/local-needs",
+          "--local",
+          "--reason",
+          "test divergence",
+        ])
+      ).exitCode,
+    ).toBe(0);
+    expect(await readSnapshot(localLockPath)).toEqual(pinnedSnapshot);
+
+    expect((await run(["apply", "--local"])).exitCode).toBe(0);
+    expect(await readSnapshot(localLockPath)).toEqual(pinnedSnapshot);
+    expect(await file(installed).text()).toBe("export default 2;\n");
+
+    expect(
+      (await run(["revert", "pi-extensions/local-needs", "--local"])).exitCode,
+    ).toBe(0);
+    expect(await readSnapshot(localLockPath)).toEqual(pinnedSnapshot);
+    expect(await file(installed).text()).toBe("export default 1;\n");
+
+    await writeFile(installed, "export default 3;\n");
+    expect((await run(["apply", "--local"])).exitCode).toBe(0);
+    expect(await readSnapshot(localLockPath)).toEqual(pinnedSnapshot);
+    expect(await file(installed).text()).toBe("export default 1;\n");
+
+    expect(
+      (await run(["move", "pi-extensions/local-needs", "--to", "project"]))
+        .exitCode,
+    ).toBe(0);
+    expect(await readSnapshot(projectLockPath)).toEqual(pinnedSnapshot);
+
+    expect(
+      (await run(["move", "pi-extensions/local-needs", "--to", "local"]))
+        .exitCode,
+    ).toBe(0);
+    expect(await readSnapshot(localLockPath)).toEqual(pinnedSnapshot);
+
+    const status = JSON.parse(
+      (
+        await run(["status", "pi-extensions/local-needs", "--local", "--json"])
+      ).stdout.toString(),
+    );
+    expect(status.items).toHaveLength(1);
+    expect(status.items[0]).toMatchObject({
+      scope: "local",
+      needsState: "current",
+      lockedNeeds: pinnedSnapshot.needs,
+    });
+  });
+
   test("share and promote capture committed needs in the selected lock", async () => {
     const project = await tempRepo("capshelf-needs-share-project-");
     const dataRepo = await tempRepo("capshelf-needs-share-data-");
@@ -213,10 +324,21 @@ describe("declared needs CLI lifecycle", () => {
       join(installed, ".capshelf.yml"),
       "needs:\n  network: [one.example.com]\n",
     );
-    expect(
-      (await run(["share", "pi-extensions/shared", "-m", "share extension"]))
-        .exitCode,
-    ).toBe(0);
+    const share = await run([
+      "share",
+      "pi-extensions/shared",
+      "-m",
+      "share extension",
+      "--json",
+    ]);
+    expect(share.exitCode).toBe(0);
+    expect(JSON.parse(share.stdout.toString())).toMatchObject({
+      verb: "share",
+      kind: "pi-extensions",
+      name: "shared",
+      scope: "project",
+      needs: { network: ["one.example.com"], env: [], bin: [] },
+    });
 
     const lockPath = join(project, ".capshelf", "capshelf.lock.json");
     let entry = (await file(lockPath).json()).items[
@@ -230,16 +352,21 @@ describe("declared needs CLI lifecycle", () => {
       join(installed, ".capshelf.yml"),
       "needs:\n  network: [two.example.com]\n",
     );
-    expect(
-      (
-        await run([
-          "promote",
-          "pi-extensions/shared",
-          "-m",
-          "promote extension",
-        ])
-      ).exitCode,
-    ).toBe(0);
+    const promote = await run([
+      "promote",
+      "pi-extensions/shared",
+      "-m",
+      "promote extension",
+      "--json",
+    ]);
+    expect(promote.exitCode).toBe(0);
+    expect(JSON.parse(promote.stdout.toString())).toMatchObject({
+      source: "data",
+      kind: "pi-extensions",
+      name: "shared",
+      action: "promoted",
+      committed: true,
+    });
 
     entry = (await file(lockPath).json()).items["data/pi-extensions/shared"];
     expect(entry.needs.network).toEqual(["two.example.com"]);
