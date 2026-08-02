@@ -750,6 +750,14 @@ to share upstream:
 Capshelf never pushes implicitly. `promote --json` includes the resolved
 `dataRepo` path and a `dataRepoHasOrigin` boolean.
 
+Copy-item promotion fails before changing the data repo when the installed
+snapshot omits its required regular entrypoint (`SKILL.md` for a skill or
+`index.ts` for a Pi extension). Project-scope snapshots contain only
+Git-visible files, so an ignore rule covering the item must be removed or the
+item must use local scope before it can be promoted. Capshelf also rechecks the
+installed snapshot and copied content before committing; a concurrent edit
+aborts and restores the canonical data-repo path and Git index.
+
 ### Stale-promote protection
 
 `promote` refuses to overwrite data-repo content that is newer than this

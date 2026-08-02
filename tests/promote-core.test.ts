@@ -1,7 +1,14 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { $, file } from "bun";
 import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  mkdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -117,6 +124,74 @@ async function commitAll(repo: string, message: string): Promise<void> {
 
 function lockWith(entry: DataLockEntry): Lock {
   return { version: 3, items: { [dataKey("skills", "hello")]: entry } };
+}
+
+async function promotionSafetyFixture(prefix: string): Promise<{
+  dataRepo: string;
+  project: string;
+  dataItem: string;
+  installed: string;
+  lock: Lock;
+  headBefore: string;
+  indexBefore: Buffer;
+  lockBefore: Lock;
+}> {
+  const dataRepo = await tempRepo(`${prefix}-data-`);
+  const project = await tempRepo(`${prefix}-project-`);
+  const dataItem = join(dataRepo, "skills", "hello");
+  await mkdir(dataItem, { recursive: true });
+  await writeFile(join(dataItem, "SKILL.md"), "canonical\n");
+  await writeFile(join(dataItem, "guide.md"), "keep me\n");
+  await writeFile(join(dataItem, ".capshelf.yml"), "tags: [safe]\n");
+  await commitAll(dataRepo, "canonical skill");
+
+  const installed = join(project, ".agents", "skills", "hello");
+  await mkdir(installed, { recursive: true });
+  await writeFile(join(installed, "SKILL.md"), "local edit\n");
+  await writeFile(join(installed, "guide.md"), "local guide\n");
+
+  const lock = lockWith({
+    source: "data",
+    sha: await shaOfGitVisibleItem(dataRepo, "skills/hello"),
+    sourceCommit: await lastTouchingContentCommit(dataRepo, "skills/hello"),
+    appliedAt: "2026-08-01T00:00:00.000Z",
+  });
+  return {
+    dataRepo,
+    project,
+    dataItem,
+    installed,
+    lock,
+    headBefore: await headSha(dataRepo),
+    indexBefore: await readFile(join(dataRepo, ".git", "index")),
+    lockBefore: structuredClone(lock),
+  };
+}
+
+async function expectCanonicalPromotionStateUnchanged(
+  fixture: Awaited<ReturnType<typeof promotionSafetyFixture>>,
+): Promise<void> {
+  expect(await headSha(fixture.dataRepo)).toBe(fixture.headBefore);
+  expect(
+    (await readFile(join(fixture.dataRepo, ".git", "index"))).equals(
+      fixture.indexBefore,
+    ),
+  ).toBe(true);
+  expect(
+    (
+      await $`git -C ${fixture.dataRepo} status --porcelain`.quiet().text()
+    ).trim(),
+  ).toBe("");
+  expect(await file(join(fixture.dataItem, "SKILL.md")).text()).toBe(
+    "canonical\n",
+  );
+  expect(await file(join(fixture.dataItem, "guide.md")).text()).toBe(
+    "keep me\n",
+  );
+  expect(await file(join(fixture.dataItem, ".capshelf.yml")).text()).toBe(
+    "tags: [safe]\n",
+  );
+  expect(fixture.lock).toEqual(fixture.lockBefore);
 }
 
 describe("syncTrackedIntoDataRepo sidecar preservation", () => {
@@ -317,6 +392,167 @@ describe("syncTrackedIntoDataRepo sidecar preservation", () => {
       {},
     );
     expect(again.action).toBe("already-current");
+  });
+});
+
+describe("syncTrackedIntoDataRepo promotion safety", () => {
+  test("rejects a non-regular required entrypoint without changing canonical state", async () => {
+    const fixture = await promotionSafetyFixture("capshelf-promote-entrypoint");
+    await rm(join(fixture.installed, "SKILL.md"));
+    await mkdir(join(fixture.installed, "SKILL.md"));
+    await writeFile(
+      join(fixture.installed, "SKILL.md", "nested.md"),
+      "not an entrypoint\n",
+    );
+
+    await expect(
+      syncTrackedIntoDataRepo(
+        fixture.project,
+        fixture.dataRepo,
+        "skills",
+        "hello",
+        fixture.lock,
+        {},
+      ),
+    ).rejects.toThrow(/required SKILL\.md is missing or not a regular file/);
+
+    await expectCanonicalPromotionStateUnchanged(fixture);
+  });
+
+  test("rejects snapshot races and rolls back canonical state", async () => {
+    const scenarios = [
+      {
+        name: "after snapshot capture",
+        hook: "afterSnapshotCaptured",
+        error: /installed snapshot changed while it was being read/,
+      },
+      {
+        name: "before canonical copy",
+        hook: "beforeCanonicalCopy",
+        error: /copied content does not match the installed snapshot/,
+      },
+      {
+        name: "after canonical copy",
+        hook: "afterCanonicalCopy",
+        error: /installed snapshot changed during promotion/,
+      },
+    ] as const;
+
+    for (const scenario of scenarios) {
+      const fixture = await promotionSafetyFixture(
+        `capshelf-promote-race-${scenario.hook}`,
+      );
+      const changedContent = `changed ${scenario.name}\n`;
+      const mutateInstalled = async () => {
+        await writeFile(join(fixture.installed, "SKILL.md"), changedContent);
+      };
+      const snapshotHooks =
+        scenario.hook === "afterSnapshotCaptured"
+          ? { afterSnapshotCaptured: mutateInstalled }
+          : scenario.hook === "beforeCanonicalCopy"
+            ? { beforeCanonicalCopy: mutateInstalled }
+            : { afterCanonicalCopy: mutateInstalled };
+
+      await expect(
+        syncTrackedIntoDataRepo(
+          fixture.project,
+          fixture.dataRepo,
+          "skills",
+          "hello",
+          fixture.lock,
+          { snapshotHooks },
+        ),
+      ).rejects.toThrow(scenario.error);
+
+      await expectCanonicalPromotionStateUnchanged(fixture);
+      expect(await file(join(fixture.installed, "SKILL.md")).text()).toBe(
+        changedContent,
+      );
+    }
+  });
+
+  test("an ignored installed skill cannot delete the canonical skill", async () => {
+    const dataRepo = await tempRepo("capshelf-promote-ignored-data-");
+    const project = await tempRepo("capshelf-promote-ignored-project-");
+    const dataItem = join(dataRepo, "skills", "hello");
+    await mkdir(dataItem, { recursive: true });
+    await writeFile(join(dataItem, "SKILL.md"), "canonical\n");
+    await writeFile(join(dataItem, "guide.md"), "keep me\n");
+    await commitAll(dataRepo, "canonical skill");
+
+    const installed = join(project, ".agents", "skills", "hello");
+    await mkdir(installed, { recursive: true });
+    await writeFile(join(installed, "SKILL.md"), "ignored local edit\n");
+    await writeFile(join(project, ".gitignore"), ".agents/skills/hello/\n");
+
+    const lock = lockWith({
+      source: "data",
+      sha: await shaOfGitVisibleItem(dataRepo, "skills/hello"),
+      sourceCommit: await lastTouchingContentCommit(dataRepo, "skills/hello"),
+      appliedAt: "2026-08-01T00:00:00.000Z",
+    });
+    const headBefore = await headSha(dataRepo);
+    const indexBefore = await readFile(join(dataRepo, ".git", "index"));
+    const lockBefore = structuredClone(lock);
+
+    await expect(
+      syncTrackedIntoDataRepo(project, dataRepo, "skills", "hello", lock, {}),
+    ).rejects.toThrow(/required SKILL\.md is not Git-visible/);
+
+    expect(await headSha(dataRepo)).toBe(headBefore);
+    expect(await readFile(join(dataRepo, ".git", "index"))).toEqual(
+      indexBefore,
+    );
+    expect(
+      (await $`git -C ${dataRepo} status --porcelain`.quiet().text()).trim(),
+    ).toBe("");
+    expect(await file(join(dataItem, "SKILL.md")).text()).toBe("canonical\n");
+    expect(await file(join(dataItem, "guide.md")).text()).toBe("keep me\n");
+    expect(lock).toEqual(lockBefore);
+  });
+
+  test("a rejected commit restores the canonical skill and index", async () => {
+    const dataRepo = await tempRepo("capshelf-promote-hook-data-");
+    const project = await tempRepo("capshelf-promote-hook-project-");
+    const dataItem = join(dataRepo, "skills", "hello");
+    await mkdir(dataItem, { recursive: true });
+    await writeFile(join(dataItem, "SKILL.md"), "canonical\n");
+    await writeFile(join(dataItem, ".capshelf.yml"), "tags: [safe]\n");
+    await commitAll(dataRepo, "canonical skill");
+
+    const installed = join(project, ".agents", "skills", "hello");
+    await mkdir(installed, { recursive: true });
+    await writeFile(join(installed, "SKILL.md"), "local edit\n");
+
+    const lock = lockWith({
+      source: "data",
+      sha: await shaOfGitVisibleItem(dataRepo, "skills/hello"),
+      sourceCommit: await lastTouchingContentCommit(dataRepo, "skills/hello"),
+      appliedAt: "2026-08-01T00:00:00.000Z",
+    });
+    const hook = join(dataRepo, ".git", "hooks", "pre-commit");
+    await writeFile(hook, "#!/bin/sh\nexit 1\n");
+    await chmod(hook, 0o755);
+    const headBefore = await headSha(dataRepo);
+    const indexBefore = await readFile(join(dataRepo, ".git", "index"));
+    const lockBefore = structuredClone(lock);
+
+    await expect(
+      syncTrackedIntoDataRepo(project, dataRepo, "skills", "hello", lock, {}),
+    ).rejects.toThrow();
+
+    expect(await headSha(dataRepo)).toBe(headBefore);
+    expect(await readFile(join(dataRepo, ".git", "index"))).toEqual(
+      indexBefore,
+    );
+    expect(
+      (await $`git -C ${dataRepo} status --porcelain`.quiet().text()).trim(),
+    ).toBe("");
+    expect(await file(join(dataItem, "SKILL.md")).text()).toBe("canonical\n");
+    expect(await file(join(dataItem, ".capshelf.yml")).text()).toBe(
+      "tags: [safe]\n",
+    );
+    expect(lock).toEqual(lockBefore);
   });
 });
 

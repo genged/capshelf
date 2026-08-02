@@ -2,3 +2,4 @@
 # Preload isolates git from the machine global/system config so the suite is
 # hermetic. See tests/setup.ts.
 preload = ["./tests/setup.ts"]
+coverageThreshold = { line = 0.85, function = 0.90 }

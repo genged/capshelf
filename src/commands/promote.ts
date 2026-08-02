@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { dirname, join } from "node:path";
 import { atomicWriteFile, lstatOrNull } from "../fs-utils";
 import { homeRelative } from "../paths";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
@@ -20,6 +20,7 @@ import {
   isCopyTargetFileItemKind,
   allCanonicalItemRelPaths,
   itemRepoRelPath,
+  shaOfGitVisibleItem,
 } from "../master";
 import type { FragmentItemKind, ItemKind } from "../master";
 import { NotFoundError, PreconditionError } from "../errors";
@@ -44,7 +45,7 @@ import {
   readSidecarBytes,
   restoreSidecarBytes,
 } from "../metadata";
-import { replaceDirFromFiles, replaceDirFromGitVisibleFiles } from "../sync";
+import { replaceDirFromFiles } from "../sync";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import {
   printRuntimeWarnings,
@@ -119,6 +120,11 @@ interface SyncOptions {
   merge?: boolean;
   persistLock?: () => Promise<void>;
   afterMergePlan?: () => Promise<void>;
+  snapshotHooks?: {
+    afterSnapshotCaptured?: () => Promise<void>;
+    beforeCanonicalCopy?: () => Promise<void>;
+    afterCanonicalCopy?: () => Promise<void>;
+  };
   transactionHooks?: PromoteTransactionHooks;
 }
 
@@ -752,7 +758,35 @@ export async function syncTrackedIntoDataRepo(
       `installed files are missing: ${installedPath(project, kind, name)}`,
     );
   }
+  await opts.snapshotHooks?.afterSnapshotCaptured?.();
   const { localPath, sha } = snapshot;
+  const requiredFile = kind === "skills" ? "SKILL.md" : "index.ts";
+  const requiredFileStat = lstatOrNull(join(localPath, requiredFile));
+  if (!requiredFileStat?.isFile()) {
+    throw new PreconditionError(
+      `not promoting ${kind}/${name} — required ${requiredFile} is missing or not a regular file`,
+    );
+  }
+  if (!snapshot.files.includes(requiredFile)) {
+    throw new PreconditionError(
+      `not promoting ${kind}/${name} — required ${requiredFile} is not Git-visible in the installed snapshot`,
+    );
+  }
+  for (const file of snapshot.files) {
+    const fileStat = lstatOrNull(join(localPath, ...file.split("/")));
+    if (!fileStat?.isFile()) {
+      throw new PreconditionError(
+        `not promoting ${kind}/${name} — installed snapshot path is not a regular file: ${file}`,
+      );
+    }
+  }
+  if (
+    shaOfNamedFiles(await namedFilesFromInstalledSnapshot(snapshot)) !== sha
+  ) {
+    throw new PreconditionError(
+      `not promoting ${kind}/${name} — installed snapshot changed while it was being read; retry`,
+    );
+  }
   if (sha === entry.sha) {
     // Guard-free no-op by design: local content matches the lock, there is
     // nothing to write. If upstream has advanced past the lock here, that is
@@ -849,7 +883,6 @@ export async function syncTrackedIntoDataRepo(
   }
 
   await assertRepoCleanOutsidePath(dataRepo, repoRelPath);
-  const localRelPath = relative(project, localPath);
   const privateDotenvWarnings = privateDotenvFiles(snapshot.files);
   // The directory replace removes the data-repo .capshelf.yml wholesale, but
   // projects never receive the sidecar: cache it and restore it afterwards
@@ -858,47 +891,44 @@ export async function syncTrackedIntoDataRepo(
   const upstreamSidecar = await readSidecarBytes(dataDir);
   const codexConfigured = kind === "skills" && hasCodexMarketplace(dataRepo);
   const replaceSource = async (): Promise<void> => {
-    if (snapshot.source === "filesystem") {
-      await replaceDirFromFiles(localPath, snapshot.files, dataDir);
-    } else {
-      await replaceDirFromGitVisibleFiles(
-        project,
-        localRelPath,
-        localPath,
-        dataDir,
+    await opts.snapshotHooks?.beforeCanonicalCopy?.();
+    await replaceDirFromFiles(localPath, snapshot.files, dataDir);
+    await restoreSidecarBytes(dataDir, upstreamSidecar);
+    await opts.snapshotHooks?.afterCanonicalCopy?.();
+    if ((await shaOfGitVisibleItem(dataRepo, repoRelPath)) !== sha) {
+      throw new PreconditionError(
+        `not promoting ${kind}/${name} — copied content does not match the installed snapshot; retry`,
       );
     }
-    await restoreSidecarBytes(dataDir, upstreamSidecar);
+    const currentSnapshot = await installedSnapshot(
+      project,
+      kind,
+      name,
+      opts.scope ?? "project",
+    );
+    const capturedFiles = new Set(snapshot.files);
+    if (
+      currentSnapshot === null ||
+      currentSnapshot.sha !== sha ||
+      currentSnapshot.files.length !== capturedFiles.size ||
+      currentSnapshot.files.some((file) => !capturedFiles.has(file))
+    ) {
+      throw new PreconditionError(
+        `not promoting ${kind}/${name} — installed snapshot changed during promotion; retry`,
+      );
+    }
     if (kind === "skills") await refreshCodexProjection(dataRepo);
   };
-  let dirty = true;
-  let sourceCommit: string;
-  if (codexConfigured) {
-    const expectedHead = await headSha(dataRepo);
-    sourceCommit = await commitDataRepoMutation({
-      dataRepo,
-      expectedHead,
-      ownedRoots: [repoRelPath, ...CODEX_PROJECTION_ROOTS],
-      message: opts.message ?? `capshelf: ${kind}/${name}`,
-      mutate: replaceSource,
-    });
-  } else {
-    await replaceSource();
-    dirty = (await statusPorcelain(dataRepo, repoRelPath)).trim().length > 0;
-    sourceCommit = dirty
-      ? await commitInRepo(
-          dataRepo,
-          [repoRelPath],
-          opts.message ?? `capshelf: ${kind}/${name}`,
-        )
-      : // The not-dirty re-pin must stay sidecar-blind: re-pinning after a
-        // metadata-only upstream commit keeps the old sourceCommit. The dirty
-        // branch usually commits content, but with a stale lock sha plus a
-        // sidecar-only difference the promote commit can be sidecar-only; the
-        // recorded sourceCommit then names that commit, which is harmless —
-        // `git show` at it still yields the locked content.
-        await lastTouchingContentCommit(dataRepo, repoRelPath);
-  }
+  const expectedHead = await headSha(dataRepo);
+  const sourceCommit = await commitDataRepoMutation({
+    dataRepo,
+    expectedHead,
+    ownedRoots: codexConfigured
+      ? [repoRelPath, ...CODEX_PROJECTION_ROOTS]
+      : [repoRelPath],
+    message: opts.message ?? `capshelf: ${kind}/${name}`,
+    mutate: replaceSource,
+  });
 
   const needsSnapshot = await captureCommittedItemNeeds(dataRepo, {
     kind,
@@ -918,7 +948,7 @@ export async function syncTrackedIntoDataRepo(
     action: "promoted",
     sha,
     sourceCommit,
-    committed: dirty,
+    committed: true,
     ...(staleOverride && { staleOverride: true as const }),
     ...(runtimeWarnings.length > 0 && { runtimeWarnings }),
     ...(privateDotenvWarnings.length > 0 && { privateDotenvWarnings }),
