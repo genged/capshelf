@@ -10,6 +10,7 @@ import {
   type CliResult,
   commitAll,
   runInProcess,
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
   tempDir,
   tempRepo,
 } from "./cli-fixtures";
@@ -104,6 +105,7 @@ function zipEntryMetadata(
 }
 
 describe("marketplace observable contracts", () => {
+  // biome-ignore format: Preserve readable indentation for this long workflow.
   test("read commands and mutations expose stable target-specific JSON", async () => {
     const { repo, run } = await fixture();
     for (const target of ["claude", "codex"] as const) {
@@ -221,7 +223,7 @@ describe("marketplace observable contracts", () => {
         ])
       ).exitCode,
     ).toBe(3);
-  });
+  }, CLI_INTEGRATION_TEST_TIMEOUT_MS);
 
   test("validation reports configured target details, projection state, and accounting", async () => {
     const { repo, run } = await fixture();

@@ -6,6 +6,11 @@ import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { main } from "../src/cli";
 
+// Multi-command lifecycle tests use real Git repositories and can exceed
+// Bun's 5-second default on macOS filesystems. Apply this only to those broad
+// integration workflows so focused tests retain the strict default timeout.
+export const CLI_INTEGRATION_TEST_TIMEOUT_MS = 30_000;
+
 export async function tempDir(prefix: string): Promise<string> {
   // realpath: on macOS tmpdir() is a symlink (/var -> /private/var); the CLI
   // reports resolved paths, so tests must compare against the resolved form.

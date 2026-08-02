@@ -20,7 +20,7 @@ import {
 } from "../src/runtime-warnings";
 import { listMasterItems, shaOfGitVisibleItem } from "../src/master";
 import { lastTouchingContentCommit, lastTouchingCommit } from "../src/git";
-import { runInProcess } from "./cli-fixtures";
+import { CLI_INTEGRATION_TEST_TIMEOUT_MS, runInProcess } from "./cli-fixtures";
 
 async function tempDir(prefix: string): Promise<string> {
   // macOS exposes tmpdir() through /var, which resolves to /private/var. The
@@ -201,6 +201,7 @@ describe("pi extension item contracts", () => {
 });
 
 describe("pi extension CLI lifecycle", () => {
+  // biome-ignore format: Preserve readable indentation for this long workflow.
   test("adds, warns, detects drift, promotes, updates, reverts, and removes", async () => {
     const home = await tempDir("capshelf-pi-home-");
     const dataRepo = await tempRepo("capshelf-pi-data-");
@@ -484,7 +485,7 @@ describe("pi extension CLI lifecycle", () => {
     ]);
     expect(removed.exitCode).toBe(0);
     expect(await file(installed).exists()).toBe(false);
-  });
+  }, CLI_INTEGRATION_TEST_TIMEOUT_MS);
 
   test("share defaults to project scope and supports explicit local scope", async () => {
     const home = await tempDir("capshelf-pi-share-home-");
@@ -592,6 +593,7 @@ describe("pi extension CLI lifecycle", () => {
     expect(manifest.piExtensions).toEqual(["review-tools", "human-review"]);
   });
 
+  // biome-ignore format: Preserve readable indentation for this long workflow.
   test("supports the complete clone-local lifecycle", async () => {
     const home = await tempDir("capshelf-pi-scope-home-");
     const dataRepo = await tempRepo("capshelf-pi-scope-data-");
@@ -800,7 +802,7 @@ describe("pi extension CLI lifecycle", () => {
       (await file(join(project, ".capshelf", "local.json")).json())
         .piExtensions,
     ).toEqual([]);
-  });
+  }, CLI_INTEGRATION_TEST_TIMEOUT_MS);
 
   test("uses the canonical source path for dirty-add and stale-promote guards", async () => {
     const home = await tempDir("capshelf-pi-guards-home-");
@@ -866,6 +868,7 @@ describe("pi extension CLI lifecycle", () => {
     );
   });
 
+  // biome-ignore format: Preserve readable indentation for this long workflow.
   test("never runs package tools, reloads Pi, or edits Pi settings", async () => {
     const home = await tempDir("capshelf-pi-no-exec-home-");
     const dataRepo = await tempRepo("capshelf-pi-no-exec-data-");
@@ -940,5 +943,5 @@ describe("pi extension CLI lifecycle", () => {
         join(project, ".pi", "extensions", "guard", "node_modules"),
       ).exists(),
     ).toBe(false);
-  });
+  }, CLI_INTEGRATION_TEST_TIMEOUT_MS);
 });
