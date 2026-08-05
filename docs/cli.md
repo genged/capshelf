@@ -62,16 +62,16 @@ hash format.
 | `show <item>` | print metadata + content for one item, including relations and current/locked declared needs; `--target` narrows MCP or subagent runtime content | implemented |
 | `search <query...>` | search available items (data repo + system) and bundles by name, tags, description, and content; supports `--kind` and `--json`; zero matches exit 0 | implemented |
 | `status [<item>]` | drift / update report plus orthogonal `needsState` freshness and locked needs; subagent JSON includes deterministic per-target state; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` explains local drift | implemented |
-| `add <item>` | install an item from the bound data repo; `--local` installs a clone-local copy item (skill or Pi extension); warns on unmet `requires`, refuses on `conflicts-with` (exit 3); `add bundles/<name>` expands a bundle (see Bundles) | implemented |
-| `rm <item>` | remove from this project; `--local` removes clone-local copy items | implemented |
+| `add <item>` | install a new item from the bound data repo; an already-installed standalone item is a byte- and lock-stable no-op; `--local` installs a clone-local copy item; `--yes` authorizes collateral fragment-output loss for a new fragment | implemented |
+| `rm <item>` | remove a locked data item; clean reproducible content is prompt-free, while local edits, modes, extra paths, subagent drift, and fragment comment loss require consent or `--yes` | implemented |
 | `get-path <item>` | print the editable path; subagents and MCP support `--target`, while `--output` returns the corresponding runtime output | implemented |
-| `apply [<item>]` | reconcile project and local files with lockfiles (data items via `git show <sourceCommit>`; system items from bundled content; fragments via merged outputs); supports `--local` and `--dry-run` | implemented |
-| `update [<item>...]` | bump content and declared-needs pins; needs-only changes do not reinstall unchanged content; `--local` updates clone-local copy-item pins; supports `--dry-run` | implemented |
+| `apply [<item>]` | reconcile project and local files with lockfiles after full-set destructive preflight; supports `--local`, `--dry-run`, and `--yes` | implemented |
+| `update [<item>...]` | bump content and declared-needs pins; needs-only changes do not reinstall unchanged content; `--local` updates clone-local copy-item pins; supports `--dry-run` and explicit drift overwrite consent with `--yes` | implemented |
 | `share <item>` | adopt a not-yet-shared on-disk item into the data repo; subagents scan both runtime outputs by default and require `--target` with `--from` | implemented |
 | `move <item> --to <scope>` | move an already-tracked data item between local and project scope without changing data-repo content | implemented |
 | `promote <item>` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects clone-local copy items; stale copy items can use `--merge` or intentional overwrite with `--stale-ok` | implemented |
 | `keep-local <item>` | mark drifted copy-item content as intentional divergence; supports project and clone-local skills/Pi extensions, and rejects fragments | implemented |
-| `revert <item>` | discard local edits, restore locked version; supports `--local` | implemented |
+| `revert <item>` | restore one locked version; already-current is a lock-stable no-op, while discarding local state requires consent or `--yes`; supports `--local` | implemented |
 | `self-update` | check for and install a Homebrew update for the capshelf binary; supports `--check` and `--yes` | implemented |
 | `marketplace ...` | author, validate, sync, rename/retire, and package independent Claude/Cowork and Codex plugin catalogs in the data repo | implemented |
 | `validate <name>` | lint an item (frontmatter, structure, broken refs) | roadmap |
@@ -122,13 +122,15 @@ native catalog and self-contained plugin roots live at
 `.agents/plugins/marketplace.json` and `codex/generated/`. Run:
 
 ```bash
-capshelf marketplace sync --target codex
+capshelf marketplace sync --target codex --dry-run --json
 capshelf marketplace validate --target codex
 codex plugin marketplace add /path/to/data-repo
 ```
 
 Sync reads dirty definitions and skills, repairs only generated paths, and
-never stages or commits. Skill `share` and `promote` regenerate the complete
+never stages or commits. Clean committed projection drift is repaired without
+a prompt. Dirty affected projection paths are listed and require interactive
+consent or `--yes`; review them first with the dry-run above. Skill `share` and `promote` regenerate the complete
 configured Codex projection in the same source commit. Codex generated plugin
 versions are deterministic `0.0.0+codex.<hash>` cachebusters. Codex
 initialization refuses any pre-existing source or generated root instead of
@@ -171,7 +173,11 @@ result.
 
 - `--data <path>` — global override for the data repo (otherwise resolved from `.capshelf/local.json`, then `$CAPSHELF_HOME`, then fail)
 - `--json` — per-command structured output where supported
-- `--dry-run` — supported by `apply` and `update`; previews planned writes without changing files or lock state
+- `--dry-run` — supported by `apply`, `update`, and `marketplace sync`; previews planned writes and destructive-change records without changing state
+- `--yes` — supported by `add`, `apply`, `update`, `rm`, `revert`,
+  `marketplace sync`, and `self-update`. It authorizes only destructive changes
+  enumerated by preflight; it never bypasses path safety, source cleanliness,
+  fragment collisions, stale promotion, or transaction checks.
 - `--user` — supported by `ls` and `status`; narrows output to user-level
   runtime skills only, without requiring a capshelf project or data repo
 - `--diff` — supported by `status`; shows local drift against the locked
@@ -657,7 +663,7 @@ this command closes.
 | 0 | success |
 | 1 | generic error (missing args, bad config, I/O) |
 | 2 | item or bundle not found in data repo |
-| 3 | conflict (promote would clobber, operation rejected on a system item, untracked target would be overwritten, path is managed by skills.sh, `add` refused by a `conflicts-with` declaration, a bundle failed preflight or its file is malformed/unsupported, or `sync-data` cannot run in the current configuration: detached HEAD, no tracking ref, no origin) |
+| 3 | conflict or refused precondition (project is already initialized, a destructive `add`/`apply`/`update`/`rm`/`revert`/marketplace sync lacks consent, promote would clobber, a system or externally managed item was selected, an untracked target would be overwritten, a bundle failed preflight, or data sync cannot run safely) |
 | 4 | drift detected (for `status --strict`), upstream verification failed, or `sync-data` needs human action (diverged history, or upstream commits blocked by a dirty worktree) |
 | 5 | reserved for future unmet-requires checks (`add` with unmet `requires` warns and exits 0) |
 | 6 | no data repo configured for this project (pass `--data`, set `.capshelf/local.json`, or `$CAPSHELF_HOME`) |
@@ -785,6 +791,37 @@ installed snapshot and copied content before committing; a concurrent edit
 aborts and restores the canonical data-repo path and Git index.
 Executable-mode-only edits count as local drift and are promotable changes.
 
+### Destructive-change consent
+
+`add`, `apply`, `update`, `rm`, `revert`, and Codex marketplace sync share one
+preflight boundary. Before the first write, Capshelf plans the complete
+operation and lists managed content drift, executable-mode changes, extra
+local paths, subagent target drift, managed fragment drift, config-comment
+loss, or dirty generated projection paths. Interactive human output asks once.
+Declining exits 0 and writes nothing. JSON and other non-TTY runs refuse with
+exit 3 unless `--yes` explicitly authorizes the listed loss. Capshelf
+revalidates the accepted snapshot immediately before writing.
+
+Use `capshelf status <item> --diff` to review managed item drift. Extra ignored
+paths are listed directly because status deliberately filters them. Use
+`capshelf marketplace sync --target codex --dry-run --json` for generated
+projection changes. Dry runs report `destructiveChanges` and never prompt.
+
+| Case | Result | Review or next command |
+| --- | --- | --- |
+| Clean locked content is applied, updated, removed, or already current | No prompt | Continue normally |
+| Installed managed content or mode differs | Prompt; non-TTY/JSON exits 3 | `capshelf status <item> --diff`, then rerun with `--yes` if approved |
+| Ignored local-only file survives reconciliation | Preserved without a prompt | Its path remains installed; a collision with new managed content hard-refuses |
+| `rm` would delete an ignored or visible extra path | Prompt names the physical path | Preserve it elsewhere or rerun `rm ... --yes` |
+| Fragment serialization would remove JSONC/TOML comments | Prompt names the output | Review the output and managed item diff before `--yes` |
+| Codex projection is stale but Git-clean | Syncs normally | Review the resulting Git diff before committing |
+| Codex projection has dirty affected paths | Prompt; dry-run lists paths | `capshelf marketplace sync --target codex --dry-run --json` |
+
+Standalone `add` of an already-installed item does not reapply, repin, clear
+`keep-local`, or select newer upstream content. Use `update` to select upstream,
+`apply` or `revert` to restore the lock, and `status <item> --diff` before any
+destructive choice.
+
 ### Stale-promote protection
 
 `promote` refuses to overwrite data-repo content that is newer than this
@@ -795,9 +832,10 @@ work with `capshelf promote <item> --merge`, take upstream with
 `capshelf update <item>`, or overwrite on purpose with
 `capshelf promote <item> --stale-ok`. `--merge` and `--stale-ok` are mutually
 exclusive. The suggested commands preserve `--local` when the refusal came
-from a local-scope promote. Preserve the current edit before running `update`,
-which replaces the installed copy; local-scope copy items are excluded from
-the project's Git repository and cannot be recovered from its diff.
+from a local-scope promote. `update` warns and asks before replacing a drifted
+installed copy; preserve the edit before consenting. Local-scope copy items
+are excluded from the project's Git repository and cannot be recovered from
+its diff.
 
 `--merge` performs a standard Git three-way content merge from the locked
 `sourceCommit`: base = locked content, local = the installed managed snapshot,
@@ -993,9 +1031,9 @@ recursively. Two fragments that set the same scalar to *different* values are
 refused (naming both fragments) rather than resolved silently by manifest
 order; identical values and mergeable arrays/objects are fine. JSON outputs
 (`settings.json`, `.mcp.json`) are read as JSONC (comments and trailing commas
-tolerated), but a managed rewrite serializes plain JSON — comments are not
-preserved, and capshelf warns when it drops them. TOML comments in rewritten
-`.codex/config.toml` are likewise not preserved. TOML date/time values are rejected in
+tolerated), but a managed rewrite serializes plain JSON. JSONC and TOML comment
+loss is detected during preflight and requires consent; dry-run and refusal
+output name the affected config path. TOML date/time values are rejected in
 fragment sources: capshelf's merge and hash pipeline round-trips values through
 JSON, which cannot preserve TOML date types (a local date would silently become
 a string or an offset date-time on re-emit).

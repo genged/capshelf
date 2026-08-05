@@ -35,6 +35,13 @@ The lockfile is the safety boundary. Data items are pinned by content hash and
 the last data-repo commit that touched that item path. System items are bundled
 inside the CLI and pinned by content hash plus CLI version.
 
+Reconciliation distinguishes reproducible locked state from unique local
+state. Before an operation overwrites managed drift, extra local paths,
+subagent edits, fragment comments, or dirty generated projections, Capshelf
+preflights the complete operation, shows review paths, asks once, and
+revalidates before writing. Ignored local-only files are carried forward when
+safe; `--yes` authorizes only the enumerated loss and is not a force flag.
+
 Project commands run from the project root, the directory containing
 `.capshelf/capshelf.json`, or any subdirectory of it (capshelf walks upward to
 find the root, like git). `init` creates `.capshelf/` in the current directory.
@@ -48,8 +55,8 @@ the project filesystem against that state.
 Core commands:
 
 - `init` binds a project to a data repo and installs bundled system items.
-- `add` installs an item from the data repo and records it in the manifest and
-  lock.
+- `add` installs a new item from the data repo; repeating it for an installed
+  item is a stable no-op.
 - `status` reports local drift, upstream changes, missing files, and external
   ownership.
 - `status --diff` compares current files against the locked source commit.
@@ -120,7 +127,8 @@ Fragments from the data repo are merged into project config outputs:
 Existing project-local config values are preserved by removing the previous
 managed contribution and applying the newly locked managed contribution on top
 of the local base. Fragment commands refuse unmanaged scalar or shape
-collisions instead of overwriting local values.
+collisions instead of overwriting local values. A rewrite that would erase
+JSONC or TOML comments is identified before writing and requires consent.
 
 ## Coexistence Rules
 

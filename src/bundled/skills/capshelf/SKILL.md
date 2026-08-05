@@ -40,7 +40,7 @@ Results with a `bundles/` prefix are **bundles** — curated item sets. Prefer t
 
 ### 4. Install
 
-`capshelf add <item>`. If the output lists missing required items, install them with the exact `capshelf add <ref>` commands it prints. If `add` refuses with exit 3 because of a `conflicts-with` declaration, that is a curated incompatibility — surface the decision to the user (remove the conflicting item, or fix a stale declaration in the data repo); never work around it. A bundle preflight refusal (exit 3) is the same kind of decision: nothing was installed and the per-member report says why — surface it, don't install members one by one to route around it.
+`capshelf add <item>`. Repeating add for an installed item is a stable no-op; use the printed `status --diff`, `update`, and `apply` guidance instead of trying to make add reapply it. If the output lists missing required items, install them with the exact `capshelf add <ref>` commands it prints. If `add` refuses with exit 3 because of a `conflicts-with` declaration, that is a curated incompatibility — surface the decision to the user (remove the conflicting item, or fix a stale declaration in the data repo); never work around it. A bundle preflight refusal (exit 3) is the same kind of decision: nothing was installed and the per-member report says why — surface it, don't install members one by one to route around it.
 
 ### 5. Verify
 
@@ -56,11 +56,11 @@ When the user asks you to improve a shared (data) item:
 4. Decide with the user:
    - `capshelf promote <item> -m "why"` — push to the data repo. Other projects see `update available` next time they check; nothing auto-changes.
    - `capshelf keep-local <item> --reason "why"` — intentional project-specific divergence for a copy item (skill or Pi extension).
-   - `capshelf revert <item>` — discard the edit, restore from the recorded `sourceCommit`.
+   - `capshelf revert <item>` — discard the edit, restore from the recorded `sourceCommit`; first show `capshelf status <item> --diff` and get permission before using `--yes` in a non-interactive run.
 
 For Pi extensions, inspect the changed source before promoting and tell the user to run `/reload` or restart Pi after materialization. Never imply that capshelf reviewed, trusted, sandboxed, or dependency-installed the extension.
 
-If `promote` fails with "changed in the data repo since this project last updated" (exit 3), a teammate's newer version is upstream. Show the user the upstream diff (`capshelf status <item> --diff` plus the scoped `git log` from the error message). For a skill in either scope or a project-scope Pi extension, offer `capshelf promote <item> --merge -m "why"` to three-way merge the locked base, installed edits, and current upstream. A merge conflict lists paths and writes nothing. Other choices are preserving the edit and running `capshelf update <item>` before redoing it, or an intentional overwrite. **Do not retry with `--stale-ok` on your own**; `--merge` and `--stale-ok` are mutually exclusive. `update` replaces the installed copy. For a local-scope item, preserve `--local` on recovery and merge commands. A merged or ordinary promote that reports `already-upstream` means the lock was re-pinned without a data-repo commit.
+If `promote` fails with "changed in the data repo since this project last updated" (exit 3), a teammate's newer version is upstream. Show the user the upstream diff (`capshelf status <item> --diff` plus the scoped `git log` from the error message). For a skill in either scope or a project-scope Pi extension, offer `capshelf promote <item> --merge -m "why"` to three-way merge the locked base, installed edits, and current upstream. A merge conflict lists paths and writes nothing. Other choices are preserving the edit and running `capshelf update <item>` before redoing it, or an intentional overwrite. **Do not retry with `--stale-ok` on your own**; `--merge` and `--stale-ok` are mutually exclusive. `update` preflights local drift and asks before replacing installed content; non-interactive and JSON calls refuse unless `--yes` is passed. Review `capshelf status <item> --diff` and get the user's permission before using `update --yes`. For a local-scope item, preserve `--local` on recovery and merge commands. A merged or ordinary promote that reports `already-upstream` means the lock was re-pinned without a data-repo commit.
 
 To change **metadata** (tags, description, `requires`/`conflicts-with`, or declared `needs`), edit the item's canonical data-repo sidecar (`skills/<name>/.capshelf.yml`, `pi/extensions/<name>/.capshelf.yml`, or the fragment path shown by `capshelf show`) and commit it in the data repo. Metadata is never hashed into item content. Tags, descriptions, and relations are live catalog data and need no project update; needs are lock-pinned, so consuming projects run `capshelf update <item>` to select a changed declaration without reinstalling unchanged content. **Commit the sidecar before returning to project work**: an uncommitted sidecar edit blocks `capshelf update` entirely (dirty data repo) and blocks `add` of that item.
 
@@ -117,10 +117,11 @@ strict validation therefore refuses it unless the support can be classified
 from the repository origin.
 
 Run `marketplace validate` before publication. After direct Codex definition
-or selected-skill edits, run `marketplace sync --target codex`, review source
-and generated diffs together, then commit them together. Sync never stages or
-commits. Marketplace mutations do make one local data-repo commit but never
-push.
+or selected-skill edits, run `marketplace sync --target codex --dry-run
+--json`, review source and generated diffs together, then sync and commit them
+together. Sync never stages or commits. If it refuses because an affected
+projection path is dirty, surface every path and get permission before using
+`--yes`. Marketplace mutations do make one local data-repo commit but never push.
 
 For local handoff, `marketplace plugin pack <name> --target claude --output
 <outside-path>.plugin` builds a Cowork upload, while the data repo itself is
@@ -181,7 +182,7 @@ models, permissions, MCP servers, and sandbox controls.
 
 ## Config fragments
 
-Shared fragments merge into project config outputs: `settings/<name>/settings.json` → `.claude/settings.json`; `mcp/<name>/claude.json` → `.mcp.json`; `mcp/<name>/codex.toml` and `codex/config/<name>/config.toml` → `.codex/config.toml`. Outputs preserve unmanaged project-local values; capshelf refuses unmanaged scalar/shape collisions, and also refuses two fragments that set the same key to conflicting scalar values (naming both) rather than silently letting manifest order decide. JSON outputs are read as JSONC (comments tolerated) but rewritten as plain JSON, so comments in `settings.json`/`.mcp.json` are dropped on a managed write — capshelf warns when it does.
+Shared fragments merge into project config outputs: `settings/<name>/settings.json` → `.claude/settings.json`; `mcp/<name>/claude.json` → `.mcp.json`; `mcp/<name>/codex.toml` and `codex/config/<name>/config.toml` → `.codex/config.toml`. Outputs preserve unmanaged project-local values; capshelf refuses unmanaged scalar/shape collisions, and also refuses two fragments that set the same key to conflicting scalar values (naming both) rather than silently letting manifest order decide. JSON outputs are read as JSONC (comments tolerated) but rewritten as plain JSON, and TOML is reserialized. Capshelf detects comment loss during preflight; review the named output and get permission before using `--yes`.
 
 Edit canonical source paths (from `get-path`), never the generated outputs, then `capshelf promote <fragment> -m "message"`. `share` for fragments always lands in project scope (`--to project` is the default). To share an existing MCP server, `capshelf share mcp/<server>` with no flags is the common case: the pick defaults to the item name and capshelf adopts the server from every output that contains it unmanaged (`.mcp.json` and/or `.codex/config.toml`), in one commit. Other cases use:
 
@@ -211,6 +212,7 @@ Codex only loads `.codex/config.toml` in trusted projects; `status` warns non-fa
 - **Do not work around an already-initialized `init` refusal.** Use the named
   `data` or `update` command; install-mode changes need a dedicated migration.
 - **Never pass `promote --stale-ok` without explicit user direction** — it intentionally overwrites a teammate's newer upstream version.
+- **Never pass `--yes` merely to route around a destructive-change refusal.** Show every affected path, use `capshelf status <item> --diff` for managed item drift (or marketplace sync dry-run for projections), explain what will be lost, and get the user's permission first. `--yes` does not bypass hard safety refusals.
 - **The lock is the source of truth** for what capshelf owns.
 - **Review Pi extension source before adding or promoting it.** The runtime warning is a trust boundary, not proof of safety; capshelf never installs extension dependencies or reloads Pi.
 - **Treat declared needs as metadata.** Capshelf records expected network,

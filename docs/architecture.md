@@ -56,8 +56,8 @@ capshelf lives firmly in the second camp. The lock is the spec, `apply` is the r
 
 Verbs map to this model:
 
-- **`apply`** — converge project files and generated config outputs to match manifest + lock. Idempotent, safe to run anytime.
-- **`add`** — add a data-repo item to the spec and materialize it, but only if the target path is absent or already locked.
+- **`apply`** — converge project files and generated config outputs to match manifest + lock after destructive-change preflight.
+- **`add`** — add a new data-repo item to the spec and materialize it; an already-installed item is a stable no-op.
 - **`status`** — show the diff between desired (lock) and actual project files. Read-only.
 - **`update`** — bump the spec (lock pointer → data repo HEAD), then apply.
 - **`revert`** — discard local edits to one item by reapplying its locked content.
@@ -299,6 +299,23 @@ Capshelf does not sandbox their arbitrary TypeScript execution, install
 process. Review source before adding or promoting an extension, then run
 `/reload` or restart Pi after materialization.
 
+### Destructive reconciliation boundary
+
+The lock defines reproducible managed state, but installed trees and generated
+outputs may also contain unique local state. Before `add`, `apply`, `update`,
+`rm`, `revert`, or Codex marketplace sync overwrites that state, a shared
+planner completes the full read-only operation, emits deterministic typed
+change records, asks once, and revalidates the reviewed snapshot before the
+first write. JSON and non-TTY invocations require `--yes`; dry runs report the
+same plan without prompting. `--yes` authorizes only enumerated loss and never
+bypasses hard path, source, collision, or transaction checks.
+
+Copy-item reconciliation carries forward ignored local-only regular files that
+do not collide with selected managed paths. Removal inventories the complete
+physical tree, including ignored files. Fragment planning preserves unmanaged
+values and separately identifies managed contribution drift and JSONC/TOML
+comment loss. Missing managed content is reproducible and safe to recreate.
+
 Claude custom commands are represented as skills. In the default layout, a skill at `.agents/skills/<name>/SKILL.md` is exposed to Claude through `.claude/skills/<name>`. In Claude-only layout, the skill lives directly at `.claude/skills/<name>/SKILL.md`. capshelf does not manage `.claude/commands/`.
 
 ### Merge rules
@@ -370,7 +387,12 @@ See `docs/team-workflow.md` for the team loop built on these guarantees.
 ## Local overrides: two escape hatches
 
 1. **Project-local settings values** — values already present in `.claude/settings.json` and not contributed by a locked settings fragment are preserved when a fragment is added, applied, removed, or updated.
-2. **Untracked files in agent surfaces** — anything not listed in the lock is ignored by the tool forever. In the default layout, project-only skills should live in `.agents/skills/<name>/` if they may later be adopted with `share`; `.claude/skills/<name>` is just the compatibility symlink. One-off Pi extensions can live under `.pi/extensions/<name>/` and may later be adopted into either scope. `init`, `add`, and `rm` all treat the lock as the ownership boundary.
+2. **Local-only files in managed copy trees** — ignored regular files are
+   preserved across reconciliation when they do not collide with selected
+   managed paths. Visible extras that replacement would remove require
+   consent; `rm` inventories both visible and ignored extras. Separate
+   unlocked item directories remain outside Capshelf ownership and can later
+   be adopted with `share`.
 
 ## Coexistence with peer tools
 
@@ -519,9 +541,8 @@ Properties of the implemented model:
   are persisted after each member during install, so the one failure
   preflight cannot rule out (mid-install I/O) leaves a consistent prefix
   that a re-run converges past.
-- **Skip already-installed members.** Re-running a bundle add never
-  re-applies or pin-bumps installed members (standalone `add` keeps its
-  implicit re-apply; the skip is the bundle executor's). Re-run is both the
+- **Skip already-installed members.** Re-running either bundle or standalone
+  add never re-applies or pin-bumps installed items. Re-run is both the
   recovery path and the upgrade path after the team grows the bundle.
 - **Flat composition.** Bundles cannot include bundles; `show
   bundles/<name>` always displays the complete literal member list with
@@ -551,8 +572,9 @@ projects it into `.agents/plugins/marketplace.json` and self-contained regular
 file copies under `codex/generated/plugins/`. The generated tree is committed
 so the data repo can be registered directly with
 `codex plugin marketplace add <data-repo>`. `marketplace sync --target codex`
-repairs the complete projection after direct edits and never stages or
-commits. Marketplace mutations and Capshelf skill share/promote commits update
+repairs clean derived drift and never stages or commits. Dirty affected paths
+inside the owned projection roots require consent and are reported by dry-run.
+Marketplace mutations and Capshelf skill share/promote commits update
 the projection in the same local Git commit.
 
 Package outputs are disposable. Claude packages are deterministic root-content
