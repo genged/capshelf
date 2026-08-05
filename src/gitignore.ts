@@ -45,6 +45,38 @@ export async function gitignoreVisibleFiles(root: string): Promise<string[]> {
   return out.sort();
 }
 
+/**
+ * Inventory every physical regular file below an item, including paths hidden
+ * by nested `.gitignore` rules. Destructive removal uses this view because an
+ * ignored file can still be unique local state.
+ */
+export async function allRegularFiles(root: string): Promise<string[]> {
+  const out: string[] = [];
+
+  async function walk(relDir: string): Promise<void> {
+    const abs = relDir ? join(root, ...relDir.split("/")) : root;
+    const entries = (await readdir(abs, { withFileTypes: true })).sort((a, b) =>
+      a.name.localeCompare(b.name),
+    );
+    for (const entry of entries) {
+      const rel = relDir ? `${relDir}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) await walk(rel);
+      else if (entry.isFile()) out.push(rel);
+      else {
+        const type = entry.isSymbolicLink()
+          ? "symlink"
+          : "unsupported filesystem object";
+        throw new PreconditionError(
+          `${root} contains an unsupported ${type}: ${rel}; copy items support regular files only`,
+        );
+      }
+    }
+  }
+
+  await walk("");
+  return out.sort();
+}
+
 async function scopesWithLocalGitignore(
   root: string,
   relDir: string,

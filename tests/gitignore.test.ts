@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { gitignoreVisibleFiles } from "../src/gitignore";
+import { allRegularFiles, gitignoreVisibleFiles } from "../src/gitignore";
 
 async function tempDir(prefix: string): Promise<string> {
   return await mkdtemp(join(tmpdir(), prefix));
@@ -53,6 +53,22 @@ describe("gitignoreVisibleFiles", () => {
       "logs/.gitignore",
       "logs/important.log",
       "main.ts",
+    ]);
+  });
+
+  test("can inventory ignored files for destructive-change preflight", async () => {
+    const root = await tempDir("capshelf-gitignore-inventory-");
+    await writeFile(join(root, ".gitignore"), "cache/\n*.tmp\n");
+    await writeFile(join(root, "visible.txt"), "visible\n");
+    await writeFile(join(root, "scratch.tmp"), "scratch\n");
+    await mkdir(join(root, "cache"), { recursive: true });
+    await writeFile(join(root, "cache", "state.db"), "local\n");
+
+    expect(await allRegularFiles(root)).toEqual([
+      ".gitignore",
+      "cache/state.db",
+      "scratch.tmp",
+      "visible.txt",
     ]);
   });
 });

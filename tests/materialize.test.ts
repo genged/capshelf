@@ -181,6 +181,112 @@ describe("materializeLockEntry", () => {
     expect(existsSync(join(project, ".claude", "skills", "hello"))).toBe(false);
   });
 
+  test("preserves ignored local-only files while replacing managed content", async () => {
+    const dataRepo = await tempRepo();
+    const project = await tempDir("capshelf-materialize-preserve-");
+    const dataItem = join(dataRepo, "skills", "hello");
+    const installed = join(project, ".agents", "skills", "hello");
+
+    await mkdir(dataItem, { recursive: true });
+    await writeFile(join(dataItem, ".gitignore"), "cache/\n");
+    await writeFile(join(dataItem, "SKILL.md"), "hello v1\n");
+    await commitAll(dataRepo, "hello v1");
+    const v1 = {
+      source: "data" as const,
+      sha: await shaOfItem(dataItem),
+      sourceCommit: await lastTouchingCommit(dataRepo, "skills/hello"),
+      appliedAt: new Date().toISOString(),
+    };
+    await materializeLockEntry({
+      project,
+      dataRepo,
+      key: dataKey("skills", "hello"),
+      entry: v1,
+      scope: "project",
+    });
+    await mkdir(join(installed, "cache"), { recursive: true });
+    await writeFile(join(installed, "cache", "state.db"), "local state\n");
+
+    await writeFile(join(dataItem, "SKILL.md"), "hello v2\n");
+    await commitAll(dataRepo, "hello v2");
+    const v2 = {
+      source: "data" as const,
+      sha: await shaOfItem(dataItem),
+      sourceCommit: await lastTouchingCommit(dataRepo, "skills/hello"),
+      appliedAt: new Date().toISOString(),
+    };
+
+    const result = await materializeLockEntry({
+      project,
+      dataRepo,
+      key: dataKey("skills", "hello"),
+      entry: v2,
+      previousEntry: v1,
+      scope: "project",
+    });
+
+    expect(result.action).toBe("reconciled");
+    expect(await file(join(installed, "SKILL.md")).text()).toBe("hello v2\n");
+    expect(await file(join(installed, "cache", "state.db")).text()).toBe(
+      "local state\n",
+    );
+  });
+
+  test("refuses collisions between ignored local files and selected managed content", async () => {
+    const dataRepo = await tempRepo();
+    const project = await tempDir("capshelf-materialize-collision-");
+    const dataItem = join(dataRepo, "skills", "hello");
+    const installed = join(project, ".agents", "skills", "hello");
+
+    await mkdir(dataItem, { recursive: true });
+    await writeFile(join(dataItem, ".gitignore"), "cache/\n");
+    await writeFile(join(dataItem, "SKILL.md"), "hello v1\n");
+    await commitAll(dataRepo, "hello v1");
+    const v1 = {
+      source: "data" as const,
+      sha: await shaOfItem(dataItem),
+      sourceCommit: await lastTouchingCommit(dataRepo, "skills/hello"),
+      appliedAt: new Date().toISOString(),
+    };
+    await materializeLockEntry({
+      project,
+      dataRepo,
+      key: dataKey("skills", "hello"),
+      entry: v1,
+      scope: "project",
+    });
+    await mkdir(join(installed, "cache"), { recursive: true });
+    await writeFile(join(installed, "cache", "state.db"), "local state\n");
+
+    await writeFile(join(dataItem, "SKILL.md"), "hello v2\n");
+    await mkdir(join(dataItem, "cache"), { recursive: true });
+    await writeFile(join(dataItem, "cache", "state.db"), "managed state\n");
+    await $`git -C ${dataRepo} add -f skills/hello/cache/state.db`.quiet();
+    await commitAll(dataRepo, "hello v2");
+    const v2 = {
+      source: "data" as const,
+      sha: await shaOfItem(dataItem),
+      sourceCommit: await lastTouchingCommit(dataRepo, "skills/hello"),
+      appliedAt: new Date().toISOString(),
+    };
+
+    await expect(
+      materializeLockEntry({
+        project,
+        dataRepo,
+        key: dataKey("skills", "hello"),
+        entry: v2,
+        previousEntry: v1,
+        scope: "project",
+        dryRun: true,
+      }),
+    ).rejects.toThrow(/ignored local path cache\/state\.db collides/);
+    expect(await file(join(installed, "SKILL.md")).text()).toBe("hello v1\n");
+    expect(await file(join(installed, "cache", "state.db")).text()).toBe(
+      "local state\n",
+    );
+  });
+
   test("local scope verifies git-excluded installs against the filesystem", async () => {
     const dataRepo = await tempRepo();
     // The project is itself a Git repo whose info/exclude hides the install
