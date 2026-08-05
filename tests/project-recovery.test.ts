@@ -180,7 +180,7 @@ describe("project recovery", () => {
   );
 
   test(
-    "re-running init preserves clone-local selections and state",
+    "re-running init refuses before overwriting initialized machine state",
     async () => {
       const dataRepo = await baselineRepo("capshelf-reinit-data-");
       await addSkill(dataRepo, "local-skill");
@@ -199,20 +199,35 @@ describe("project recovery", () => {
       expect(
         run(["add", "pi-extensions/local-extension", "--local"]).exitCode,
       ).toBe(0);
+      const systemSkill = join(
+        project,
+        ".agents",
+        "skills",
+        "capshelf",
+        "SKILL.md",
+      );
+      await writeFile(systemSkill, "local system edit\n");
       const excludePath = await gitInfoExcludePath(project);
       if (excludePath === null) throw new Error("expected Git exclude path");
       const paths = [
+        join(project, ".capshelf", "capshelf.json"),
+        join(project, ".capshelf", "capshelf.lock.json"),
         join(project, ".capshelf", "local.json"),
         join(project, ".capshelf", "local.lock.json"),
         excludePath,
+        systemSkill,
         join(project, ".agents", "skills", "local-skill", "SKILL.md"),
         join(project, ".pi", "extensions", "local-extension", "index.ts"),
       ];
       const before = await Promise.all(paths.map((path) => readFile(path)));
 
-      expect(run(["init", "--data", dataRepo, "--no-upstream"]).exitCode).toBe(
-        0,
+      const repeated = run(["init", "--data", dataRepo, "--no-upstream"]);
+      expect(repeated.exitCode).toBe(3);
+      expect(repeated.stderr.toString()).toContain(
+        "capshelf is already initialized for this machine",
       );
+      expect(repeated.stderr.toString()).toContain("capshelf data bind <path>");
+      expect(repeated.stderr.toString()).toContain("capshelf update");
       const after = await Promise.all(paths.map((path) => readFile(path)));
       expect(after).toEqual(before);
     },

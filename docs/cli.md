@@ -53,7 +53,7 @@ hash format.
 
 | verb | purpose | availability |
 |---|---|---|
-| `init` | scaffold a new project (manifest + lock, install bundled system items, bind data repo) | implemented |
+| `init` | scaffold a new project or onboard a fresh clone without a local binding (manifest + lock, bundled system items, data repo); refuses an already initialized machine | implemented |
 | `data bind <path>` | bind this machine to the project's data repo clone via `.capshelf/local.json` (alias: `set-data`) | implemented |
 | `data upstream <url>` | write the committed `dataRepoUpstream` URL in `.capshelf/capshelf.json` (alias: `set-upstream`) | implemented |
 | `data path` | print the resolved local data repo path; `--json` includes the path and the normalized upstream (`null` when absent) (alias: `data-path`) | implemented |
@@ -489,16 +489,20 @@ determine a portable upstream, `init` fails before writing project state and
 asks you to configure the data repo's `origin` or pass `--no-upstream`
 explicitly.
 
-Re-running `init` preserves clone-local skill, Pi-extension, settings, and MCP
-selection arrays in `.capshelf/local.json`; it does not clear their local lock
-entries, installed content, or Git exclude entries.
+A project is initialized on the current machine once `.capshelf/local.json`
+exists. Re-running `init` in that state is refused with exit 3 before Capshelf
+processes a replacement data repo, clones anything, reinstalls system items, or
+rewrites metadata. Use `capshelf data bind`, `capshelf data upstream`, and
+`capshelf update` for those explicit lifecycle changes. Changing the install
+mode of an existing project is not an `init` operation and currently has no
+automatic migration command.
 
-In an already-initialized project cloned from Git, plain `capshelf init` also
-acts as the onboarding command: when `.capshelf/capshelf.json` declares
-`dataRepoUpstream` and no local data repo binding exists yet, capshelf clones or
-reuses that upstream at the default clone path, writes `.capshelf/local.json`,
-and installs bundled system items. Run `capshelf apply` afterwards to
-materialize the project's locked data items.
+Plain `capshelf init` also acts as fresh-clone onboarding when committed
+`.capshelf/capshelf.json` exists but the gitignored `.capshelf/local.json` does
+not. When the manifest declares `dataRepoUpstream`, Capshelf clones or reuses
+that upstream at the default clone path, writes `.capshelf/local.json`, and
+installs bundled system items. Run `capshelf apply` afterwards to materialize
+the project's locked data items.
 
 ## Remote data repo bootstrap
 

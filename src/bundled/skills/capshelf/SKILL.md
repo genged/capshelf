@@ -8,6 +8,10 @@ description: Use the capshelf CLI to manage shared skills, Pi extensions, subage
 This project uses **capshelf** to track shared coding-agent config (skills, project-local Pi extensions, Claude/Codex subagents, settings fragments, MCP configs) pulled from a **data repo**. When the user asks to add, remove, discover, edit, or update shared config, use the `capshelf` CLI. **Do not hand-edit** `.capshelf/capshelf.json` or `.capshelf/capshelf.lock.json` — they are tool-managed.
 
 Run project commands from anywhere inside a capshelf project — the directory containing `.capshelf/capshelf.json`, or any subdirectory of it (capshelf walks upward to find the root, like git). `init` acts on the current directory, not a discovered parent.
+Use `init` only for a new project or a fresh clone without
+`.capshelf/local.json`; it refuses a project already initialized on this
+machine. Use `data bind`, `data upstream`, and `update` for later lifecycle
+changes.
 
 ## The agent decision loop
 
@@ -85,7 +89,8 @@ Always check the current surface with `capshelf --help` and `capshelf <verb> --h
 
 | verb | purpose |
 |---|---|
-| `init` / `data bind` / `data upstream` / `data path` | bind the project to a data repo (the data-repo verbs live under `capshelf data <sub>`; old `set-data`/`set-upstream`/`data-path`/`sync-data` still work as aliases) |
+| `init` | initialize a new project or onboard a fresh clone without `.capshelf/local.json`; never use it to reinstall or rebind an initialized machine |
+| `data bind` / `data upstream` / `data path` | inspect or change the explicit data-repo binding (old `set-data`/`set-upstream`/`data-path` still work as aliases) |
 | `ls` / `show` / `search` / `status` | inspect and discover (all support `--json`; `ls` and `status` include user-level runtime skills by default, `--user` narrows to them only) |
 | `add` / `rm` / `apply` / `update` / `revert` | converge the project on its locks |
 | `share` / `move` / `promote` / `keep-local` | flow content and intent between project and data repo |
@@ -203,6 +208,8 @@ Codex only loads `.codex/config.toml` in trusted projects; `status` warns non-fa
 
 - **Never run `capshelf promote`** while the user has open PRs on other projects using that item, unless those projects are OK picking up the change on their next `update`.
 - **Treat `add` conflict refusals (exit 3) as decisions for the user**, not obstacles. There is no force flag by design.
+- **Do not work around an already-initialized `init` refusal.** Use the named
+  `data` or `update` command; install-mode changes need a dedicated migration.
 - **Never pass `promote --stale-ok` without explicit user direction** — it intentionally overwrites a teammate's newer upstream version.
 - **The lock is the source of truth** for what capshelf owns.
 - **Review Pi extension source before adding or promoting it.** The runtime warning is a trust boundary, not proof of safety; capshelf never installs extension dependencies or reloads Pi.
@@ -213,6 +220,9 @@ Codex only loads `.codex/config.toml` in trusted projects; `status` warns non-fa
 ## Troubleshooting
 
 - `no data repo configured` — clone the declared `dataRepoUpstream` if one exists, then `capshelf set-data <path>`, or pass `--data <path>`, or set `$CAPSHELF_HOME`.
+- `capshelf is already initialized for this machine` — use `capshelf data bind
+  <path>`, `capshelf data upstream <url>`, or `capshelf update`; do not delete
+  `.capshelf/local.json` to route around the state boundary.
 - `could not determine a portable data repo upstream` — configure the data repo's `origin` before `capshelf init`, or pass `--no-upstream` only for an intentionally non-portable local project.
 - `data repo at <path> is bound to the wrong upstream` — `capshelf set-data <correct-clone>` or intentionally change committed state with `capshelf set-upstream <url>`.
 - `data repo has uncommitted metadata changes: <item>/.capshelf.yml` — commit the sidecar in the data repo; no item content is at risk.

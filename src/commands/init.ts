@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import { existsSync } from "node:fs";
 import { DEFAULT_INSTALL_MODE, homeRelative, initProjectRoot } from "../paths";
 import { resolveDataRepo, resolveDataRepoOptional } from "../data-repo";
 import type { InstallMode } from "../paths";
@@ -20,7 +21,7 @@ import {
 } from "../git";
 import { globalOpts } from "../global-options";
 import { PreconditionError } from "../errors";
-import { loadLocalConfig, saveLocalConfig } from "../local-config";
+import { localConfigPath, saveLocalConfig } from "../local-config";
 import { UpstreamVerificationError } from "../upstream-check";
 import {
   printRuntimeWarnings,
@@ -66,8 +67,19 @@ export function registerInit(program: Command): void {
     .option("--json", "output JSON")
     .action(async (opts: InitOptions, cmd: Command) => {
       const project = initProjectRoot();
+      if (existsSync(localConfigPath(project))) {
+        throw new PreconditionError(
+          `capshelf is already initialized for this machine at ${project}`,
+          {
+            hint:
+              "init is only for new projects or fresh clones without .capshelf/local.json.\n" +
+              "  use 'capshelf data bind <path>' to change the local data repo,\n" +
+              "  use 'capshelf data upstream <url>' to change its committed upstream, or\n" +
+              "  use 'capshelf update' to update managed items.",
+          },
+        );
+      }
       const manifest = await loadManifest(project);
-      const existingLocalConfig = await loadLocalConfig(project);
       const installMode = resolveInstallMode(manifest.installMode, opts);
       const lock = await loadLock(project);
 
@@ -209,10 +221,10 @@ export function registerInit(program: Command): void {
       await saveManifest(project, manifest);
       await saveLocalConfig(project, {
         dataRepo,
-        skills: existingLocalConfig?.skills ?? [],
-        piExtensions: existingLocalConfig?.piExtensions ?? [],
-        settings: existingLocalConfig?.settings ?? [],
-        mcp: existingLocalConfig?.mcp ?? [],
+        skills: [],
+        piExtensions: [],
+        settings: [],
+        mcp: [],
       });
       await saveLock(project, lock);
 
