@@ -280,7 +280,9 @@ describe("declared needs CLI lifecycle", () => {
     expect(await file(installed).text()).toBe("export default 1;\n");
 
     await writeFile(installed, "export default 3;\n");
-    expect((await run(["apply", "--local"])).exitCode).toBe(0);
+    expect((await run(["apply", "--local"])).exitCode).toBe(3);
+    expect(await file(installed).text()).toBe("export default 3;\n");
+    expect((await run(["apply", "--local", "--yes"])).exitCode).toBe(0);
     expect(await readSnapshot(localLockPath)).toEqual(pinnedSnapshot);
     expect(await file(installed).text()).toBe("export default 1;\n");
 

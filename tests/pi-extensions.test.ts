@@ -371,7 +371,19 @@ describe("pi extension CLI lifecycle", () => {
       "pi-extensions/path-guard",
       "--json",
     ]);
-    expect(applied.exitCode).toBe(0);
+    expect(applied.exitCode).toBe(3);
+    expect(applied.stderr).toContain(".pi/extensions/path-guard/stale.ts");
+    expect(await file(join(installed, "stale.ts")).text()).toBe("stale\n");
+    expect(
+      (
+        await runCli(project, home, [
+          "apply",
+          "pi-extensions/path-guard",
+          "--yes",
+          "--json",
+        ])
+      ).exitCode,
+    ).toBe(0);
     expect(await file(join(installed, "stale.ts")).exists()).toBe(false);
 
     await writeFile(

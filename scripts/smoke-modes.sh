@@ -149,7 +149,7 @@ assert_contains '"action": "would-reconcile"' "$TMP/shadow-apply-dry-run.json"
 assert_contains 'shadowed_by_personal_claude_skill' "$TMP/shadow-apply-dry-run.json"
 assert_contains 'local drift' "$SHADOW/.claude/skills/hello/SKILL.md"
 test -f "$SHADOW/.claude/skills/hello/stale.txt"
-(cd "$SHADOW" && "${CLI[@]}" apply skills/hello --json > "$TMP/shadow-apply.json")
+(cd "$SHADOW" && "${CLI[@]}" apply skills/hello --yes --json > "$TMP/shadow-apply.json")
 assert_contains 'shadowed_by_personal_claude_skill' "$TMP/shadow-apply.json"
 rm -rf "$HOME/.claude/skills/hello"
 assert_contains 'hello v1' "$SHADOW/.claude/skills/hello/SKILL.md"
@@ -157,7 +157,7 @@ test ! -e "$SHADOW/.claude/skills/hello/stale.txt"
 
 # --- system item: apply self-heals; promote refuses ---
 printf '%s\n' 'broken system skill' > "$SHADOW/.claude/skills/capshelf/SKILL.md"
-(cd "$SHADOW" && "${CLI[@]}" apply skills/capshelf --json >/dev/null)
+(cd "$SHADOW" && "${CLI[@]}" apply skills/capshelf --yes --json >/dev/null)
 assert_contains '# capshelf' "$SHADOW/.claude/skills/capshelf/SKILL.md"
 if (cd "$SHADOW" && "${CLI[@]}" promote skills/capshelf > "$TMP/promote-system.txt" 2>&1); then
   echo "expected promote to reject system items"

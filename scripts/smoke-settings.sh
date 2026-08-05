@@ -35,8 +35,8 @@ printf '%s\n' '{"permissions":{"allow":["Bash(git status *)"],"deny":["Read(./.e
 assert_contains 'diff data/settings/security' "$TMP/settings-drift-diff.txt"
 assert_fixed_contains 'Bash(curl *)' "$TMP/settings-drift-diff.txt"
 
-# --- apply: re-merges fragment into project settings ---
-(cd "$A" && "${CLI[@]}" apply settings/security --json >/dev/null)
+# --- apply: re-merges fragment into project settings after explicit consent ---
+(cd "$A" && "${CLI[@]}" apply settings/security --yes --json >/dev/null)
 
 # --- update flow: upstream changes the fragment; three-way merge picks up new local + new upstream ---
 printf '%s\n' '{"permissions":{"deny":["Read(./.env)","Bash(wget *)"]}}' > "$DATA/settings/security/settings.json"

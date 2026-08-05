@@ -77,7 +77,13 @@ assert_contains 'drifted' "$TMP/drift.txt"
 assert_contains '"action": "would-reconcile"' "$TMP/apply-dry-run.json"
 assert_contains 'local drift' "$A/.claude/skills/hello/SKILL.md"
 test -f "$A/.claude/skills/hello/stale.txt"
-(cd "$A" && "${CLI[@]}" apply skills/hello --json >/dev/null)
+if (cd "$A" && "${CLI[@]}" apply skills/hello --json > "$TMP/apply-refused.json" 2>&1); then
+  echo "expected apply to require consent for local drift"
+  exit 1
+fi
+assert_contains 'Apply would destroy local state' "$TMP/apply-refused.json"
+test -f "$A/.claude/skills/hello/stale.txt"
+(cd "$A" && "${CLI[@]}" apply skills/hello --yes --json >/dev/null)
 assert_contains 'hello v1' "$A/.claude/skills/hello/SKILL.md"
 test ! -e "$A/.claude/skills/hello/stale.txt"
 
