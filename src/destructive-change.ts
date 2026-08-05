@@ -62,7 +62,16 @@ export function normalizeDestructiveChanges(
       reason: change.reason,
       ...(change.reviewCommand && { reviewCommand: change.reviewCommand }),
     } satisfies DestructiveChange;
-    unique.set(changeKey(normalized), normalized);
+    const key = changeKey(normalized);
+    const current = unique.get(key);
+    if (
+      !current ||
+      (normalized.reviewCommand !== undefined &&
+        (current.reviewCommand === undefined ||
+          normalized.reviewCommand.localeCompare(current.reviewCommand) < 0))
+    ) {
+      unique.set(key, normalized);
+    }
   }
   return [...unique.values()].sort((left, right) =>
     changeKey(left).localeCompare(changeKey(right)),
@@ -146,13 +155,9 @@ export function renderDestructiveChanges(
 }
 
 function changeKey(change: DestructiveChange): string {
-  return [
-    change.scope,
-    change.item ?? "",
-    change.path,
-    change.reason,
-    change.reviewCommand ?? "",
-  ].join("\0");
+  return [change.scope, change.item ?? "", change.path, change.reason].join(
+    "\0",
+  );
 }
 
 function defaultDestructiveConfirmationContext(): DestructiveConfirmationContext {

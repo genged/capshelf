@@ -168,6 +168,22 @@ describe("Git and filesystem semantics", () => {
     expect(consumerLock.items["data/skills/mode"].sourceCommit).not.toBe(
       sourceCommit,
     );
+    const consumerInstalled = join(
+      consumer,
+      ".agents",
+      "skills",
+      "mode",
+      "SKILL.md",
+    );
+    await chmod(consumerInstalled, 0o644);
+    const refusedUpdate = consume(["update", "skills/mode"]);
+    expect(refusedUpdate.exitCode).toBe(3);
+    expect(refusedUpdate.stderr.toString()).toContain(
+      "Update would destroy local state",
+    );
+    expect(executable(consumerInstalled)).toBe(false);
+    expect(consume(["update", "skills/mode", "--yes"]).exitCode).toBe(0);
+    expect(executable(consumerInstalled)).toBe(true);
 
     const entry = lock.items[dataKey("skills", "mode")];
     if (entry?.source !== "data") throw new Error("expected data lock");

@@ -1,5 +1,19 @@
 import type { Command } from "commander";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
+import {
+  assertDestructivePlanUnchanged,
+  confirmDestructiveChanges,
+  createDestructiveChangePlan,
+  renderDestructiveChanges,
+  type DestructiveChange,
+  type DestructiveChangePlan,
+  type DestructiveConfirmationContext,
+} from "../destructive-change";
+import {
+  planCopyDirectoryDestruction,
+  planFragmentDestruction,
+  planSubagentDestruction,
+} from "../destructive-preflight";
 import type { Manifest } from "../manifest";
 import {
   needsEqual,
@@ -7,7 +21,7 @@ import {
   saveLocalLock,
   saveLock,
 } from "../lock";
-import type { DataLockEntry, LockEntry, SystemLockEntry } from "../lock";
+import type { DataLockEntry, Lock, LockEntry, SystemLockEntry } from "../lock";
 import { parseLockKey, shaOfInstalled } from "../installed";
 import {
   isCopyDirectoryItemKind,
@@ -32,6 +46,7 @@ import {
 import type { RuntimeWarning } from "../runtime-warnings";
 import {
   applyFragmentOutputPlans,
+  fragmentContributionState,
   fragmentKindForTarget,
   fragmentTargetKey,
   lastTouchingFragmentCommit,
@@ -54,7 +69,10 @@ interface UpdateOptions {
   json?: boolean;
   dryRun?: boolean;
   local?: boolean;
+  yes?: boolean;
 }
+
+export type UpdateConfirmationContext = DestructiveConfirmationContext;
 
 type UpdateAction =
   | "updated"
@@ -93,6 +111,7 @@ export function registerUpdate(program: Command): void {
       "preview planned lock and file changes without writing",
     )
     .option("--local", "update local-scope items")
+    .option("--yes", "overwrite local changes without prompting")
     .option("--json", "output JSON")
     .action(
       async (
@@ -170,6 +189,59 @@ export function registerUpdate(program: Command): void {
           explicit,
           externalSkillByName,
         };
+
+        const preflight = await planUpdatePreflight(
+          ctx,
+          targets,
+          projectLock,
+          localLock,
+        );
+        if (opts.dryRun) {
+          printUpdateOutput({
+            project,
+            dataRepo,
+            dryRun: true,
+            results: preflight.results,
+            destructivePlan: preflight.destructivePlan,
+            json: opts.json === true,
+          });
+          if (preflight.results.some((result) => result.action === "error")) {
+            throw new ResultExitError(1);
+          }
+          return;
+        }
+        if (preflight.results.some((result) => result.action === "error")) {
+          printUpdateOutput({
+            project,
+            dataRepo,
+            dryRun: false,
+            results: preflight.results,
+            destructivePlan: preflight.destructivePlan,
+            json: opts.json === true,
+          });
+          throw new ResultExitError(1);
+        }
+        if (
+          !(await confirmDestructiveChanges(preflight.destructivePlan, {
+            operation: "Update",
+            json: opts.json === true,
+            yes: opts.yes === true,
+            dryRun: false,
+            rerunCommand: updateRerunCommand(refs, opts.local === true),
+          }))
+        ) {
+          return;
+        }
+        const revalidated = await planUpdatePreflight(
+          ctx,
+          targets,
+          projectLock,
+          localLock,
+        );
+        assertDestructivePlanUnchanged(
+          preflight.destructivePlan,
+          revalidated.destructivePlan,
+        );
 
         // Each target is planned in isolation and returns an explicit effect;
         // the loop is the only place the shared accumulators are mutated, so
@@ -265,22 +337,14 @@ export function registerUpdate(program: Command): void {
         if (projectChanged) await saveLock(project, projectLock);
         if (localChanged) await saveLocalLock(project, localLock);
 
-        if (opts.json) {
-          console.log(
-            JSON.stringify(
-              {
-                project,
-                dataRepo,
-                dryRun: opts.dryRun === true,
-                items: results,
-              },
-              null,
-              2,
-            ),
-          );
-        } else {
-          printUpdateResults(results);
-        }
+        printUpdateOutput({
+          project,
+          dataRepo,
+          dryRun: false,
+          results,
+          destructivePlan: preflight.destructivePlan,
+          json: opts.json === true,
+        });
         if (results.some((r) => r.action === "error")) {
           throw new ResultExitError(1);
         }
@@ -295,6 +359,242 @@ interface UpdateContext {
   dryRun: boolean;
   explicit: boolean;
   externalSkillByName: Map<string, ExternalSkill>;
+}
+
+interface UpdatePreflight {
+  results: UpdateResult[];
+  destructivePlan: DestructiveChangePlan;
+}
+
+async function planUpdatePreflight(
+  ctx: UpdateContext,
+  targets: ScopedTarget[],
+  projectLock: Lock,
+  localLock: Lock,
+): Promise<UpdatePreflight> {
+  const dryContext = { ...ctx, dryRun: true };
+  const results: UpdateResult[] = [];
+  const changes: DestructiveChange[] = [];
+  const snapshotParts: string[] = [];
+  const fragmentNextLock = structuredClone(projectLock);
+  const fragmentTargets = new Set<FragmentTarget>();
+  const fragmentItems = new Map<FragmentTarget, Set<string>>();
+
+  for (const target of targets) {
+    const lock = target.scope === "local" ? localLock : projectLock;
+    const currentEntry = lock.items[target.key]!;
+    const outcome = await updateOneTarget(dryContext, target, currentEntry);
+    results.push(outcome.result);
+    snapshotParts.push(
+      `update-result:${target.scope}:${target.key}:${JSON.stringify(outcome.result)}`,
+    );
+    if (outcome.result.action === "error") continue;
+
+    const parsed = parseLockKey(target.key);
+    const selectedEntry = outcome.fragment?.entry ?? outcome.newEntry;
+    if (selectedEntry) {
+      snapshotParts.push(
+        `update-entry:${target.scope}:${target.key}:${lockEntrySnapshot(selectedEntry)}`,
+      );
+    }
+    if (outcome.fragment) {
+      fragmentNextLock.items[target.key] = outcome.fragment.entry;
+      for (const fragmentTarget of outcome.fragment.targets) {
+        fragmentTargets.add(fragmentTarget);
+        const items = fragmentItems.get(fragmentTarget) ?? new Set<string>();
+        items.add(`${parsed.kind}/${parsed.name}`);
+        fragmentItems.set(fragmentTarget, items);
+      }
+      continue;
+    }
+    if (!selectedEntry || outcome.result.action === "kept-local") continue;
+
+    const reviewCommand = itemReviewCommand(
+      parsed.kind,
+      parsed.name,
+      target.scope,
+    );
+    if (isCopyDirectoryItemKind(parsed.kind)) {
+      const planned = await planCopyDirectoryDestruction({
+        project: ctx.project,
+        dataRepo: ctx.dataRepo,
+        manifest: ctx.manifest,
+        kind: parsed.kind,
+        name: parsed.name,
+        key: target.key,
+        scope: target.scope,
+        currentEntry,
+        selectedEntry,
+        reviewCommand,
+      });
+      changes.push(...planned.changes);
+      snapshotParts.push(...planned.snapshotParts);
+    } else if (
+      isCopyTargetFileItemKind(parsed.kind) &&
+      currentEntry.source === "data" &&
+      selectedEntry.source === "data" &&
+      ctx.dataRepo
+    ) {
+      const planned = await planSubagentDestruction({
+        project: ctx.project,
+        dataRepo: ctx.dataRepo,
+        name: parsed.name,
+        key: target.key,
+        scope: target.scope,
+        currentEntry,
+        selectedEntry,
+        reviewCommand,
+      });
+      changes.push(...planned.changes);
+      snapshotParts.push(...planned.snapshotParts);
+    }
+  }
+
+  if (fragmentTargets.size > 0 && ctx.dataRepo) {
+    const plans: FragmentOutputPlan[] = [];
+    for (const target of [...fragmentTargets].sort()) {
+      try {
+        plans.push(
+          await planFragmentOutput({
+            project: ctx.project,
+            dataRepo: ctx.dataRepo,
+            manifest: ctx.manifest,
+            oldLock: projectLock,
+            nextLock: fragmentNextLock,
+            target,
+          }),
+        );
+      } catch (error) {
+        results.push({
+          key: fragmentTargetKey(target),
+          source: "data",
+          kind: fragmentKindForTarget(target),
+          name: "(merged)",
+          action: "error",
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    for (const result of await applyFragmentOutputPlans(plans, {
+      dryRun: true,
+    })) {
+      if (result.action !== "already-current") {
+        results.push(fragmentMergedUpdateResult(result));
+      }
+    }
+    const contributionStates = new Map<
+      FragmentTarget,
+      Awaited<ReturnType<typeof fragmentContributionState>>
+    >();
+    const reviewCommands = new Map<FragmentTarget, string>();
+    for (const target of fragmentTargets) {
+      contributionStates.set(
+        target,
+        await fragmentContributionState(
+          ctx.project,
+          ctx.dataRepo,
+          ctx.manifest,
+          projectLock,
+          target,
+        ),
+      );
+      const refs = [...(fragmentItems.get(target) ?? [])].sort();
+      if (refs.length > 0) {
+        reviewCommands.set(target, `capshelf status ${refs.join(" ")} --diff`);
+      }
+    }
+    const fragmentDestruction = planFragmentDestruction({
+      project: ctx.project,
+      plans,
+      contributionStates,
+      reviewCommands,
+    });
+    changes.push(...fragmentDestruction.changes);
+    snapshotParts.push(...fragmentDestruction.snapshotParts);
+  }
+
+  return {
+    results,
+    destructivePlan: createDestructiveChangePlan(changes, snapshotParts),
+  };
+}
+
+function lockEntrySnapshot(entry: LockEntry): string {
+  const { appliedAt: _appliedAt, ...stable } = entry;
+  return JSON.stringify(stable);
+}
+
+function itemReviewCommand(
+  kind: string,
+  name: string,
+  scope: "project" | "local",
+): string {
+  return `capshelf status ${kind}/${name}${scope === "local" ? " --local" : ""} --diff`;
+}
+
+function updateRerunCommand(refs: string[], local: boolean): string {
+  return `capshelf update${refs.length > 0 ? ` ${refs.join(" ")}` : ""}${local ? " --local" : ""} --yes`;
+}
+
+function printUpdateOutput(opts: {
+  project: string;
+  dataRepo: string | undefined;
+  dryRun: boolean;
+  results: UpdateResult[];
+  destructivePlan: DestructiveChangePlan;
+  json: boolean;
+}): void {
+  if (opts.json) {
+    console.log(
+      JSON.stringify(
+        {
+          project: opts.project,
+          dataRepo: opts.dataRepo,
+          dryRun: opts.dryRun,
+          items: opts.results,
+          destructiveChanges: opts.destructivePlan.changes,
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+  printUpdateResults(opts.results);
+  if (opts.dryRun && opts.destructivePlan.changes.length > 0) {
+    console.log(
+      renderDestructiveChanges("Update", opts.destructivePlan.changes),
+    );
+  }
+}
+
+interface UpdateConfirmationOptions {
+  json: boolean;
+}
+
+export async function confirmUpdateOverwrite(
+  items: string[],
+  options: UpdateConfirmationOptions,
+  context?: UpdateConfirmationContext,
+): Promise<boolean> {
+  return await confirmDestructiveChanges(
+    createDestructiveChangePlan(
+      items.map((item) => ({
+        scope: item.startsWith("local/") ? "local" : "project",
+        path: item,
+        reason: "managed_content",
+        reviewCommand: "capshelf status <item> --diff",
+      })),
+    ),
+    {
+      operation: "Update",
+      json: options.json,
+      yes: false,
+      dryRun: false,
+      rerunCommand: "capshelf update ... --yes",
+    },
+    context,
+  );
 }
 
 interface FragmentContribution {
@@ -536,6 +836,7 @@ async function updateDataTarget(
           manifest: ctx.manifest,
           key,
           entry: newEntry,
+          previousEntry: entry,
           scope,
           dryRun: ctx.dryRun,
         });
@@ -591,6 +892,7 @@ async function updateSystemTarget(
     key,
     manifest: ctx.manifest,
     entry: newEntry,
+    previousEntry: entry,
     scope,
     dryRun: ctx.dryRun,
   });

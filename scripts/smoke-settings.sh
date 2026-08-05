@@ -51,7 +51,18 @@ assert_contains '"action": "would-update"' "$TMP/settings-dry-run.json"
 assert_contains "$SETTINGS_COMMIT" "$TMP/settings-dry-run.json"
 assert_fixed_contains 'Bash(curl *)' "$A/.claude/settings.json"
 assert_not_contains "$SETTINGS_COMMIT" "$A/.capshelf/capshelf.lock.json"
-(cd "$A" && "${CLI[@]}" update settings/security --json >/dev/null)
+set +e
+(cd "$A" && "${CLI[@]}" update settings/security --json > "$TMP/settings-refused.json" 2> "$TMP/settings-refused-error.json")
+UPDATE_EXIT=$?
+set -e
+if [[ "$UPDATE_EXIT" -ne 3 ]]; then
+  echo "expected drifted non-interactive update to exit 3, got $UPDATE_EXIT"
+  exit 1
+fi
+assert_fixed_contains 'Update would destroy local state' "$TMP/settings-refused-error.json"
+assert_fixed_contains 'Bash(curl *)' "$A/.claude/settings.json"
+assert_not_contains "$SETTINGS_COMMIT" "$A/.capshelf/capshelf.lock.json"
+(cd "$A" && "${CLI[@]}" update settings/security --yes --json >/dev/null)
 assert_fixed_contains 'Read(./tmp/private/**)' "$A/.claude/settings.json"
 assert_fixed_contains 'Bash(wget *)' "$A/.claude/settings.json"
 assert_fixed_not_contains 'Bash(curl *)' "$A/.claude/settings.json"

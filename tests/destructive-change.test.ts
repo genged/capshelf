@@ -68,10 +68,13 @@ describe("destructive change consent", () => {
       path: ".agents/skills/second/SKILL.md",
       reason: "executable_mode",
     };
-    expect(normalizeDestructiveChanges([second, first, first])).toEqual([
-      second,
-      first,
-    ]);
+    expect(
+      normalizeDestructiveChanges([
+        second,
+        first,
+        { ...first, reviewCommand: "capshelf status --diff" },
+      ]),
+    ).toEqual([second, { ...first, reviewCommand: "capshelf status --diff" }]);
   });
 
   test("prompts once with all changes and accepts only explicit yes", async () => {

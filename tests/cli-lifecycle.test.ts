@@ -2,7 +2,7 @@ import { $, file } from "bun";
 import { describe, expect, test } from "bun:test";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { commitAll, runInProcess, tempRepo } from "./cli-fixtures";
+import { addSkill, commitAll, runInProcess, tempRepo } from "./cli-fixtures";
 
 describe("cli integration", () => {
   test("update rewrites installed files and bumps the lock to the new data commit", async () => {
@@ -62,7 +62,7 @@ describe("cli integration", () => {
     expect(JSON.parse(status.stdout.toString()).items[0].state).toBe("ok");
   });
 
-  test("update overwrites unpinned local edits with the new upstream content", async () => {
+  test("update requires explicit consent before overwriting local edits", async () => {
     const project = await tempRepo("capshelf-update-drift-project-");
     const dataRepo = await tempRepo("capshelf-update-drift-data-");
     const run = runInProcess(project);
@@ -84,10 +84,26 @@ describe("cli integration", () => {
     );
     await commitAll(dataRepo, "hello v2");
 
-    // Contract: update reconciles drifted installs to the new upstream
-    // content — local edits are overwritten unless the user has explicitly
-    // pinned them with `capshelf keep-local` (covered separately).
-    const update = await run(["update", "skills/hello", "--json"]);
+    const lockPath = join(project, ".capshelf", "capshelf.lock.json");
+    const lockBefore = await file(lockPath).text();
+    const dryRun = await run(["update", "skills/hello", "--dry-run", "--json"]);
+    expect(dryRun.exitCode).toBe(0);
+    expect(JSON.parse(dryRun.stdout.toString()).items[0].action).toBe(
+      "would-update",
+    );
+    expect(await file(installed).text()).toBe("local edit\n");
+    expect(await file(lockPath).text()).toBe(lockBefore);
+
+    const refused = await run(["update", "skills/hello", "--json"]);
+    expect(refused.exitCode).toBe(3);
+    expect(refused.stdout.toString()).toBe("");
+    const refusal = JSON.parse(refused.stderr.toString());
+    expect(refusal.error.message).toContain("project/data/skills/hello");
+    expect(refusal.error.hint).toContain("--yes");
+    expect(await file(installed).text()).toBe("local edit\n");
+    expect(await file(lockPath).text()).toBe(lockBefore);
+
+    const update = await run(["update", "skills/hello", "--yes", "--json"]);
     expect(update.exitCode).toBe(0);
     const item = JSON.parse(update.stdout.toString()).items.find(
       (i: { key: string }) => i.key === "data/skills/hello",
@@ -98,6 +114,53 @@ describe("cli integration", () => {
     const status = await run(["status", "skills/hello", "--json"]);
     expect(status.exitCode).toBe(0);
     expect(JSON.parse(status.stdout.toString()).items[0].state).toBe("ok");
+  });
+
+  test("update preflights all drift before changing any selected item", async () => {
+    const project = await tempRepo("capshelf-update-preflight-project-");
+    const dataRepo = await tempRepo("capshelf-update-preflight-data-");
+    const run = runInProcess(project);
+    await addSkill(dataRepo, "first", "first v1\n");
+    await addSkill(dataRepo, "second", "second v1\n");
+    await commitAll(dataRepo, "initial skills");
+
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/first"])).exitCode).toBe(0);
+    expect((await run(["add", "skills/second"])).exitCode).toBe(0);
+
+    const firstInstalled = join(
+      project,
+      ".agents",
+      "skills",
+      "first",
+      "SKILL.md",
+    );
+    const secondInstalled = join(
+      project,
+      ".agents",
+      "skills",
+      "second",
+      "SKILL.md",
+    );
+    await writeFile(
+      join(dataRepo, "skills", "first", "SKILL.md"),
+      "first v2\n",
+    );
+    await writeFile(
+      join(dataRepo, "skills", "second", "SKILL.md"),
+      "second v2\n",
+    );
+    await commitAll(dataRepo, "updated skills");
+    await writeFile(secondInstalled, "second local edit\n");
+
+    const lockPath = join(project, ".capshelf", "capshelf.lock.json");
+    const lockBefore = await file(lockPath).text();
+    const update = await run(["update", "--json"]);
+
+    expect(update.exitCode).toBe(3);
+    expect(await file(firstInstalled).text()).toBe("first v1\n");
+    expect(await file(secondInstalled).text()).toBe("second local edit\n");
+    expect(await file(lockPath).text()).toBe(lockBefore);
   });
 
   test("apply recreates installed skills in a fresh clone bound with set-data", async () => {
