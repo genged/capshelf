@@ -397,7 +397,6 @@ export async function planFragmentOutput(
 
   const commentLoss =
     changed &&
-    plannedText !== null &&
     currentText !== null &&
     (spec.format === "json"
       ? jsonTextHasComments(currentText)

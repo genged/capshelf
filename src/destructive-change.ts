@@ -145,12 +145,18 @@ export function renderDestructiveChanges(
   operation: string,
   changes: DestructiveChange[],
 ): string {
+  const normalized = normalizeDestructiveChanges(changes);
   return [
     `${operation} would destroy local state:`,
-    ...normalizeDestructiveChanges(changes).map((change) => {
+    ...normalized.map((change) => {
       const item = change.item ? `${change.item} — ` : "";
       return `  ${item}${change.path} — ${reasonLabels[change.reason]}`;
     }),
+    ...(normalized.some((change) => change.scope === "local")
+      ? [
+          "  Warning: local-scope files are excluded from project Git and may not be recoverable.",
+        ]
+      : []),
   ].join("\n");
 }
 

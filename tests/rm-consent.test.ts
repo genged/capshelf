@@ -1,0 +1,131 @@
+import { file } from "bun";
+import { describe, expect, test } from "bun:test";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { addSkill, commitAll, runInProcess, tempRepo } from "./cli-fixtures";
+
+describe("rm destructive-change consent", () => {
+  test("removes an unmodified locked item without prompting", async () => {
+    const project = await tempRepo("capshelf-rm-clean-project-");
+    const dataRepo = await tempRepo("capshelf-rm-clean-data-");
+    const run = runInProcess(project);
+    await addSkill(dataRepo, "clean", "clean\n");
+    await commitAll(dataRepo, "clean skill");
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/clean"])).exitCode).toBe(0);
+
+    const removed = await run(["rm", "skills/clean", "--json"]);
+    expect(removed.exitCode).toBe(0);
+    expect(
+      await file(
+        join(project, ".agents", "skills", "clean", "SKILL.md"),
+      ).exists(),
+    ).toBe(false);
+  });
+
+  test("detects ignored files and mode drift before deleting a copy item", async () => {
+    const project = await tempRepo("capshelf-rm-copy-project-");
+    const dataRepo = await tempRepo("capshelf-rm-copy-data-");
+    const run = runInProcess(project);
+    const skill = await addSkill(dataRepo, "stateful", "stateful\n");
+    await writeFile(join(skill, ".gitignore"), "cache/\n");
+    await commitAll(dataRepo, "stateful skill");
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/stateful"])).exitCode).toBe(0);
+
+    const installed = join(project, ".agents", "skills", "stateful");
+    const ignored = join(installed, "cache", "state.db");
+    await mkdir(join(installed, "cache"), { recursive: true });
+    await writeFile(ignored, "unique local state\n");
+    await chmod(join(installed, "SKILL.md"), 0o755);
+    const manifestPath = join(project, ".capshelf", "capshelf.json");
+    const lockPath = join(project, ".capshelf", "capshelf.lock.json");
+    const before = await Promise.all([
+      file(manifestPath).text(),
+      file(lockPath).text(),
+    ]);
+
+    const refused = await run(["rm", "skills/stateful", "--json"]);
+    expect(refused.exitCode).toBe(3);
+    expect(refused.stderr.toString()).toContain(
+      ".agents/skills/stateful/cache/state.db",
+    );
+    expect(refused.stderr.toString()).toContain(
+      "replace an executable-mode change",
+    );
+    expect(refused.stderr.toString()).toContain(
+      "capshelf status skills/stateful --diff",
+    );
+    expect(await file(ignored).text()).toBe("unique local state\n");
+    expect(
+      await Promise.all([file(manifestPath).text(), file(lockPath).text()]),
+    ).toEqual(before);
+
+    expect(
+      (await run(["rm", "skills/stateful", "--yes", "--json"])).exitCode,
+    ).toBe(0);
+    expect(await file(installed).exists()).toBe(false);
+  });
+
+  test("guards fragment comments and drift before unmerging", async () => {
+    const project = await tempRepo("capshelf-rm-fragment-project-");
+    const dataRepo = await tempRepo("capshelf-rm-fragment-data-");
+    const run = runInProcess(project);
+    const fragment = join(dataRepo, "settings", "theme");
+    await mkdir(fragment, { recursive: true });
+    await writeFile(
+      join(fragment, "settings.json"),
+      `${JSON.stringify({ theme: "dark" })}\n`,
+    );
+    await commitAll(dataRepo, "theme fragment");
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "settings/theme"])).exitCode).toBe(0);
+    const output = join(project, ".claude", "settings.json");
+    await writeFile(output, '// local context\n{"theme":"light"}\n');
+    const lockPath = join(project, ".capshelf", "capshelf.lock.json");
+    const lockBefore = await file(lockPath).text();
+
+    const refused = await run(["rm", "settings/theme", "--json"]);
+    expect(refused.exitCode).toBe(3);
+    expect(refused.stderr.toString()).toContain(
+      "replace a managed config contribution",
+    );
+    expect(refused.stderr.toString()).toContain("remove config comments");
+    expect(await file(output).text()).toContain("// local context");
+    expect(await file(lockPath).text()).toBe(lockBefore);
+
+    expect(
+      (await run(["rm", "settings/theme", "--yes", "--json"])).exitCode,
+    ).toBe(0);
+    expect(await file(output).exists()).toBe(false);
+  });
+
+  test("guards edited subagent targets before deleting them", async () => {
+    const project = await tempRepo("capshelf-rm-subagent-project-");
+    const dataRepo = await tempRepo("capshelf-rm-subagent-data-");
+    const run = runInProcess(project);
+    const source = join(dataRepo, "subagents", "reviewer", "claude.md");
+    await mkdir(join(dataRepo, "subagents", "reviewer"), { recursive: true });
+    await writeFile(
+      source,
+      "---\nname: reviewer\ndescription: Review changes\n---\n\nReview carefully.\n",
+    );
+    await commitAll(dataRepo, "reviewer subagent");
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "subagents/reviewer"])).exitCode).toBe(0);
+    const output = join(project, ".claude", "agents", "reviewer.md");
+    await writeFile(
+      output,
+      "---\nname: reviewer\ndescription: Review changes\n---\n\nLocal rules.\n",
+    );
+
+    const refused = await run(["rm", "subagents/reviewer", "--json"]);
+    expect(refused.exitCode).toBe(3);
+    expect(refused.stderr.toString()).toContain("overwrite a subagent target");
+    expect(await file(output).text()).toContain("Local rules");
+    expect(
+      (await run(["rm", "subagents/reviewer", "--yes", "--json"])).exitCode,
+    ).toBe(0);
+    expect(await file(output).exists()).toBe(false);
+  });
+});

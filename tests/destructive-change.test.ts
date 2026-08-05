@@ -101,6 +101,24 @@ describe("destructive change consent", () => {
     expect(stderr).toEqual([]);
   });
 
+  test("warns that local-scope loss may not be recoverable", async () => {
+    const { context, prompts } = confirmationContext("yes");
+    await confirmDestructiveChanges(
+      createDestructiveChangePlan([
+        {
+          ...first,
+          scope: "local",
+          item: "local/data/skills/first",
+        },
+      ]),
+      options(),
+      context,
+    );
+    expect(prompts[0]).toContain(
+      "local-scope files are excluded from project Git and may not be recoverable",
+    );
+  });
+
   test("declines empty and unrelated answers without authorization", async () => {
     for (const answer of ["", "n", "continue"]) {
       const { context, stderr } = confirmationContext(answer);

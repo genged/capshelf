@@ -57,7 +57,12 @@ export async function planCopyDirectoryDestruction(opts: {
     scope: opts.scope,
   });
 
-  const root = installedPath(opts.project, opts.kind, opts.name);
+  const root = installedPath(
+    opts.project,
+    opts.kind,
+    opts.name,
+    opts.manifest?.installMode,
+  );
   if (!existsSync(root)) {
     return { changes: [], snapshotParts: [`missing:${root}`] };
   }
@@ -99,6 +104,79 @@ export async function planCopyDirectoryDestruction(opts: {
   for (const path of expectedByPath.keys()) {
     if (!seen.has(path))
       snapshotParts.push(`copy:${join(root, ...path.split("/"))}:missing`);
+  }
+  return { changes, snapshotParts };
+}
+
+/** Inventory every file that removal would delete, including ignored files. */
+export async function planCopyDirectoryRemoval(opts: {
+  project: string;
+  dataRepo?: string;
+  manifest?: Manifest;
+  kind: CopyDirectoryItemKind;
+  name: string;
+  key: string;
+  scope: Scope;
+  currentEntry: LockEntry;
+  reviewCommand: string;
+}): Promise<PlannedDestruction> {
+  const current = await copyDirectoryReconciliationFiles({
+    project: opts.project,
+    dataRepo: opts.dataRepo,
+    manifest: opts.manifest,
+    kind: opts.kind,
+    name: opts.name,
+    entry: opts.currentEntry,
+    previousEntry: opts.currentEntry,
+    scope: opts.scope,
+  });
+  const root = installedPath(
+    opts.project,
+    opts.kind,
+    opts.name,
+    opts.manifest?.installMode,
+  );
+  if (!existsSync(root)) {
+    return { changes: [], snapshotParts: [`missing:${root}`] };
+  }
+  const rootInfo = await lstat(root);
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) {
+    throw new PreconditionError(
+      `managed copy-item target is not a regular directory: ${root}`,
+    );
+  }
+
+  const expectedByPath = new Map(
+    current.expected.map((file) => [file.path, file]),
+  );
+  const seen = new Set<string>();
+  const changes: DestructiveChange[] = [];
+  const snapshotParts: string[] = [];
+  for (const path of await allRegularFiles(root)) {
+    seen.add(path);
+    const fullPath = join(root, ...path.split("/"));
+    const [info, content] = await Promise.all([
+      lstat(fullPath),
+      readFile(fullPath),
+    ]);
+    const mode = (info.mode & 0o111) !== 0 ? "100755" : "100644";
+    snapshotParts.push(`copy:${fullPath}:${mode}:${contentDigest(content)}`);
+    const expected = expectedByPath.get(path);
+    if (!expected) {
+      changes.push(copyChange(opts, fullPath, "extra_local_path"));
+      continue;
+    }
+    if (!content.equals(expected.content)) {
+      changes.push(copyChange(opts, fullPath, "managed_content"));
+    }
+    if (mode !== expected.mode) {
+      changes.push(copyChange(opts, fullPath, "executable_mode"));
+    }
+  }
+  for (const path of expectedByPath.keys()) {
+    if (!seen.has(path)) {
+      snapshotParts.push(`copy:${join(root, ...path.split("/"))}:missing`);
+    }
   }
   return { changes, snapshotParts };
 }

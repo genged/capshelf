@@ -1,5 +1,15 @@
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
+import {
+  assertDestructivePlanUnchanged,
+  confirmDestructiveChanges,
+  createDestructiveChangePlan,
+} from "../destructive-change";
+import {
+  planCopyDirectoryRemoval,
+  planFragmentDestruction,
+  planSubagentDestruction,
+} from "../destructive-preflight";
 import { rmTreeWithRetries } from "../fs-utils";
 import { projectRoot } from "../paths";
 import { resolveProjectDataRepo } from "../command-context";
@@ -38,15 +48,20 @@ import {
   saveLocalConfig,
 } from "../local-config";
 import {
-  applyFragmentOutput,
+  applyFragmentOutputPlans,
+  fragmentContributionState,
   fragmentOutputPath,
   lockedFragmentTargetsForItem,
+  planFragmentOutput,
+  type FragmentOutputPlan,
+  type FragmentTarget,
 } from "../fragments";
 import { removeSubagentOutputs } from "../subagents";
 
 interface RmOptions {
   json?: boolean;
   local?: boolean;
+  yes?: boolean;
 }
 
 export function registerRm(program: Command): void {
@@ -54,6 +69,7 @@ export function registerRm(program: Command): void {
     .command("rm <item>")
     .description("remove a locked data item from the current project")
     .option("--local", "remove a local-scope item")
+    .option("--yes", "authorize deletion of detected local changes")
     .option("--json", "output JSON")
     .action(async (itemRef: string, opts: RmOptions, cmd: Command) => {
       const ref = parseItemRef(itemRef);
@@ -151,28 +167,140 @@ export function registerRm(program: Command): void {
       const parsed = parseLockKey(dataKeys[0]!);
       const kind = parsed.kind as ItemKind;
       const name = parsed.name;
-      if (opts.local) {
-        assertLocalScopeSupported(kind, name, "rm --local");
-        if (!localConfig) throw new Error("no local manifest exists");
-        removeLocalConfigName(localConfig, kind, name);
-      } else {
-        removeManifestName(manifest, kind, name);
-      }
-
       const entry = oldLock.items[dataKey(kind, name)];
       if (entry?.source !== "data") {
         throw new Error(`expected data lock entry for data/${kind}/${name}`);
       }
-      delete lock.items[dataKey(kind, name)];
+      const dataRepo = await resolveProjectDataRepo(project, oldManifest, cmd);
+      const nextManifest = structuredClone(manifest);
+      const nextLock = structuredClone(lock);
+      const nextLocalConfig = localConfig ? structuredClone(localConfig) : null;
+      if (opts.local) {
+        assertLocalScopeSupported(kind, name, "rm --local");
+        if (!nextLocalConfig) throw new Error("no local manifest exists");
+        removeLocalConfigName(nextLocalConfig, kind, name);
+      } else {
+        removeManifestName(nextManifest, kind, name);
+      }
+      delete nextLock.items[dataKey(kind, name)];
+
+      const scope = opts.local ? "local" : "project";
+      const reviewCommand = `${PRODUCT_NAME} status ${kind}/${name}${
+        opts.local ? " --local" : ""
+      } --diff`;
+      const planRemoval = async (): Promise<{
+        destructivePlan: ReturnType<typeof createDestructiveChangePlan>;
+        fragmentPlans: FragmentOutputPlan[];
+      }> => {
+        const changes = [];
+        const snapshotParts = [
+          `entry:${JSON.stringify(entry)}`,
+          `next-lock:${JSON.stringify(nextLock)}`,
+        ];
+        const fragmentPlans: FragmentOutputPlan[] = [];
+        if (isFragmentItemKind(kind)) {
+          const targets = await lockedFragmentTargetsForItem(
+            dataRepo,
+            kind,
+            name,
+            entry,
+            oldManifest,
+          );
+          const contributionStates = new Map<
+            FragmentTarget,
+            Awaited<ReturnType<typeof fragmentContributionState>>
+          >();
+          const reviewCommands = new Map<FragmentTarget, string>();
+          for (const target of targets) {
+            fragmentPlans.push(
+              await planFragmentOutput({
+                project,
+                dataRepo,
+                manifest: nextManifest,
+                oldManifest,
+                nextManifest,
+                oldLock,
+                nextLock,
+                target,
+              }),
+            );
+            contributionStates.set(
+              target,
+              await fragmentContributionState(
+                project,
+                dataRepo,
+                oldManifest,
+                oldLock,
+                target,
+              ),
+            );
+            reviewCommands.set(target, reviewCommand);
+          }
+          const planned = planFragmentDestruction({
+            project,
+            plans: fragmentPlans,
+            contributionStates,
+            reviewCommands,
+          });
+          changes.push(...planned.changes);
+          snapshotParts.push(...planned.snapshotParts);
+        } else if (isCopyDirectoryItemKind(kind)) {
+          const planned = await planCopyDirectoryRemoval({
+            project,
+            dataRepo,
+            manifest: oldManifest,
+            kind,
+            name,
+            key: dataKey(kind, name),
+            scope,
+            currentEntry: entry,
+            reviewCommand,
+          });
+          changes.push(...planned.changes);
+          snapshotParts.push(...planned.snapshotParts);
+        } else if (isCopyTargetFileItemKind(kind)) {
+          const planned = await planSubagentDestruction({
+            project,
+            dataRepo,
+            name,
+            key: dataKey(kind, name),
+            scope,
+            currentEntry: entry,
+            selectedEntry: entry,
+            reviewCommand,
+          });
+          changes.push(...planned.changes);
+          snapshotParts.push(...planned.snapshotParts);
+        }
+        return {
+          destructivePlan: createDestructiveChangePlan(changes, snapshotParts),
+          fragmentPlans,
+        };
+      };
+
+      const accepted = await planRemoval();
+      if (
+        !(await confirmDestructiveChanges(accepted.destructivePlan, {
+          operation: `${PRODUCT_NAME} rm`,
+          json: opts.json === true,
+          yes: opts.yes === true,
+          dryRun: false,
+          rerunCommand: `${PRODUCT_NAME} rm ${kind}/${name}${
+            opts.local ? " --local" : ""
+          } --yes`,
+        }))
+      ) {
+        return;
+      }
+      const revalidated = await planRemoval();
+      assertDestructivePlanUnchanged(
+        accepted.destructivePlan,
+        revalidated.destructivePlan,
+      );
 
       let path = "";
       let removed = false;
       if (isFragmentItemKind(kind)) {
-        const dataRepo = await resolveProjectDataRepo(
-          project,
-          oldManifest,
-          cmd,
-        );
         const targets = await lockedFragmentTargetsForItem(
           dataRepo,
           kind,
@@ -181,27 +309,19 @@ export function registerRm(program: Command): void {
           oldManifest,
         );
         path = targets[0] ? fragmentOutputPath(project, targets[0]) : "";
-        for (const target of targets) {
-          const result = await applyFragmentOutput({
-            project,
-            dataRepo,
-            manifest,
-            oldManifest,
-            nextManifest: manifest,
-            oldLock,
-            nextLock: lock,
-            target,
-          });
+        for (const result of await applyFragmentOutputPlans(
+          revalidated.fragmentPlans,
+        )) {
           removed = removed || result.action === "reconciled";
         }
       } else if (isCopyDirectoryItemKind(kind)) {
-        path = installedPath(project, kind, name, manifest.installMode);
+        path = installedPath(project, kind, name, oldManifest.installMode);
         removed = await removeInstallAliases(
           project,
           kind,
           name,
           path,
-          manifest.installMode,
+          oldManifest.installMode,
         );
         if (existsSync(path)) {
           try {
@@ -218,11 +338,6 @@ export function registerRm(program: Command): void {
           removed = true;
         }
       } else if (isCopyTargetFileItemKind(kind)) {
-        const dataRepo = await resolveProjectDataRepo(
-          project,
-          oldManifest,
-          cmd,
-        );
         const paths = await removeSubagentOutputs(
           project,
           dataRepo,
@@ -236,13 +351,13 @@ export function registerRm(program: Command): void {
       }
 
       if (opts.local) {
-        if (!localConfig) throw new Error("expected local manifest");
+        if (!nextLocalConfig) throw new Error("expected local manifest");
         await removeLocalExcludes(project, kind, name);
-        await saveLocalConfig(project, localConfig);
-        await saveLocalLock(project, lock);
+        await saveLocalConfig(project, nextLocalConfig);
+        await saveLocalLock(project, nextLock);
       } else {
-        await saveManifest(project, manifest);
-        await saveLock(project, lock);
+        await saveManifest(project, nextManifest);
+        await saveLock(project, nextLock);
       }
 
       if (opts.json) {
