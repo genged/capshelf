@@ -298,6 +298,13 @@ async function printAlreadyInstalled(
     `Review installed changes: capshelf status ${parsed.kind}/${parsed.name}${localFlag} --diff`,
     `Select newer upstream content: capshelf update ${parsed.kind}/${parsed.name}${localFlag}`,
     `Restore the selected lock: capshelf apply ${parsed.kind}/${parsed.name}${localFlag}`,
+    `Discard installed changes: capshelf revert ${parsed.kind}/${parsed.name}${localFlag}`,
+    `Publish installed changes: capshelf promote ${parsed.kind}/${parsed.name}${localFlag}`,
+    ...(isCopyDirectoryItemKind(parsed.kind)
+      ? [
+          `Keep installed divergence: capshelf keep-local ${parsed.kind}/${parsed.name}${localFlag} --reason <why>`,
+        ]
+      : []),
   ];
   const runtimeWarnings = runtimeWarningsForItem(
     ctx.project,

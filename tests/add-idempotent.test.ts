@@ -36,6 +36,15 @@ describe("standalone add convergence", () => {
     expect(report.guidance.join("\n")).toContain(
       "capshelf update skills/hello",
     );
+    expect(report.guidance.join("\n")).toContain(
+      "capshelf revert skills/hello",
+    );
+    expect(report.guidance.join("\n")).toContain(
+      "capshelf promote skills/hello",
+    );
+    expect(report.guidance.join("\n")).toContain(
+      "capshelf keep-local skills/hello",
+    );
     expect(await file(installed).text()).toBe("local edit\n");
     expect(await file(manifestPath).text()).toBe(manifestBefore);
     expect(await file(lockPath).text()).toBe(lockBefore);
