@@ -483,6 +483,7 @@ describe("pi extension CLI lifecycle", () => {
     const reverted = await runCli(project, home, [
       "revert",
       "pi-extensions/path-guard",
+      "--yes",
       "--json",
     ]);
     expect(reverted.exitCode).toBe(0);
@@ -741,6 +742,7 @@ describe("pi extension CLI lifecycle", () => {
           "update",
           "pi-extensions/guard",
           "--local",
+          "--yes",
         ])
       ).exitCode,
     ).toBe(0);
@@ -753,6 +755,7 @@ describe("pi extension CLI lifecycle", () => {
           "revert",
           "pi-extensions/guard",
           "--local",
+          "--yes",
         ])
       ).exitCode,
     ).toBe(0);

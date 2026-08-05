@@ -50,7 +50,7 @@ printf '%s\n' "export const rules = ['kept'];" > "$C/.pi/extensions/path-guard/s
 (cd "$C" && "${CLI[@]}" status pi-extensions/path-guard --local --strict --json > "$TMP/status-kept-local.json")
 assert_contains '"state": "kept-local"' "$TMP/status-kept-local.json"
 (cd "$C" && "${CLI[@]}" keep-local pi-extensions/path-guard --local --unset >/dev/null)
-(cd "$C" && "${CLI[@]}" revert pi-extensions/path-guard --local >/dev/null)
+(cd "$C" && "${CLI[@]}" revert pi-extensions/path-guard --local --yes >/dev/null)
 assert_contains "v1" "$C/.pi/extensions/path-guard/src/rules.ts"
 
 (cd "$A" && "${CLI[@]}" status pi-extensions/path-guard --strict --json > "$TMP/status-current.json")

@@ -274,7 +274,8 @@ describe("declared needs CLI lifecycle", () => {
     expect(await file(installed).text()).toBe("export default 2;\n");
 
     expect(
-      (await run(["revert", "pi-extensions/local-needs", "--local"])).exitCode,
+      (await run(["revert", "pi-extensions/local-needs", "--local", "--yes"]))
+        .exitCode,
     ).toBe(0);
     expect(await readSnapshot(localLockPath)).toEqual(pinnedSnapshot);
     expect(await file(installed).text()).toBe("export default 1;\n");

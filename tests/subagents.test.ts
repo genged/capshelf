@@ -326,7 +326,9 @@ describe("subagent CLI lifecycle", () => {
     expect(JSON.parse(drifted.stdout.toString()).items[0].state).toBe(
       "drifted_local",
     );
-    expect((await run(["revert", "subagents/reviewer"])).exitCode).toBe(0);
+    expect(
+      (await run(["revert", "subagents/reviewer", "--yes"])).exitCode,
+    ).toBe(0);
     expect(await file(claudeOutput).text()).toBe(CLAUDE);
     expect((await run(["keep-local", "subagents/reviewer"])).exitCode).toBe(3);
 

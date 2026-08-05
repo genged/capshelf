@@ -95,7 +95,7 @@ assert_contains '"state": "kept-local"' "$TMP/kept-local.json"
 (cd "$A" && "${CLI[@]}" apply skills/hello --json >/dev/null)
 assert_contains 'local fork' "$A/.claude/skills/hello/SKILL.md"
 (cd "$A" && "${CLI[@]}" keep-local skills/hello --unset --json >/dev/null)
-(cd "$A" && "${CLI[@]}" revert skills/hello --json >/dev/null)
+(cd "$A" && "${CLI[@]}" revert skills/hello --yes --json >/dev/null)
 assert_contains 'hello v1' "$A/.claude/skills/hello/SKILL.md"
 
 # --- promote: A pushes hello v2 upstream and bumps its own lock ---

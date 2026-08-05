@@ -450,7 +450,13 @@ describe("cli integration", () => {
       join(project, ".agents", "skills", "hello", "SKILL.md"),
       "local edit\n",
     );
-    const revert = await run(["revert", "skills/hello", "--local", "--json"]);
+    const revert = await run([
+      "revert",
+      "skills/hello",
+      "--local",
+      "--yes",
+      "--json",
+    ]);
     expect(revert.exitCode).toBe(0);
     expect(JSON.parse(revert.stdout.toString()).action).toBe("reconciled");
     expect(

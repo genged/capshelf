@@ -238,7 +238,7 @@ describe("cli integration", () => {
       "drifted_local",
     );
 
-    const revert = await run(["revert", "skills/hello", "--json"]);
+    const revert = await run(["revert", "skills/hello", "--yes", "--json"]);
     expect(revert.exitCode).toBe(0);
     const result = JSON.parse(revert.stdout.toString());
     expect(result.action).toBe("reconciled");

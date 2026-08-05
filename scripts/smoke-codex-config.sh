@@ -53,7 +53,7 @@ assert_fixed_contains 'model = "gpt-5.1"' "$A/.codex/config.toml"
 assert_fixed_contains 'profile = "local"' "$A/.codex/config.toml"
 
 perl -0pi -e 's/model = "gpt-5.1"\\n//' "$A/.codex/config.toml"
-(cd "$A" && "${CLI[@]}" revert codex-config/defaults --json > "$TMP/codex-revert.json")
+(cd "$A" && "${CLI[@]}" revert codex-config/defaults --yes --json > "$TMP/codex-revert.json")
 assert_fixed_contains 'model = "gpt-5.1"' "$A/.codex/config.toml"
 
 (cd "$A" && "${CLI[@]}" rm codex-config/defaults --json > "$TMP/codex-rm.json")
