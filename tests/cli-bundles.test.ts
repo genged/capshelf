@@ -154,15 +154,14 @@ describe("cli integration", () => {
       await readFile(join(project, ".capshelf", "capshelf.lock.json"), "utf-8"),
     ).toBe(before);
 
-    // …while standalone add of the same installed item still re-applies
-    // (fresh appliedAt) — the pair pins the skip gate to the executor.
+    // …and standalone add of the same installed item is also a stable no-op.
     await new Promise((resolve) => setTimeout(resolve, 5));
     const single = await run(["add", "skills/security-review"]);
     expect(single.exitCode).toBe(0);
-    expect(single.stdout.toString()).toContain("re-applied");
+    expect(single.stdout.toString()).toContain("already installed");
     expect(
       await readFile(join(project, ".capshelf", "capshelf.lock.json"), "utf-8"),
-    ).not.toBe(before);
+    ).toBe(before);
 
     // Bundle grows upstream → re-run adds only the new member.
     await mkdir(join(dataRepo, "skills", "extra"), { recursive: true });

@@ -2,6 +2,13 @@ import type { Command } from "commander";
 import { join } from "node:path";
 import { homeRelative } from "../paths";
 import { loadProjectContext } from "../command-context";
+import {
+  assertDestructivePlanUnchanged,
+  confirmDestructiveChanges,
+  createDestructiveChangePlan,
+  type DestructiveChangePlan,
+} from "../destructive-change";
+import { planFragmentDestruction } from "../destructive-preflight";
 import { saveManifest } from "../manifest";
 import type { Manifest } from "../manifest";
 import { addManifestName, manifestNamesForKind } from "../manifest";
@@ -20,6 +27,7 @@ import {
   METADATA_SIDECAR,
   captureCommittedItemNeeds,
   loadDataItemMetadata,
+  loadCommittedItemNeeds,
   printMetadataWarnings,
 } from "../metadata";
 import type { ItemMetadata, ItemNeeds } from "../metadata";
@@ -29,10 +37,11 @@ import {
   ensureInstallAliases,
   findInstallConflict,
   installedPath,
+  parseLockKey,
 } from "../installed";
 import { isSystemItemName } from "../bundled";
 import { assertPathClean, lastTouchingContentCommit } from "../git";
-import { findMasterItemByRef, parseItemRef } from "../item-ref";
+import { findMasterItemByRef, lockKeyForRef, parseItemRef } from "../item-ref";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import {
   addLocalConfigName,
@@ -54,11 +63,18 @@ import {
   assertFragmentSourcesClean,
   currentFragmentSourcesForItem,
   currentFragmentTargetsForItem,
+  fragmentContributionState,
   fragmentOutputPath,
   lastTouchingFragmentCommit,
+  planFragmentOutput,
   shaOfFragmentItem,
 } from "../fragments";
-import type { FragmentApplyResult, FragmentSource } from "../fragments";
+import type {
+  FragmentApplyResult,
+  FragmentOutputPlan,
+  FragmentSource,
+  FragmentTarget,
+} from "../fragments";
 import { isBundleRef, loadBundleStrict, memberRef } from "../bundles";
 import type { Bundle } from "../bundles";
 import {
@@ -89,6 +105,7 @@ interface AddOptions {
   json?: boolean;
   local?: boolean;
   target?: string;
+  yes?: boolean;
 }
 
 /** Everything the single-item installer needs; loaded once per command. */
@@ -121,6 +138,7 @@ export function registerAdd(program: Command): void {
       "install an item (or expand a bundles/<name> bundle) from the data repo into the current project",
     )
     .option("--local", "install as clone-local project state")
+    .option("--yes", "authorize destructive collateral config changes")
     .option(
       "--target <target>",
       "target selection is not supported for add; subagents install all targets",
@@ -154,10 +172,44 @@ export function registerAdd(program: Command): void {
       }
 
       const ctx = await loadAddContext(opts, cmd);
+      const selectedLock = ctx.local ? ctx.localLock : ctx.projectLock;
+      const otherLock = ctx.local ? ctx.projectLock : ctx.localLock;
+      const selectedKey = lockKeyForRef(selectedLock, ref, "data");
+      const otherKey = lockKeyForRef(otherLock, ref, "data");
+      if (otherKey) {
+        const parsed = parseLockKey(otherKey);
+        const otherScope = ctx.local ? "project" : "local";
+        throw new PreconditionError(
+          `${parsed.kind}/${parsed.name} is already owned by ${otherScope} scope; remove one owner before adding another`,
+        );
+      }
+      if (selectedKey && trackedInSelectedManifest(ctx, selectedKey)) {
+        await printAlreadyInstalled(ctx, selectedKey, opts.json === true);
+        return;
+      }
       const item = await findMasterItemByRef(ctx.dataRepo, ref);
       if (!item) {
         throw new NotFoundError(
           `not found in data repo (${ctx.dataRepo}): ${itemRef}`,
+        );
+      }
+
+      if (isFragmentItemKind(item.kind)) {
+        const preflight = await planStandaloneFragmentAdd(ctx, item);
+        if (
+          !(await confirmDestructiveChanges(preflight, {
+            operation: "Add",
+            json: opts.json === true,
+            yes: opts.yes === true,
+            dryRun: false,
+            rerunCommand: `capshelf add ${item.kind}/${item.name}${ctx.local ? " --local" : ""} --yes`,
+          }))
+        ) {
+          return;
+        }
+        assertDestructivePlanUnchanged(
+          preflight,
+          await planStandaloneFragmentAdd(ctx, item),
         );
       }
 
@@ -195,10 +247,9 @@ export function registerAdd(program: Command): void {
         );
         return;
       }
-      const verb = result.wasAlreadyInstalled ? "re-applied" : "added";
       const scope = ctx.local ? "local" : "project";
       console.log(
-        `✓ ${verb} ${scope}/data/${item.kind}/${item.name} @ ${result.sha}`,
+        `✓ added ${scope}/data/${item.kind}/${item.name} @ ${result.sha}`,
       );
       console.log(`  source commit: ${result.sourceCommit}`);
       console.log(`  ${result.dst}`);
@@ -223,6 +274,156 @@ async function loadAddContext(
   };
 }
 
+function trackedInSelectedManifest(ctx: AddContext, key: string): boolean {
+  const parsed = parseLockKey(key);
+  return ctx.local
+    ? ctx.localConfig !== null &&
+        localConfigNamesForKind(ctx.localConfig, parsed.kind).includes(
+          parsed.name,
+        )
+    : manifestNamesForKind(ctx.manifest, parsed.kind).includes(parsed.name);
+}
+
+async function printAlreadyInstalled(
+  ctx: AddContext,
+  key: string,
+  json: boolean,
+): Promise<void> {
+  const parsed = parseLockKey(key);
+  const lock = ctx.local ? ctx.localLock : ctx.projectLock;
+  const entry = lock.items[key]!;
+  const scope = ctx.local ? "local" : "project";
+  const localFlag = ctx.local ? " --local" : "";
+  const guidance = [
+    `Review installed changes: capshelf status ${parsed.kind}/${parsed.name}${localFlag} --diff`,
+    `Select newer upstream content: capshelf update ${parsed.kind}/${parsed.name}${localFlag}`,
+    `Restore the selected lock: capshelf apply ${parsed.kind}/${parsed.name}${localFlag}`,
+  ];
+  const runtimeWarnings = runtimeWarningsForItem(
+    ctx.project,
+    parsed.kind,
+    parsed.name,
+  );
+  const missingRequires =
+    entry.source === "data"
+      ? (
+          await loadCommittedItemNeeds(
+            ctx.dataRepo,
+            { kind: parsed.kind, name: parsed.name },
+            entry.sourceCommit,
+          )
+        ).requires.filter(
+          (required) =>
+            ctx.projectLock.items[`data/${required}`] === undefined &&
+            ctx.projectLock.items[`system/${required}`] === undefined &&
+            ctx.localLock.items[`data/${required}`] === undefined &&
+            ctx.localLock.items[`system/${required}`] === undefined,
+        )
+      : [];
+  if (json) {
+    console.log(
+      JSON.stringify(
+        {
+          kind: parsed.kind,
+          name: parsed.name,
+          scope,
+          action: "already-installed",
+          sha: entry.sha,
+          ...(entry.source === "data" && {
+            sourceCommit: entry.sourceCommit,
+            needs: entry.needs ?? { network: [], env: [], bin: [] },
+          }),
+          wasAlreadyInstalled: true,
+          guidance,
+          ...(runtimeWarnings.length > 0 && { runtimeWarnings }),
+          ...(missingRequires.length > 0 && { missingRequires }),
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+  console.log(
+    `= already installed ${scope}/data/${parsed.kind}/${parsed.name} @ ${entry.sha}`,
+  );
+  for (const line of guidance) console.log(`  ${line}`);
+  printRuntimeWarnings(runtimeWarnings);
+  printMissingRequires(`${parsed.kind}/${parsed.name}`, missingRequires);
+}
+
+async function planStandaloneFragmentAdd(
+  ctx: AddContext,
+  item: MasterItem,
+): Promise<DestructiveChangePlan> {
+  if (!isFragmentItemKind(item.kind)) {
+    return createDestructiveChangePlan([]);
+  }
+  if (ctx.local) {
+    assertLocalScopeSupported(item.kind, item.name, "add --local");
+  }
+  await assertFragmentSourcesClean(ctx.dataRepo, item.kind, item.name);
+  const [sha, sourceCommit, snapshot] = await Promise.all([
+    shaOfFragmentItem(ctx.dataRepo, item.kind, item.name),
+    lastTouchingFragmentCommit(ctx.dataRepo, item.kind, item.name),
+    captureCommittedItemNeeds(ctx.dataRepo, item),
+  ]);
+  const nextManifest = structuredClone(ctx.manifest);
+  addToManifest(nextManifest, item);
+  const nextLock = structuredClone(ctx.projectLock);
+  nextLock.items[dataKey(item.kind, item.name)] = createDataLockEntry({
+    sha,
+    sourceCommit,
+    ...snapshot,
+  });
+  const targets = await currentFragmentTargetsForItem(
+    ctx.dataRepo,
+    item.kind,
+    item.name,
+  );
+  const plans: FragmentOutputPlan[] = [];
+  const contributionStates = new Map<
+    FragmentTarget,
+    Awaited<ReturnType<typeof fragmentContributionState>>
+  >();
+  const reviewCommands = new Map<FragmentTarget, string>();
+  for (const target of [...new Set(targets)].sort()) {
+    plans.push(
+      await planFragmentOutput({
+        project: ctx.project,
+        dataRepo: ctx.dataRepo,
+        manifest: nextManifest,
+        oldManifest: ctx.manifest,
+        nextManifest,
+        oldLock: ctx.projectLock,
+        nextLock,
+        target,
+      }),
+    );
+    contributionStates.set(
+      target,
+      await fragmentContributionState(
+        ctx.project,
+        ctx.dataRepo,
+        ctx.manifest,
+        ctx.projectLock,
+        target,
+      ),
+    );
+    reviewCommands.set(target, "capshelf status --diff");
+  }
+  const destruction = planFragmentDestruction({
+    project: ctx.project,
+    plans,
+    contributionStates,
+    reviewCommands,
+  });
+  return createDestructiveChangePlan(destruction.changes, [
+    ...destruction.snapshotParts,
+    `add-source:${item.kind}/${item.name}:${sha}:${sourceCommit}`,
+  ]);
+}
+
 export interface InstallDataItemOptions {
   /**
    * Sidecar relations (`requires`/`conflicts-with`) enforcement. The bundle
@@ -238,11 +439,9 @@ export interface InstallDataItemOptions {
  * executor. Persists manifest + lock before returning, so bundle expansion
  * leaves a consistent prefix after a mid-install failure.
  *
- * Deliberately has NO skip guard for already-installed items: standalone
- * `add` re-applies them (recomputes sha/sourceCommit, rewrites the lock
- * entry with a fresh appliedAt) and "re-applied" vs "added" is display-only.
- * The bundle executor never calls this for installed members — the skip
- * lives there, not here.
+ * Deliberately has no internal skip guard: standalone `add` returns before
+ * calling this for installed items, and the bundle executor likewise calls it
+ * only for members whose plan status is `install`.
  */
 export async function installDataItem(
   ctx: AddContext,
