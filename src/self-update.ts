@@ -98,13 +98,13 @@ export interface SelfUpdateCommandOptions {
 }
 
 export function defaultSelfUpdateContext(
-  argv: string[] = process.argv,
+  _argv: string[] = process.argv,
 ): SelfUpdateContext {
   return {
     env: process.env,
     stdinIsTTY: process.stdin.isTTY === true,
     stderrIsTTY: process.stderr.isTTY === true,
-    activeExecutablePath: argv[1] ?? process.execPath,
+    activeExecutablePath: process.execPath,
     cachePath: selfUpdateCachePath(process.env),
     now: () => new Date(),
     prompt: defaultPrompt,

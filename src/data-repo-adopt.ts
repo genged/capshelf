@@ -16,7 +16,7 @@ import {
   ensureInstallAliases,
   installedPath,
 } from "./installed";
-import { assertRepoClean, commitInRepo, headSha } from "./git";
+import { headSha } from "./git";
 import {
   METADATA_SIDECAR,
   parseSidecar,
@@ -129,25 +129,14 @@ export async function adoptIntoDataRepo(
     }
     if (kind === "skills") await refreshCodexProjection(dataRepo);
   };
-  let sourceCommit: string;
-  if (projectionRoots.length > 0) {
-    const expectedHead = await headSha(dataRepo);
-    sourceCommit = await commitDataRepoMutation({
-      dataRepo,
-      expectedHead,
-      ownedRoots: [repoRelPath, ...projectionRoots],
-      message: opts.message ?? `capshelf: ${kind}/${name}`,
-      mutate: mutateSource,
-    });
-  } else {
-    await assertRepoClean(dataRepo);
-    await mutateSource();
-    sourceCommit = await commitInRepo(
-      dataRepo,
-      [repoRelPath],
-      opts.message ?? `capshelf: ${kind}/${name}`,
-    );
-  }
+  const expectedHead = await headSha(dataRepo).catch(() => null);
+  const sourceCommit = await commitDataRepoMutation({
+    dataRepo,
+    expectedHead,
+    ownedRoots: [repoRelPath, ...projectionRoots],
+    message: opts.message ?? `capshelf: ${kind}/${name}`,
+    mutate: mutateSource,
+  });
 
   if (kind === "skills") {
     await normalizeAdoptedSkill(

@@ -1,11 +1,12 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { lstat, readdir, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join, basename } from "node:path";
 import { hashNamedContents } from "./content-hash";
-import { assertNever } from "./assert";
+import { assertNever, assertSafeItemName } from "./assert";
 import { isIgnoredDotDirent } from "./dotfiles";
 import { gitVisibleFilesUnderPath } from "./git";
 import { METADATA_SIDECAR } from "./identity";
+import { PreconditionError } from "./errors";
 
 export const ITEM_KINDS = [
   "skills",
@@ -105,8 +106,14 @@ export async function listMasterItems(
     if (!existsSync(dir)) continue;
     const entries = await readdir(dir, { withFileTypes: true });
     for (const e of entries) {
+      if (e.isSymbolicLink()) {
+        throw new PreconditionError(
+          `${join(dir, e.name)} is an unsupported symlink; copy items support regular directories only`,
+        );
+      }
       if (!e.isDirectory()) continue;
       if (e.name.startsWith(".")) continue;
+      assertSafeItemName(e.name, `data repo ${k} catalog`);
       if (!(await isInstallableDataItem(dataRepo, k, e.name))) continue;
       const repoRelPath = itemRepoRelPath(k, e.name);
       const abs = join(dataRepo, ...repoRelPath.split("/"));
@@ -158,6 +165,14 @@ async function walkFiles(root: string): Promise<string[]> {
       const childRel = rel ? join(rel, e.name) : e.name;
       if (e.isDirectory()) await go(childRel);
       else if (e.isFile()) out.push(childRel);
+      else {
+        const type = e.isSymbolicLink()
+          ? "symlink"
+          : "unsupported filesystem object";
+        throw new PreconditionError(
+          `${root} contains an unsupported ${type}: ${childRel}; copy items support regular files only`,
+        );
+      }
     }
   }
   await go("");
@@ -170,9 +185,14 @@ async function walkFiles(root: string): Promise<string[]> {
  * roots) and single files (future codex agents).
  */
 export async function shaOfItem(itemPath: string): Promise<string> {
-  const info = await stat(itemPath);
+  const info = await lstat(itemPath);
   if (info.isFile()) {
     return shaOfItemFiles(itemPath, []);
+  }
+  if (!info.isDirectory()) {
+    throw new PreconditionError(
+      `${itemPath} is not a regular file or directory; copy items do not support symlinks or special files`,
+    );
   }
   return shaOfItemFiles(
     itemPath,
@@ -196,7 +216,7 @@ export async function shaOfItemFiles(
   itemPath: string,
   files: string[],
 ): Promise<string> {
-  const info = await stat(itemPath);
+  const info = await lstat(itemPath);
   const named = info.isFile()
     ? [{ name: basename(itemPath), path: itemPath }]
     : files.map((rel) => ({
@@ -205,10 +225,15 @@ export async function shaOfItemFiles(
       }));
   return hashNamedContents(
     await Promise.all(
-      named.map(async ({ name, path }) => ({
-        name,
-        content: await readFile(path),
-      })),
+      named.map(async ({ name, path }) => {
+        const file = await lstat(path);
+        if (!file.isFile()) {
+          throw new PreconditionError(
+            `${itemPath} contains a non-regular file: ${name}; copy items support regular files only`,
+          );
+        }
+        return { name, content: await readFile(path) };
+      }),
     ),
   );
 }

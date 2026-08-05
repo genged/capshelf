@@ -2,7 +2,11 @@ import { constants, existsSync } from "node:fs";
 import { lstat, readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { hashNamedContents } from "./content-hash";
-import { lsTreeEntriesAtCommit, showAtCommit } from "./git";
+import {
+  assertRegularBlobEntries,
+  lsTreeEntriesAtCommit,
+  showAtCommit,
+} from "./git";
 import type { GitFileMode, NamedFile } from "./merge-tree";
 import { METADATA_SIDECAR } from "./metadata";
 import type { CopyDirectoryItemKind } from "./master";
@@ -16,6 +20,7 @@ import { installedPath, shaOfInstalled } from "./installed";
 import { gitVisibleFilesUnderPath, isGitWorkTreeRoot } from "./git";
 import { gitignoreVisibleFiles } from "./gitignore";
 import type { ItemSnapshot, Scope } from "./promote-core";
+import { PreconditionError } from "./errors";
 
 export async function installedSnapshot(
   project: string,
@@ -99,7 +104,11 @@ export async function namedFilesFromInstalledSnapshot(
     if (path === METADATA_SIDECAR) continue;
     const fullPath = join(snapshot.localPath, ...path.split("/"));
     const stats = await lstat(fullPath);
-    if (!stats.isFile()) continue;
+    if (!stats.isFile()) {
+      throw new PreconditionError(
+        `${snapshot.localPath} contains a non-regular file: ${path}; copy items support regular files only`,
+      );
+    }
     files.push({
       path,
       content: await readFile(fullPath),
@@ -123,12 +132,10 @@ export async function namedFilesAtCommit(
 ): Promise<NamedFile[]> {
   const prefix = `${repoRelPath}/`;
   const files: NamedFile[] = [];
-  for (const entry of await lsTreeEntriesAtCommit(
-    dataRepo,
-    commit,
-    repoRelPath,
-  )) {
-    if (entry.type !== "blob" || !entry.path.startsWith(prefix)) continue;
+  const entries = await lsTreeEntriesAtCommit(dataRepo, commit, repoRelPath);
+  assertRegularBlobEntries(entries, repoRelPath);
+  for (const entry of entries) {
+    if (!entry.path.startsWith(prefix)) continue;
     const path = entry.path.slice(prefix.length);
     if (path === METADATA_SIDECAR) continue;
     files.push({
@@ -146,9 +153,9 @@ export async function sidecarAtCommit(
   commit: string,
 ): Promise<Buffer | null> {
   const path = `${repoRelPath}/${METADATA_SIDECAR}`;
-  const entry = (
-    await lsTreeEntriesAtCommit(dataRepo, commit, repoRelPath)
-  ).find((candidate) => candidate.path === path && candidate.type === "blob");
+  const entries = await lsTreeEntriesAtCommit(dataRepo, commit, repoRelPath);
+  assertRegularBlobEntries(entries, repoRelPath);
+  const entry = entries.find((candidate) => candidate.path === path);
   return entry ? await showAtCommit(dataRepo, commit, path) : null;
 }
 

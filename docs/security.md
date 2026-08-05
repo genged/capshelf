@@ -85,6 +85,10 @@ that boundary:
   `dataRepoUpstream`, capshelf refuses to use a clone whose `origin` does not
   normalize to that URL (exit 4). A contributor cannot be silently pointed at
   a look-alike repo with the same item names.
+- **Copy inputs are regular files only.** Data-repo bindings must name the Git
+  worktree root. Copy-item ingestion rejects symlinks, Git links, and special
+  objects in both the working tree and pinned commits, so a catalog item cannot
+  follow a link outside the repository during hashing or materialization.
 
 ## What capshelf does not do
 

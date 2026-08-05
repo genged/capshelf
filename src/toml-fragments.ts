@@ -83,6 +83,11 @@ function validateTomlValue(value: ConfigValue, label: string): void {
       `${label} contains a TOML date, which capshelf does not support in TOML fragments`,
     );
   }
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    throw new Error(
+      `${label} contains a non-finite number, which capshelf does not support in TOML fragments`,
+    );
+  }
   if (Array.isArray(value)) {
     for (const [index, entry] of value.entries()) {
       validateTomlValue(entry, `${label}[${index}]`);

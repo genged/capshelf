@@ -118,6 +118,11 @@ A data repo is any directory matching this layout, with its own git history:
 └── .git/                       required: a data repo MUST be a git repo
 ```
 
+The bound directory must canonicalize to the Git worktree root; a nested
+directory is not a data repo binding. Copy-item trees contain regular files
+only. Working-tree ingestion rejects symlinks and special objects, and
+commit-based reads accept only blob modes `100644` and `100755`.
+
 Items may carry an optional `.capshelf.yml` metadata sidecar at their
 directory root (see Item Metadata below). The CLI discovers installable
 items only from `skills/`, `pi/extensions/`, `subagents/`, `settings/`, `mcp/`, and
@@ -281,6 +286,11 @@ CLI-only changes in the data repo (e.g. someone edits `src/foo.ts`) don't bump `
 | mcp | merge `mcp/<name>/claude.json` and/or `mcp/<name>/codex.toml` fragments | `.mcp.json` and/or `.codex/config.toml` |
 | codex-config | merge `codex/config/<name>/config.toml` fragments | `.codex/config.toml` |
 
+Apply and revert build a complete replacement copy-item tree in a temporary
+sibling directory, verify its bytes and modes, then publish it with renames.
+The previous installation remains available as a backup through alias
+creation; a read, write, chmod, publication, or alias failure restores it.
+
 Pi extensions are loaded by Pi only after project trust. Project and
 clone-local Capshelf scope both materialize to the same Pi project path;
 Capshelf scope controls intent and lock ownership, not Pi runtime scope.
@@ -309,9 +319,19 @@ collisions instead of overwriting project-local values, and refuses two
 fragments that set the same key to conflicting scalar values instead of
 resolving them silently by manifest order.
 
+Multi-target reconciliation separates planning from publication: every
+fragment target must pass collision and current-output checks before the first
+write. Publication retains the old text for rollback, and lock state advances
+only after all target writes succeed. Configuration maps use own data
+properties throughout merge and serialization so valid keys such as
+`__proto__` and `constructor` are not lost or mistaken for inherited values.
+
 ## Versioning: content-hash + last-touching-commit
 
 - Each item has a `sha` over its sorted file list. Truncated `sha256`, 12 hex chars.
+- Copy-item executable mode is compared separately as normalized Git mode
+  `100644` or `100755`; it is intentionally not folded into the current hash
+  format.
 - For data items, the lockfile also records `sourceCommit` — the data repo commit whose tree at this item's path matches the locked sha.
 - For system items, the lockfile records `cliVersion` — the capshelf binary version that produced the bundled content.
 - Optional human `label` (e.g. `"v3"`) is decoration, not identity.

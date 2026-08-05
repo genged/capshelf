@@ -11,6 +11,7 @@ import {
   installedPath,
 } from "./installed";
 import type { InstallMode } from "./paths";
+import { PreconditionError } from "./errors";
 
 export function targetDir(
   project: string,
@@ -51,6 +52,14 @@ export async function copyRecursive(
       const d = join(to, e.name);
       if (e.isDirectory()) await go(s, d, childRel);
       else if (e.isFile()) await copyFile(s, d);
+      else {
+        const type = e.isSymbolicLink()
+          ? "symlink"
+          : "unsupported filesystem object";
+        throw new PreconditionError(
+          `${src} contains an unsupported ${type}: ${childRel}; copy items support regular files only`,
+        );
+      }
     }
   }
 }

@@ -7,16 +7,25 @@ import { expandTilde } from "./paths";
 import { atomicWriteFile } from "./fs-utils";
 import { hasShelvesKey } from "./manifest";
 import { PreconditionError } from "./errors";
-import { assertNever } from "./assert";
+import { assertNever, isSafeItemName } from "./assert";
 import type { ItemKind } from "./master";
-import { gitInfoExcludePath, gitTry, isGitWorkTreeRoot } from "./git";
+import {
+  gitInfoExcludePath,
+  gitTry,
+  isGitWorkTreeRoot,
+  literalPathspec,
+} from "./git";
+
+const localItemNames = z.array(
+  z.string().refine(isSafeItemName, { message: "unsafe local item name" }),
+);
 
 const LocalConfigSchema = z.object({
   dataRepo: z.string().min(1),
-  skills: z.array(z.string()).default([]),
-  piExtensions: z.array(z.string()).default([]),
-  settings: z.array(z.string()).default([]),
-  mcp: z.array(z.string()).default([]),
+  skills: localItemNames.default([]),
+  piExtensions: localItemNames.default([]),
+  settings: localItemNames.default([]),
+  mcp: localItemNames.default([]),
 });
 
 export interface LocalConfig {
@@ -127,6 +136,13 @@ export async function ensureLocalExcludes(
   if (!excludePath) return;
   await assertLocalInstallPathsUntracked(project, kind, name);
   const entries = localInstallPaths(kind, name, true);
+  for (const entry of entries) {
+    if (/\r|\n/u.test(entry)) {
+      throw new PreconditionError(
+        `refusing to write a line break to the Git exclude file: ${JSON.stringify(entry)}`,
+      );
+    }
+  }
 
   await mkdir(dirname(excludePath), { recursive: true });
   const raw = existsSync(excludePath)
@@ -148,14 +164,17 @@ export async function removeLocalExcludes(
   name: string,
 ): Promise<void> {
   const entries = new Set(localInstallPaths(kind, name, true));
-  const excludePath = join(project, ".git", "info", "exclude");
-  if (!existsSync(excludePath)) return;
+  const excludePath = await gitInfoExcludePath(project);
+  if (!excludePath || !existsSync(excludePath)) return;
 
   const raw = await readFile(excludePath, "utf-8");
+  const trailingNewline = raw.endsWith("\n");
   const lines = raw.split(/\r?\n/);
+  if (trailingNewline) lines.pop();
   const nextLines = lines.filter((line) => !entries.has(line.trim()));
   if (nextLines.length === lines.length) return;
-  await atomicWriteFile(excludePath, nextLines.join("\n"));
+  const next = nextLines.join("\n");
+  await atomicWriteFile(excludePath, trailingNewline ? `${next}\n` : next);
 }
 
 export async function assertLocalInstallPathsUntracked(
@@ -231,7 +250,7 @@ async function trackedPathExists(
   repo: string,
   relPath: string,
 ): Promise<boolean> {
-  const r = await gitTry(repo, ["ls-files", "--", relPath]);
+  const r = await gitTry(repo, ["ls-files", "--", literalPathspec(relPath)]);
   if (r.exitCode !== 0) return false;
   return r.stdout.toString().trim().length > 0;
 }

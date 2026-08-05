@@ -42,6 +42,13 @@ Most item arguments accept either a bare unique name (`hello`) or an explicit ki
 
 Mutating commands only touch item files that are tracked in `.capshelf/capshelf.lock.json` or `.capshelf/local.lock.json`. `add` refuses to overwrite an existing untracked target, `init` refuses to overwrite an existing untracked system target, and `rm` deletes only locked data items. Copy-directory items—skills and Pi extensions—can use either committed project scope or clone-local scope. Use `share <item> --to local|project` to choose when adopting an unmanaged copy.
 
+Copy-item names reject control characters, and copy-item trees accept regular
+files only. Symlinks, Git links, and special filesystem objects are refused at
+both working-tree and committed-object boundaries. Executable intent is
+normalized to Git modes `100644` and `100755`; status, promote, apply, and
+update preserve and compare that mode without changing the existing content
+hash format.
+
 ## Command surface
 
 | verb | purpose | availability |
@@ -482,6 +489,10 @@ determine a portable upstream, `init` fails before writing project state and
 asks you to configure the data repo's `origin` or pass `--no-upstream`
 explicitly.
 
+Re-running `init` preserves clone-local skill, Pi-extension, settings, and MCP
+selection arrays in `.capshelf/local.json`; it does not clear their local lock
+entries, installed content, or Git exclude entries.
+
 In an already-initialized project cloned from Git, plain `capshelf init` also
 acts as the onboarding command: when `.capshelf/capshelf.json` declares
 `dataRepoUpstream` and no local data repo binding exists yet, capshelf clones or
@@ -548,10 +559,14 @@ capshelf set-data ~/code/capshelf-data
 capshelf apply
 ```
 
-`set-data` verifies the path is a git repo, checks the clone's `origin` against
+`set-data` verifies the path is the root of a Git worktree, checks the clone's `origin` against
 `dataRepoUpstream` when present, verifies existing data lock entries can be read
 from the clone, writes `.capshelf/local.json`, and ensures
 `.capshelf/.gitignore` contains that file.
+
+Nested directories inside a worktree are not valid bindings. Paths containing
+`..` or symlinked parent components are accepted only when their canonical
+path is the worktree root.
 
 `set-data` accepts only local paths. Passing a remote data repo URL fails with
 exit 3 and points at `capshelf init --data <remote-data-repo-url>` for new
@@ -570,13 +585,20 @@ Legacy projects with `dataRepo` in `.capshelf/capshelf.json` or root
 
 ```text
 <manifest-path> uses the legacy dataRepo field.
-  fix it manually:
+  fix it manually, or migrate it directly with set-data:
+    capshelf set-data <path-from-dataRepo>
+  manual steps:
     1. remove dataRepo from <manifest-path>.
     2. point capshelf at that path:
          capshelf set-data <path-from-dataRepo>
     3. optionally declare the upstream (commits to .capshelf/capshelf.json):
          capshelf set-upstream <origin-url>
 ```
+
+`capshelf set-data <path>` is the supported direct recovery command in this
+state. It writes the portable manifest at `.capshelf/capshelf.json`, preserves
+the remaining manifest fields, writes the local binding, and removes an
+obsolete root `capshelf.json` only after validation succeeds.
 
 `capshelf migrate` and `capshelf migrate-data-repo-config` are no longer
 registered.
@@ -757,6 +779,7 @@ Git-visible files, so an ignore rule covering the item must be removed or the
 item must use local scope before it can be promoted. Capshelf also rechecks the
 installed snapshot and copied content before committing; a concurrent edit
 aborts and restores the canonical data-repo path and Git index.
+Executable-mode-only edits count as local drift and are promotable changes.
 
 ### Stale-promote protection
 
@@ -841,6 +864,12 @@ Local-scope skill adoption and promotion copy only files visible after applying
 the skill directory's own `.gitignore` files. In Git projects, local-scope
 skills also add their install paths to `.git/info/exclude`; non-Git projects
 skip Git excludes and rely on `.capshelf/local.json` plus `.capshelf/local.lock.json`.
+
+If `share` commits the source but local metadata persistence is interrupted,
+rerun the documented `add` command in the intended scope. With no existing
+lock, `add` adopts the canonical installed target only when its bytes and
+executable modes exactly match the commit it would pin; a mismatch remains an
+unmanaged-target conflict and writes no metadata.
 
 `promote --create` and `promote --local --to-project` have been removed; use
 `share` for adoption and `move --to <scope>` for scope changes.
@@ -966,6 +995,12 @@ preserved, and capshelf warns when it drops them. TOML comments in rewritten
 fragment sources: capshelf's merge and hash pipeline round-trips values through
 JSON, which cannot preserve TOML date types (a local date would silently become
 a string or an offset date-time on re-emit).
+
+Commands that reconcile multiple fragment outputs preflight every target
+before writing any of them. If a later output swap fails, earlier swaps are
+rolled back and lock changes are not persisted. TOML `inf`, `-inf`, and `nan`
+are rejected before hashing or comparison because JSON canonicalization cannot
+represent them distinctly.
 
 `share` for fragments always lands in project scope (`--to project` is the
 default; `--to local` is rejected). For mcp items the common case needs no

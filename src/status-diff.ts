@@ -14,7 +14,13 @@ import type { CopyDirectoryItemKind, ItemKind } from "./master";
 import type { ItemSource } from "./installed";
 import { installedPath } from "./installed";
 import { findSystemItem } from "./bundled";
-import { gitTry, lsTreeAtCommit, showAtCommit } from "./git";
+import {
+  assertRegularBlobEntries,
+  gitTry,
+  literalPathspec,
+  lsTreeEntriesAtCommit,
+  showAtCommit,
+} from "./git";
 import { hasIgnoredDotSegment } from "./dotfiles";
 import { missingSourceCommitMessage } from "./upstream-check";
 import { gitignoreVisibleFiles } from "./gitignore";
@@ -218,11 +224,39 @@ export async function currentCopyDirectoryItemSha(
   return shaOfFileMap(currentFiles);
 }
 
+export async function copyDirectoryModeDrifted(
+  opts: CopyDirectoryFilesOptions,
+): Promise<boolean> {
+  const root = installedPath(opts.project, opts.kind, opts.name);
+  if (!existsSync(root)) return false;
+
+  const expected = await expectedModesForCopyItem(opts);
+  if (expected === null) return false;
+  for (const [rel, executable] of expected) {
+    const path = join(root, ...rel.split("/"));
+    let info: Awaited<ReturnType<typeof lstat>>;
+    try {
+      info = await lstat(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      throw error;
+    }
+    if (!info.isFile()) return true;
+    if (((info.mode & 0o111) !== 0) !== executable) return true;
+  }
+  return false;
+}
+
 async function dataRepoDiff(
   dataRepo: string,
   relPaths: string[],
 ): Promise<string> {
-  const result = await gitTry(dataRepo, ["diff", "HEAD", "--", ...relPaths]);
+  const result = await gitTry(dataRepo, [
+    "diff",
+    "HEAD",
+    "--",
+    ...relPaths.map(literalPathspec),
+  ]);
   if (result.exitCode !== 0) {
     throw new Error(result.stderr || "git diff failed");
   }
@@ -254,7 +288,7 @@ async function untrackedDataRepoFiles(
     "--others",
     "--exclude-standard",
     "--",
-    ...relPaths,
+    ...relPaths.map(literalPathspec),
   ]);
   if (result.exitCode !== 0) {
     throw new Error(result.stderr || "git ls-files failed");
@@ -332,9 +366,13 @@ async function expectedFilePathsForCopyItem(
   if (!opts.sourceCommit) return null;
 
   const repoRelPath = itemRepoRelPath(opts.kind, opts.name);
-  let files: string[];
+  let entries: Awaited<ReturnType<typeof lsTreeEntriesAtCommit>>;
   try {
-    files = await lsTreeAtCommit(opts.dataRepo, opts.sourceCommit, repoRelPath);
+    entries = await lsTreeEntriesAtCommit(
+      opts.dataRepo,
+      opts.sourceCommit,
+      repoRelPath,
+    );
   } catch {
     throw new Error(
       missingSourceCommitMessage(
@@ -344,8 +382,9 @@ async function expectedFilePathsForCopyItem(
       ),
     );
   }
-  return files
-    .map((file) => posix.relative(repoRelPath, file))
+  assertRegularBlobEntries(entries, repoRelPath);
+  return entries
+    .map((entry) => posix.relative(repoRelPath, entry.path))
     .filter(
       (rel) =>
         rel.length > 0 &&
@@ -355,6 +394,51 @@ async function expectedFilePathsForCopyItem(
         // it must not participate in status hashes or diffs.
         !isMetadataSidecarPath(rel),
     );
+}
+
+async function expectedModesForCopyItem(
+  opts: CopyDirectoryFilesOptions,
+): Promise<Map<string, boolean> | null> {
+  if (opts.source === "system") {
+    const item = findSystemItem(opts.name);
+    if (!item || item.kind !== opts.kind) return null;
+    return new Map(item.files.map((file) => [file.relPath, false]));
+  }
+  if (!opts.dataRepo || !opts.sourceCommit) return null;
+
+  const repoRelPath = itemRepoRelPath(opts.kind, opts.name);
+  let entries: Awaited<ReturnType<typeof lsTreeEntriesAtCommit>>;
+  try {
+    entries = await lsTreeEntriesAtCommit(
+      opts.dataRepo,
+      opts.sourceCommit,
+      repoRelPath,
+    );
+  } catch {
+    throw new Error(
+      missingSourceCommitMessage(
+        opts.dataRepo,
+        opts.sourceCommit,
+        opts.manifest,
+      ),
+    );
+  }
+  assertRegularBlobEntries(entries, repoRelPath);
+  return new Map(
+    entries
+      .map((entry) => ({
+        rel: posix.relative(repoRelPath, entry.path),
+        executable: entry.mode === "100755",
+      }))
+      .filter(
+        ({ rel }) =>
+          rel.length > 0 &&
+          !rel.startsWith("..") &&
+          !hasIgnoredDotSegment(rel) &&
+          !isMetadataSidecarPath(rel),
+      )
+      .map(({ rel, executable }) => [rel, executable]),
+  );
 }
 
 async function showExpectedFile(

@@ -1,12 +1,13 @@
 import { Command } from "commander";
+import { rm } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { isRemoteDataUrl } from "../data-bootstrap";
-import { assertIsGitRepo } from "../git";
+import { assertDataRepoRoot } from "../git";
 import { PRODUCT_NAME } from "../identity";
-import { loadManifest } from "../manifest";
+import { loadManifestForDataBinding, saveManifest } from "../manifest";
 import { loadLock } from "../lock";
 import { loadLocalConfig, saveLocalConfig } from "../local-config";
-import { normalizePath, projectRoot } from "../paths";
+import { manifestPath, normalizePath, projectRoot } from "../paths";
 import { verifyDataLockEntries } from "../lock-verify";
 import { verifyDataRepoUpstream } from "../upstream-check";
 import { PreconditionError } from "../errors";
@@ -32,13 +33,14 @@ export function buildSetData(name: string): Command {
         );
       }
       const project = projectRoot();
-      const manifest = await loadManifest(project);
+      const { manifest, legacyManifestPath } =
+        await loadManifestForDataBinding(project);
       const lock = await loadLock(project);
       const storedPath = storedDataRepoPath(path);
       const dataRepo = normalizePath(storedPath, project);
 
       try {
-        await assertIsGitRepo(dataRepo);
+        await assertDataRepoRoot(dataRepo);
       } catch (err) {
         // Preserve the historical behavior: any failure to validate the data
         // repo (including git being unavailable) surfaces as exit 3 here.
@@ -51,6 +53,9 @@ export function buildSetData(name: string): Command {
       await verifyDataRepoUpstream(dataRepo, manifest);
       await verifyDataLockEntries(dataRepo, manifest, lock);
       const existing = await loadLocalConfig(project);
+      if (legacyManifestPath !== null) {
+        await saveManifest(project, manifest);
+      }
       await saveLocalConfig(project, {
         dataRepo: storedPath,
         skills: existing?.skills ?? [],
@@ -58,6 +63,12 @@ export function buildSetData(name: string): Command {
         settings: existing?.settings ?? [],
         mcp: existing?.mcp ?? [],
       });
+      if (
+        legacyManifestPath !== null &&
+        resolve(legacyManifestPath) !== resolve(manifestPath(project))
+      ) {
+        await rm(legacyManifestPath);
+      }
       if (opts.json) {
         console.log(JSON.stringify({ project, dataRepo }, null, 2));
         return;

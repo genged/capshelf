@@ -1675,17 +1675,20 @@ describe("upstreamFactsForItem", () => {
     expect(await upstreamFactsForItem(dataRepo, "skills", "hello")).toEqual({
       upstreamSha: await shaOfGitVisibleItem(dataRepo, "skills/hello"),
       upstreamDirty: false,
+      sourceCommit: await lastTouchingContentCommit(dataRepo, "skills/hello"),
     });
 
     await writeFile(join(dataItem, "SKILL.md"), "dirty\n");
     expect(await upstreamFactsForItem(dataRepo, "skills", "hello")).toEqual({
       upstreamSha: null,
       upstreamDirty: true,
+      sourceCommit: null,
     });
 
     expect(await upstreamFactsForItem(dataRepo, "skills", "absent")).toEqual({
       upstreamSha: null,
       upstreamDirty: false,
+      sourceCommit: null,
     });
   });
 
@@ -1702,6 +1705,11 @@ describe("upstreamFactsForItem", () => {
     expect(await upstreamFactsForItem(dataRepo, "settings", "theme")).toEqual({
       upstreamSha: await shaOfFragmentItem(dataRepo, "settings", "theme"),
       upstreamDirty: false,
+      sourceCommit: await lastTouchingFragmentCommit(
+        dataRepo,
+        "settings",
+        "theme",
+      ),
     });
 
     await writeFile(
@@ -1711,6 +1719,7 @@ describe("upstreamFactsForItem", () => {
     expect(await upstreamFactsForItem(dataRepo, "settings", "theme")).toEqual({
       upstreamSha: null,
       upstreamDirty: true,
+      sourceCommit: null,
     });
   });
 });

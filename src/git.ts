@@ -50,7 +50,7 @@ export async function gitTry(
   await assertGitAvailable();
   const argv = repo === null ? ["git", ...args] : ["git", "-C", repo, ...args];
   const proc = Bun.spawn(argv, {
-    ...(options.env && { env: options.env }),
+    env: options.env ?? process.env,
     stdout: "pipe",
     stderr: "pipe",
     stdin: options.stdin === undefined ? "ignore" : new Blob([options.stdin]),
@@ -91,6 +91,24 @@ export async function assertIsGitRepo(path: string): Promise<void> {
   if (await isGitRepo(path)) return;
   throw new PreconditionError(
     `not a git repository: ${path}\n  initialize with: git -C ${path} init && git -C ${path} add -A && git -C ${path} commit -m "baseline"`,
+  );
+}
+
+export async function assertDataRepoRoot(path: string): Promise<void> {
+  await assertGitAvailable();
+  const root = await gitWorkTreeRoot(path);
+  if (root === null) {
+    throw new PreconditionError(
+      `not a git repository: ${path}\n  initialize with: git -C ${path} init && git -C ${path} add -A && git -C ${path} commit -m "baseline"`,
+    );
+  }
+  const [boundPath, worktreeRoot] = await Promise.all([
+    realpath(path),
+    realpath(root),
+  ]);
+  if (boundPath === worktreeRoot) return;
+  throw new PreconditionError(
+    `data repo binding must point at the Git worktree root\n  supplied: ${path}\n  worktree root: ${root}`,
   );
 }
 
@@ -154,7 +172,10 @@ export async function lastTouchingCommitForPaths(
   repo: string,
   relPaths: string[],
 ): Promise<string> {
-  const sha = await tryLastTouchingCommitForPaths(repo, relPaths);
+  const sha = await tryLastTouchingCommitForPathspecs(
+    repo,
+    relPaths.map(literalPathspec),
+  );
   if (!sha) {
     const relPathLabel = relPaths.join(", ");
     throw new Error(
@@ -179,28 +200,27 @@ export async function lastTouchingContentCommit(
 ): Promise<string> {
   // `literal` disables glob interpretation so item names containing pathspec
   // metacharacters cannot widen the exclusion (git accepts combined magic
-  // words, verified). The non-literal include pathspec shares
-  // lastTouchingCommit's pre-existing exposure and stays consistent with it.
-  const sha = await tryLastTouchingCommitForPaths(repo, [
-    relPath,
+  // words, verified).
+  const sha = await tryLastTouchingCommitForPathspecs(repo, [
+    literalPathspec(relPath),
     `:(literal,exclude)${relPath}/.capshelf.yml`,
   ]);
   if (sha) return sha;
   return await lastTouchingCommit(repo, relPath);
 }
 
-async function tryLastTouchingCommitForPaths(
+async function tryLastTouchingCommitForPathspecs(
   repo: string,
-  relPaths: string[],
+  pathspecs: string[],
 ): Promise<string | null> {
-  if (relPaths.length === 0) {
+  if (pathspecs.length === 0) {
     throw new Error(
       "cannot compute last touching commit for an empty path list",
     );
   }
   let out: string;
   try {
-    out = await gitText(repo, ["log", "-1", "--format=%H", "--", ...relPaths]);
+    out = await gitText(repo, ["log", "-1", "--format=%H", "--", ...pathspecs]);
   } catch {
     out = "";
   }
@@ -275,6 +295,23 @@ export interface GitTreeEntry {
   path: string;
 }
 
+export function assertRegularBlobEntries(
+  entries: GitTreeEntry[],
+  itemPath: string,
+): void {
+  for (const entry of entries) {
+    if (
+      entry.type === "blob" &&
+      (entry.mode === "100644" || entry.mode === "100755")
+    ) {
+      continue;
+    }
+    throw new PreconditionError(
+      `${itemPath} contains an unsupported Git entry: ${entry.path} (mode ${entry.mode}, type ${entry.type}); copy items support regular files only`,
+    );
+  }
+}
+
 /**
  * List files in a directory at a specific commit. Returns paths relative to
  * the repo root. Used by `apply` to enumerate what to restore.
@@ -304,7 +341,7 @@ export async function lsTreeEntriesAtCommit(
     "-z",
     commit,
     "--",
-    relPath,
+    literalPathspec(relPath),
   ]);
   return out
     .split("\0")
@@ -338,14 +375,22 @@ export async function gitVisibleFilesUnderPath(
     "--others",
     "--exclude-standard",
     "--",
-    normalized,
+    literalPathspec(normalized),
   ]);
   const candidates = out.split("\0").filter((path) => path.length > 0);
   const present = await Promise.all(
     candidates.map(async (path) => {
       try {
         const info = await lstat(join(repo, ...path.split("/")));
-        return info.isFile() || info.isSymbolicLink() ? path : null;
+        if (info.isFile()) return path;
+        const type = info.isSymbolicLink()
+          ? "symlink"
+          : info.isDirectory()
+            ? "directory or Git link"
+            : "non-regular filesystem object";
+        throw new PreconditionError(
+          `${normalized} contains an unsupported ${type}: ${path}; copy items support regular files only`,
+        );
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") {
           return null;
@@ -365,7 +410,12 @@ export async function statusPorcelain(
   relPath?: string,
 ): Promise<string> {
   if (relPath) {
-    return await gitText(repo, ["status", "--porcelain", "--", relPath]);
+    return await gitText(repo, [
+      "status",
+      "--porcelain",
+      "--",
+      literalPathspec(relPath),
+    ]);
   }
   return await gitText(repo, ["status", "--porcelain"]);
 }
@@ -393,7 +443,9 @@ export async function statusPorcelainOutsidePaths(
   repo: string,
   relPaths: string[],
 ): Promise<string> {
-  const excludes = relPaths.map((relPath) => `:(exclude)${relPath}`);
+  const excludes = relPaths.map(
+    (relPath) => `:(literal,exclude)${normalizeGitPath(relPath)}`,
+  );
   return await gitText(repo, ["status", "--porcelain", "--", ".", ...excludes]);
 }
 
@@ -557,10 +609,7 @@ export async function commitInRepo(
   relPaths: string[],
   message: string,
 ): Promise<string> {
-  await gitBuffer(repo, ["add", ...relPaths]);
-  await gitBuffer(repo, ["commit", "-m", message, "--", ...relPaths]);
-  const out = await gitText(repo, ["rev-parse", "HEAD"]);
-  return out.trim();
+  return await commitLiteralPathsInRepo(repo, relPaths, message);
 }
 
 /**
@@ -574,15 +623,9 @@ export async function commitLiteralPathsInRepo(
   relPaths: string[],
   message: string,
 ): Promise<string> {
-  await gitBuffer(repo, ["--literal-pathspecs", "add", "--", ...relPaths]);
-  await gitBuffer(repo, [
-    "--literal-pathspecs",
-    "commit",
-    "-m",
-    message,
-    "--",
-    ...relPaths,
-  ]);
+  const pathspecs = relPaths.map(literalPathspec);
+  await gitBuffer(repo, ["add", "--", ...pathspecs]);
+  await gitBuffer(repo, ["commit", "-m", message, "--", ...pathspecs]);
   return (await gitText(repo, ["rev-parse", "HEAD"])).trim();
 }
 
@@ -684,6 +727,10 @@ function normalizeGitPath(path: string): string {
     .split(/[\\/]+/)
     .filter(Boolean)
     .join("/");
+}
+
+export function literalPathspec(path: string): string {
+  return `:(literal)${normalizeGitPath(path)}`;
 }
 
 function relativeToGitPath(path: string, root: string): string {

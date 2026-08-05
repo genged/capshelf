@@ -41,6 +41,8 @@ export interface StatusRow {
   state: State;
   lockedSha: string;
   currentSha: string | null;
+  /** Executable modes differ even when the byte-only lock sha is unchanged. */
+  modeDrifted?: boolean;
   /** master sha (data) or bundled sha (system); null if upstream is gone */
   upstreamSha: string | null;
   /** true when the data-repo item path has uncommitted changes */
@@ -83,8 +85,12 @@ export interface StateFacts {
   /** the sha recorded in the lock (entry.sha) */
   lockedSha: string;
   currentSha: string | null;
+  /** Executable modes differ even when the byte-only lock sha is unchanged. */
+  modeDrifted?: boolean;
   upstreamSha: string | null;
   upstreamDirty: boolean;
+  /** Upstream bytes or last-touching commit differ from the lock. */
+  upstreamChanged?: boolean;
   fragmentOutputState: FragmentContributionState | null;
   /**
    * Whether the data entry's locked `sourceCommit` is reachable in the data
@@ -126,13 +132,13 @@ export function deriveState(f: StateFacts): State {
   }
   if (f.currentSha === null) return "missing_installed";
   if (f.upstreamDirty) {
-    return f.currentSha !== f.lockedSha
+    return f.currentSha !== f.lockedSha || f.modeDrifted === true
       ? "drifted_and_upstream_dirty"
       : "upstream_dirty";
   }
   if (f.upstreamSha === null) return "missing_upstream";
-  const drifted = f.currentSha !== f.lockedSha;
-  const update = f.upstreamSha !== f.lockedSha;
+  const drifted = f.currentSha !== f.lockedSha || f.modeDrifted === true;
+  const update = f.upstreamChanged ?? f.upstreamSha !== f.lockedSha;
   if (drifted && update) return "drifted_and_update";
   if (drifted) return "drifted_local";
   if (update) return "update_available";
@@ -155,6 +161,7 @@ export interface BuildStatusRowInput {
   currentSha: string | null;
   upstreamSha: string | null;
   upstreamDirty: boolean;
+  modeDrifted?: boolean;
   runtimeWarnings: RuntimeWarning[];
   needsState?: NeedsState;
   targets?: StatusTargetDetail[];
@@ -172,6 +179,7 @@ export function buildStatusRow(input: BuildStatusRowInput): StatusRow {
     lockedSha: entry.sha,
     currentSha: input.currentSha,
     upstreamSha: input.upstreamSha,
+    ...(input.modeDrifted && { modeDrifted: true }),
     ...(input.upstreamDirty && { upstreamDirty: input.upstreamDirty }),
     ...(entry.source === "data" && {
       sourceCommit: entry.sourceCommit,

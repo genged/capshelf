@@ -14,6 +14,7 @@ import { existsSync } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { YAMLParseError, parse as parseYaml } from "yaml";
+import { isSafeItemName } from "./assert";
 import { NotFoundError, PreconditionError } from "./errors";
 import { ITEM_KINDS, isItemKind } from "./master";
 import type { ItemKind } from "./master";
@@ -71,7 +72,7 @@ export function isBundleRef(input: string): string | null {
  * addressable under a future shelf-qualified ref grammar.
  */
 export function isValidBundleName(name: string): boolean {
-  if (!name || name === "." || name === "..") return false;
+  if (!isSafeItemName(name)) return false;
   if (name.includes("/")) return false;
   if (name.includes(":")) return false;
   return true;

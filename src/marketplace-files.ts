@@ -21,6 +21,7 @@ import {
   gitBuffer,
   gitTry,
   headSha,
+  literalPathspec,
 } from "./git";
 import {
   type ProjectionFile,
@@ -148,14 +149,14 @@ export async function commitMarketplaceMutation(options: {
 
 export async function commitDataRepoMutation(options: {
   dataRepo: string;
-  expectedHead: string;
+  expectedHead: string | null;
   message: string;
   ownedRoots: string[];
   mutate: () => Promise<void>;
 }): Promise<string> {
   const { dataRepo, expectedHead, message, ownedRoots, mutate } = options;
   await assertRepoClean(dataRepo);
-  if ((await headSha(dataRepo)) !== expectedHead) {
+  if ((await currentHead(dataRepo)) !== expectedHead) {
     throw new PreconditionError(
       "data repo HEAD changed during marketplace mutation",
     );
@@ -177,7 +178,7 @@ export async function commitDataRepoMutation(options: {
   }
   try {
     await mutate();
-    if ((await headSha(dataRepo)) !== expectedHead) {
+    if ((await currentHead(dataRepo)) !== expectedHead) {
       throw new PreconditionError(
         "data repo HEAD changed during marketplace mutation",
       );
@@ -190,25 +191,25 @@ export async function commitDataRepoMutation(options: {
     );
     return createdCommit;
   } catch (error) {
-    const current = await headSha(dataRepo).catch(() => expectedHead);
+    const current = await currentHead(dataRepo);
     if (createdCommit !== null && current === createdCommit) {
-      const reverted = await gitBuffer(dataRepo, [
-        "update-ref",
-        "HEAD",
-        expectedHead,
-        createdCommit,
-      ])
+      const revertArgs =
+        expectedHead === null
+          ? ["update-ref", "-d", "HEAD", createdCommit]
+          : ["update-ref", "HEAD", expectedHead, createdCommit];
+      const reverted = await gitBuffer(dataRepo, revertArgs)
         .then(() => true)
         .catch(() => false);
       if (!reverted) throw error;
     } else if (current !== expectedHead) {
+      if (expectedHead === null || current === null) throw error;
       const ownedTrees = await gitTry(dataRepo, [
         "diff",
         "--quiet",
         expectedHead,
         current,
         "--",
-        ...ownedRoots,
+        ...ownedRoots.map(literalPathspec),
       ]);
       if (ownedTrees.exitCode === 0) {
         await replaceOwnedFiles(dataRepo, ownedRoots, before).catch(() => {});
@@ -225,6 +226,10 @@ export async function commitDataRepoMutation(options: {
   } finally {
     await rm(backupRoot, { recursive: true, force: true }).catch(() => {});
   }
+}
+
+async function currentHead(dataRepo: string): Promise<string | null> {
+  return await headSha(dataRepo).catch(() => null);
 }
 
 export async function publishDirectoryAtomically(

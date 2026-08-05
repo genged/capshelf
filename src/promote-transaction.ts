@@ -11,7 +11,7 @@ import {
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { gitBuffer, gitText, headSha } from "./git";
+import { gitBuffer, gitText, headSha, literalPathspec } from "./git";
 import type { NamedFile } from "./merge-tree";
 import { METADATA_SIDECAR } from "./metadata";
 
@@ -72,9 +72,11 @@ export async function commitNamedFilesTransaction(
   try {
     await gitBuffer(input.repo, ["read-tree", input.expectedHead], { env });
     const tracked = (
-      await gitText(input.repo, ["ls-files", "-z", "--", input.repoRelPath], {
-        env,
-      })
+      await gitText(
+        input.repo,
+        ["ls-files", "-z", "--", literalPathspec(input.repoRelPath)],
+        { env },
+      )
     )
       .split("\0")
       .filter(Boolean);
@@ -201,6 +203,57 @@ export async function commitNamedFilesTransaction(
 export interface InstalledReconciliation {
   commit(): Promise<void>;
   rollback(): Promise<void>;
+}
+
+export async function beginDirectoryReplacement(
+  target: string,
+  prepare: (replacement: string) => Promise<void>,
+): Promise<InstalledReconciliation> {
+  const parent = dirname(target);
+  await mkdir(parent, { recursive: true });
+  const transactionDir = await mkdtemp(join(parent, ".capshelf-materialize-"));
+  const replacement = join(transactionDir, "replacement");
+  const backup = join(transactionDir, "original");
+  let hadOriginal = false;
+
+  try {
+    await prepare(replacement);
+    try {
+      await rename(target, backup);
+      hadOriginal = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    try {
+      await rename(replacement, target);
+    } catch (error) {
+      if (hadOriginal) await rename(backup, target);
+      throw error;
+    }
+  } catch (error) {
+    await rm(transactionDir, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+
+  let finished = false;
+  return {
+    async commit() {
+      if (finished) return;
+      finished = true;
+      await rm(transactionDir, { recursive: true, force: true }).catch(
+        () => {},
+      );
+    },
+    async rollback() {
+      if (finished) return;
+      finished = true;
+      await rm(target, { recursive: true, force: true });
+      if (hadOriginal) await rename(backup, target);
+      await rm(transactionDir, { recursive: true, force: true }).catch(
+        () => {},
+      );
+    },
+  };
 }
 
 export async function beginInstalledReconciliation(

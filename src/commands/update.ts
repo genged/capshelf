@@ -31,13 +31,15 @@ import {
 } from "../runtime-warnings";
 import type { RuntimeWarning } from "../runtime-warnings";
 import {
-  applyFragmentOutput,
+  applyFragmentOutputPlans,
   fragmentKindForTarget,
   fragmentTargetKey,
   lastTouchingFragmentCommit,
+  planFragmentOutput,
   shaOfFragmentItem,
   touchedFragmentTargetsForItem,
   type FragmentApplyResult,
+  type FragmentOutputPlan,
   type FragmentTarget,
 } from "../fragments";
 import { captureCommittedItemNeeds } from "../metadata";
@@ -203,22 +205,45 @@ export function registerUpdate(program: Command): void {
           // no other command emits. Only commit the fragment lock bumps if
           // every reconcile succeeded, preserving the original all-or-nothing.
           let reconcileFailed = false;
+          const plans: FragmentOutputPlan[] = [];
           for (const target of touchedFragmentTargets) {
             try {
-              const applied = await applyFragmentOutput({
-                project,
-                dataRepo,
-                manifest,
-                oldLock: originalLock,
-                nextLock: fragmentNextLock,
-                target,
+              plans.push(
+                await planFragmentOutput({
+                  project,
+                  dataRepo,
+                  manifest,
+                  oldLock: originalLock,
+                  nextLock: fragmentNextLock,
+                  target,
+                }),
+              );
+            } catch (err) {
+              reconcileFailed = true;
+              results.push({
+                key: fragmentTargetKey(target),
+                source: "data",
+                kind: fragmentKindForTarget(target),
+                name: "(merged)",
+                action: "error",
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
+          }
+          if (!reconcileFailed) {
+            try {
+              const appliedResults = await applyFragmentOutputPlans(plans, {
                 dryRun: opts.dryRun,
               });
-              if (applied.action !== "already-current") {
-                results.push(fragmentMergedUpdateResult(applied));
+              for (const applied of appliedResults) {
+                if (applied.action !== "already-current") {
+                  results.push(fragmentMergedUpdateResult(applied));
+                }
               }
             } catch (err) {
               reconcileFailed = true;
+              const target =
+                plans[0]?.target ?? [...touchedFragmentTargets][0]!;
               results.push({
                 key: fragmentTargetKey(target),
                 source: "data",

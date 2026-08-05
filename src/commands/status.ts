@@ -19,7 +19,7 @@ import { PreconditionError, ResultExitError } from "../errors";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
 import { globalOpts } from "../global-options";
 import { parseItemRef } from "../item-ref";
-import { commitExists, isGitRepo } from "../git";
+import { commitExists, isGitWorkTreeRoot } from "../git";
 import { upstreamFactsForItem } from "../upstream-facts";
 import {
   listClaudePlugins,
@@ -28,7 +28,11 @@ import {
   withUserSkillShadows,
 } from "../external";
 import type { ExternalUserSkill } from "../external";
-import { buildStatusDiff, currentCopyDirectoryItemSha } from "../status-diff";
+import {
+  buildStatusDiff,
+  copyDirectoryModeDrifted,
+  currentCopyDirectoryItemSha,
+} from "../status-diff";
 import type { StatusDiff } from "../status-diff";
 import {
   codexProjectTrustWarnings,
@@ -118,7 +122,7 @@ export function registerStatus(program: Command): void {
         const dataRepo =
           resolvedDataRepo &&
           existsSync(resolvedDataRepo) &&
-          (await isGitRepo(resolvedDataRepo))
+          (await isGitWorkTreeRoot(resolvedDataRepo))
             ? resolvedDataRepo
             : null;
 
@@ -168,6 +172,7 @@ export function registerStatus(program: Command): void {
               ? await commitExists(dataRepo, entry.sourceCommit)
               : null;
           let currentSha: string | null;
+          let modeDrifted = false;
           if (isFragmentItemKind(kind)) {
             currentSha = await shaOfInstalled(project, kind, itemName);
           } else if (isCopyDirectoryItemKind(kind)) {
@@ -183,6 +188,20 @@ export function registerStatus(program: Command): void {
                   ? entry.sourceCommit
                   : undefined,
             });
+            if (currentSha !== null) {
+              modeDrifted = await copyDirectoryModeDrifted({
+                project,
+                dataRepo,
+                manifest,
+                source,
+                kind,
+                name: itemName,
+                sourceCommit:
+                  entry.source === "data" && sourceCommitPresent !== false
+                    ? entry.sourceCommit
+                    : undefined,
+              });
+            }
           } else if (isCopyTargetFileItemKind(kind)) {
             currentSha =
               entry.source === "data" &&
@@ -231,6 +250,7 @@ export function registerStatus(program: Command): void {
           }
 
           let upstreamSha: string | null = null;
+          let upstreamChanged = false;
           let upstreamDirty = false;
           let currentNeeds: ItemNeeds | undefined;
           if (source === "data") {
@@ -242,6 +262,11 @@ export function registerStatus(program: Command): void {
               );
               upstreamSha = upstream.upstreamSha;
               upstreamDirty = upstream.upstreamDirty;
+              upstreamChanged =
+                upstreamSha !== entry.sha ||
+                (entry.source === "data" &&
+                  upstream.sourceCommit !== null &&
+                  upstream.sourceCommit !== entry.sourceCommit);
               if (upstreamSha !== null || upstreamDirty) {
                 try {
                   currentNeeds = (
@@ -259,6 +284,7 @@ export function registerStatus(program: Command): void {
             const sys = findSystemItem(itemName);
             upstreamSha =
               sys && sys.kind === kind ? await shaOfSystemItem(sys) : null;
+            upstreamChanged = upstreamSha !== entry.sha;
           }
 
           const state = deriveState({
@@ -267,8 +293,10 @@ export function registerStatus(program: Command): void {
             local: entry.source === "data" && entry.local === true,
             lockedSha: entry.sha,
             currentSha,
+            modeDrifted,
             upstreamSha,
             upstreamDirty,
+            upstreamChanged,
             fragmentOutputState,
             sourceCommitPresent,
           });
@@ -299,6 +327,7 @@ export function registerStatus(program: Command): void {
               entry,
               state,
               currentSha,
+              modeDrifted,
               upstreamSha,
               upstreamDirty,
               needsState:

@@ -6,15 +6,25 @@ import {
   shaOfGitVisibleItem,
 } from "./master";
 import type { FragmentItemKind, ItemKind } from "./master";
-import { isPathClean } from "./git";
-import { allCanonicalFragmentRelPaths, shaOfFragmentItem } from "./fragments";
-import { shaOfCurrentSubagent, subagentSourceCandidates } from "./subagents";
+import { isPathClean, lastTouchingContentCommit } from "./git";
+import {
+  allCanonicalFragmentRelPaths,
+  lastTouchingFragmentCommit,
+  shaOfFragmentItem,
+} from "./fragments";
+import {
+  lastTouchingSubagentCommit,
+  shaOfCurrentSubagent,
+  subagentSourceCandidates,
+} from "./subagents";
 
 export interface UpstreamFacts {
   /** worktree content sha of the data-repo item; null when dirty or missing */
   upstreamSha: string | null;
   /** true when the data-repo item path has uncommitted changes */
   upstreamDirty: boolean;
+  /** Last commit affecting the accepted item content model. */
+  sourceCommit: string | null;
 }
 
 /**
@@ -29,7 +39,9 @@ export async function upstreamFactsForItem(
   name: string,
 ): Promise<UpstreamFacts> {
   const masterItem = await findMasterItemByRef(dataRepo, { kind, name });
-  if (!masterItem) return { upstreamSha: null, upstreamDirty: false };
+  if (!masterItem) {
+    return { upstreamSha: null, upstreamDirty: false, sourceCommit: null };
+  }
   if (isFragmentItemKind(kind)) {
     const upstreamDirty = await fragmentSourceDirty(dataRepo, kind, name);
     return {
@@ -37,6 +49,9 @@ export async function upstreamFactsForItem(
         ? null
         : await shaOfFragmentItem(dataRepo, kind, name),
       upstreamDirty,
+      sourceCommit: upstreamDirty
+        ? null
+        : await lastTouchingFragmentCommit(dataRepo, kind, name),
     };
   }
   if (isCopyDirectoryItemKind(kind)) {
@@ -49,6 +64,9 @@ export async function upstreamFactsForItem(
         ? null
         : await shaOfGitVisibleItem(dataRepo, masterItem.repoRelPath),
       upstreamDirty,
+      sourceCommit: upstreamDirty
+        ? null
+        : await lastTouchingContentCommit(dataRepo, masterItem.repoRelPath),
     };
   }
   if (isCopyTargetFileItemKind(kind)) {
@@ -63,6 +81,9 @@ export async function upstreamFactsForItem(
         ? null
         : await shaOfCurrentSubagent("", dataRepo, name),
       upstreamDirty,
+      sourceCommit: upstreamDirty
+        ? null
+        : await lastTouchingSubagentCommit("", dataRepo, name),
     };
   }
   throw new Error(`no upstream strategy for ${kind}/${name}`);

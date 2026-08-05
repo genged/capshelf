@@ -3,7 +3,12 @@ import { hashNamedContents } from "./content-hash";
 import { needsEqual } from "./lock";
 import type { Lock } from "./lock";
 import { parseLockKey } from "./installed";
-import { commitExists, lsTreeEntriesAtCommit, showAtCommit } from "./git";
+import {
+  assertRegularBlobEntries,
+  commitExists,
+  lsTreeEntriesAtCommit,
+  showAtCommit,
+} from "./git";
 import type { Manifest } from "./manifest";
 import { hasIgnoredDotSegment } from "./dotfiles";
 import { missingSourceCommitMessage } from "./upstream-check";
@@ -126,6 +131,7 @@ async function shaOfDataAtCommit(
   } catch {
     throw new Error(missingSourceCommitMessage(dataRepo, commit, manifest));
   }
+  assertRegularBlobEntries(entries, relPath);
 
   // Reduce to item-relative paths. hashNamedContents sorts by name in the same
   // code-unit order as shaOfItemFiles (add-time hashing over

@@ -94,7 +94,9 @@ export async function loadManifest(project: string): Promise<Manifest> {
     const legacyDataRepo = (parsed as { dataRepo: string }).dataRepo;
     throw new Error(
       `${p} uses the legacy dataRepo field.\n` +
-        "  fix it manually:\n" +
+        "  fix it manually, or migrate it directly with set-data:\n" +
+        `    ${PRODUCT_NAME} set-data ${legacyDataRepo}\n` +
+        "  manual steps:\n" +
         `    1. remove dataRepo from ${p}.\n` +
         "    2. point capshelf at that path:\n" +
         `         ${PRODUCT_NAME} set-data ${legacyDataRepo}\n` +
@@ -103,6 +105,34 @@ export async function loadManifest(project: string): Promise<Manifest> {
     );
   }
   return ManifestSchema.parse(parsed);
+}
+
+export async function loadManifestForDataBinding(project: string): Promise<{
+  manifest: Manifest;
+  legacyManifestPath: string | null;
+}> {
+  const p = manifestReadPath(project);
+  if (!p) return { manifest: emptyManifest(), legacyManifestPath: null };
+  const parsed: unknown = JSON.parse(await readFile(p, "utf-8"));
+  if (hasShelvesKey(parsed)) {
+    throw new Error(
+      `${p} declares "shelves": this project uses multi-shelf federation, which this capshelf version does not support; upgrade capshelf`,
+    );
+  }
+  if (!hasLegacyDataRepo(parsed)) {
+    return {
+      manifest: ManifestSchema.parse(parsed),
+      legacyManifestPath: null,
+    };
+  }
+  const { dataRepo: _dataRepo, ...portable } = parsed as Record<
+    string,
+    unknown
+  >;
+  return {
+    manifest: ManifestSchema.parse(portable),
+    legacyManifestPath: p,
+  };
 }
 
 export async function saveManifest(

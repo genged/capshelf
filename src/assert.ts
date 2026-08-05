@@ -21,6 +21,14 @@ export function isSafeItemName(name: string): boolean {
   if (name.length === 0) return false;
   if (name.startsWith("/") || name.startsWith("-")) return false;
   if (name.includes("\\")) return false;
+  if (
+    [...name].some((character) => {
+      const codePoint = character.codePointAt(0)!;
+      return codePoint <= 0x1f || codePoint === 0x7f;
+    })
+  ) {
+    return false;
+  }
   return name
     .split("/")
     .every((seg) => seg !== "" && seg !== "." && seg !== "..");

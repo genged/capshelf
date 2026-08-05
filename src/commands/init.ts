@@ -13,10 +13,14 @@ import {
   CLI_VERSION,
 } from "../bundled";
 import { findInstallConflict } from "../installed";
-import { assertIsGitRepo, normalizeRemoteUrl, originRemoteUrl } from "../git";
+import {
+  assertDataRepoRoot,
+  normalizeRemoteUrl,
+  originRemoteUrl,
+} from "../git";
 import { globalOpts } from "../global-options";
 import { PreconditionError } from "../errors";
-import { saveLocalConfig } from "../local-config";
+import { loadLocalConfig, saveLocalConfig } from "../local-config";
 import { UpstreamVerificationError } from "../upstream-check";
 import {
   printRuntimeWarnings,
@@ -63,6 +67,7 @@ export function registerInit(program: Command): void {
     .action(async (opts: InitOptions, cmd: Command) => {
       const project = initProjectRoot();
       const manifest = await loadManifest(project);
+      const existingLocalConfig = await loadLocalConfig(project);
       const installMode = resolveInstallMode(manifest.installMode, opts);
       const lock = await loadLock(project);
 
@@ -147,7 +152,7 @@ export function registerInit(program: Command): void {
 
       // Fail BEFORE writing any state if the data repo isn't a usable git repo.
       // Otherwise we'd silently bind the project to a bad path that ls/add can't use.
-      await assertIsGitRepo(dataRepo);
+      await assertDataRepoRoot(dataRepo);
 
       manifest.installMode = installMode;
       const upstream = await initUpstream(dataRepo, opts);
@@ -204,10 +209,10 @@ export function registerInit(program: Command): void {
       await saveManifest(project, manifest);
       await saveLocalConfig(project, {
         dataRepo,
-        skills: [],
-        piExtensions: [],
-        settings: [],
-        mcp: [],
+        skills: existingLocalConfig?.skills ?? [],
+        piExtensions: existingLocalConfig?.piExtensions ?? [],
+        settings: existingLocalConfig?.settings ?? [],
+        mcp: existingLocalConfig?.mcp ?? [],
       });
       await saveLock(project, lock);
 

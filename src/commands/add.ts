@@ -25,7 +25,11 @@ import {
 import type { ItemMetadata, ItemNeeds } from "../metadata";
 import { NotFoundError, PreconditionError, ResultExitError } from "../errors";
 import { copyItemIntoProject, targetDir } from "../sync";
-import { findInstallConflict } from "../installed";
+import {
+  ensureInstallAliases,
+  findInstallConflict,
+  installedPath,
+} from "../installed";
 import { isSystemItemName } from "../bundled";
 import { assertPathClean, lastTouchingContentCommit } from "../git";
 import { findMasterItemByRef, parseItemRef } from "../item-ref";
@@ -73,6 +77,13 @@ import {
   shaOfCurrentSubagent,
   validateCurrentSubagent,
 } from "../subagents";
+import {
+  installedSnapshot,
+  namedFilesAtCommit,
+  namedFilesFromInstalledSnapshot,
+  shaOfNamedFiles,
+} from "../item-snapshot";
+import { namedFilesEqual } from "../merge-tree";
 
 interface AddOptions {
   json?: boolean;
@@ -322,13 +333,6 @@ export async function installDataItem(
           item.name,
           manifest.installMode,
         );
-  if (!alreadyInLock && conflict) {
-    throw new PreconditionError(
-      `not installing ${item.kind}/${item.name} — target already exists but is not managed by capshelf\n` +
-        `  existing path: ${conflict}\n` +
-        `  remove it manually, choose a different name, or adopt it with: capshelf share ${item.kind}/${item.name} --to project`,
-    );
-  }
   if (!alreadyInLock && item.kind === "subagents") {
     await assertSubagentOutputAvailable(project, dataRepo, item.name);
   }
@@ -352,6 +356,26 @@ export async function installDataItem(
       ? await lastTouchingSubagentCommit(project, dataRepo, item.name)
       : await lastTouchingContentCommit(dataRepo, item.repoRelPath);
   const snapshot = await captureCommittedItemNeeds(dataRepo, item);
+  let adoptMatchingInstall = false;
+  if (!alreadyInLock && conflict) {
+    if (isCopyDirectoryItemKind(item.kind)) {
+      adoptMatchingInstall = await matchesCommittedInstall(
+        ctx,
+        item,
+        conflict,
+        sourceCommit,
+        sha,
+      );
+    }
+    if (!adoptMatchingInstall) {
+      throw new PreconditionError(
+        `not installing ${item.kind}/${item.name} — target already exists but is not managed by capshelf and does not exactly match the commit selected for recovery\n` +
+          `  existing path: ${conflict}\n` +
+          `  expected commit: ${sourceCommit}\n` +
+          "  preserve or remove the conflicting target, then retry; capshelf will not adopt mismatched content",
+      );
+    }
+  }
 
   if (ctx.local) {
     if (!localConfig) {
@@ -388,7 +412,16 @@ export async function installDataItem(
       );
     }
   } else if (isCopyDirectoryItemKind(item.kind)) {
-    await copyItemIntoProject(project, item, manifest.installMode);
+    if (adoptMatchingInstall) {
+      await ensureInstallAliases(
+        project,
+        item.kind,
+        item.name,
+        manifest.installMode,
+      );
+    } else {
+      await copyItemIntoProject(project, item, manifest.installMode);
+    }
   } else if (item.kind === "subagents") {
     const entry = lock.items[key];
     if (entry?.source !== "data")
@@ -427,6 +460,38 @@ export async function installDataItem(
     missingRequires,
     needs: snapshot.needs,
   };
+}
+
+async function matchesCommittedInstall(
+  ctx: AddContext,
+  item: MasterItem,
+  conflict: string,
+  sourceCommit: string,
+  expectedSha: string,
+): Promise<boolean> {
+  if (!isCopyDirectoryItemKind(item.kind)) return false;
+  const canonicalPath = installedPath(
+    ctx.project,
+    item.kind,
+    item.name,
+    ctx.manifest.installMode,
+  );
+  if (conflict !== canonicalPath) return false;
+  const installed = await installedSnapshot(
+    ctx.project,
+    item.kind,
+    item.name,
+    ctx.local ? "local" : "project",
+  );
+  if (installed === null) return false;
+  const [currentFiles, committedFiles] = await Promise.all([
+    namedFilesFromInstalledSnapshot(installed),
+    namedFilesAtCommit(ctx.dataRepo, item.repoRelPath, sourceCommit),
+  ]);
+  return (
+    shaOfNamedFiles(committedFiles) === expectedSha &&
+    namedFilesEqual(currentFiles, committedFiles)
+  );
 }
 
 /** Expand `add bundles/<name>`: load → preflight → refuse or install. */

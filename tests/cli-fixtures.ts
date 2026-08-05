@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { spyOn } from "bun:test";
 import { Buffer } from "node:buffer";
-import { mkdtemp, realpath } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { main } from "../src/cli";
@@ -33,6 +33,24 @@ export async function tempRepo(
     await $`git -C ${repo} remote add origin ${origin}`.quiet();
   }
   return repo;
+}
+
+export async function baselineRepo(prefix: string): Promise<string> {
+  const repo = await tempRepo(prefix, { origin: null });
+  await writeFile(join(repo, "README.md"), "baseline\n");
+  await commitAll(repo, "baseline");
+  return repo;
+}
+
+export async function addSkill(
+  dataRepo: string,
+  name: string,
+  content = `${name}\n`,
+): Promise<string> {
+  const root = join(dataRepo, "skills", name);
+  await mkdir(root, { recursive: true });
+  await writeFile(join(root, "SKILL.md"), content);
+  return root;
 }
 
 export async function commitAll(repo: string, message: string): Promise<void> {

@@ -232,7 +232,7 @@ describe("cli integration", () => {
     expect(kept.stderr.toString()).toContain("no local divergence");
   });
 
-  test("self-update --check reports through the CLI with Homebrew metadata", async () => {
+  test("self-update source execution stays source-or-unknown", async () => {
     const home = await tempDir("capshelf-self-update-home-");
     const bin = await tempDir("capshelf-self-update-bin-");
     const prefix = await tempDir("capshelf-self-update-prefix-");
@@ -271,8 +271,8 @@ describe("cli integration", () => {
     });
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout.toString()).toContain("latest: 0.3.1");
-    expect(result.stdout.toString()).toContain("installer: homebrew");
+    expect(result.stdout.toString()).toContain("update available: no");
+    expect(result.stdout.toString()).toContain("installer: source-or-unknown");
   });
 
   test("init honors --no-upstream for repos with origin", async () => {

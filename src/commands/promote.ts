@@ -780,14 +780,27 @@ export async function syncTrackedIntoDataRepo(
       );
     }
   }
-  if (
-    shaOfNamedFiles(await namedFilesFromInstalledSnapshot(snapshot)) !== sha
-  ) {
+  const localFiles = await namedFilesFromInstalledSnapshot(snapshot);
+  if (shaOfNamedFiles(localFiles) !== sha) {
     throw new PreconditionError(
       `not promoting ${kind}/${name} — installed snapshot changed while it was being read; retry`,
     );
   }
-  if (sha === entry.sha) {
+  const lockedCommit = await resolveCommit(dataRepo, entry.sourceCommit);
+  if (lockedCommit === null && !opts.merge) {
+    throw new PreconditionError(
+      `not promoting ${kind}/${name} — the locked source commit is not available in the data repo`,
+    );
+  }
+  const lockedFiles =
+    lockedCommit === null
+      ? null
+      : await namedFilesAtCommit(dataRepo, repoRelPath, lockedCommit);
+  if (
+    lockedFiles !== null &&
+    sha === entry.sha &&
+    namedFilesEqual(localFiles, lockedFiles)
+  ) {
     // Guard-free no-op by design: local content matches the lock, there is
     // nothing to write. If upstream has advanced past the lock here, that is
     // update_available territory and surfacing it is status's job.
@@ -822,8 +835,19 @@ export async function syncTrackedIntoDataRepo(
     );
   }
   let staleOverride = false;
-  if (upstream.upstreamSha !== null && upstream.upstreamSha !== entry.sha) {
-    if (upstream.upstreamSha === sha) {
+  const upstreamSha = upstream.upstreamSha;
+  const upstreamChanged =
+    upstreamSha !== null &&
+    (upstreamSha !== entry.sha ||
+      (upstream.sourceCommit !== null &&
+        upstream.sourceCommit !== entry.sourceCommit));
+  if (upstreamChanged) {
+    const upstreamFiles = await namedFilesAtCommit(
+      dataRepo,
+      repoRelPath,
+      upstream.sourceCommit ?? "HEAD",
+    );
+    if (namedFilesEqual(localFiles, upstreamFiles)) {
       // Convergence short-circuit: the project's edited content is
       // byte-identical to what upstream already has (e.g. a teammate
       // promoted the same fix first). Metadata-only lock repin; commit
@@ -863,7 +887,7 @@ export async function syncTrackedIntoDataRepo(
         key,
         entry,
         snapshot,
-        upstreamSha: upstream.upstreamSha,
+        upstreamSha,
         opts,
       });
     }
@@ -874,7 +898,7 @@ export async function syncTrackedIntoDataRepo(
         name,
         lockedSha: entry.sha,
         sourceCommit: entry.sourceCommit,
-        upstreamSha: upstream.upstreamSha,
+        upstreamSha,
         logPathspec: repoRelPath,
         scope: opts.scope ?? "project",
       });
@@ -906,12 +930,14 @@ export async function syncTrackedIntoDataRepo(
       name,
       opts.scope ?? "project",
     );
-    const capturedFiles = new Set(snapshot.files);
+    const currentFiles =
+      currentSnapshot === null
+        ? null
+        : await namedFilesFromInstalledSnapshot(currentSnapshot);
     if (
       currentSnapshot === null ||
-      currentSnapshot.sha !== sha ||
-      currentSnapshot.files.length !== capturedFiles.size ||
-      currentSnapshot.files.some((file) => !capturedFiles.has(file))
+      currentFiles === null ||
+      !namedFilesEqual(localFiles, currentFiles)
     ) {
       throw new PreconditionError(
         `not promoting ${kind}/${name} — installed snapshot changed during promotion; retry`,

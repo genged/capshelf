@@ -1,5 +1,5 @@
 import type { Command } from "commander";
-import { assertIsGitRepo } from "./git";
+import { assertDataRepoRoot } from "./git";
 import { globalOpts } from "./global-options";
 import { loadLocalLock, loadLock } from "./lock";
 import type { Lock } from "./lock";
@@ -68,6 +68,6 @@ export async function resolveProjectDataRepo(
     manifest,
     project,
   });
-  await assertIsGitRepo(dataRepo);
+  await assertDataRepoRoot(dataRepo);
   return dataRepo;
 }

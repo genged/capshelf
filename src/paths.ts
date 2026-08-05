@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import {
   LOCAL_LOCK_FILE,
@@ -51,7 +51,13 @@ export function normalizePath(
 export function findProjectRoot(cwd: string = process.cwd()): string | null {
   let dir = resolve(cwd);
   for (;;) {
-    if (existsSync(manifestPath(dir))) return dir;
+    if (
+      basename(dir) === METADATA_DIR &&
+      existsSync(join(dir, MANIFEST_FILE))
+    ) {
+      return dirname(dir);
+    }
+    if (manifestReadPath(dir) !== null) return dir;
     const parent = dirname(dir);
     if (parent === dir) return null; // reached the filesystem root
     dir = parent;

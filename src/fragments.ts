@@ -111,6 +111,11 @@ export interface FragmentApplyResult {
   dryRun?: true;
 }
 
+export interface ApplyFragmentPlansOptions {
+  dryRun?: boolean;
+  beforeWrite?: (plan: FragmentOutputPlan, index: number) => Promise<void>;
+}
+
 export interface FragmentValue {
   source: FragmentSource;
   value: ConfigObject;
@@ -412,33 +417,92 @@ export async function applyFragmentOutput(
   opts: ApplyFragmentOutputOptions,
 ): Promise<FragmentApplyResult> {
   const plan = await planFragmentOutput(opts);
-  if (!opts.dryRun && plan.changed) {
-    if (plan.commentLoss) {
-      console.error(
-        `⚠ ${relative(opts.project, plan.path)}: comments in this file are not preserved when capshelf rewrites its managed content`,
+  return (await applyFragmentOutputPlans([plan], { dryRun: opts.dryRun }))[0]!;
+}
+
+export async function applyFragmentOutputPlans(
+  plans: FragmentOutputPlan[],
+  opts: ApplyFragmentPlansOptions = {},
+): Promise<FragmentApplyResult[]> {
+  if (opts.dryRun) {
+    return plans.map((plan) => fragmentApplyResult(plan, true));
+  }
+
+  for (const plan of plans) {
+    const currentText = existsSync(plan.path)
+      ? await readFile(plan.path, "utf-8")
+      : null;
+    if (currentText !== plan.currentText) {
+      throw new PreconditionError(
+        `cannot reconcile ${plan.path}: the output changed after preflight; retry`,
       );
     }
-    if (plan.plannedText === null) {
-      await rm(plan.path, { force: true });
-    } else {
-      await mkdir(dirname(plan.path), { recursive: true });
-      await atomicWriteFile(plan.path, plan.plannedText);
-    }
   }
+
+  const attempted: FragmentOutputPlan[] = [];
+  try {
+    for (const [index, plan] of plans.entries()) {
+      if (!plan.changed) continue;
+      if (plan.commentLoss) {
+        console.error(
+          `⚠ ${plan.path}: comments in this file are not preserved when capshelf rewrites its managed content`,
+        );
+      }
+      await opts.beforeWrite?.(plan, index);
+      attempted.push(plan);
+      await writeFragmentPlan(plan, plan.plannedText);
+    }
+  } catch (error) {
+    const rollbackErrors: unknown[] = [];
+    for (const plan of attempted.reverse()) {
+      try {
+        await writeFragmentPlan(plan, plan.currentText);
+      } catch (rollbackError) {
+        rollbackErrors.push(rollbackError);
+      }
+    }
+    if (rollbackErrors.length > 0) {
+      throw new AggregateError(
+        [error, ...rollbackErrors],
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    throw error;
+  }
+
+  return plans.map((plan) => fragmentApplyResult(plan, false));
+}
+
+function fragmentApplyResult(
+  plan: FragmentOutputPlan,
+  dryRun: boolean,
+): FragmentApplyResult {
   return {
-    key: fragmentTargetKey(opts.target),
+    key: fragmentTargetKey(plan.target),
     source: "data",
-    target: opts.target,
+    target: plan.target,
     action: plan.changed
-      ? opts.dryRun
+      ? dryRun
         ? "would-reconcile"
         : "reconciled"
       : "already-current",
     path: plan.path,
     currentSha: plan.currentSha,
     plannedSha: plan.plannedSha,
-    ...(opts.dryRun && { dryRun: true as const }),
+    ...(dryRun && { dryRun: true as const }),
   };
+}
+
+async function writeFragmentPlan(
+  plan: FragmentOutputPlan,
+  text: string | null,
+): Promise<void> {
+  if (text === null) {
+    await rm(plan.path, { force: true });
+    return;
+  }
+  await mkdir(dirname(plan.path), { recursive: true });
+  await atomicWriteFile(plan.path, text);
 }
 
 export async function fragmentContributionState(
@@ -776,6 +840,7 @@ function containsManagedOutput(
   managed: ConfigObject,
 ): boolean {
   return Object.entries(managed).every(([key, value]) => {
+    if (!Object.hasOwn(current, key)) return false;
     if (Array.isArray(value)) {
       const currentArray = current[key];
       if (!Array.isArray(currentArray)) return false;

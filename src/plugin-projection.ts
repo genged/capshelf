@@ -3,8 +3,10 @@ import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PreconditionError } from "./errors";
 import {
+  assertRegularBlobEntries,
   gitVisibleFilesUnderPath,
   gitText,
+  literalPathspec,
   lsTreeEntriesAtCommit,
   showAtCommit,
 } from "./git";
@@ -210,15 +212,12 @@ async function collectHeadFiles(
   ref: string,
 ): Promise<ProjectionFile[]> {
   const entries = await lsTreeEntriesAtCommit(dataRepo, "HEAD", ref);
+  assertRegularBlobEntries(entries, ref);
   const prefix = `${ref}/`;
   const files: ProjectionFile[] = [];
   for (const entry of entries) {
     const relPath = entry.path.slice(prefix.length);
     if (relPath === ".capshelf.yml") continue;
-    if (entry.mode === "120000") {
-      throw new PreconditionError(`${entry.path} is a symlink`);
-    }
-    if (entry.type !== "blob") continue;
     files.push({
       path: relPath,
       bytes: await showAtCommit(dataRepo, "HEAD", entry.path),
@@ -246,7 +245,13 @@ async function trackedModesUnderPath(
   dataRepo: string,
   ref: string,
 ): Promise<Map<string, string>> {
-  const out = await gitText(dataRepo, ["ls-files", "--stage", "-z", "--", ref]);
+  const out = await gitText(dataRepo, [
+    "ls-files",
+    "--stage",
+    "-z",
+    "--",
+    literalPathspec(ref),
+  ]);
   const prefix = `${ref}/`;
   const modes = new Map<string, string>();
   for (const record of out.split("\0").filter(Boolean)) {

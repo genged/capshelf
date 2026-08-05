@@ -141,7 +141,7 @@ export function normalizeClaudeSettingsOutput(
 ): ConfigObject {
   const nonSchemaKeys = Object.keys(value).filter((key) => key !== "$schema");
   if (nonSchemaKeys.length === 0) return {};
-  if ("$schema" in value) return value;
+  if (Object.hasOwn(value, "$schema")) return value;
   return { $schema: CLAUDE_SETTINGS_SCHEMA, ...value };
 }
 

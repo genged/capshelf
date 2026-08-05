@@ -1,8 +1,9 @@
 import { existsSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { lstat, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import ignore from "ignore";
 import { isIgnoredDotDirent } from "./dotfiles";
+import { PreconditionError } from "./errors";
 
 interface IgnoreScope {
   relDir: string;
@@ -29,6 +30,14 @@ export async function gitignoreVisibleFiles(root: string): Promise<string[]> {
 
       if (entry.isDirectory()) await walk(rel, activeScopes);
       else if (entry.isFile()) out.push(rel);
+      else {
+        const type = entry.isSymbolicLink()
+          ? "symlink"
+          : "unsupported filesystem object";
+        throw new PreconditionError(
+          `${root} contains an unsupported ${type}: ${rel}; copy items support regular files only`,
+        );
+      }
     }
   }
 
@@ -43,6 +52,14 @@ async function scopesWithLocalGitignore(
 ): Promise<readonly IgnoreScope[]> {
   const path = join(root, ...(relDir ? relDir.split("/") : []), ".gitignore");
   if (!existsSync(path)) return scopes;
+
+  const info = await lstat(path);
+  if (info.isSymbolicLink()) {
+    throw new PreconditionError(
+      `${root} contains an unsupported symlink: ${relDir ? `${relDir}/` : ""}.gitignore; copy items support regular files only`,
+    );
+  }
+  if (!info.isFile()) return scopes;
 
   const content = await readFile(path, "utf-8");
   const matcher = ignore().add(content);
