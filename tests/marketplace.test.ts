@@ -254,6 +254,164 @@ describe("marketplace CLI", () => {
     ).toContain("description: changed");
   });
 
+  test("sync reports and refuses dirty projection loss until --yes", async () => {
+    const repo = await tempRepo("capshelf-marketplace-sync-consent-", {
+      origin: null,
+    });
+    await seedSkill(repo, "review");
+    await commitAll(repo, "skill");
+    const run = runInProcess(repo);
+    expect(
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "init",
+          "--target",
+          "codex",
+          "--name",
+          "company",
+          "--owner",
+          "Engineering",
+        ])
+      ).exitCode,
+    ).toBe(0);
+    expect(
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "plugin",
+          "create",
+          "engineering",
+          "--target",
+          "codex",
+          "--skill",
+          "review",
+        ])
+      ).exitCode,
+    ).toBe(0);
+    const projection =
+      "codex/generated/plugins/engineering/skills/review/SKILL.md";
+    const projectionPath = join(repo, ...projection.split("/"));
+    await writeFile(projectionPath, "unique generated edit\n");
+
+    const dryRun = await run([
+      "--data",
+      repo,
+      "marketplace",
+      "sync",
+      "--target",
+      "codex",
+      "--dry-run",
+      "--json",
+    ]);
+    expect(dryRun.exitCode).toBe(0);
+    const report = JSON.parse(stdout(dryRun));
+    expect(report.dirtyProjectionPaths).toEqual([projection]);
+    expect(report.destructiveChanges).toEqual([
+      expect.objectContaining({
+        scope: "data-repo",
+        path: projection,
+        reason: "dirty_projection",
+      }),
+    ]);
+
+    const refused = await run([
+      "--data",
+      repo,
+      "marketplace",
+      "sync",
+      "--target",
+      "codex",
+      "--json",
+    ]);
+    expect(refused.exitCode).toBe(3);
+    expect(stderr(refused)).toContain(projection);
+    expect(await readFile(projectionPath, "utf8")).toBe(
+      "unique generated edit\n",
+    );
+
+    const accepted = await run([
+      "--data",
+      repo,
+      "marketplace",
+      "sync",
+      "--target",
+      "codex",
+      "--yes",
+      "--json",
+    ]);
+    expect(accepted.exitCode).toBe(0);
+    expect(await readFile(projectionPath, "utf8")).toContain("name: review");
+  });
+
+  test("sync repairs clean committed projection drift without consent", async () => {
+    const repo = await tempRepo("capshelf-marketplace-sync-clean-", {
+      origin: null,
+    });
+    await seedSkill(repo, "review");
+    await commitAll(repo, "skill");
+    const run = runInProcess(repo);
+    expect(
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "init",
+          "--target",
+          "codex",
+          "--name",
+          "company",
+          "--owner",
+          "Engineering",
+        ])
+      ).exitCode,
+    ).toBe(0);
+    expect(
+      (
+        await run([
+          "--data",
+          repo,
+          "marketplace",
+          "plugin",
+          "create",
+          "engineering",
+          "--target",
+          "codex",
+          "--skill",
+          "review",
+        ])
+      ).exitCode,
+    ).toBe(0);
+    const projectionPath = join(
+      repo,
+      "codex/generated/plugins/engineering/skills/review/SKILL.md",
+    );
+    await writeFile(projectionPath, "committed stale projection\n");
+    await commitAll(repo, "commit stale projection");
+    const head = (await Bun.$`git -C ${repo} rev-parse HEAD`.text()).trim();
+
+    const synced = await run([
+      "--data",
+      repo,
+      "marketplace",
+      "sync",
+      "--target",
+      "codex",
+      "--json",
+    ]);
+    expect(synced.exitCode).toBe(0);
+    expect(JSON.parse(stdout(synced)).dirtyProjectionPaths).toEqual([]);
+    expect(await readFile(projectionPath, "utf8")).toContain("name: review");
+    expect((await Bun.$`git -C ${repo} rev-parse HEAD`.text()).trim()).toBe(
+      head,
+    );
+  });
+
   test("missing selected skills block validate, sync, pack, and mutations", async () => {
     const repo = await tempRepo("capshelf-marketplace-missing-", {
       origin: null,

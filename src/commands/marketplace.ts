@@ -3,6 +3,11 @@ import { lstat, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Command } from "commander";
 import {
+  assertDestructivePlanUnchanged,
+  confirmDestructiveChanges,
+  createDestructiveChangePlan,
+} from "../destructive-change";
+import {
   claudePluginSkills,
   findClaudePlugin,
   isManagedClaudePlugin,
@@ -35,6 +40,7 @@ import {
   originRemoteUrl,
 } from "../git";
 import { globalOpts } from "../global-options";
+import { PRODUCT_NAME } from "../identity";
 import { loadManifest } from "../manifest";
 import {
   CODEX_PROJECTION_ROOTS,
@@ -66,6 +72,7 @@ interface CommonOptions {
   json?: boolean;
   dryRun?: boolean;
   message?: string;
+  yes?: boolean;
 }
 
 interface InitOptions extends CommonOptions {
@@ -399,6 +406,7 @@ export function registerMarketplace(program: Command): void {
     .command("sync")
     .requiredOption("--target <target>", "codex")
     .option("--dry-run")
+    .option("--yes", "authorize replacing dirty generated projection paths")
     .option("--json")
     .action(async (opts: CommonOptions, cmd: Command) => {
       const dataRepo = await marketplaceDataRepo(cmd);
@@ -407,13 +415,31 @@ export function registerMarketplace(program: Command): void {
           "marketplace sync supports only --target codex",
         );
       }
-      const state = await loadCodexState(dataRepo);
-      const expected = await buildCodexProjection(dataRepo, state);
-      const current = await readFilesBelow(dataRepo, CODEX_PROJECTION_ROOTS);
-      const changes = diffFileSets(current, expected);
+      const accepted = await planCodexProjectionSync(dataRepo);
+      const { state, changes } = accepted;
       const changed = totalChanges(changes) > 0;
       if (changed && !opts.dryRun) {
-        await replaceOwnedFiles(dataRepo, CODEX_PROJECTION_ROOTS, expected);
+        if (
+          !(await confirmDestructiveChanges(accepted.destructivePlan, {
+            operation: "Marketplace sync",
+            json: opts.json === true,
+            yes: opts.yes === true,
+            dryRun: false,
+            rerunCommand: `${PRODUCT_NAME} marketplace sync --target codex --yes`,
+          }))
+        ) {
+          return;
+        }
+        const revalidated = await planCodexProjectionSync(dataRepo);
+        assertDestructivePlanUnchanged(
+          accepted.destructivePlan,
+          revalidated.destructivePlan,
+        );
+        await replaceOwnedFiles(
+          dataRepo,
+          CODEX_PROJECTION_ROOTS,
+          revalidated.expected,
+        );
       }
       printResult(opts, {
         verb: "marketplace-sync",
@@ -425,6 +451,8 @@ export function registerMarketplace(program: Command): void {
         ...changes,
         committed: false,
         dryRun: opts.dryRun ?? false,
+        dirtyProjectionPaths: accepted.dirtyProjectionPaths,
+        destructiveChanges: accepted.destructivePlan.changes,
         warnings: overlapWarnings(state.definitions),
       });
     });
@@ -1030,6 +1058,13 @@ function printResult(
   console.log(`${String(result.action)} ${String(result.target ?? "")}`.trim());
   if (result.dataRepo) console.log(`  data repo: ${String(result.dataRepo)}`);
   if (result.output) console.log(`  output: ${String(result.output)}`);
+  const dirtyProjectionPaths = result.dirtyProjectionPaths;
+  if (Array.isArray(dirtyProjectionPaths) && dirtyProjectionPaths.length > 0) {
+    console.log("  dirty projection paths:");
+    for (const path of dirtyProjectionPaths) {
+      console.log(`    ${String(path)}`);
+    }
+  }
   const warnings = result.warnings;
   if (Array.isArray(warnings)) {
     for (const warning of warnings) console.error(`⚠ ${String(warning)}`);
@@ -1723,6 +1758,63 @@ function totalChanges(changes: {
   return (
     changes.created.length + changes.updated.length + changes.deleted.length
   );
+}
+
+async function planCodexProjectionSync(dataRepo: string): Promise<{
+  state: CodexState;
+  expected: ProjectionFile[];
+  changes: { created: string[]; updated: string[]; deleted: string[] };
+  dirtyProjectionPaths: string[];
+  destructivePlan: ReturnType<typeof createDestructiveChangePlan>;
+}> {
+  const state = await loadCodexState(dataRepo);
+  const expected = await buildCodexProjection(dataRepo, state);
+  const current = await readFilesBelow(dataRepo, CODEX_PROJECTION_ROOTS);
+  const changes = diffFileSets(current, expected);
+  const changedPaths = new Set([
+    ...changes.created,
+    ...changes.updated,
+    ...changes.deleted,
+  ]);
+  const dirtyProjectionPaths = (await dirtyCodexProjectionPaths(dataRepo))
+    .filter((path) => changedPaths.has(path))
+    .sort();
+  const destructiveChanges = dirtyProjectionPaths.map((path) => ({
+    scope: "data-repo" as const,
+    path,
+    reason: "dirty_projection" as const,
+    reviewCommand: `git -C ${JSON.stringify(dataRepo)} diff -- ${JSON.stringify(path)}`,
+  }));
+  return {
+    state,
+    expected,
+    changes,
+    dirtyProjectionPaths,
+    destructivePlan: createDestructiveChangePlan(destructiveChanges, [
+      `current:${logicalContentHash(null, current)}`,
+      `expected:${logicalContentHash(null, expected)}`,
+      `diff:${JSON.stringify(changes)}`,
+      `dirty:${JSON.stringify(dirtyProjectionPaths)}`,
+    ]),
+  };
+}
+
+async function dirtyCodexProjectionPaths(dataRepo: string): Promise<string[]> {
+  const output = await gitText(dataRepo, [
+    "--literal-pathspecs",
+    "status",
+    "--porcelain",
+    "--untracked-files=all",
+    "--",
+    ...CODEX_PROJECTION_ROOTS,
+  ]);
+  const paths = new Set<string>();
+  for (const line of output.split("\n").filter(Boolean)) {
+    const raw = line.slice(3);
+    const rename = raw.split(" -> ");
+    for (const path of rename) paths.add(path);
+  }
+  return [...paths].sort();
 }
 
 async function dirtyPackInputs(

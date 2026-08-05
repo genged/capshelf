@@ -526,6 +526,12 @@ describe("marketplace observable contracts", () => {
       committed: false,
       dryRun: true,
     });
+    expect(json(dryRun).dirtyProjectionPaths).toEqual([
+      "codex/generated/README.md",
+      "codex/generated/plugins/engineering/.codex-plugin/plugin.json",
+      "codex/generated/plugins/engineering/extra.txt",
+      "codex/generated/plugins/engineering/skills/review/SKILL.md",
+    ]);
     expect(await readFile(copied, "utf8")).toBe("manually changed");
     expect(await readFile(extra, "utf8")).toBe("extra");
 
@@ -536,6 +542,7 @@ describe("marketplace observable contracts", () => {
       "sync",
       "--target",
       "codex",
+      "--yes",
       "--json",
     ]);
     expect(synced.exitCode).toBe(0);
