@@ -85,7 +85,7 @@ if (cd "$A" && "${CLI[@]}" status mcp/github --strict >/dev/null 2>&1); then
   echo "expected strict status to fail on output drift"
   exit 1
 fi
-(cd "$A" && "${CLI[@]}" apply mcp/github --json > "$TMP/mcp-apply.json")
+(cd "$A" && "${CLI[@]}" apply mcp/github --yes --json > "$TMP/mcp-apply.json")
 assert_fixed_contains 'github-mcp-v2' "$A/.mcp.json"
 assert_fixed_contains 'command = "github-mcp-v2"' "$A/.codex/config.toml"
 
