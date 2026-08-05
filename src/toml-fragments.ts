@@ -30,6 +30,58 @@ export function stringifyTomlConfig(value: ConfigObject): string {
   return text.endsWith("\n") ? text : `${text}\n`;
 }
 
+export function tomlTextHasComments(raw: string): boolean {
+  let state:
+    | "normal"
+    | "basic"
+    | "literal"
+    | "multiline-basic"
+    | "multiline-literal" = "normal";
+
+  for (let index = 0; index < raw.length; index += 1) {
+    const rest = raw.slice(index);
+    const character = raw[index]!;
+    if (state === "normal") {
+      if (character === "#") return true;
+      if (rest.startsWith('"""')) {
+        state = "multiline-basic";
+        index += 2;
+      } else if (rest.startsWith("'''")) {
+        state = "multiline-literal";
+        index += 2;
+      } else if (character === '"') {
+        state = "basic";
+      } else if (character === "'") {
+        state = "literal";
+      }
+      continue;
+    }
+
+    if (state === "basic") {
+      if (character === "\\") index += 1;
+      else if (character === '"') state = "normal";
+      continue;
+    }
+    if (state === "literal") {
+      if (character === "'") state = "normal";
+      continue;
+    }
+
+    const quote = state === "multiline-basic" ? '"' : "'";
+    if (state === "multiline-basic" && character === "\\") {
+      index += 1;
+      continue;
+    }
+    if (character === quote) {
+      let runLength = 1;
+      while (raw[index + runLength] === quote) runLength += 1;
+      if (runLength >= 3) state = "normal";
+      index += runLength - 1;
+    }
+  }
+  return false;
+}
+
 export function validateCodexMcpFragment(
   value: ConfigObject,
   label: string,

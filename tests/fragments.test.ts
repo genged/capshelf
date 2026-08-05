@@ -11,6 +11,7 @@ import {
   fragmentContributionState,
   lastTouchingFragmentCommit,
   lockedFragmentTargetsForItem,
+  planFragmentOutput,
   shaOfFragmentItem,
   shaOfFragmentItemAtCommit,
 } from "../src/fragments";
@@ -397,6 +398,65 @@ describe("fragment output planning", () => {
         "codex-config",
       ),
     ).toBe("ok");
+  });
+
+  test("reports TOML comment loss in the output preflight plan", async () => {
+    const dataRepo = await tempRepo();
+    const project = await tempDir("capshelf-fragments-comment-project-");
+    const source = join(dataRepo, "codex", "config", "defaults", "config.toml");
+    await mkdir(join(dataRepo, "codex", "config", "defaults"), {
+      recursive: true,
+    });
+    await writeFile(source, 'model = "gpt-5"\n');
+    await commitAll(dataRepo, "config v1");
+    const manifest = { ...emptyManifest(), codexConfig: ["defaults"] };
+    const oldLock = emptyLock();
+    oldLock.items[dataKey("codex-config", "defaults")] = {
+      source: "data",
+      sha: await shaOfFragmentItem(dataRepo, "codex-config", "defaults"),
+      sourceCommit: await lastTouchingFragmentCommit(
+        dataRepo,
+        "codex-config",
+        "defaults",
+      ),
+      appliedAt: new Date().toISOString(),
+    };
+    await applyFragmentOutput({
+      project,
+      dataRepo,
+      manifest,
+      oldLock: emptyLock(),
+      nextLock: oldLock,
+      target: "codex-config",
+    });
+    const output = join(project, ".codex", "config.toml");
+    await writeFile(output, '# keep this context\nmodel = "gpt-5"\n');
+
+    await writeFile(source, 'model = "gpt-5.1"\n');
+    await commitAll(dataRepo, "config v2");
+    const nextLock = structuredClone(oldLock);
+    nextLock.items[dataKey("codex-config", "defaults")] = {
+      source: "data",
+      sha: await shaOfFragmentItem(dataRepo, "codex-config", "defaults"),
+      sourceCommit: await lastTouchingFragmentCommit(
+        dataRepo,
+        "codex-config",
+        "defaults",
+      ),
+      appliedAt: new Date().toISOString(),
+    };
+
+    const plan = await planFragmentOutput({
+      project,
+      dataRepo,
+      manifest,
+      oldLock,
+      nextLock,
+      target: "codex-config",
+    });
+    expect(plan.changed).toBe(true);
+    expect(plan.commentLoss).toBe(true);
+    expect(await file(output).text()).toContain("# keep this context");
   });
 
   test("applies mcp fragment over an empty .mcp.json", async () => {

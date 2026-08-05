@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   parseTomlConfigObject,
   stringifyTomlConfig,
+  tomlTextHasComments,
   validateCodexMcpFragment,
 } from "../src/toml-fragments";
 
@@ -32,6 +33,29 @@ describe("parseTomlConfigObject", () => {
         "config.toml",
       ),
     ).toThrow("config.toml.meta.updated contains a TOML date");
+  });
+});
+
+describe("tomlTextHasComments", () => {
+  test("detects full-line and trailing comments", () => {
+    expect(tomlTextHasComments('# heading\nmodel = "gpt-5"\n')).toBe(true);
+    expect(tomlTextHasComments('model = "gpt-5" # selected\n')).toBe(true);
+  });
+
+  test("ignores hashes inside every TOML string form", () => {
+    expect(
+      tomlTextHasComments(
+        [
+          'basic = "# not a comment"',
+          "literal = '# still data'",
+          'multi = """line # one',
+          'line two"""',
+          "multi_literal = '''line # one",
+          "line two'''",
+          "",
+        ].join("\n"),
+      ),
+    ).toBe(false);
   });
 });
 

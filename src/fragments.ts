@@ -27,6 +27,7 @@ import {
 import {
   parseTomlConfigObject,
   stringifyTomlConfig,
+  tomlTextHasComments,
   validateCodexConfigFragment,
   validateCodexMcpFragment,
 } from "./toml-fragments";
@@ -84,7 +85,7 @@ export interface FragmentOutputPlan {
   currentSha: string | null;
   plannedSha: string | null;
   changed: boolean;
-  /** The existing JSON file had comments a managed rewrite will not preserve. */
+  /** The existing JSONC or TOML file had comments a rewrite cannot preserve. */
   commentLoss: boolean;
 }
 
@@ -395,11 +396,12 @@ export async function planFragmentOutput(
       : stableStringifyConfig(current) !== stableStringifyConfig(planned);
 
   const commentLoss =
-    spec.format === "json" &&
     changed &&
     plannedText !== null &&
     currentText !== null &&
-    jsonTextHasComments(currentText);
+    (spec.format === "json"
+      ? jsonTextHasComments(currentText)
+      : tomlTextHasComments(currentText));
 
   return {
     target: opts.target,
