@@ -14,6 +14,7 @@ import {
   currentBranch,
   fastForwardTo,
   fetchOrigin,
+  gitBuffer,
   gitVisibleFilesUnderPath,
   headSha,
   isPathClean,
@@ -24,6 +25,7 @@ import {
   normalizeRemoteUrl,
   showAtCommit,
   statusPorcelainOutsidePath,
+  statusPorcelainRecords,
   trackingRef,
 } from "../src/git";
 
@@ -323,6 +325,57 @@ describe("git historical content helpers", () => {
     await expect(assertPathClean(repo, "skills/hello")).rejects.toThrow(
       /uncommitted changes under skills\/hello/,
     );
+  });
+
+  test("assertPathClean diagnoses a non-ASCII item path like its ASCII twin", async () => {
+    const repo = await tempRepo();
+    for (const name of ["café", "cafe"]) {
+      await mkdir(join(repo, "skills", name), { recursive: true });
+      await writeFile(join(repo, "skills", name, "SKILL.md"), "hello\n");
+    }
+    await commitAll(repo, "baseline");
+    for (const name of ["café", "cafe"]) {
+      await writeFile(
+        join(repo, "skills", name, ".capshelf.yml"),
+        "tags: []\n",
+      );
+    }
+
+    // Without -z git returns "skills/caf\303\251/.capshelf.yml", which never
+    // matches the expected sidecar path and takes the strict content branch.
+    await expect(assertPathClean(repo, "skills/café")).rejects.toThrow(
+      /uncommitted metadata changes: skills\/café\/\.capshelf\.yml/,
+    );
+    await expect(assertPathClean(repo, "skills/cafe")).rejects.toThrow(
+      /uncommitted metadata changes: skills\/cafe\/\.capshelf\.yml/,
+    );
+  });
+
+  test("statusPorcelainRecords survives quoting, renames, and literal arrows", async () => {
+    const repo = await tempRepo();
+    await mkdir(join(repo, "d"), { recursive: true });
+    await writeFile(join(repo, "d", "café.txt"), "one\n");
+    await writeFile(join(repo, "d", "a -> b.txt"), "two\n");
+    await commitAll(repo, "baseline");
+    // Bun's `$` mis-serializes some non-Latin1 argv strings, which is why
+    // capshelf runs git through Bun.spawn — see the note on gitTry.
+    await gitBuffer(repo, ["mv", "d/café.txt", "d/rénamed.txt"]);
+    await writeFile(join(repo, "d", "a -> b.txt"), "edited\n");
+    await writeFile(join(repo, "d", 'qu"ote.txt'), "three\n");
+
+    const records = await statusPorcelainRecords(repo, ["d"], {
+      untrackedFiles: "all",
+    });
+    expect(
+      records.map(({ code, ...rest }) => ({ code: code.trim(), ...rest })),
+    ).toEqual([
+      // A path containing a literal " -> " must not be mis-split.
+      { code: "M", path: "d/a -> b.txt" },
+      // -z puts the new path first and the original in a bare follow-on
+      // record with no status prefix.
+      { code: "R", path: "d/rénamed.txt", origPath: "d/café.txt" },
+      { code: "??", path: 'd/qu"ote.txt' },
+    ]);
   });
 
   test("lastTouchingCommit rejects uncommitted paths", async () => {

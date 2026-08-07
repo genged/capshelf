@@ -8,6 +8,7 @@ import {
   type ProjectionFile,
 } from "../src/plugin-projection";
 import {
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
   type CliResult,
   commitAll,
   runInProcess,
@@ -347,6 +348,122 @@ describe("marketplace CLI", () => {
     expect(accepted.exitCode).toBe(0);
     expect(await readFile(projectionPath, "utf8")).toContain("name: review");
   });
+
+  test(
+    "sync detects a dirty projection whose path git would octal-quote",
+    async () => {
+      const repo = await tempRepo("capshelf-marketplace-sync-quoted-", {
+        origin: null,
+      });
+      await seedSkill(repo, "review");
+      // Marketplace skill names are slug-restricted, but the files inside a
+      // skill are not, and they project verbatim.
+      await mkdir(join(repo, "skills", "review", "assets"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(repo, "skills", "review", "assets", "café.md"),
+        "a\n",
+      );
+      await writeFile(
+        join(repo, "skills", "review", "assets", 'a "q" b.md'),
+        "b\n",
+      );
+      await commitAll(repo, "skill");
+      const run = runInProcess(repo);
+      expect(
+        (
+          await run([
+            "--data",
+            repo,
+            "marketplace",
+            "init",
+            "--target",
+            "codex",
+            "--name",
+            "company",
+            "--owner",
+            "Engineering",
+          ])
+        ).exitCode,
+      ).toBe(0);
+      expect(
+        (
+          await run([
+            "--data",
+            repo,
+            "marketplace",
+            "plugin",
+            "create",
+            "engineering",
+            "--target",
+            "codex",
+            "--skill",
+            "review",
+          ])
+        ).exitCode,
+      ).toBe(0);
+      const projection =
+        "codex/generated/plugins/engineering/skills/review/assets/café.md";
+      const quotedProjection =
+        'codex/generated/plugins/engineering/skills/review/assets/a "q" b.md';
+      const projectionPath = join(repo, ...projection.split("/"));
+      await writeFile(projectionPath, "unique generated edit\n");
+      await writeFile(
+        join(repo, ...quotedProjection.split("/")),
+        "another edit\n",
+      );
+
+      // Without -z the porcelain path comes back as "codex/.../caf\303\251/..."
+      // and never matches the raw UTF-8 changed path, so the guard silently
+      // fails open and the edit is overwritten by a `✓` clean sync.
+      const dryRun = await run([
+        "--data",
+        repo,
+        "marketplace",
+        "sync",
+        "--target",
+        "codex",
+        "--dry-run",
+        "--json",
+      ]);
+      expect(dryRun.exitCode).toBe(0);
+      expect(JSON.parse(stdout(dryRun)).dirtyProjectionPaths).toEqual(
+        [quotedProjection, projection].sort(),
+      );
+
+      const refused = await run([
+        "--data",
+        repo,
+        "marketplace",
+        "sync",
+        "--target",
+        "codex",
+        "--json",
+      ]);
+      expect(refused.exitCode).toBe(3);
+      expect(await readFile(projectionPath, "utf8")).toBe(
+        "unique generated edit\n",
+      );
+
+      expect(
+        (
+          await run([
+            "--data",
+            repo,
+            "marketplace",
+            "sync",
+            "--target",
+            "codex",
+            "--yes",
+            "--json",
+          ])
+        ).exitCode,
+      ).toBe(0);
+      expect(await readFile(projectionPath, "utf8")).toBe("a\n");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
 
   test("sync repairs clean committed projection drift without consent", async () => {
     const repo = await tempRepo("capshelf-marketplace-sync-clean-", {

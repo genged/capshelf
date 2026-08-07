@@ -34,10 +34,10 @@ import { NotFoundError, PreconditionError, ResultExitError } from "../errors";
 import {
   assertIsGitRepo,
   gitVisibleFilesUnderPath,
-  gitText,
   headSha,
   isRepoClean,
   originRemoteUrl,
+  statusPorcelainRecords,
 } from "../git";
 import { globalOpts } from "../global-options";
 import { PRODUCT_NAME } from "../identity";
@@ -1800,19 +1800,17 @@ async function planCodexProjectionSync(dataRepo: string): Promise<{
 }
 
 async function dirtyCodexProjectionPaths(dataRepo: string): Promise<string[]> {
-  const output = await gitText(dataRepo, [
-    "--literal-pathspecs",
-    "status",
-    "--porcelain",
-    "--untracked-files=all",
-    "--",
-    ...CODEX_PROJECTION_ROOTS,
-  ]);
+  const records = await statusPorcelainRecords(
+    dataRepo,
+    [...CODEX_PROJECTION_ROOTS],
+    { untrackedFiles: "all" },
+  );
+  // Both sides of a rename count here: regenerating the projection restores
+  // the original path and removes the new one, so both are at risk.
   const paths = new Set<string>();
-  for (const line of output.split("\n").filter(Boolean)) {
-    const raw = line.slice(3);
-    const rename = raw.split(" -> ");
-    for (const path of rename) paths.add(path);
+  for (const record of records) {
+    paths.add(record.path);
+    if (record.origPath) paths.add(record.origPath);
   }
   return [...paths].sort();
 }
@@ -1830,23 +1828,11 @@ async function dirtyPackInputs(
           "codex/plugin-definitions/marketplace.json",
           `codex/plugin-definitions/${plugin}.json`,
         ];
-  const output = await gitText(dataRepo, [
-    "--literal-pathspecs",
-    "status",
-    "--porcelain",
-    "--",
+  const records = await statusPorcelainRecords(dataRepo, [
     ...sourcePaths,
     ...skills,
   ]);
-  return output
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => {
-      const path = line.slice(3);
-      const arrow = path.lastIndexOf(" -> ");
-      return arrow === -1 ? path : path.slice(arrow + 4);
-    })
-    .sort();
+  return records.map((record) => record.path).sort();
 }
 
 function sameClaudeIdentity(

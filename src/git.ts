@@ -405,6 +405,62 @@ export async function gitVisibleFilesUnderPath(
     .sort();
 }
 
+export interface StatusPorcelainRecord {
+  /** The two-character XY status code, e.g. `??`, ` M`, `R `. */
+  code: string;
+  /** Repo-relative path, verbatim. */
+  path: string;
+  /** For a rename or copy, the path the entry moved from. */
+  origPath?: string;
+}
+
+/**
+ * `git status --porcelain -z`, parsed into records.
+ *
+ * `-z` is not optional. Without it git octal-quotes any path containing
+ * non-ASCII, control, quote, or backslash characters
+ * (`"codex/generated/caf\303\251/plugin.json"`), so every caller that
+ * compares a parsed path against a real one silently stops matching — which
+ * fails open for a dirty-state guard and fails closed for a diagnosis.
+ *
+ * `-z` also changes the rename encoding, and a naive `split("\0")` gets it
+ * wrong: the original path arrives as a **bare follow-on record with no
+ * status prefix**, so the parser must consume the next record when the code
+ * is `R` or `C` or it will slice a status prefix off a plain path. That is
+ * why this is the only place in the codebase that parses porcelain paths.
+ */
+export async function statusPorcelainRecords(
+  repo: string,
+  relPaths: string[] = [],
+  options: { untrackedFiles?: "all" } = {},
+): Promise<StatusPorcelainRecord[]> {
+  const args = ["status", "--porcelain", "-z"];
+  if (options.untrackedFiles === "all") args.push("--untracked-files=all");
+  if (relPaths.length > 0) args.push("--", ...relPaths.map(literalPathspec));
+  const out = await gitText(repo, args);
+  // The stream is NUL-terminated, so the trailing element is always empty.
+  const fields = out.split("\0");
+  const records: StatusPorcelainRecord[] = [];
+  for (let index = 0; index < fields.length; index += 1) {
+    const field = fields[index]!;
+    if (field.length === 0) continue;
+    const code = field.slice(0, 2);
+    const path = field.slice(3);
+    if (code.includes("R") || code.includes("C")) {
+      const origPath = fields[index + 1];
+      index += 1;
+      records.push({ code, path, ...(origPath ? { origPath } : {}) });
+      continue;
+    }
+    records.push({ code, path });
+  }
+  return records;
+}
+
+/**
+ * Raw porcelain text. Callers must only test this for emptiness — parsing
+ * paths out of it is unsafe without `-z`; use `statusPorcelainRecords`.
+ */
 export async function statusPorcelain(
   repo: string,
   relPath?: string,
@@ -488,10 +544,12 @@ export async function assertPathClean(
   repo: string,
   relPath: string,
 ): Promise<void> {
-  const out = await statusPorcelain(repo, relPath);
-  if (out.trim().length === 0) return;
+  const records = await statusPorcelainRecords(repo, [relPath]);
+  if (records.length === 0) return;
   const sidecarPath = `${relPath}/.capshelf.yml`;
-  if (dirtyPathsFromPorcelain(out).every((path) => path === sidecarPath)) {
+  // Renames are attributed to the new path; a rename *of* the sidecar moved
+  // content and correctly falls through to the strict branch.
+  if (records.every((record) => record.path === sidecarPath)) {
     // Metadata-dirty, not content-dirty: the catalog must not be read from
     // limbo, but no item content is at risk — the fix is a one-line commit.
     throw new PreconditionError(
@@ -501,18 +559,6 @@ export async function assertPathClean(
   throw new PreconditionError(
     `data repo has uncommitted changes under ${relPath}\n  the recorded sha would not match its source commit. Commit first:\n    git -C ${repo} add ${relPath} && git -C ${repo} commit -m "..."`,
   );
-}
-
-function dirtyPathsFromPorcelain(out: string): string[] {
-  return out
-    .split("\n")
-    .filter((line) => line.trim().length > 0)
-    .map((line) => {
-      const path = line.slice(3);
-      // Renames are reported as "XY old -> new"; the new path is what counts.
-      const arrow = path.lastIndexOf(" -> ");
-      return arrow === -1 ? path : path.slice(arrow + 4);
-    });
 }
 
 export interface FetchResult {
