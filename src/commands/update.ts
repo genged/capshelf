@@ -7,7 +7,6 @@ import {
   renderDestructiveChanges,
   type DestructiveChange,
   type DestructiveChangePlan,
-  type DestructiveConfirmationContext,
 } from "../destructive-change";
 import {
   planCopyDirectoryDestruction,
@@ -71,8 +70,6 @@ interface UpdateOptions {
   local?: boolean;
   yes?: boolean;
 }
-
-export type UpdateConfirmationContext = DestructiveConfirmationContext;
 
 type UpdateAction =
   | "updated"
@@ -566,35 +563,6 @@ function printUpdateOutput(opts: {
       renderDestructiveChanges("Update", opts.destructivePlan.changes),
     );
   }
-}
-
-interface UpdateConfirmationOptions {
-  json: boolean;
-}
-
-export async function confirmUpdateOverwrite(
-  items: string[],
-  options: UpdateConfirmationOptions,
-  context?: UpdateConfirmationContext,
-): Promise<boolean> {
-  return await confirmDestructiveChanges(
-    createDestructiveChangePlan(
-      items.map((item) => ({
-        scope: item.startsWith("local/") ? "local" : "project",
-        path: item,
-        reason: "managed_content",
-        reviewCommand: "capshelf status <item> --diff",
-      })),
-    ),
-    {
-      operation: "Update",
-      json: options.json,
-      yes: false,
-      dryRun: false,
-      rerunCommand: "capshelf update ... --yes",
-    },
-    context,
-  );
 }
 
 interface FragmentContribution {

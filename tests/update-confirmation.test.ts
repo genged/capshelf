@@ -2,73 +2,132 @@ import { file } from "bun";
 import { describe, expect, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setDestructiveConfirmationContext } from "../src/destructive-change";
 import {
-  confirmUpdateOverwrite,
-  type UpdateConfirmationContext,
-} from "../src/commands/update";
-import { commitAll, runInProcess, tempRepo } from "./cli-fixtures";
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  addSkill,
+  commitAll,
+  runInProcess,
+  tempRepo,
+} from "./cli-fixtures";
 
-function confirmationContext(answer: string): {
-  context: UpdateConfirmationContext;
-  prompts: string[];
-  stderr: string[];
-} {
-  const prompts: string[] = [];
-  const stderr: string[] = [];
-  return {
-    context: {
-      stdinIsTTY: true,
-      stderrIsTTY: true,
-      prompt: async (message) => {
-        prompts.push(message);
-        return answer;
-      },
-      stderr: {
-        write(text) {
-          stderr.push(text);
-        },
+/**
+ * Drive the production consent path — the one `apply`, `update`, `rm`, and
+ * `revert` actually call — with a scripted TTY, and restore the default
+ * afterwards.
+ */
+async function withTty<T>(
+  answer: string,
+  body: (recorded: { prompts: string[]; stderr: string[] }) => Promise<T>,
+): Promise<T> {
+  const recorded = { prompts: [] as string[], stderr: [] as string[] };
+  setDestructiveConfirmationContext({
+    stdinIsTTY: true,
+    stderrIsTTY: true,
+    prompt: async (message: string) => {
+      recorded.prompts.push(message);
+      return answer;
+    },
+    stderr: {
+      write(text: string) {
+        recorded.stderr.push(text);
       },
     },
-    prompts,
-    stderr,
-  };
+  });
+  try {
+    return await body(recorded);
+  } finally {
+    setDestructiveConfirmationContext(null);
+  }
 }
 
-describe("update overwrite confirmation", () => {
-  test("lists every drifted item and accepts explicit interactive consent", async () => {
-    const { context, prompts, stderr } = confirmationContext("yes");
+describe("interactive destructive-change consent", () => {
+  async function driftedProject(prefix: string): Promise<{
+    run: ReturnType<typeof runInProcess>;
+    installed: string;
+    dataRepo: string;
+  }> {
+    const project = await tempRepo(`${prefix}-project-`);
+    const dataRepo = await tempRepo(`${prefix}-data-`);
+    const run = runInProcess(project);
+    await addSkill(dataRepo, "hello", "locked v1\n");
+    await commitAll(dataRepo, "hello v1");
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/hello"])).exitCode).toBe(0);
+    const installed = join(project, ".agents", "skills", "hello", "SKILL.md");
+    await writeFile(installed, "local edit\n");
+    return { run, installed, dataRepo };
+  }
 
-    expect(
-      await confirmUpdateOverwrite(
-        ["project/data/skills/first", "local/data/skills/second"],
-        { json: false },
-        context,
-      ),
-    ).toBe(true);
-    expect(prompts).toHaveLength(1);
-    expect(prompts[0]).toContain("Update would destroy local state");
-    expect(prompts[0]).toContain("project/data/skills/first");
-    expect(prompts[0]).toContain("local/data/skills/second");
-    expect(prompts[0]).toContain("capshelf status <item> --diff");
-    expect(prompts[0]).toContain("Continue? [y/N]");
-    expect(stderr).toEqual([]);
-  });
+  test(
+    "y at the prompt authorizes the write for a real update",
+    async () => {
+      const { run, installed, dataRepo } = await driftedProject(
+        "capshelf-consent-yes",
+      );
+      await writeFile(
+        join(dataRepo, "skills", "hello", "SKILL.md"),
+        "locked v2\n",
+      );
+      await commitAll(dataRepo, "hello v2");
 
-  test("declining consent cancels without authorization", async () => {
-    const { context, prompts, stderr } = confirmationContext("n");
+      await withTty("y", async ({ prompts, stderr }) => {
+        expect((await run(["update", "skills/hello"])).exitCode).toBe(0);
+        expect(prompts).toHaveLength(1);
+        expect(prompts[0]).toContain("Update would destroy local state");
+        expect(prompts[0]).toContain(".agents/skills/hello/SKILL.md");
+        expect(prompts[0]).toContain("capshelf status skills/hello --diff");
+        expect(prompts[0]).toContain("Continue? [y/N]");
+        expect(stderr).toEqual([]);
+      });
+      expect(await file(installed).text()).toBe("locked v2\n");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
 
-    expect(
-      await confirmUpdateOverwrite(
-        ["project/data/skills/hello"],
-        { json: false },
-        context,
-      ),
-    ).toBe(false);
-    expect(prompts).toHaveLength(1);
-    expect(stderr.join("")).toContain(
-      "Update cancelled; no changes were written",
-    );
-  });
+  test(
+    "N at the prompt cancels a real apply and leaves state byte-identical",
+    async () => {
+      const { run, installed } = await driftedProject("capshelf-consent-no");
+
+      await withTty("N", async ({ prompts, stderr }) => {
+        expect((await run(["apply", "skills/hello"])).exitCode).toBe(0);
+        expect(prompts).toHaveLength(1);
+        expect(prompts[0]).toContain("Apply would destroy local state");
+        expect(stderr.join("")).toContain(
+          "Apply cancelled; no changes were written",
+        );
+      });
+      expect(await file(installed).text()).toBe("local edit\n");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "a non-TTY invocation refuses with the rerun hint instead of prompting",
+    async () => {
+      const { run, installed } = await driftedProject("capshelf-consent-notty");
+
+      await withTty("y", async ({ prompts }) => {
+        setDestructiveConfirmationContext({
+          stdinIsTTY: false,
+          stderrIsTTY: false,
+          prompt: async () => {
+            throw new Error("must not prompt without a TTY");
+          },
+          stderr: { write: () => true },
+        });
+        const refused = await run(["apply", "skills/hello"]);
+        expect(refused.exitCode).toBe(3);
+        expect(refused.stderr.toString()).toContain(
+          "capshelf apply skills/hello --yes",
+        );
+        expect(prompts).toEqual([]);
+      });
+      expect(await file(installed).text()).toBe("local edit\n");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
 
   test("guards drifted managed fragment output and preserves it on refusal", async () => {
     const project = await tempRepo("capshelf-update-fragment-project-");

@@ -5,6 +5,8 @@ import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { main } from "../src/cli";
+import { setDestructiveConfirmationContext } from "../src/destructive-change";
+import type { DestructiveConfirmationContext } from "../src/destructive-change";
 
 // Multi-command lifecycle tests use real Git repositories and can exceed
 // Bun's 5-second default on macOS filesystems. Apply this only to those broad
@@ -76,12 +78,38 @@ export interface CliResult {
   stderr: Buffer;
 }
 
+/**
+ * `runInProcess` runs the CLI inside the test process, so without this the
+ * consent prompt reads the *developer's* terminal: `bun test` from an
+ * interactive shell makes `confirmDestructiveChanges` take the TTY branch and
+ * block on `readline.question` forever, and any refusal asserted without
+ * `--json` times out. Pin it to non-interactive so a consent refusal is
+ * deterministic regardless of how the suite was launched. Tests that mean to
+ * exercise the prompt install their own context and get it back.
+ */
+const NON_INTERACTIVE_CONFIRMATION: DestructiveConfirmationContext = {
+  stdinIsTTY: false,
+  stderrIsTTY: false,
+  prompt: async () => {
+    throw new Error(
+      "runInProcess is non-interactive; install a context with setDestructiveConfirmationContext to test the prompt",
+    );
+  },
+  stderr: { write: () => true },
+};
+
 export function runInProcess(project: string) {
   return async (
     args: string[],
     env: Record<string, string | undefined> = {},
   ): Promise<CliResult> => {
     const previousCwd = process.cwd();
+    // Read the installed context by swapping, then put back whatever a test
+    // installed — or the non-interactive default when nothing was.
+    const outerConfirmation = setDestructiveConfirmationContext(null);
+    setDestructiveConfirmationContext(
+      outerConfirmation ?? NON_INTERACTIVE_CONFIRMATION,
+    );
     const previousEnv = new Map(
       Object.keys(env).map((name) => [name, process.env[name]] as const),
     );
@@ -124,6 +152,7 @@ export function runInProcess(project: string) {
       };
     } finally {
       process.chdir(previousCwd);
+      setDestructiveConfirmationContext(outerConfirmation);
       for (const [name, value] of previousEnv) {
         if (value === undefined) delete process.env[name];
         else process.env[name] = value;

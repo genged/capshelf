@@ -104,10 +104,32 @@ export function assertDestructivePlanUnchanged(
   }
 }
 
+let installedConfirmationContext: DestructiveConfirmationContext | null = null;
+
+/**
+ * Replace the confirmation context every command uses, or restore the default
+ * with `null`. Returns the context that was installed before, so a caller can
+ * restore it instead of clobbering an outer one.
+ *
+ * This is the one seam that lets the interactive consent path be exercised as
+ * it actually ships. The alternative — a command-module wrapper that
+ * hardcoded its own prompt strings and had zero production callers — made the
+ * TTY prompt, the `y`/`N` parsing, and the cancellation message look covered
+ * while none of them were.
+ */
+export function setDestructiveConfirmationContext(
+  context: DestructiveConfirmationContext | null,
+): DestructiveConfirmationContext | null {
+  const previous = installedConfirmationContext;
+  installedConfirmationContext = context;
+  return previous;
+}
+
 export async function confirmDestructiveChanges(
   plan: DestructiveChangePlan,
   options: DestructiveConfirmationOptions,
-  context: DestructiveConfirmationContext = defaultDestructiveConfirmationContext(),
+  context: DestructiveConfirmationContext = installedConfirmationContext ??
+    defaultDestructiveConfirmationContext(),
 ): Promise<boolean> {
   if (plan.changes.length === 0 || options.dryRun || options.yes) return true;
 
