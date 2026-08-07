@@ -1,6 +1,8 @@
-import { mkdir, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { atomicWriteFile } from "./fs-utils";
 import { dirname, join } from "node:path";
+import { inventoryLocalTree } from "./gitignore";
 import bootstrap from "./bundled/skills/capshelf/SKILL.md" with {
   type: "text",
 };
@@ -67,6 +69,34 @@ export async function shaOfSystemItem(item: SystemItem): Promise<string> {
     hasher.update("\0");
   }
   return hasher.digest("hex").slice(0, 12);
+}
+
+/**
+ * True when the install target already holds exactly this bundled item.
+ *
+ * An `init` interrupted after the system items were written but before the
+ * lock was saved leaves such a directory behind with no lock entry. Without
+ * this check the re-run — which is the documented recovery — would refuse its
+ * own leftovers as an unmanaged target and the project would be stuck.
+ */
+export async function installedMatchesSystemItem(
+  project: string,
+  item: SystemItem,
+  mode?: InstallMode,
+): Promise<boolean> {
+  const dst = systemTargetDir(project, item, mode);
+  if (!existsSync(dst)) return false;
+  const inventory = await inventoryLocalTree(dst).catch(() => null);
+  if (inventory === null || inventory.irregular.length > 0) return false;
+  const expected = new Map(item.files.map((f) => [f.relPath, f.content]));
+  if (inventory.files.length !== expected.size) return false;
+  for (const relPath of inventory.files) {
+    const content = expected.get(relPath);
+    if (content === undefined) return false;
+    const onDisk = await readFile(join(dst, ...relPath.split("/")), "utf-8");
+    if (onDisk !== content) return false;
+  }
+  return true;
 }
 
 export async function installSystemItem(

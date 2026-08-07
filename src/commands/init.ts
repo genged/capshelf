@@ -10,6 +10,7 @@ import { loadLock, saveLock, systemKey } from "../lock";
 import {
   SYSTEM_ITEMS,
   installSystemItem,
+  installedMatchesSystemItem,
   shaOfSystemItem,
   CLI_VERSION,
 } from "../bundled";
@@ -179,13 +180,22 @@ export function registerInit(program: Command): void {
           item.name,
           installMode,
         );
-        if (lock.items[key] === undefined && conflict) {
-          throw new PreconditionError(
-            `not installing system/${item.kind}/${item.name} — target already exists but is not managed by capshelf\n` +
-              `  existing path: ${conflict}\n` +
-              "  remove it manually or choose a different local skill name before running capshelf init",
-          );
+        if (lock.items[key] !== undefined || !conflict) continue;
+        // A re-run after an interrupted init finds its own bundled content
+        // sitting there with no lock entry. That is the recovery path, not an
+        // unmanaged target — refusing it would strand the project. The test is
+        // deliberately exact, so a leftover from an *older* capshelf (whose
+        // bundled content differs) or a torn write still refuses; the message
+        // below says that deleting it is safe, because init reinstalls it.
+        if (await installedMatchesSystemItem(project, item, installMode)) {
+          continue;
         }
+        throw new PreconditionError(
+          `not installing system/${item.kind}/${item.name} — target already exists but is not managed by capshelf\n` +
+            `  existing path: ${conflict}\n` +
+            "  remove it manually or choose a different local skill name before running capshelf init\n" +
+            `  if an interrupted init left it there, deleting it is safe — capshelf reinstalls ${item.kind}/${item.name} from the binary`,
+        );
       }
 
       const installed: {
@@ -218,7 +228,15 @@ export function registerInit(program: Command): void {
         });
       }
 
+      // `local.json` is written LAST, because the guard at the top of this
+      // command keys on its existence. Writing it earlier let an interruption
+      // (ENOSPC, read-only .capshelf/, Ctrl-C, a concurrent process) leave a
+      // project that init refuses as "already initialized" while `apply`
+      // reports nothing tracked, with no supported way out. With this order
+      // "already initialized" is true exactly when init finished, and a plain
+      // re-run is the recovery.
       await saveManifest(project, manifest);
+      await saveLock(project, lock);
       await saveLocalConfig(project, {
         dataRepo,
         skills: [],
@@ -226,7 +244,6 @@ export function registerInit(program: Command): void {
         settings: [],
         mcp: [],
       });
-      await saveLock(project, lock);
 
       if (opts.json) {
         console.log(

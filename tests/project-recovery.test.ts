@@ -233,4 +233,92 @@ describe("project recovery", () => {
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );
+
+  test(
+    "a plain init re-run recovers an interrupted initialization",
+    async () => {
+      const dataRepo = await baselineRepo("capshelf-partial-init-data-");
+
+      // `local.json` is init's last write, so every interruption leaves it
+      // absent. Both prefixes below are reachable states; each must recover
+      // by re-running init, with no new subcommand and no manual repair.
+      for (const leftover of [
+        // Interrupted after saveLock: manifest, lock, and files on disk.
+        [] as string[],
+        // Interrupted during the installs: files on disk, no lock entry.
+        [join(".capshelf", "capshelf.lock.json")],
+      ]) {
+        const project = await tempRepo("capshelf-partial-init-project-", {
+          origin: null,
+        });
+        const run = runIn(project);
+        expect(
+          run(["init", "--data", dataRepo, "--no-upstream"]).exitCode,
+        ).toBe(0);
+        await rm(join(project, ".capshelf", "local.json"));
+        for (const relPath of leftover) {
+          await rm(join(project, ...relPath.split("/")));
+        }
+        const systemSkill = join(
+          project,
+          ".agents",
+          "skills",
+          "capshelf",
+          "SKILL.md",
+        );
+        expect(existsSync(systemSkill)).toBe(true);
+
+        const repaired = run(["init", "--data", dataRepo, "--no-upstream"]);
+        expect(repaired.exitCode).toBe(0);
+        expect(existsSync(join(project, ".capshelf", "local.json"))).toBe(true);
+        const lock = await file(
+          join(project, ".capshelf", "capshelf.lock.json"),
+        ).json();
+        expect(lock.items["system/skills/capshelf"]).toBeDefined();
+        expect(run(["apply"]).exitCode).toBe(0);
+      }
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "init still refuses a leftover target it did not install",
+    async () => {
+      const dataRepo = await baselineRepo("capshelf-foreign-target-data-");
+      const project = await tempRepo("capshelf-foreign-target-project-", {
+        origin: null,
+      });
+      await mkdir(join(project, ".agents", "skills", "capshelf"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(project, ".agents", "skills", "capshelf", "SKILL.md"),
+        "someone else's skill\n",
+      );
+
+      const refused = runIn(project)([
+        "init",
+        "--data",
+        dataRepo,
+        "--no-upstream",
+      ]);
+      expect(refused.exitCode).toBe(3);
+      expect(refused.stderr.toString()).toContain(
+        "target already exists but is not managed by capshelf",
+      );
+      // Adoption is an exact-content test, so a leftover from a different
+      // capshelf version or a torn write lands here too. The message has to
+      // say that deleting it is safe, because init reinstalls it.
+      expect(refused.stderr.toString()).toContain("deleting it is safe");
+      expect(existsSync(join(project, ".capshelf", "local.json"))).toBe(false);
+
+      await rm(join(project, ".agents", "skills", "capshelf"), {
+        recursive: true,
+      });
+      expect(
+        runIn(project)(["init", "--data", dataRepo, "--no-upstream"]).exitCode,
+      ).toBe(0);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
 });

@@ -904,6 +904,23 @@ content sha is unchanged), or push/fetch the clone that has the commit. See
 [`docs/team-workflow.md`](team-workflow.md) for the team loop, the
 propose-upstream recipe, and the CI gate built on this state.
 
+### Interrupted initialization
+
+`init` writes `.capshelf/local.json` last, so the file the "already
+initialized" guard keys on is also the completion marker. Any interruption —
+ENOSPC, a read-only `.capshelf/`, `Ctrl-C`, a concurrent process — leaves no
+`local.json`, and a plain `capshelf init` re-run is the recovery. There is no
+repair subcommand and no state to reason about.
+
+If you are looking at a project where `init` refuses with "already
+initialized" while `apply` reports `(no items tracked)`, the lock is missing
+under a `local.json` that an older capshelf wrote first. Delete
+`.capshelf/local.json` and re-run `init`. The re-run adopts a leftover system
+item whose content matches the running binary exactly; if it does not — the
+leftover came from a different capshelf version, or the write was torn — `init`
+refuses and names the path, and deleting that directory is safe because `init`
+reinstalls the system items from the binary.
+
 ## Adopting a local skill
 
 ```

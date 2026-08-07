@@ -224,7 +224,14 @@ Codex only loads `.codex/config.toml` in trusted projects; `status` warns non-fa
 - `no data repo configured` — clone the declared `dataRepoUpstream` if one exists, then `capshelf set-data <path>`, or pass `--data <path>`, or set `$CAPSHELF_HOME`.
 - `capshelf is already initialized for this machine` — use `capshelf data bind
   <path>`, `capshelf data upstream <url>`, or `capshelf update`; do not delete
-  `.capshelf/local.json` to route around the state boundary.
+  `.capshelf/local.json` to route around the state boundary. The one exception
+  is a genuinely half-initialized project: `init` refuses while `apply` reports
+  `(no items tracked)`. `local.json` is init's last write, so a current
+  capshelf never leaves that state; if an older one did, delete
+  `.capshelf/local.json` and re-run `capshelf init`. The re-run adopts a
+  leftover system item only when its content matches the running binary
+  exactly; otherwise it refuses and names the path, and deleting that directory
+  is safe because `init` reinstalls system items from the binary.
 - `could not determine a portable data repo upstream` — configure the data repo's `origin` before `capshelf init`, or pass `--no-upstream` only for an intentionally non-portable local project.
 - `data repo at <path> is bound to the wrong upstream` — `capshelf set-data <correct-clone>` or intentionally change committed state with `capshelf set-upstream <url>`.
 - `data repo has uncommitted metadata changes: <item>/.capshelf.yml` — commit the sidecar in the data repo; no item content is at risk.
