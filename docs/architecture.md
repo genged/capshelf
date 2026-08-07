@@ -310,11 +310,32 @@ first write. JSON and non-TTY invocations require `--yes`; dry runs report the
 same plan without prompting. `--yes` authorizes only enumerated loss and never
 bypasses hard path, source, collision, or transaction checks.
 
-Copy-item reconciliation carries forward ignored local-only regular files that
-do not collide with selected managed paths. Removal inventories the complete
-physical tree, including ignored files. Fragment planning preserves unmanaged
-values and separately identifies managed contribution drift and JSONC/TOML
-comment loss. Missing managed content is reproducible and safe to recreate.
+Copy-item reconciliation carries forward ignored local-only files that do not
+collide with selected managed paths. Removal inventories the complete physical
+tree, including ignored files. Fragment planning preserves unmanaged values and
+separately identifies managed contribution drift and JSONC/TOML comment loss.
+Missing managed content is reproducible and safe to recreate.
+
+### The object model
+
+Git visibility is the line between drift and local state. Every call site that
+walks a managed directory classifies what it finds against these five rows;
+the same table is repeated in `src/master.ts` next to the sidecar invariant.
+
+| # | Population | Policy |
+|---|---|---|
+| 1 | Item content in the data-repo working tree | Regular files only, Git modes. Symlinks refused — trust boundary |
+| 2 | Item content at a commit | Regular blobs only, sidecar filtered |
+| 3 | Git-visible content inside an installed directory that is not managed | Drift. Reconciled away under consent as `extra_local_path`; Git modes apply, so `executable_mode` is a real change |
+| 4 | Ignored local state under an installed directory | Carried across as-is: real `stat` modes, symlinks preserved by target, never hashed or published. Non-recreatable objects (fifo, socket, device) refused on write, listed on remove |
+| 5 | `.capshelf.yml` | Excluded from hashing and materialization everywhere; for reconciliation, treated as row 4 regardless of Git visibility |
+
+Rows 1 and 2 are the trust boundary: item content crossing into or out of the
+data repo is Git's object model, and nothing below may widen it. Row 4 never
+crosses that boundary — an ignored `node_modules/.bin/*` symlink or an
+owner-only `.env.local` came from the user's filesystem and goes back to the
+same path, so capshelf never dereferences, hashes, or publishes it, and Git's
+two-mode model does not apply to it.
 
 Claude custom commands are represented as skills. In the default layout, a skill at `.agents/skills/<name>/SKILL.md` is exposed to Claude through `.claude/skills/<name>`. In Claude-only layout, the skill lives directly at `.claude/skills/<name>/SKILL.md`. capshelf does not manage `.claude/commands/`.
 
