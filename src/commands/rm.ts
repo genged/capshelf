@@ -171,7 +171,27 @@ export function registerRm(program: Command): void {
       if (entry?.source !== "data") {
         throw new Error(`expected data lock entry for data/${kind}/${name}`);
       }
-      const dataRepo = await resolveProjectDataRepo(project, oldManifest, cmd);
+      // Resolved lazily: fragment and subagent removal read the data repo to
+      // rebuild their outputs, but a copy directory is deleted from the
+      // project alone. Requiring it unconditionally made `rm` impossible in
+      // exactly the states it exists for — a deleted clone or a rewritten
+      // upstream — while rm.ts:140 still advertised it as the escape hatch.
+      let cachedDataRepo: string | undefined;
+      const requireDataRepo = async (): Promise<string> => {
+        cachedDataRepo ??= await resolveProjectDataRepo(
+          project,
+          oldManifest,
+          cmd,
+        );
+        return cachedDataRepo;
+      };
+      const optionalDataRepo = async (): Promise<string | undefined> => {
+        try {
+          return await requireDataRepo();
+        } catch {
+          return undefined;
+        }
+      };
       const nextManifest = structuredClone(manifest);
       const nextLock = structuredClone(lock);
       const nextLocalConfig = localConfig ? structuredClone(localConfig) : null;
@@ -199,6 +219,7 @@ export function registerRm(program: Command): void {
         ];
         const fragmentPlans: FragmentOutputPlan[] = [];
         if (isFragmentItemKind(kind)) {
+          const dataRepo = await requireDataRepo();
           const targets = await lockedFragmentTargetsForItem(
             dataRepo,
             kind,
@@ -247,7 +268,7 @@ export function registerRm(program: Command): void {
         } else if (isCopyDirectoryItemKind(kind)) {
           const planned = await planCopyDirectoryRemoval({
             project,
-            dataRepo,
+            dataRepo: await optionalDataRepo(),
             manifest: oldManifest,
             kind,
             name,
@@ -261,7 +282,7 @@ export function registerRm(program: Command): void {
         } else if (isCopyTargetFileItemKind(kind)) {
           const planned = await planSubagentDestruction({
             project,
-            dataRepo,
+            dataRepo: await requireDataRepo(),
             name,
             key: dataKey(kind, name),
             scope,
@@ -302,7 +323,7 @@ export function registerRm(program: Command): void {
       let removed = false;
       if (isFragmentItemKind(kind)) {
         const targets = await lockedFragmentTargetsForItem(
-          dataRepo,
+          await requireDataRepo(),
           kind,
           name,
           entry,
@@ -340,7 +361,7 @@ export function registerRm(program: Command): void {
       } else if (isCopyTargetFileItemKind(kind)) {
         const paths = await removeSubagentOutputs(
           project,
-          dataRepo,
+          await requireDataRepo(),
           name,
           entry,
         );

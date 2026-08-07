@@ -74,6 +74,59 @@ describe("rm destructive-change consent", () => {
   });
 
   test(
+    "removes a copy item when the data repo source is unreachable",
+    async () => {
+      for (const breakage of ["missing-clone", "orphaned-commit"] as const) {
+        const project = await tempRepo(`capshelf-rm-degrade-${breakage}-`);
+        const dataRepo = await tempRepo(
+          `capshelf-rm-degrade-${breakage}-data-`,
+        );
+        const run = runInProcess(project);
+        await addSkill(dataRepo, "hello", "locked\n");
+        await commitAll(dataRepo, "hello");
+        expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+        expect((await run(["add", "skills/hello"])).exitCode).toBe(0);
+        const installed = join(project, ".agents", "skills", "hello");
+
+        if (breakage === "missing-clone") {
+          const localPath = join(project, ".capshelf", "local.json");
+          const local = await file(localPath).json();
+          local.dataRepo = join(project, "no-such-data-repo");
+          await writeFile(localPath, `${JSON.stringify(local, null, 2)}\n`);
+        } else {
+          const lockPath = join(project, ".capshelf", "capshelf.lock.json");
+          const lock = await file(lockPath).json();
+          lock.items["data/skills/hello"].sourceCommit = "0".repeat(40);
+          await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+        }
+
+        // Removing a copy item is a project-only deletion. Degrading to "every
+        // installed path is local state" keeps the user consenting to the full
+        // list instead of stranding the item in exactly the situations — a
+        // deleted clone, a rewritten upstream — where rm is what they need.
+        const refused = await run(["rm", "skills/hello", "--json"]);
+        expect(refused.exitCode).toBe(3);
+        expect(refused.stderr.toString()).toContain(
+          ".agents/skills/hello/SKILL.md — delete a local-only path",
+        );
+        expect(await file(join(installed, "SKILL.md")).exists()).toBe(true);
+
+        expect((await run(["rm", "skills/hello", "--yes"])).exitCode).toBe(0);
+        expect(await file(join(installed, "SKILL.md")).exists()).toBe(false);
+        const lock = await file(
+          join(project, ".capshelf", "capshelf.lock.json"),
+        ).json();
+        expect(lock.items["data/skills/hello"]).toBeUndefined();
+        const manifest = await file(
+          join(project, ".capshelf", "capshelf.json"),
+        ).json();
+        expect(manifest.skills ?? []).not.toContain("hello");
+      }
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "lists an ignored symlink as a deletion and removes it",
     async () => {
       const project = await tempRepo("capshelf-rm-symlink-project-");

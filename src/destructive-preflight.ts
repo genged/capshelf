@@ -14,7 +14,11 @@ import { inventoryLocalTree } from "./gitignore";
 import { installedPath } from "./installed";
 import type { DataLockEntry, LockEntry } from "./lock";
 import type { Manifest } from "./manifest";
-import { copyDirectoryReconciliationFiles } from "./materialize";
+import {
+  copyDirectoryReconciliationFiles,
+  lockedCopyDirectoryFiles,
+} from "./materialize";
+import type { NamedFile } from "./merge-tree";
 import type { CopyDirectoryItemKind } from "./master";
 import type { Scope } from "./promote-core";
 import { materializeSubagent, subagentSourcesAtCommit } from "./subagents";
@@ -130,6 +134,14 @@ export async function planCopyDirectoryDestruction(opts: {
 /**
  * Inventory every object that removal would delete, including ignored files
  * and symlinks.
+ *
+ * Untracking must not depend on the data repo. The locked file set is only
+ * used to label a path as reproducible managed content rather than unique
+ * local state, so when the source is unreachable — a deleted clone, a
+ * garbage-collected or squash-orphaned `sourceCommit` — every installed path
+ * degrades to `extra_local_path` and the user consents to the full deletion
+ * list. Failing the command instead would strand the item: those are exactly
+ * the situations where `rm` is what the user needs.
  */
 export async function planCopyDirectoryRemoval(opts: {
   project: string;
@@ -142,16 +154,18 @@ export async function planCopyDirectoryRemoval(opts: {
   currentEntry: LockEntry;
   reviewCommand: string;
 }): Promise<PlannedDestruction> {
-  const current = await copyDirectoryReconciliationFiles({
-    project: opts.project,
-    dataRepo: opts.dataRepo,
-    manifest: opts.manifest,
-    kind: opts.kind,
-    name: opts.name,
-    entry: opts.currentEntry,
-    previousEntry: opts.currentEntry,
-    scope: opts.scope,
-  });
+  let expectedFiles: NamedFile[];
+  try {
+    expectedFiles = await lockedCopyDirectoryFiles({
+      dataRepo: opts.dataRepo,
+      manifest: opts.manifest,
+      kind: opts.kind,
+      name: opts.name,
+      entry: opts.currentEntry,
+    });
+  } catch {
+    expectedFiles = [];
+  }
   const root = installedPath(
     opts.project,
     opts.kind,
@@ -169,7 +183,7 @@ export async function planCopyDirectoryRemoval(opts: {
   }
 
   const expectedByPath = new Map(
-    current.expected.map((file) => [file.path, file]),
+    expectedFiles.map((file) => [file.path, file]),
   );
   const seen = new Set<string>();
   const changes: DestructiveChange[] = [];

@@ -364,6 +364,28 @@ export async function copyDirectoryReconciliationFiles(opts: {
   };
 }
 
+/**
+ * The managed file set a lock entry selects, without touching the project.
+ * Removal planning needs it to tell managed content apart from local state,
+ * but must not depend on the reconciliation preflight: `rm` has to work when
+ * the data repo is gone or the source commit was garbage-collected.
+ */
+export async function lockedCopyDirectoryFiles(opts: {
+  dataRepo?: string;
+  manifest?: Manifest;
+  kind: CopyDirectoryItemKind;
+  name: string;
+  entry: LockEntry;
+}): Promise<NamedFile[]> {
+  return await filesForEntry(
+    opts.dataRepo,
+    opts.manifest,
+    opts.kind,
+    opts.name,
+    opts.entry,
+  );
+}
+
 async function readDataFilesAtCommit(
   dataRepo: string,
   manifest: Manifest | undefined,
