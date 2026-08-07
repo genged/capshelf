@@ -2,7 +2,12 @@ import { file } from "bun";
 import { describe, expect, test } from "bun:test";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { commitAll, runInProcess, tempRepo } from "./cli-fixtures";
+import {
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  commitAll,
+  runInProcess,
+  tempRepo,
+} from "./cli-fixtures";
 
 describe("cli integration", () => {
   /**
@@ -284,6 +289,99 @@ describe("cli integration", () => {
     expect(out).toContain("unmanaged local value");
     expect(await capshelfState(project)).toBe(before);
   });
+
+  test(
+    "bundle expansion reaches the destructive-consent boundary",
+    async () => {
+      const project = await tempRepo("capshelf-bundle-consent-project-");
+      const dataRepo = await bundleDataRepo();
+      const run = runInProcess(project);
+      expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+      // Install one member standalone, then hand-edit its managed value using
+      // strict, comment-free JSON so the refusal cannot be attributed to JSONC.
+      expect((await run(["add", "settings/permissions-base"])).exitCode).toBe(
+        0,
+      );
+      const output = join(project, ".claude", "settings.json");
+      await writeFile(
+        output,
+        `${JSON.stringify({ env: { BASE: "EDITED" } })}\n`,
+      );
+
+      const before = await capshelfState(project);
+      const refused = await run(["add", "bundles/go-backend"]);
+      expect(refused.exitCode).toBe(3);
+      expect(refused.stderr.toString()).toContain(
+        "replace a managed config contribution",
+      );
+      expect(refused.stderr.toString()).toContain(
+        "capshelf add bundles/go-backend --yes",
+      );
+      expect(await capshelfState(project)).toBe(before);
+      expect((await file(output).json()).env.BASE).toBe("EDITED");
+
+      const accepted = await run(["add", "bundles/go-backend", "--yes"]);
+      expect(accepted.exitCode).toBe(0);
+      expect((await file(output).json()).env.BASE).toBe("1");
+      expect((await file(output).json()).env.GO).toBe("1");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "bundle comment loss in .codex/config.toml requires consent",
+    async () => {
+      const project = await tempRepo("capshelf-bundle-toml-project-");
+      const dataRepo = await tempRepo("capshelf-bundle-toml-data-");
+      const run = runInProcess(project);
+      await mkdir(join(dataRepo, "codex", "config", "defaults"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(dataRepo, "codex", "config", "defaults", "config.toml"),
+        'model = "gpt-5"\n',
+      );
+      await mkdir(join(dataRepo, "bundles"), { recursive: true });
+      await writeFile(
+        join(dataRepo, "bundles", "codex.yml"),
+        "includes:\n  codex-config: [defaults]\n",
+      );
+      await commitAll(dataRepo, "codex defaults");
+      expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+      const output = join(project, ".codex", "config.toml");
+      await mkdir(join(project, ".codex"), { recursive: true });
+      await writeFile(output, '# why this exists\napproval = "never"\n');
+
+      const refused = await run(["add", "bundles/codex"]);
+      expect(refused.exitCode).toBe(3);
+      expect(refused.stderr.toString()).toContain("remove config comments");
+      expect(await file(output).text()).toContain("# why this exists");
+
+      expect((await run(["add", "bundles/codex", "--yes"])).exitCode).toBe(0);
+      expect(await file(output).text()).toContain('model = "gpt-5"');
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "a bundle with no fragment members installs without a prompt",
+    async () => {
+      const project = await tempRepo("capshelf-bundle-nofrag-project-");
+      const dataRepo = await bundleDataRepo();
+      const run = runInProcess(project);
+      await writeFile(
+        join(dataRepo, "bundles", "skills-only.yml"),
+        "includes:\n  skills: [security-review]\n",
+      );
+      await commitAll(dataRepo, "skills-only bundle");
+      expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+
+      const added = await run(["add", "bundles/skills-only"]);
+      expect(added.exitCode).toBe(0);
+      expect(added.stdout.toString()).toContain("1 added");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
 
   test("add bundles --local accepts copy items and aggregates fragments", async () => {
     const project = await tempRepo("capshelf-bundle-local-project-");

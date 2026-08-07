@@ -31,7 +31,11 @@ import {
 } from "../external";
 import { printRuntimeWarnings } from "../runtime-warnings";
 import { assertLocalScopeSupported } from "../local-config";
-import { isCopyDirectoryItemKind, isMaterializedItemKind } from "../master";
+import {
+  isCopyDirectoryItemKind,
+  isFragmentKindName,
+  isMaterializedItemKind,
+} from "../master";
 import { materializeSubagent, shaOfInstalledSubagent } from "../subagents";
 import {
   applyFragmentOutput,
@@ -172,15 +176,34 @@ export function registerApply(program: Command): void {
           }
           return;
         }
-        if (preflight.results.some((result) => result.action === "error")) {
+        // All-or-nothing only for fragment targets: they share output files
+        // (.claude/settings.json, .mcp.json, .codex/config.toml), so a
+        // partial write leaves the runtime diverged from the lock.
+        // Independent copy items share nothing, so one stale pin must not
+        // cost the project `apply` — including self-healing of the bundled
+        // system items.
+        const fragmentPreflightFailed = preflight.results.some(
+          (result) =>
+            result.action === "error" && isFragmentKindName(result.kind),
+        );
+        if (fragmentPreflightFailed) {
           printApplyOutput({
             project,
             dataRepo,
             dryRun: false,
-            results: preflight.results,
+            // Nothing ran, so reporting the preflight's `would reconcile`
+            // previews as if they were outcomes would be a lie.
+            results: preflight.results.filter(
+              (result) => result.action === "error",
+            ),
             destructivePlan: preflight.destructivePlan,
             json: opts.json === true,
           });
+          if (!opts.json) {
+            console.log(
+              "  no changes were written; fragment outputs are reconciled together",
+            );
+          }
           throw new ResultExitError(1);
         }
         if (

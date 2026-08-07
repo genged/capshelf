@@ -26,6 +26,7 @@ import {
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
   isFragmentItemKind,
+  isFragmentKindName,
   shaOfGitVisibleItem,
 } from "../master";
 import { assertRepoClean, lastTouchingContentCommit } from "../git";
@@ -209,15 +210,30 @@ export function registerUpdate(program: Command): void {
           }
           return;
         }
-        if (preflight.results.some((result) => result.action === "error")) {
+        // Scoped to fragment targets: they share output files and can leave
+        // the runtime diverged from the lock, so a partial write is worse
+        // than no write. Independent copy and subagent items fall through to
+        // per-item handling, converging everything they can.
+        const fragmentPreflightFailed = preflight.results.some(
+          (result) =>
+            result.action === "error" && isFragmentKindName(result.kind),
+        );
+        if (fragmentPreflightFailed) {
           printUpdateOutput({
             project,
             dataRepo,
             dryRun: false,
-            results: preflight.results,
+            results: preflight.results.filter(
+              (result) => result.action === "error",
+            ),
             destructivePlan: preflight.destructivePlan,
             json: opts.json === true,
           });
+          if (!opts.json) {
+            console.log(
+              "  no changes were written; fragment outputs are reconciled together",
+            );
+          }
           throw new ResultExitError(1);
         }
         if (

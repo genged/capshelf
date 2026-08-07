@@ -262,4 +262,75 @@ describe("apply destructive-change preflight", () => {
     );
     expect(await file(output).text()).toContain("// local rationale");
   });
+  test(
+    "converges healthy items when an unrelated copy item cannot resolve",
+    async () => {
+      const project = await tempRepo("capshelf-apply-partial-project-");
+      const dataRepo = await tempRepo("capshelf-apply-partial-data-");
+      const run = runInProcess(project);
+      await addSkill(dataRepo, "good", "locked\n");
+      await addSkill(dataRepo, "broken", "locked\n");
+      await commitAll(dataRepo, "two skills");
+      expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+      expect((await run(["add", "skills/good"])).exitCode).toBe(0);
+      expect((await run(["add", "skills/broken"])).exitCode).toBe(0);
+
+      const lockPath = join(project, ".capshelf", "capshelf.lock.json");
+      const lock = await file(lockPath).json();
+      lock.items["data/skills/broken"].sourceCommit = "0".repeat(40);
+      await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+      const good = join(project, ".agents", "skills", "good", "SKILL.md");
+      await writeFile(good, "local edit\n");
+
+      // Independent copy items share no output, so one unreachable pin must not
+      // cost the project `apply` — including self-healing of the system item.
+      const applied = await run(["apply", "--yes"]);
+      expect(applied.exitCode).toBe(1);
+      expect(await file(good).text()).toBe("locked\n");
+      expect(applied.stdout.toString()).toContain(
+        "data/skills/good reconciled",
+      );
+      expect(applied.stdout.toString()).toContain("data/skills/broken error");
+      // A real apply reports outcomes, never a dry-run preview label.
+      expect(applied.stdout.toString()).not.toContain("would reconcile");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "writes no fragment output when one fragment target fails preflight",
+    async () => {
+      const project = await tempRepo("capshelf-apply-fragment-gate-project-");
+      const dataRepo = await tempRepo("capshelf-apply-fragment-gate-data-");
+      const run = runInProcess(project);
+      const fragment = join(dataRepo, "settings", "theme");
+      await mkdir(fragment, { recursive: true });
+      await writeFile(
+        join(fragment, "settings.json"),
+        `${JSON.stringify({ theme: "dark" })}\n`,
+      );
+      await addSkill(dataRepo, "helper", "locked\n");
+      await commitAll(dataRepo, "theme and helper");
+      expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+      expect((await run(["add", "settings/theme"])).exitCode).toBe(0);
+      expect((await run(["add", "skills/helper"])).exitCode).toBe(0);
+
+      const lockPath = join(project, ".capshelf", "capshelf.lock.json");
+      const lock = await file(lockPath).json();
+      lock.items["data/settings/theme"].sourceCommit = "0".repeat(40);
+      await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+      const helper = join(project, ".agents", "skills", "helper", "SKILL.md");
+      await writeFile(helper, "local edit\n");
+      const output = join(project, ".claude", "settings.json");
+      const outputBefore = await file(output).text();
+
+      const applied = await run(["apply", "--yes"]);
+      expect(applied.exitCode).toBe(1);
+      expect(await file(output).text()).toBe(outputBefore);
+      expect(await file(helper).text()).toBe("local edit\n");
+      expect(applied.stdout.toString()).toContain("no changes were written");
+      expect(applied.stdout.toString()).not.toContain("would reconcile");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
 });

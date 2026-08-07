@@ -54,6 +54,15 @@ export function isFragmentItemKind(value: ItemKind): value is FragmentItemKind {
   return (FRAGMENT_ITEM_KINDS as readonly ItemKind[]).includes(value);
 }
 
+/**
+ * Same test for a kind that has already been widened to `string` — result rows
+ * from `apply`/`update` carry `kind` that way, and the all-or-nothing preflight
+ * gate is scoped by it.
+ */
+export function isFragmentKindName(value: string): value is FragmentItemKind {
+  return (FRAGMENT_ITEM_KINDS as readonly string[]).includes(value);
+}
+
 export function isMaterializedItemKind(
   value: ItemKind,
 ): value is MaterializedItemKind {

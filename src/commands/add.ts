@@ -6,6 +6,7 @@ import {
   assertDestructivePlanUnchanged,
   confirmDestructiveChanges,
   createDestructiveChangePlan,
+  type DestructiveChange,
   type DestructiveChangePlan,
 } from "../destructive-change";
 import { planFragmentDestruction } from "../destructive-preflight";
@@ -754,6 +755,41 @@ async function addBundle(
     }
     throw new ResultExitError(3);
   }
+
+  // Bundles are the recommended entry point (`capshelf init` suggests
+  // `capshelf add bundles/<name>`), so the consent boundary has to be reached
+  // here too. Without this, the same fragment destruction was gated for
+  // `add settings/extra` and ungated for the bundle that contains it.
+  const planBundleDestruction = async (): Promise<DestructiveChangePlan> => {
+    const changes: DestructiveChange[] = [];
+    const snapshotParts: string[] = [];
+    for (const member of plan.members) {
+      if (member.status !== "install") continue;
+      if (!isFragmentItemKind(member.kind)) continue;
+      const item = masterByRef.get(member.ref);
+      if (!item) continue;
+      const memberPlan = await planStandaloneFragmentAdd(ctx, item);
+      changes.push(...memberPlan.changes);
+      snapshotParts.push(memberPlan.snapshot);
+    }
+    return createDestructiveChangePlan(changes, snapshotParts);
+  };
+  const destructivePlan = await planBundleDestruction();
+  if (
+    !(await confirmDestructiveChanges(destructivePlan, {
+      operation: "Add",
+      json: opts.json === true,
+      yes: opts.yes === true,
+      dryRun: false,
+      rerunCommand: `capshelf add bundles/${bundle.name}${ctx.local ? " --local" : ""} --yes`,
+    }))
+  ) {
+    return;
+  }
+  assertDestructivePlanUnchanged(
+    destructivePlan,
+    await planBundleDestruction(),
+  );
 
   const results = await executeBundleInstall(plan, {
     projectLock: ctx.projectLock,
