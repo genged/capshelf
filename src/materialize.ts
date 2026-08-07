@@ -230,28 +230,12 @@ export async function materializeLockEntry(
   // The transactional writer verifies both selected managed bytes and copied-
   // forward local bytes. The reported sha remains the selected lock sha;
   // intentionally ignored local-only files are outside that content identity.
-  const after = opts.dryRun ? before : opts.entry.sha;
-  if (after !== opts.entry.sha) {
-    if (opts.dryRun) {
-      return {
-        key: opts.key,
-        source,
-        kind,
-        name,
-        action: "would-reconcile",
-        path: dst,
-        sha: before,
-        currentSha: before,
-        plannedSha: opts.entry.sha,
-        dryRun: true,
-        ...runtimeWarningFields(opts.project, kind, name),
-      };
-    }
-    throw new Error(
-      `materialized ${kind}/${name} at ${after ?? "(missing)"}, but lock expects ${opts.entry.sha}`,
-    );
-  }
-
+  //
+  // `dataBeforeMatches` is the only convergence signal, deliberately: it byte-
+  // compares every expected and preserved path. Comparing the Git-visible
+  // installed sha against the lock sha instead would report permanent
+  // `would-reconcile` for any item whose managed content includes paths the
+  // project's own .gitignore hides, making --dry-run disagree with apply.
   const changed = !dataBeforeMatches;
   return {
     key: opts.key,
@@ -266,7 +250,7 @@ export async function materializeLockEntry(
         ? "reconciled"
         : "already-current",
     path: dst,
-    sha: after,
+    sha: opts.dryRun ? before : opts.entry.sha,
     ...(opts.dryRun && {
       currentSha: before,
       plannedSha: opts.entry.sha,
@@ -327,7 +311,11 @@ export async function copyDirectoryReconciliationFiles(opts: {
   const inventory = await inventoryLocalTree(dst);
   const preserved: PreservedEntry[] = [];
   for (const path of inventory.files) {
-    if (visiblePaths.has(path) || previousPaths.has(path)) continue;
+    // Row 5: the sidecar is excluded from hashing and materialization
+    // everywhere, so it is carried across regardless of Git visibility. Every
+    // other Git-visible path is row 3 — drift the caller reconciles away.
+    if (!isMetadataSidecarPath(path) && visiblePaths.has(path)) continue;
+    if (previousPaths.has(path)) continue;
     const fullPath = join(dst, ...path.split("/"));
     const info = await lstat(fullPath);
     preserved.push({
@@ -569,7 +557,8 @@ async function installedFilesMatch(
     ...preserved.map((entry) => entry.path),
   ]);
   for (const path of await gitignoreVisibleFiles(root)) {
-    if (isMetadataSidecarPath(path)) return false;
+    // The sidecar is catalog data, never managed content and never drift.
+    if (isMetadataSidecarPath(path)) continue;
     if (!knownPaths.has(path)) return false;
   }
   const current: NamedFile[] = [];
