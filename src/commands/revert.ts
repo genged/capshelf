@@ -13,6 +13,7 @@ import { projectRoot } from "../paths";
 import { resolveDataRepo } from "../data-repo";
 import { loadManifest } from "../manifest";
 import { loadLocalLock, loadLock, saveLocalLock, saveLock } from "../lock";
+import type { LockEntry } from "../lock";
 import { parseLockKey } from "../installed";
 import { assertIsGitRepo } from "../git";
 import { globalOpts } from "../global-options";
@@ -269,6 +270,7 @@ export function registerRevert(program: Command): void {
           `= already current ${opts.local ? "local/" : ""}${parsed.source}/${parsed.kind}/${parsed.name}`,
         );
         if (accepted.path) console.log(`  ${accepted.path}`);
+        printKeptLocalNotice(entry, parsed, opts.local === true, "current");
         return;
       }
       if (
@@ -290,12 +292,11 @@ export function registerRevert(program: Command): void {
         revalidated.destructivePlan,
       );
 
+      // The keep-local marker records intent, not a fact about current
+      // content, so revert restores bytes and leaves it alone. Only
+      // `keep-local --unset` clears it. See the field doc in lock.ts.
       const nextLock = structuredClone(lock);
       const nextEntry = nextLock.items[key]!;
-      if (nextEntry.source === "data") {
-        delete nextEntry.local;
-        delete nextEntry.localReason;
-      }
 
       if (isFragmentKind(parsed.kind)) {
         const results = await applyFragmentOutputPlans(
@@ -365,6 +366,32 @@ export function registerRevert(program: Command): void {
         `✓ reverted ${opts.local ? "local/" : ""}${parsed.source}/${parsed.kind}/${parsed.name}`,
       );
       console.log(`  ${result.path}`);
+      printKeptLocalNotice(entry, parsed, opts.local === true, "reverted");
       printRuntimeWarnings(result.runtimeWarnings);
     });
+}
+
+/**
+ * Reverting a kept-local item is a behavior change users must see: the marker
+ * survives, so the item stays skipped by `apply` and `update` until it is
+ * explicitly cleared, and nothing else in the output would say so.
+ */
+function printKeptLocalNotice(
+  entry: LockEntry,
+  parsed: { kind: string; name: string },
+  local: boolean,
+  outcome: "reverted" | "current",
+): void {
+  if (entry.source !== "data" || entry.local !== true) return;
+  const reason = entry.localReason ? ` (${entry.localReason})` : "";
+  console.log(
+    outcome === "reverted"
+      ? `  keep-local marker kept${reason}`
+      : `  keep-local marker is set${reason}; revert restores content only`,
+  );
+  console.log(
+    `  clear it with: ${PRODUCT_NAME} keep-local ${parsed.kind}/${parsed.name}${
+      local ? " --local" : ""
+    } --unset`,
+  );
 }

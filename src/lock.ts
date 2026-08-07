@@ -23,6 +23,20 @@ const DataLockEntryV2Schema = z.object({
   sourceCommit: GitCommitSchema,
   appliedAt: z.string(),
   label: z.string().optional(),
+  /**
+   * Intentional project-local divergence. Set only by `keep-local`, cleared
+   * only by `keep-local --unset`. This records *intent*, not a fact about
+   * current content: it survives `revert`, so a user can reset to the pinned
+   * base and start a fresh edit without losing the marker, and it survives a
+   * lock refresh (`refreshDataLockEntry`) so `update` and `sync` cannot
+   * silently revoke it.
+   *
+   * It means "do not reconcile this automatically", not "do not touch".
+   * `apply` and `update` skip the item. `revert` is the explicit user-driven
+   * override and reconciles through it behind the destructive-change consent
+   * gate. `promote` refuses: publishing would end the divergence the marker
+   * asserts, so the user must clear it first.
+   */
   local: z.literal(true).optional(),
   localReason: z.string().optional(),
 });

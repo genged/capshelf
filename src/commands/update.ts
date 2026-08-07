@@ -29,6 +29,7 @@ import {
   shaOfGitVisibleItem,
 } from "../master";
 import { assertRepoClean, lastTouchingContentCommit } from "../git";
+import { PRODUCT_NAME } from "../identity";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
 import { PreconditionError, ResultExitError } from "../errors";
 import { assertLocalScopeSupported } from "../local-config";
@@ -94,6 +95,7 @@ interface UpdateResult {
   sourceCommit?: string;
   cliVersion?: string;
   dryRun?: true;
+  localReason?: string;
   error?: string;
   runtimeWarnings?: RuntimeWarning[];
   scope?: "project" | "local";
@@ -558,6 +560,7 @@ function printUpdateOutput(opts: {
     return;
   }
   printUpdateResults(opts.results);
+  printKeptLocalHint(opts.results);
   if (opts.dryRun && opts.destructivePlan.changes.length > 0) {
     console.log(
       renderDestructiveChanges("Update", opts.destructivePlan.changes),
@@ -656,6 +659,9 @@ async function updateDataTarget(
         action: "kept-local",
         sha: entry.sha,
         sourceCommit: entry.sourceCommit,
+        ...(entry.localReason !== undefined && {
+          localReason: entry.localReason,
+        }),
         ...(runtimeWarnings.length > 0 && { runtimeWarnings }),
       },
     };
@@ -910,9 +916,27 @@ function printUpdateResults(results: UpdateResult[]): void {
       printUpdateDetails(r);
     } else {
       console.log(`✓ ${id} ${r.action}`);
+      if (r.action === "kept-local" && r.localReason) {
+        console.log(`  ${r.localReason}`);
+      }
       printUpdateDetails(r);
     }
   }
+}
+
+/**
+ * Once per run, not per item. The marker is cleared by exactly one command, so
+ * a run that skipped items has to name it — and a project with several marked
+ * items should not repeat the same line for each.
+ */
+function printKeptLocalHint(results: UpdateResult[]): void {
+  const first = results.find((result) => result.action === "kept-local");
+  if (!first) return;
+  console.log(
+    `  clear a keep-local marker to have it reconciled again: ${PRODUCT_NAME} keep-local ${first.kind}/${first.name}${
+      first.scope === "local" ? " --local" : ""
+    } --unset`,
+  );
 }
 
 function printUpdateDetails(r: UpdateResult): void {

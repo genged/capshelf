@@ -14,6 +14,7 @@ import {
   planSubagentDestruction,
 } from "../destructive-preflight";
 import { parseLockKey } from "../installed";
+import { PRODUCT_NAME } from "../identity";
 import type { Lock } from "../lock";
 import type { Manifest } from "../manifest";
 import { assertNoScopeCollisions } from "../status-core";
@@ -663,6 +664,20 @@ function printApplyOutput(opts: {
     return;
   }
   printApplyResults(opts.results);
+  // Once per run, not per item: the marker is now cleared by exactly one
+  // command, so a project with several marked items should say so once.
+  const keptLocal = opts.results.filter(
+    (result) => result.action === "kept-local",
+  );
+  if (keptLocal.length > 0) {
+    const first = keptLocal[0]!;
+    const scope = "scope" in first ? first.scope : "project";
+    console.log(
+      `  clear a keep-local marker to have it reconciled again: ${PRODUCT_NAME} keep-local ${first.kind}/${first.name}${
+        scope === "local" ? " --local" : ""
+      } --unset`,
+    );
+  }
   if (opts.dryRun && opts.destructivePlan.changes.length > 0) {
     console.log(
       renderDestructiveChanges("Apply", opts.destructivePlan.changes),

@@ -70,8 +70,8 @@ hash format.
 | `share <item>` | adopt a not-yet-shared on-disk item into the data repo; subagents scan both runtime outputs by default and require `--target` with `--from` | implemented |
 | `move <item> --to <scope>` | move an already-tracked data item between local and project scope without changing data-repo content | implemented |
 | `promote <item>` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects clone-local copy items; stale copy items can use `--merge` or intentional overwrite with `--stale-ok` | implemented |
-| `keep-local <item>` | mark drifted copy-item content as intentional divergence; supports project and clone-local skills/Pi extensions, and rejects fragments | implemented |
-| `revert <item>` | restore one locked version; already-current is a lock-stable no-op, while discarding local state requires consent or `--yes`; supports `--local` | implemented |
+| `keep-local <item>` | mark drifted copy-item content as intentional divergence; supports project and clone-local skills/Pi extensions, and rejects fragments; `--unset` is the only thing that clears the marker, and `promote` refuses a marked item | implemented |
+| `revert <item>` | restore one locked version; the lock is never rewritten, so a keep-local marker survives; discarding local state requires consent or `--yes`; supports `--local` | implemented |
 | `self-update` | check for and install a Homebrew update for the capshelf binary; supports `--check` and `--yes` | implemented |
 | `marketplace ...` | author, validate, sync, rename/retire, and package independent Claude/Cowork and Codex plugin catalogs in the data repo | implemented |
 | `validate <name>` | lint an item (frontmatter, structure, broken refs) | roadmap |
@@ -821,6 +821,23 @@ Standalone `add` of an already-installed item does not reapply, repin, clear
 `keep-local`, or select newer upstream content. Use `update` to select upstream,
 `apply` or `revert` to restore the lock, and `status <item> --diff` before any
 destructive choice.
+
+### The keep-local marker
+
+The marker records *intent*, not a fact about current content. Exactly one
+command sets it (`keep-local <item>`) and exactly one clears it
+(`keep-local <item> --unset`). It means "do not reconcile this
+automatically", not "do not touch":
+
+| Command | Behavior on a marked item |
+| --- | --- |
+| `apply`, `update` | Skip the item and print the reason; the run ends with the `--unset` command that would resume reconciliation |
+| `revert` | The explicit user-driven override. Restores the pinned content behind the destructive-change consent gate and keeps the marker, so resetting to the pinned base and starting a fresh edit does not lose it |
+| `promote` | Refused (exit 3). Publishing the divergence upstream would end it, so the error prints the `--unset` and `promote` pair in order, and warns that the item is drifted and unmanaged between them |
+| `update`, `data sync` | Carry the marker across a lock refresh, so upstream movement cannot silently revoke it |
+
+`revert` never rewrites the lock. A marked item that already matches its
+pinned content reports `= already current` and says the marker is still set.
 
 ### Stale-promote protection
 

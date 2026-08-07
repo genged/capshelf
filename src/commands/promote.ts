@@ -38,6 +38,7 @@ import {
   statusPorcelain,
 } from "../git";
 import { isSystemItemName } from "../bundled";
+import { PRODUCT_NAME } from "../identity";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import { assertLocalScopeSupported } from "../local-config";
 import {
@@ -716,6 +717,7 @@ export async function syncTrackedIntoDataRepo(
 ): Promise<PromoteResult> {
   const key = dataKey(kind, name);
   const entry = dataEntryOrThrow(lock.items[key], key);
+  assertNotKeptLocal(entry, kind, name, opts.scope ?? "project");
 
   if (isFragmentKind(kind)) {
     throw new PreconditionError(
@@ -1206,6 +1208,32 @@ async function mergeStalePromote(input: {
     ...(runtimeWarnings.length > 0 && { runtimeWarnings }),
     ...(privateDotenvWarnings.length > 0 && { privateDotenvWarnings }),
   };
+}
+
+/**
+ * The keep-local marker asserts that this project's divergence is intentional
+ * and should not be reconciled. Promoting publishes that divergence upstream,
+ * which ends it — so the marker and the promote contradict each other and the
+ * user has to say which one they meant.
+ */
+function assertNotKeptLocal(
+  entry: ReturnType<typeof dataEntryOrThrow>,
+  kind: ItemKind,
+  name: string,
+  scope: Scope,
+): void {
+  if (entry.local !== true) return;
+  const item = `${kind}/${name}`;
+  const scopeFlag = scope === "local" ? " --local" : "";
+  throw new PreconditionError(
+    `not promoting ${item} — marked as intentional project-local divergence\n` +
+      (entry.localReason ? `    reason: ${entry.localReason}\n` : "") +
+      "  promoting publishes this divergence upstream, which ends it. Clear the marker first:\n" +
+      `    ${PRODUCT_NAME} keep-local ${item}${scopeFlag} --unset\n` +
+      `    ${PRODUCT_NAME} promote ${item}${scopeFlag} -m "<message>"\n` +
+      "  between those two commands the item is drifted and unmanaged — do not run\n" +
+      `  ${PRODUCT_NAME} apply until the promote completes`,
+  );
 }
 
 function buffersEqual(a: Buffer | null, b: Buffer | null): boolean {
