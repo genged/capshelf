@@ -224,7 +224,7 @@ describe("apply destructive-change preflight", () => {
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );
 
-  test("reports fragment contribution and comment loss before writing", async () => {
+  test("reports fragment contribution drift before writing", async () => {
     const project = await tempRepo("capshelf-apply-fragment-project-");
     const dataRepo = await tempRepo("capshelf-apply-fragment-data-");
     const run = runInProcess(project);
@@ -253,8 +253,9 @@ describe("apply destructive-change preflight", () => {
     const report = JSON.parse(dryRun.stdout.toString()) as {
       destructiveChanges: Array<{ reason: string }>;
     };
+    // Comment loss in a strict-JSON target is repair, not destruction: only
+    // the edited managed contribution reaches the consent boundary.
     expect(report.destructiveChanges.map((change) => change.reason)).toEqual([
-      "config_comments",
       "fragment_contribution",
     ]);
     expect((await run(["apply", "settings/security", "--json"])).exitCode).toBe(
@@ -262,6 +263,43 @@ describe("apply destructive-change preflight", () => {
     );
     expect(await file(output).text()).toContain("// local rationale");
   });
+
+  test(
+    "gates TOML comment loss in .codex/config.toml",
+    async () => {
+      const project = await tempRepo("capshelf-apply-toml-project-");
+      const dataRepo = await tempRepo("capshelf-apply-toml-data-");
+      const run = runInProcess(project);
+      const fragment = join(dataRepo, "codex", "config", "defaults");
+      await mkdir(fragment, { recursive: true });
+      await writeFile(join(fragment, "config.toml"), 'model = "gpt-5"\n');
+      await commitAll(dataRepo, "codex defaults");
+      expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+      expect((await run(["add", "codex-config/defaults"])).exitCode).toBe(0);
+      const output = join(project, ".codex", "config.toml");
+      await writeFile(output, '# why this exists\nmodel = "gpt-4"\n');
+
+      const dryRun = await run([
+        "apply",
+        "codex-config/defaults",
+        "--dry-run",
+        "--json",
+      ]);
+      expect(dryRun.exitCode).toBe(0);
+      const report = JSON.parse(dryRun.stdout.toString()) as {
+        destructiveChanges: Array<{ reason: string }>;
+      };
+      expect(
+        report.destructiveChanges.map((change) => change.reason),
+      ).toContain("config_comments");
+      expect(
+        (await run(["apply", "codex-config/defaults", "--json"])).exitCode,
+      ).toBe(3);
+      expect(await file(output).text()).toContain("# why this exists");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
   test(
     "converges healthy items when an unrelated copy item cannot resolve",
     async () => {

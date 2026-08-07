@@ -162,7 +162,7 @@ describe("rm destructive-change consent", () => {
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );
 
-  test("guards fragment comments and drift before unmerging", async () => {
+  test("guards fragment drift before unmerging", async () => {
     const project = await tempRepo("capshelf-rm-fragment-project-");
     const dataRepo = await tempRepo("capshelf-rm-fragment-data-");
     const run = runInProcess(project);
@@ -185,7 +185,8 @@ describe("rm destructive-change consent", () => {
     expect(refused.stderr.toString()).toContain(
       "replace a managed config contribution",
     );
-    expect(refused.stderr.toString()).toContain("remove config comments");
+    // Comment loss in a strict-JSON target is repair, not consentable loss.
+    expect(refused.stderr.toString()).not.toContain("remove config comments");
     expect(await file(output).text()).toContain("// local context");
     expect(await file(lockPath).text()).toBe(lockBefore);
 

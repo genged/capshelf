@@ -87,6 +87,30 @@ export interface FragmentOutputPlan {
   changed: boolean;
   /** The existing JSONC or TOML file had comments a rewrite cannot preserve. */
   commentLoss: boolean;
+  /** How that loss is treated — see `commentLossPolicy`. */
+  commentPolicy: CommentLossPolicy;
+}
+
+/**
+ * Losing comments is destruction in one target and repair in the others.
+ *
+ * `#` comments are standard TOML and Codex reads `.codex/config.toml` with
+ * them, so dropping them is real loss the user must authorize (`gate`).
+ *
+ * `.claude/settings.json` and `.mcp.json` are strict JSON to the tool that
+ * consumes them. Verified against Claude Code 2.1.220: a `//` comment in
+ * `settings.json` makes the whole file silently not load — an `env` entry in
+ * it never reaches the session — and the same comment in `.mcp.json` reports
+ * `[Failed to parse] ... MCP config is not a valid JSON`. capshelf can read
+ * either file only because of its own JSONC tolerance (`parseJsonc`). Asking
+ * the user to authorize losing those comments would be asking them to
+ * authorize keeping a broken config: the rewrite is what makes the file
+ * loadable again, so it is announced, not gated (`repair`).
+ */
+export type CommentLossPolicy = "gate" | "repair";
+
+export function commentLossPolicy(format: FragmentFormat): CommentLossPolicy {
+  return format === "toml" ? "gate" : "repair";
 }
 
 export interface ApplyFragmentOutputOptions {
@@ -411,6 +435,7 @@ export async function planFragmentOutput(
     plannedSha,
     changed,
     commentLoss,
+    commentPolicy: commentLossPolicy(spec.format),
   };
 }
 
@@ -446,7 +471,9 @@ export async function applyFragmentOutputPlans(
       if (!plan.changed) continue;
       if (plan.commentLoss) {
         console.error(
-          `⚠ ${plan.path}: comments in this file are not preserved when capshelf rewrites its managed content`,
+          plan.commentPolicy === "gate"
+            ? `⚠ ${plan.path}: comments in this file are not preserved when capshelf rewrites its managed content`
+            : `⚠ ${plan.path}: comments removed — the tool that reads this file requires strict JSON, so it was not loading the file at all; the rewrite repairs that`,
         );
       }
       await opts.beforeWrite?.(plan, index);

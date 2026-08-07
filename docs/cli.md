@@ -818,7 +818,8 @@ projection changes. Dry runs report `destructiveChanges` and never prompt.
 | Installed managed content or mode differs | Prompt; non-TTY/JSON exits 3 | `capshelf status <item> --diff`, then rerun with `--yes` if approved |
 | Ignored local-only file survives reconciliation | Preserved without a prompt | Its path remains installed; a collision with new managed content hard-refuses |
 | `rm` would delete an ignored or visible extra path | Prompt names the physical path | Preserve it elsewhere or rerun `rm ... --yes` |
-| Fragment serialization would remove JSONC/TOML comments | Prompt names the output | Review the output and managed item diff before `--yes` |
+| Fragment serialization would remove `.codex/config.toml` comments | Prompt names the output | Review the output and managed item diff before `--yes` |
+| Fragment serialization would remove `.claude/settings.json` or `.mcp.json` comments | No prompt; a warning says the file was not loading and the rewrite repairs it | Nothing — the comments were already stopping Claude Code from reading the file |
 | Codex projection is stale but Git-clean | Syncs normally | Review the resulting Git diff before committing |
 | Codex projection has dirty affected paths | Prompt; dry-run lists paths | `capshelf marketplace sync --target codex --dry-run --json` |
 
@@ -833,7 +834,7 @@ declared-but-unreachable branch of the boundary cannot read as implemented.
 | `extra_local_path` | A path under the managed directory that the lock does not own — including ignored files and symlinks on `rm` | copy-item reconciliation and removal |
 | `subagent_target` | A runtime subagent output differs from its locked source | subagent reconciliation and removal |
 | `fragment_contribution` | The managed contribution in a generated config was edited | fragment planning |
-| `config_comments` | A managed rewrite would drop comments from a config target | fragment planning |
+| `config_comments` | A managed rewrite would drop comments from `.codex/config.toml`, where `#` comments are standard TOML and Codex reads them | fragment planning |
 | `dirty_projection` | A generated marketplace projection path has uncommitted edits | Codex marketplace sync |
 
 Standalone `add` over a pre-existing unmanaged install target is **not** on
@@ -1088,9 +1089,18 @@ recursively. Two fragments that set the same scalar to *different* values are
 refused (naming both fragments) rather than resolved silently by manifest
 order; identical values and mergeable arrays/objects are fine. JSON outputs
 (`settings.json`, `.mcp.json`) are read as JSONC (comments and trailing commas
-tolerated), but a managed rewrite serializes plain JSON. JSONC and TOML comment
-loss is detected during preflight and requires consent; dry-run and refusal
-output name the affected config path. TOML date/time values are rejected in
+tolerated), but a managed rewrite serializes plain JSON.
+
+That JSONC tolerance is capshelf's alone. **Claude Code requires strict JSON
+for both files** (verified against 2.1.220): a `//` comment in
+`.claude/settings.json` makes the whole file silently not load, and the same
+comment in `.mcp.json` reports `[Failed to parse] … MCP config is not a valid
+JSON`. So removing those comments repairs the file rather than destroying
+anything: capshelf warns and proceeds instead of asking for consent. TOML is
+the opposite — `#` comments are standard and Codex reads them — so comment loss
+in `.codex/config.toml` is a `config_comments` destructive change that requires
+consent, and dry-run and refusal output name the affected config path. TOML
+date/time values are rejected in
 fragment sources: capshelf's merge and hash pipeline round-trips values through
 JSON, which cannot preserve TOML date types (a local date would silently become
 a string or an offset date-time on re-emit).

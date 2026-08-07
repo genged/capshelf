@@ -34,6 +34,7 @@ function fragmentPlan(
     plannedSha: null,
     changed: currentText !== plannedText,
     commentLoss: false,
+    commentPolicy: "repair",
   };
 }
 

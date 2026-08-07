@@ -289,7 +289,7 @@ describe("revert destructive-change consent", () => {
     expect(await file(ignored).text()).toBe("cache state\n");
   });
 
-  test("guards fragment drift and comment loss before restoring the lock", async () => {
+  test("guards fragment drift before restoring the lock", async () => {
     const project = await tempRepo("capshelf-revert-fragment-project-");
     const dataRepo = await tempRepo("capshelf-revert-fragment-data-");
     const run = runInProcess(project);
@@ -310,7 +310,8 @@ describe("revert destructive-change consent", () => {
     expect(refused.stderr.toString()).toContain(
       "replace a managed config contribution",
     );
-    expect(refused.stderr.toString()).toContain("remove config comments");
+    // Comment loss in a strict-JSON target is repair, not consentable loss.
+    expect(refused.stderr.toString()).not.toContain("remove config comments");
     expect(await file(output).text()).toContain("// local context");
 
     expect(

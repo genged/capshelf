@@ -286,53 +286,83 @@ describe("interactive destructive-change consent", () => {
     expect(await file(localPath).exists()).toBe(false);
   });
 
-  test("reports config comment loss before updating a fragment output", async () => {
-    const project = await tempRepo("capshelf-update-comments-project-");
-    const dataRepo = await tempRepo("capshelf-update-comments-data-");
-    const run = runInProcess(project);
-    const fragment = join(dataRepo, "settings", "theme");
-    await mkdir(fragment, { recursive: true });
-    await writeFile(
-      join(fragment, "settings.json"),
-      `${JSON.stringify({ theme: "dark" })}\n`,
-    );
-    await commitAll(dataRepo, "theme v1");
-    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
-    expect((await run(["add", "settings/theme"])).exitCode).toBe(0);
-    const outputPath = join(project, ".claude", "settings.json");
-    const current = await file(outputPath).text();
-    await writeFile(outputPath, `// local context\n${current}`);
-    await writeFile(
-      join(fragment, "settings.json"),
-      `${JSON.stringify({ theme: "light" })}\n`,
-    );
-    await commitAll(dataRepo, "theme v2");
+  test(
+    "gates TOML comment loss but repairs a strict-JSON target",
+    async () => {
+      const project = await tempRepo("capshelf-update-comments-project-");
+      const dataRepo = await tempRepo("capshelf-update-comments-data-");
+      const run = runInProcess(project);
+      const settings = join(dataRepo, "settings", "theme");
+      const codex = join(dataRepo, "codex", "config", "defaults");
+      await mkdir(settings, { recursive: true });
+      await mkdir(codex, { recursive: true });
+      await writeFile(
+        join(settings, "settings.json"),
+        `${JSON.stringify({ theme: "dark" })}\n`,
+      );
+      await writeFile(join(codex, "config.toml"), 'model = "gpt-5"\n');
+      await commitAll(dataRepo, "fragments v1");
+      expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+      expect((await run(["add", "settings/theme"])).exitCode).toBe(0);
+      expect((await run(["add", "codex-config/defaults"])).exitCode).toBe(0);
+      const settingsOutput = join(project, ".claude", "settings.json");
+      const codexOutput = join(project, ".codex", "config.toml");
+      await writeFile(
+        settingsOutput,
+        `// local context\n${await file(settingsOutput).text()}`,
+      );
+      await writeFile(
+        codexOutput,
+        `# local rationale\n${await file(codexOutput).text()}`,
+      );
+      await writeFile(
+        join(settings, "settings.json"),
+        `${JSON.stringify({ theme: "light" })}\n`,
+      );
+      await writeFile(join(codex, "config.toml"), 'model = "gpt-5-codex"\n');
+      await commitAll(dataRepo, "fragments v2");
 
-    const dryRun = await run([
-      "update",
-      "settings/theme",
-      "--dry-run",
-      "--json",
-    ]);
-    expect(dryRun.exitCode).toBe(0);
-    const report = JSON.parse(dryRun.stdout.toString()) as {
-      destructiveChanges: Array<{
-        scope: string;
-        item?: string;
-        path: string;
-        reason: string;
-        reviewCommand?: string;
-      }>;
-    };
-    expect(report.destructiveChanges).toContainEqual({
-      scope: "project",
-      path: ".claude/settings.json",
-      reason: "config_comments",
-      reviewCommand: "capshelf status settings/theme --diff",
-    });
-    expect((await run(["update", "settings/theme", "--json"])).exitCode).toBe(
-      3,
-    );
-    expect(await file(outputPath).text()).toContain("// local context");
-  });
+      const dryRun = await run(["update", "--dry-run", "--json"]);
+      expect(dryRun.exitCode).toBe(0);
+      const report = JSON.parse(dryRun.stdout.toString()) as {
+        destructiveChanges: Array<{
+          scope: string;
+          item?: string;
+          path: string;
+          reason: string;
+          reviewCommand?: string;
+        }>;
+      };
+      // `#` is standard TOML and Codex reads it, so this is real loss.
+      expect(report.destructiveChanges).toContainEqual({
+        scope: "project",
+        path: ".codex/config.toml",
+        reason: "config_comments",
+        reviewCommand: "capshelf status codex-config/defaults --diff",
+      });
+      // Claude Code will not load a settings.json with comments, so removing
+      // them repairs the file rather than destroying anything.
+      expect(
+        report.destructiveChanges.filter(
+          (change) =>
+            change.path === ".claude/settings.json" &&
+            change.reason === "config_comments",
+        ),
+      ).toEqual([]);
+
+      const refused = await run(["update", "--json"]);
+      expect(refused.exitCode).toBe(3);
+      expect(await file(codexOutput).text()).toContain("# local rationale");
+      expect(await file(settingsOutput).text()).toContain("// local context");
+
+      const accepted = await run(["update", "--yes"]);
+      expect(accepted.exitCode).toBe(0);
+      expect(accepted.stderr.toString()).toContain("comments removed");
+      expect(await file(settingsOutput).json()).toMatchObject({
+        theme: "light",
+      });
+      expect(await file(codexOutput).text()).toContain('model = "gpt-5-codex"');
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
 });

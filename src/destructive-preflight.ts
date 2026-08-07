@@ -50,6 +50,7 @@ export async function planCopyDirectoryDestruction(opts: {
     previousEntry: opts.currentEntry,
     scope: opts.scope,
   });
+
   const root = installedPath(
     opts.project,
     opts.kind,
@@ -319,7 +320,12 @@ export function planFragmentDestruction(opts: {
         ...(reviewCommand && { reviewCommand }),
       });
     }
-    if (plan.commentLoss) {
+    // Only `gate` targets reach the consent boundary. For strict-JSON targets
+    // the comments were already stopping the consuming tool from loading the
+    // file, so the rewrite repairs it — `applyFragmentOutputPlans` announces
+    // that instead of asking the user to authorize keeping it broken. See
+    // `commentLossPolicy`.
+    if (plan.commentLoss && plan.commentPolicy === "gate") {
       changes.push({
         scope: "project",
         path: projectRelative(opts.project, plan.path),
