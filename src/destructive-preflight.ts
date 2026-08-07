@@ -50,17 +50,6 @@ export async function planCopyDirectoryDestruction(opts: {
     previousEntry: opts.currentEntry,
     scope: opts.scope,
   });
-  await copyDirectoryReconciliationFiles({
-    project: opts.project,
-    dataRepo: opts.dataRepo,
-    manifest: opts.manifest,
-    kind: opts.kind,
-    name: opts.name,
-    entry: opts.selectedEntry,
-    previousEntry: opts.currentEntry,
-    scope: opts.scope,
-  });
-
   const root = installedPath(
     opts.project,
     opts.kind,

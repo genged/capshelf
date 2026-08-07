@@ -293,13 +293,18 @@ export async function copyDirectoryReconciliationFiles(opts: {
   const dst = installedPath(opts.project, opts.kind, opts.name);
   if (!existsSync(dst)) return { expected, preserved: [] };
 
-  const previous = await filesForEntry(
-    opts.dataRepo,
-    opts.manifest,
-    opts.kind,
-    opts.name,
-    opts.previousEntry,
-  );
+  // Reading the previous tree is one `git ls-tree` plus one `git show` per
+  // file. `apply` and `revert` always pass the same entry twice, so aliasing
+  // rather than re-reading removes half the source reads on those paths.
+  const previous = sameSourceContent(opts.entry, opts.previousEntry)
+    ? expected
+    : await filesForEntry(
+        opts.dataRepo,
+        opts.manifest,
+        opts.kind,
+        opts.name,
+        opts.previousEntry,
+      );
   const previousPaths = new Set(previous.map((file) => file.path));
   const snapshot = await installedSnapshot(
     opts.project,
@@ -386,6 +391,35 @@ export async function lockedCopyDirectoryFiles(opts: {
   );
 }
 
+/**
+ * True when two lock entries resolve to the same source tree. Data entries are
+ * identified by their source commit; system entries always resolve to the
+ * current bundle, so the entry itself carries no selection.
+ */
+function sameSourceContent(entry: LockEntry, previous: LockEntry): boolean {
+  if (entry === previous) return true;
+  if (entry.source !== previous.source) return false;
+  if (entry.source === "data" && previous.source === "data") {
+    return entry.sourceCommit === previous.sourceCommit;
+  }
+  return true;
+}
+
+/**
+ * Item content at a commit, memoized for the life of the process.
+ *
+ * A commit's tree is immutable and content-addressed, so a second read can
+ * only ever return the same bytes. Without this, one `apply` reads the whole
+ * source tree once per plan/revalidate/materialize pass and once per planner
+ * within each — one `git ls-tree` plus one `git show` per file, every time.
+ * The local filesystem is deliberately NOT cached: revalidation exists to
+ * notice that it changed.
+ *
+ * Peak memory becomes the managed content one command touches rather than one
+ * item's worth; for the item kinds capshelf manages that is kilobytes.
+ */
+const atCommitFiles = new Map<string, NamedFile[]>();
+
 async function readDataFilesAtCommit(
   dataRepo: string,
   manifest: Manifest | undefined,
@@ -395,6 +429,21 @@ async function readDataFilesAtCommit(
   hooks?: MaterializeHooks,
 ): Promise<NamedFile[]> {
   const repoRelPath = itemRepoRelPath(kind, name);
+  const cacheKey = `${dataRepo}\0${commit}\0${repoRelPath}`;
+  const cached = atCommitFiles.get(cacheKey);
+  if (cached) {
+    // Hooks still fire on a cache hit: they are how the transaction tests
+    // inject a failure at a specific source read, and skipping them would
+    // make a cached pass behave differently from a cold one.
+    for (const [index, file] of cached.entries()) {
+      await hooks?.beforeSourceRead?.(`${repoRelPath}/${file.path}`, index);
+    }
+    // A fresh array per caller, on both the hit and the miss path: the entries
+    // are immutable content, but callers own their list and one of them
+    // sorting in place must not reorder another's.
+    return [...cached];
+  }
+
   const entries = await materializableFilesAtCommit(
     dataRepo,
     manifest,
@@ -416,7 +465,8 @@ async function readDataFilesAtCommit(
       mode: entry.mode === "100755" ? "100755" : "100644",
     });
   }
-  return files;
+  atCommitFiles.set(cacheKey, files);
+  return [...files];
 }
 
 async function materializeCopyDirectory(

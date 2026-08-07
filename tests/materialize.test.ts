@@ -15,6 +15,7 @@ import { dataKey } from "../src/lock";
 import { lastTouchingCommit } from "../src/git";
 import { shaOfItem } from "../src/master";
 import { materializeLockEntry } from "../src/materialize";
+import { CLI_INTEGRATION_TEST_TIMEOUT_MS } from "./cli-fixtures";
 import { inventoryLocalTree } from "../src/gitignore";
 
 async function tempDir(prefix: string): Promise<string> {
@@ -489,4 +490,75 @@ describe("materializeLockEntry", () => {
     expect(result.message).toBe("project-specific");
     expect(await file(join(installed, "SKILL.md")).text()).toBe("local\n");
   });
+});
+
+describe("materialization source reads", () => {
+  test(
+    "apply reads the item source tree once, not once per preflight pass",
+    async () => {
+      const realGit = Bun.which("git");
+      if (!realGit) throw new Error("git is required for this test");
+      const dataRepo = await tempRepo();
+      const dataItem = join(dataRepo, "skills", "big");
+      await mkdir(dataItem, { recursive: true });
+      await writeFile(
+        join(dataItem, "SKILL.md"),
+        "---\nname: big\ndescription: big\n---\nv1\n",
+      );
+      const fileCount = 12;
+      for (let index = 1; index < fileCount; index += 1) {
+        await writeFile(join(dataItem, `f${index}.md`), `file ${index}\n`);
+      }
+      await commitAll(dataRepo, "big skill");
+
+      const project = await tempDir("capshelf-git-calls-project-");
+      await $`git -C ${project} init -q`.quiet();
+      const cli = join(import.meta.dir, "..", "src", "cli.ts");
+      const run = (args: string[]) =>
+        Bun.spawnSync({
+          cmd: [process.execPath, cli, ...args],
+          cwd: project,
+          env: process.env,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+      expect(run(["init", "--data", dataRepo, "--no-upstream"]).exitCode).toBe(
+        0,
+      );
+      expect(run(["add", "skills/big"]).exitCode).toBe(0);
+      await writeFile(
+        join(project, ".agents", "skills", "big", "SKILL.md"),
+        "drifted\n",
+      );
+
+      // A shim on PATH logs every git invocation before exec'ing the real
+      // binary, so this counts subprocesses rather than trusting a code read.
+      const shimDir = await tempDir("capshelf-git-shim-");
+      const log = join(shimDir, "calls.log");
+      await writeFile(
+        join(shimDir, "git"),
+        `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(log)}\nexec ${JSON.stringify(realGit)} "$@"\n`,
+      );
+      await chmod(join(shimDir, "git"), 0o755);
+
+      const previousPath = process.env.PATH;
+      process.env.PATH = `${shimDir}:${previousPath ?? ""}`;
+      try {
+        expect(run(["apply", "skills/big", "--yes"]).exitCode).toBe(0);
+      } finally {
+        process.env.PATH = previousPath;
+      }
+
+      const calls = (await file(log).text()).split("\n").filter(Boolean);
+      // One `git ls-tree` and one `git show` per file for the whole command.
+      // Plan, revalidate, and materialize used to re-read the tree each time,
+      // and each pass ran two planners: 14 full reads per copy item.
+      expect(calls.filter((line) => line.includes("ls-tree")).length).toBe(1);
+      expect(calls.filter((line) => line.includes(" show ")).length).toBe(
+        fileCount,
+      );
+      expect(calls.length).toBeLessThan(fileCount * 4);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
 });
