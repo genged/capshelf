@@ -1,5 +1,8 @@
+import { file } from "bun";
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import {
+  DESTRUCTIVE_CHANGE_REASON_LABELS,
   assertDestructivePlanUnchanged,
   confirmDestructiveChanges,
   createDestructiveChangePlan,
@@ -186,5 +189,31 @@ describe("destructive change consent", () => {
     expect(() => assertDestructivePlanUnchanged(accepted, current)).toThrow(
       /changed after destructive-change preflight/,
     );
+  });
+});
+
+describe("destructive change reasons", () => {
+  test("every declared reason is documented and emitted by a planner", async () => {
+    const reasons = Object.keys(DESTRUCTIVE_CHANGE_REASON_LABELS);
+    expect(reasons.length).toBeGreaterThan(0);
+
+    // The docs table is the user-facing contract for the JSON `reason` field.
+    const docs = await file(
+      join(import.meta.dir, "..", "docs", "cli.md"),
+    ).text();
+    for (const reason of reasons) {
+      expect(docs).toContain(`\`${reason}\``);
+    }
+
+    // A reason nobody emits makes an unimplemented branch of the safety
+    // boundary read as implemented; that is how `install_target` survived.
+    const planners = await Promise.all(
+      ["destructive-preflight.ts", "commands/marketplace.ts"].map((relPath) =>
+        file(join(import.meta.dir, "..", "src", relPath)).text(),
+      ),
+    );
+    for (const reason of reasons) {
+      expect(planners.some((source) => source.includes(reason))).toBe(true);
+    }
   });
 });

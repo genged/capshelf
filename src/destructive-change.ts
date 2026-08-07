@@ -1,6 +1,14 @@
 import { createInterface } from "node:readline/promises";
 import { PreconditionError } from "./errors";
 
+/**
+ * Every kind of local state a consented write can destroy. A reason exists
+ * only when a planner emits it: an unimplemented branch of a safety boundary
+ * reads as implemented, which is worse than an absent one. `install_target`
+ * was declared and never emitted — `add` over a pre-existing unmanaged target
+ * is a hard refusal by design (`findInstallConflict`,
+ * `assertCanMaterializeInstalled`), not consentable loss — so it is gone.
+ */
 export type DestructiveChangeReason =
   | "managed_content"
   | "executable_mode"
@@ -8,8 +16,7 @@ export type DestructiveChangeReason =
   | "subagent_target"
   | "fragment_contribution"
   | "config_comments"
-  | "dirty_projection"
-  | "install_target";
+  | "dirty_projection";
 
 export interface DestructiveChange {
   scope: "project" | "local" | "data-repo";
@@ -39,7 +46,10 @@ interface DestructiveConfirmationOptions {
   rerunCommand: string;
 }
 
-const reasonLabels: Record<DestructiveChangeReason, string> = {
+export const DESTRUCTIVE_CHANGE_REASON_LABELS: Record<
+  DestructiveChangeReason,
+  string
+> = {
   managed_content: "overwrite managed content",
   executable_mode: "replace an executable-mode change",
   extra_local_path: "delete a local-only path",
@@ -47,7 +57,6 @@ const reasonLabels: Record<DestructiveChangeReason, string> = {
   fragment_contribution: "replace a managed config contribution",
   config_comments: "remove config comments",
   dirty_projection: "replace a dirty generated projection",
-  install_target: "replace an existing install target",
 };
 
 export function normalizeDestructiveChanges(
@@ -172,7 +181,7 @@ export function renderDestructiveChanges(
     `${operation} would destroy local state:`,
     ...normalized.map((change) => {
       const item = change.item ? `${change.item} — ` : "";
-      return `  ${item}${change.path} — ${reasonLabels[change.reason]}`;
+      return `  ${item}${change.path} — ${DESTRUCTIVE_CHANGE_REASON_LABELS[change.reason]}`;
     }),
     ...(normalized.some((change) => change.scope === "local")
       ? [

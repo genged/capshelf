@@ -822,6 +822,24 @@ projection changes. Dry runs report `destructiveChanges` and never prompt.
 | Codex projection is stale but Git-clean | Syncs normally | Review the resulting Git diff before committing |
 | Codex projection has dirty affected paths | Prompt; dry-run lists paths | `capshelf marketplace sync --target codex --dry-run --json` |
 
+Every `reason` a change record can carry, and the planner that emits it. The
+list is exhaustive: a reason exists only when something emits it, so a
+declared-but-unreachable branch of the boundary cannot read as implemented.
+
+| `reason` | Meaning | Emitted by |
+| --- | --- | --- |
+| `managed_content` | Installed bytes differ from the locked content | copy-item reconciliation and removal |
+| `executable_mode` | Installed mode differs from the locked Git mode | copy-item reconciliation and removal |
+| `extra_local_path` | A path under the managed directory that the lock does not own — including ignored files and symlinks on `rm` | copy-item reconciliation and removal |
+| `subagent_target` | A runtime subagent output differs from its locked source | subagent reconciliation and removal |
+| `fragment_contribution` | The managed contribution in a generated config was edited | fragment planning |
+| `config_comments` | A managed rewrite would drop comments from a config target | fragment planning |
+| `dirty_projection` | A generated marketplace projection path has uncommitted edits | Codex marketplace sync |
+
+Standalone `add` over a pre-existing unmanaged install target is **not** on
+this list: it is a hard refusal (exit 3), not consentable loss, and there is
+no force flag by design.
+
 Standalone `add` of an already-installed item does not reapply, repin, clear
 `keep-local`, or select newer upstream content. Use `update` to select upstream,
 `apply` or `revert` to restore the lock, and `status <item> --diff` before any
