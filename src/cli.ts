@@ -132,10 +132,15 @@ function reportError(err: unknown, json: boolean): number {
 
   if (json) {
     if (message) {
-      console.error(
-        JSON.stringify({
+      // Written straight to the stream, not through console.error: Bun
+      // colorizes console.error when stderr is a TTY, and an agent that runs
+      // capshelf through a pty would get the envelope wrapped in ANSI escapes
+      // and fail to parse it. The human branch below keeps console.error —
+      // prose is meant to be colored.
+      process.stderr.write(
+        `${JSON.stringify({
           error: { message, ...(hint && { hint }), exitCode },
-        }),
+        })}\n`,
       );
     }
     return exitCode;

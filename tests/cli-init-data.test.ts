@@ -202,6 +202,10 @@ describe("cli integration", () => {
     expect(envelope.error.message).toContain("not a capshelf project");
     // Human channel is untouched — no bare ✗ prose leaked into the JSON.
     expect(result.stderr.toString()).not.toContain("✗");
+    // No ANSI escapes either. Bun colorizes console.error when stderr is a
+    // TTY, which would wrap the envelope in escape codes and break
+    // JSON.parse for any agent running capshelf through a pty.
+    expect(result.stderr.toString()).not.toContain(String.fromCharCode(27));
   });
 
   test("keep-local refuses an item with no divergence", async () => {
