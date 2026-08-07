@@ -154,6 +154,28 @@ describe("revert destructive-change consent", () => {
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );
 
+  test("an unmarked, undrifted revert is silent and lock-stable", async () => {
+    const project = await tempRepo("capshelf-revert-noop-project-");
+    const dataRepo = await tempRepo("capshelf-revert-noop-data-");
+    const run = runInProcess(project);
+    await addSkill(dataRepo, "quiet", "locked\n");
+    await commitAll(dataRepo, "quiet skill");
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/quiet"])).exitCode).toBe(0);
+    const lockPath = join(project, ".capshelf", "capshelf.lock.json");
+    const before = await file(lockPath).text();
+
+    // No marker and no drift: the hint belongs only to a kept-local item, and
+    // revert must not rewrite the lock just to report that nothing changed.
+    const reverted = await run(["revert", "skills/quiet"]);
+    expect(reverted.exitCode).toBe(0);
+    const out = reverted.stdout.toString();
+    expect(out).toContain("= already current");
+    expect(out).not.toContain("keep-local");
+    expect(out).not.toContain("--unset");
+    expect(await file(lockPath).text()).toBe(before);
+  });
+
   test(
     "keeps the marker when reverting a drifted local-scope item",
     async () => {

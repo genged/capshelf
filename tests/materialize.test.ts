@@ -276,6 +276,9 @@ describe("materializeLockEntry", () => {
     const secret = join(installed, "secrets", "tokens.json");
     await writeFile(secret, '{"t":1}');
     await chmod(secret, 0o600);
+    const readOnly = join(installed, "secrets", "pinned.pem");
+    await writeFile(readOnly, "key\n");
+    await chmod(readOnly, 0o400);
 
     await writeFile(join(dataItem, "SKILL.md"), "hello v2\n");
     await commitAll(dataRepo, "hello v2");
@@ -300,6 +303,8 @@ describe("materializeLockEntry", () => {
     expect(lstatSync(link).isSymbolicLink()).toBe(true);
     expect(await readlink(link)).toBe("../lib/x.js");
     expect(lstatSync(secret).mode & 0o7777).toBe(0o600);
+    // 0400 must not gain write either: the mode is carried, not normalized.
+    expect(lstatSync(readOnly).mode & 0o7777).toBe(0o400);
     // Managed content still normalizes to Git's two modes.
     expect(lstatSync(join(installed, "SKILL.md")).mode & 0o7777).toBe(0o644);
 

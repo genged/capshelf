@@ -127,6 +127,58 @@ describe("rm destructive-change consent", () => {
   );
 
   test(
+    "fragment and subagent removal still require the data repo",
+    async () => {
+      const project = await tempRepo("capshelf-rm-requires-project-");
+      const dataRepo = await tempRepo("capshelf-rm-requires-data-");
+      const run = runInProcess(project);
+      const fragment = join(dataRepo, "settings", "theme");
+      await mkdir(fragment, { recursive: true });
+      await writeFile(
+        join(fragment, "settings.json"),
+        `${JSON.stringify({ env: { THEME: "dark" } })}\n`,
+      );
+      await mkdir(join(dataRepo, "subagents", "reviewer"), { recursive: true });
+      await writeFile(
+        join(dataRepo, "subagents", "reviewer", "claude.md"),
+        "---\nname: reviewer\ndescription: Review changes\n---\n\nReview.\n",
+      );
+      await commitAll(dataRepo, "fragment and subagent");
+      // --no-upstream so the refusal below is the data-repo check itself,
+      // not the upstream-mismatch check that would otherwise fire first.
+      expect(
+        (await run(["init", "--data", dataRepo, "--no-upstream"])).exitCode,
+      ).toBe(0);
+      expect((await run(["add", "settings/theme"])).exitCode).toBe(0);
+      expect((await run(["add", "subagents/reviewer"])).exitCode).toBe(0);
+
+      const localPath = join(project, ".capshelf", "local.json");
+      const local = await file(localPath).json();
+      local.dataRepo = join(project, "no-such-data-repo");
+      await writeFile(localPath, `${JSON.stringify(local, null, 2)}\n`);
+
+      // A copy directory is deleted from the project alone, so its removal
+      // degrades when the source is gone. These two rebuild their outputs from
+      // the data repo, so they must still refuse rather than guess: the lazy
+      // resolution is scoped to the branch that does not need it.
+      const lockPath = join(project, ".capshelf", "capshelf.lock.json");
+      const lockBefore = await file(lockPath).text();
+      const settingsOutput = join(project, ".claude", "settings.json");
+      const subagentOutput = join(project, ".claude", "agents", "reviewer.md");
+
+      for (const ref of ["settings/theme", "subagents/reviewer"]) {
+        const refused = await run(["rm", ref, "--yes"]);
+        expect({ ref, code: refused.exitCode }).toEqual({ ref, code: 3 });
+        expect(refused.stderr.toString()).toContain("not a git repository");
+      }
+      expect(await file(lockPath).text()).toBe(lockBefore);
+      expect(await file(settingsOutput).exists()).toBe(true);
+      expect(await file(subagentOutput).exists()).toBe(true);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "lists an ignored symlink as a deletion and removes it",
     async () => {
       const project = await tempRepo("capshelf-rm-symlink-project-");
