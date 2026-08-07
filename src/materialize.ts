@@ -1,6 +1,15 @@
-import { chmod, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readFile,
+  readlink,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
 import { existsSync } from "node:fs";
+import type { Stats } from "node:fs";
 import type { LockEntry } from "./lock";
 import type { Manifest } from "./manifest";
 import {
@@ -34,9 +43,10 @@ import type { RuntimeWarning } from "./runtime-warnings";
 import { missingSourceCommitMessage } from "./upstream-check";
 import type { NamedFile } from "./merge-tree";
 import { namedFilesEqual } from "./merge-tree";
-import { allRegularFiles, gitignoreVisibleFiles } from "./gitignore";
+import { gitignoreVisibleFiles, inventoryLocalTree } from "./gitignore";
 import { beginDirectoryReplacement } from "./promote-transaction";
 import { shaOfNamedFiles } from "./item-snapshot";
+import { PRODUCT_NAME } from "./identity";
 import { PreconditionError } from "./errors";
 
 export type MaterializeAction =
@@ -90,9 +100,23 @@ export interface MaterializeOptions {
   hooks?: MaterializeHooks;
 }
 
+/**
+ * Row 4 of the object-model table in `master.ts`: ignored local state under a
+ * managed directory, carried across a directory replacement as-is. This is
+ * deliberately not `NamedFile` — these paths never cross a Git boundary, so
+ * they keep their real `stat` mode instead of collapsing to `100644`/`100755`,
+ * and a symlink is recreated by target rather than refused. `NamedFile` stays
+ * the Git-boundary type shared with merge-tree, promote, and the tree code.
+ */
+export type PreservedEntry =
+  | { kind: "file"; path: string; content: Buffer; mode: number }
+  | { kind: "symlink"; path: string; target: string };
+
 export interface CopyDirectoryReconciliationFiles {
+  /** Rows 1–3: managed content, Git modes, Git rules. */
   expected: NamedFile[];
-  preserved: NamedFile[];
+  /** Rows 4–5. */
+  preserved: PreservedEntry[];
 }
 
 export async function materializeLockEntry(
@@ -300,15 +324,33 @@ export async function copyDirectoryReconciliationFiles(opts: {
     opts.scope,
   );
   const visiblePaths = new Set(snapshot?.files ?? []);
-  const preserved: NamedFile[] = [];
-  for (const path of await allRegularFiles(dst)) {
+  const inventory = await inventoryLocalTree(dst);
+  const preserved: PreservedEntry[] = [];
+  for (const path of inventory.files) {
     if (visiblePaths.has(path) || previousPaths.has(path)) continue;
     const fullPath = join(dst, ...path.split("/"));
     const info = await lstat(fullPath);
     preserved.push({
+      kind: "file",
       path,
       content: await readFile(fullPath),
-      mode: (info.mode & 0o111) !== 0 ? "100755" : "100644",
+      mode: info.mode & 0o7777,
+    });
+  }
+  for (const object of inventory.irregular) {
+    if (object.type !== "symlink") {
+      throw new PreconditionError(
+        `${dst} contains an unsupported filesystem object: ${object.path}; fifos, sockets, and device nodes cannot be recreated by a directory replacement`,
+        {
+          hint: `Remove or relocate the path, then rerun the command. \`${PRODUCT_NAME} rm\` can still delete the item with it in place.`,
+        },
+      );
+    }
+    const fullPath = join(dst, ...object.path.split("/"));
+    preserved.push({
+      kind: "symlink",
+      path: object.path,
+      target: await readlink(fullPath),
     });
   }
 
@@ -388,11 +430,15 @@ async function materializeCopyDirectory(
       await chmod(out, mode);
       await hooks?.afterStagedChmod?.(file.path, index);
     }
-    for (const file of files.preserved) {
-      const out = join(staged, ...file.path.split("/"));
+    for (const entry of files.preserved) {
+      const out = join(staged, ...entry.path.split("/"));
       await mkdir(dirname(out), { recursive: true });
-      await writeFile(out, file.content);
-      await chmod(out, fileModeFromGit(file.mode));
+      if (entry.kind === "symlink") {
+        await symlink(entry.target, out);
+        continue;
+      }
+      await writeFile(out, entry.content);
+      await chmod(out, entry.mode);
     }
     await hooks?.beforePublish?.();
   });
@@ -515,35 +561,53 @@ function fileModeFromGit(mode: string): number {
 async function installedFilesMatch(
   root: string,
   expected: NamedFile[],
-  preserved: NamedFile[] = [],
+  preserved: PreservedEntry[] = [],
 ): Promise<boolean> {
   if (!existsSync(root)) return false;
-  const known = [...expected, ...preserved].sort((left, right) =>
-    left.path.localeCompare(right.path),
-  );
-  const knownPaths = new Set(known.map((file) => file.path));
+  const knownPaths = new Set([
+    ...expected.map((file) => file.path),
+    ...preserved.map((entry) => entry.path),
+  ]);
   for (const path of await gitignoreVisibleFiles(root)) {
     if (isMetadataSidecarPath(path)) return false;
     if (!knownPaths.has(path)) return false;
   }
   const current: NamedFile[] = [];
-  for (const file of known) {
+  for (const file of expected) {
     const fullPath = join(root, ...file.path.split("/"));
-    let stats: Awaited<ReturnType<typeof lstat>>;
-    try {
-      stats = await lstat(fullPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-      throw error;
-    }
-    if (!stats.isFile()) return false;
+    const stats = await lstatOrNullAsync(fullPath);
+    if (stats === null || !stats.isFile()) return false;
     current.push({
       path: file.path,
       content: await readFile(fullPath),
       mode: (stats.mode & 0o111) !== 0 ? "100755" : "100644",
     });
   }
-  return namedFilesEqual(current, known);
+  if (!namedFilesEqual(current, expected)) return false;
+
+  for (const entry of preserved) {
+    const fullPath = join(root, ...entry.path.split("/"));
+    const stats = await lstatOrNullAsync(fullPath);
+    if (stats === null) return false;
+    if (entry.kind === "symlink") {
+      if (!stats.isSymbolicLink()) return false;
+      if ((await readlink(fullPath)) !== entry.target) return false;
+      continue;
+    }
+    if (!stats.isFile()) return false;
+    if ((stats.mode & 0o7777) !== entry.mode) return false;
+    if (!(await readFile(fullPath)).equals(entry.content)) return false;
+  }
+  return true;
+}
+
+async function lstatOrNullAsync(path: string): Promise<Stats | null> {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
 }
 
 function pathsCollide(left: string, right: string): boolean {

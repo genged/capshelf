@@ -1,13 +1,21 @@
 import { $, file } from "bun";
 import { describe, expect, test } from "bun:test";
 import { existsSync, lstatSync } from "node:fs";
-import { chmod, mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  mkdir,
+  readlink,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { dataKey } from "../src/lock";
 import { lastTouchingCommit } from "../src/git";
 import { shaOfItem } from "../src/master";
 import { materializeLockEntry } from "../src/materialize";
+import { inventoryLocalTree } from "../src/gitignore";
 
 async function tempDir(prefix: string): Promise<string> {
   return await mkdtemp(join(tmpdir(), prefix));
@@ -230,6 +238,123 @@ describe("materializeLockEntry", () => {
     expect(await file(join(installed, "cache", "state.db")).text()).toBe(
       "local state\n",
     );
+  });
+
+  test("carries ignored symlinks and real file modes across a replacement", async () => {
+    const dataRepo = await tempRepo();
+    const project = await tempDir("capshelf-materialize-row4-");
+    const dataItem = join(dataRepo, "skills", "hello");
+    const installed = join(project, ".agents", "skills", "hello");
+
+    await mkdir(dataItem, { recursive: true });
+    await writeFile(join(dataItem, ".gitignore"), "node_modules/\nsecrets/\n");
+    await writeFile(join(dataItem, "SKILL.md"), "hello v1\n");
+    await commitAll(dataRepo, "hello v1");
+    const v1 = {
+      source: "data" as const,
+      sha: await shaOfItem(dataItem),
+      sourceCommit: await lastTouchingCommit(dataRepo, "skills/hello"),
+      appliedAt: new Date().toISOString(),
+    };
+    await materializeLockEntry({
+      project,
+      dataRepo,
+      key: dataKey("skills", "hello"),
+      entry: v1,
+      scope: "project",
+    });
+
+    // Row 4 of the object-model table: local state under a managed directory
+    // never crosses a Git boundary, so Git's two-mode model does not apply
+    // and a symlink is preserved by target rather than refused.
+    await mkdir(join(installed, "node_modules", ".bin"), { recursive: true });
+    await mkdir(join(installed, "node_modules", "lib"), { recursive: true });
+    await writeFile(join(installed, "node_modules", "lib", "x.js"), "mod\n");
+    await symlink("../lib/x.js", join(installed, "node_modules", ".bin", "x"));
+    await mkdir(join(installed, "secrets"), { recursive: true });
+    const secret = join(installed, "secrets", "tokens.json");
+    await writeFile(secret, '{"t":1}');
+    await chmod(secret, 0o600);
+
+    await writeFile(join(dataItem, "SKILL.md"), "hello v2\n");
+    await commitAll(dataRepo, "hello v2");
+    const v2 = {
+      source: "data" as const,
+      sha: await shaOfItem(dataItem),
+      sourceCommit: await lastTouchingCommit(dataRepo, "skills/hello"),
+      appliedAt: new Date().toISOString(),
+    };
+    const result = await materializeLockEntry({
+      project,
+      dataRepo,
+      key: dataKey("skills", "hello"),
+      entry: v2,
+      previousEntry: v1,
+      scope: "project",
+    });
+
+    expect(result.action).toBe("reconciled");
+    expect(await file(join(installed, "SKILL.md")).text()).toBe("hello v2\n");
+    const link = join(installed, "node_modules", ".bin", "x");
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(await readlink(link)).toBe("../lib/x.js");
+    expect(lstatSync(secret).mode & 0o7777).toBe(0o600);
+    // Managed content still normalizes to Git's two modes.
+    expect(lstatSync(join(installed, "SKILL.md")).mode & 0o7777).toBe(0o644);
+
+    // A second pass sees no drift: preserved entries are compared, not
+    // rewritten, so the item converges instead of reconciling forever.
+    const again = await materializeLockEntry({
+      project,
+      dataRepo,
+      key: dataKey("skills", "hello"),
+      entry: v2,
+      scope: "project",
+    });
+    expect(again.action).toBe("already-current");
+  });
+
+  test("refuses a non-recreatable object on write but only on write", async () => {
+    const dataRepo = await tempRepo();
+    const project = await tempDir("capshelf-materialize-fifo-");
+    const dataItem = join(dataRepo, "skills", "hello");
+    const installed = join(project, ".agents", "skills", "hello");
+
+    await mkdir(dataItem, { recursive: true });
+    await writeFile(join(dataItem, ".gitignore"), "run/\n");
+    await writeFile(join(dataItem, "SKILL.md"), "hello v1\n");
+    await commitAll(dataRepo, "hello v1");
+    const entry = {
+      source: "data" as const,
+      sha: await shaOfItem(dataItem),
+      sourceCommit: await lastTouchingCommit(dataRepo, "skills/hello"),
+      appliedAt: new Date().toISOString(),
+    };
+    await materializeLockEntry({
+      project,
+      dataRepo,
+      key: dataKey("skills", "hello"),
+      entry,
+      scope: "project",
+    });
+
+    await mkdir(join(installed, "run"), { recursive: true });
+    await $`mkfifo ${join(installed, "run", "pipe")}`.quiet();
+
+    // A fifo cannot be recreated by a directory replacement, so the write
+    // path names the path and refuses. `rm` still inventories and deletes it.
+    await expect(
+      materializeLockEntry({
+        project,
+        dataRepo,
+        key: dataKey("skills", "hello"),
+        entry,
+        scope: "project",
+      }),
+    ).rejects.toThrow(/unsupported filesystem object: run\/pipe/);
+    expect(await inventoryLocalTree(installed)).toMatchObject({
+      irregular: [{ path: "run/pipe", type: "other" }],
+    });
   });
 
   test("refuses collisions between ignored local files and selected managed content", async () => {

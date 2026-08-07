@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { lstat, readFile } from "node:fs/promises";
+import { lstat, readFile, readlink } from "node:fs/promises";
 import { join, relative } from "node:path";
 import type { DestructiveChange } from "./destructive-change";
 import { PreconditionError } from "./errors";
@@ -10,7 +10,7 @@ import type {
   FragmentTarget,
 } from "./fragments";
 import { showAtCommit } from "./git";
-import { allRegularFiles } from "./gitignore";
+import { inventoryLocalTree } from "./gitignore";
 import { installedPath } from "./installed";
 import type { DataLockEntry, LockEntry } from "./lock";
 import type { Manifest } from "./manifest";
@@ -76,11 +76,12 @@ export async function planCopyDirectoryDestruction(opts: {
   const expectedByPath = new Map(
     current.expected.map((file) => [file.path, file]),
   );
-  const preservedPaths = new Set(current.preserved.map((file) => file.path));
+  const preservedPaths = new Set(current.preserved.map((entry) => entry.path));
   const seen = new Set<string>();
   const changes: DestructiveChange[] = [];
   const snapshotParts: string[] = [];
-  for (const path of await allRegularFiles(root)) {
+  const inventory = await inventoryLocalTree(root);
+  for (const path of inventory.files) {
     seen.add(path);
     const fullPath = join(root, ...path.split("/"));
     const [info, content] = await Promise.all([
@@ -101,6 +102,24 @@ export async function planCopyDirectoryDestruction(opts: {
       changes.push(copyChange(opts, fullPath, "extra_local_path"));
     }
   }
+  for (const object of inventory.irregular) {
+    seen.add(object.path);
+    snapshotParts.push(
+      await irregularSnapshotPart(root, object.path, object.type),
+    );
+    // Preserved symlinks are carried across the replacement, so they are not
+    // destroyed. Anything else here was already refused by the reconciliation
+    // preflight above; listing it keeps the plan honest if that ever changes.
+    if (!preservedPaths.has(object.path)) {
+      changes.push(
+        copyChange(
+          opts,
+          join(root, ...object.path.split("/")),
+          "extra_local_path",
+        ),
+      );
+    }
+  }
   for (const path of expectedByPath.keys()) {
     if (!seen.has(path))
       snapshotParts.push(`copy:${join(root, ...path.split("/"))}:missing`);
@@ -108,7 +127,10 @@ export async function planCopyDirectoryDestruction(opts: {
   return { changes, snapshotParts };
 }
 
-/** Inventory every file that removal would delete, including ignored files. */
+/**
+ * Inventory every object that removal would delete, including ignored files
+ * and symlinks.
+ */
 export async function planCopyDirectoryRemoval(opts: {
   project: string;
   dataRepo?: string;
@@ -152,7 +174,8 @@ export async function planCopyDirectoryRemoval(opts: {
   const seen = new Set<string>();
   const changes: DestructiveChange[] = [];
   const snapshotParts: string[] = [];
-  for (const path of await allRegularFiles(root)) {
+  const inventory = await inventoryLocalTree(root);
+  for (const path of inventory.files) {
     seen.add(path);
     const fullPath = join(root, ...path.split("/"));
     const [info, content] = await Promise.all([
@@ -173,12 +196,40 @@ export async function planCopyDirectoryRemoval(opts: {
       changes.push(copyChange(opts, fullPath, "executable_mode"));
     }
   }
+  // Symlinks and other non-regular objects are deleted with the tree, so the
+  // user must see them. Recording a symlink's target in the snapshot — not a
+  // content digest, which a link does not have — is what lets
+  // assertDestructivePlanUnchanged notice a retarget between prompt and write.
+  for (const object of inventory.irregular) {
+    seen.add(object.path);
+    snapshotParts.push(
+      await irregularSnapshotPart(root, object.path, object.type),
+    );
+    changes.push(
+      copyChange(
+        opts,
+        join(root, ...object.path.split("/")),
+        "extra_local_path",
+      ),
+    );
+  }
   for (const path of expectedByPath.keys()) {
     if (!seen.has(path)) {
       snapshotParts.push(`copy:${join(root, ...path.split("/"))}:missing`);
     }
   }
   return { changes, snapshotParts };
+}
+
+async function irregularSnapshotPart(
+  root: string,
+  path: string,
+  type: "symlink" | "other",
+): Promise<string> {
+  const fullPath = join(root, ...path.split("/"));
+  const target =
+    type === "symlink" ? await readlink(fullPath).catch(() => "") : "";
+  return `copy:${fullPath}:${type}:${target}`;
 }
 
 export async function planSubagentDestruction(opts: {

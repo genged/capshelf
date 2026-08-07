@@ -1,8 +1,14 @@
 import { file } from "bun";
 import { describe, expect, test } from "bun:test";
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { addSkill, commitAll, runInProcess, tempRepo } from "./cli-fixtures";
+import {
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  addSkill,
+  commitAll,
+  runInProcess,
+  tempRepo,
+} from "./cli-fixtures";
 
 describe("rm destructive-change consent", () => {
   test("removes an unmodified locked item without prompting", async () => {
@@ -66,6 +72,42 @@ describe("rm destructive-change consent", () => {
     ).toBe(0);
     expect(await file(installed).exists()).toBe(false);
   });
+
+  test(
+    "lists an ignored symlink as a deletion and removes it",
+    async () => {
+      const project = await tempRepo("capshelf-rm-symlink-project-");
+      const dataRepo = await tempRepo("capshelf-rm-symlink-data-");
+      const run = runInProcess(project);
+      const skill = join(dataRepo, "skills", "linked");
+      await mkdir(skill, { recursive: true });
+      await writeFile(join(skill, ".gitignore"), "node_modules/\n");
+      await writeFile(join(skill, "SKILL.md"), "locked\n");
+      await commitAll(dataRepo, "linked skill");
+      expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+      expect((await run(["add", "skills/linked"])).exitCode).toBe(0);
+      const installed = join(project, ".agents", "skills", "linked");
+      await mkdir(join(installed, "node_modules", ".bin"), { recursive: true });
+      await mkdir(join(installed, "node_modules", "lib"), { recursive: true });
+      await writeFile(join(installed, "node_modules", "lib", "x.js"), "mod\n");
+      await symlink(
+        "../lib/x.js",
+        join(installed, "node_modules", ".bin", "x"),
+      );
+
+      // Refusing to *enumerate* a symlink is strictly worse than listing it:
+      // planCopyDirectoryRemoval exists to say what deletion will destroy.
+      const refused = await run(["rm", "skills/linked", "--json"]);
+      expect(refused.exitCode).toBe(3);
+      expect(refused.stderr.toString()).toContain(
+        ".agents/skills/linked/node_modules/.bin/x — delete a local-only path",
+      );
+
+      expect((await run(["rm", "skills/linked", "--yes"])).exitCode).toBe(0);
+      expect(await file(join(installed, "SKILL.md")).exists()).toBe(false);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
 
   test("guards fragment comments and drift before unmerging", async () => {
     const project = await tempRepo("capshelf-rm-fragment-project-");

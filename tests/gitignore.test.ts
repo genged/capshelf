@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { allRegularFiles, gitignoreVisibleFiles } from "../src/gitignore";
+import { gitignoreVisibleFiles, inventoryLocalTree } from "../src/gitignore";
 
 async function tempDir(prefix: string): Promise<string> {
   return await mkdtemp(join(tmpdir(), prefix));
@@ -56,6 +56,21 @@ describe("gitignoreVisibleFiles", () => {
     ]);
   });
 
+  test("refuses a symlink in Git-visible item content", async () => {
+    const root = await tempDir("capshelf-gitignore-symlink-");
+    await writeFile(join(root, "SKILL.md"), "skill\n");
+    await writeFile(join(root, "real.txt"), "real\n");
+    await symlink("real.txt", join(root, "link.txt"));
+
+    // Row 1 of the object-model table: the data-repo trust boundary does not
+    // move when ignored local state learns to carry symlinks across.
+    expect(gitignoreVisibleFiles(root)).rejects.toThrow(
+      "contains an unsupported symlink: link.txt",
+    );
+  });
+});
+
+describe("inventoryLocalTree", () => {
   test("can inventory ignored files for destructive-change preflight", async () => {
     const root = await tempDir("capshelf-gitignore-inventory-");
     await writeFile(join(root, ".gitignore"), "cache/\n*.tmp\n");
@@ -64,11 +79,24 @@ describe("gitignoreVisibleFiles", () => {
     await mkdir(join(root, "cache"), { recursive: true });
     await writeFile(join(root, "cache", "state.db"), "local\n");
 
-    expect(await allRegularFiles(root)).toEqual([
-      ".gitignore",
-      "cache/state.db",
-      "scratch.tmp",
-      "visible.txt",
-    ]);
+    expect(await inventoryLocalTree(root)).toEqual({
+      files: [".gitignore", "cache/state.db", "scratch.tmp", "visible.txt"],
+      irregular: [],
+    });
+  });
+
+  test("classifies symlinks instead of refusing to enumerate them", async () => {
+    const root = await tempDir("capshelf-gitignore-irregular-");
+    await writeFile(join(root, ".gitignore"), "node_modules/\n");
+    await writeFile(join(root, "SKILL.md"), "skill\n");
+    await mkdir(join(root, "node_modules", ".bin"), { recursive: true });
+    await mkdir(join(root, "node_modules", "lib"), { recursive: true });
+    await writeFile(join(root, "node_modules", "lib", "x.js"), "module\n");
+    await symlink("../lib/x.js", join(root, "node_modules", ".bin", "x"));
+
+    expect(await inventoryLocalTree(root)).toEqual({
+      files: [".gitignore", "SKILL.md", "node_modules/lib/x.js"],
+      irregular: [{ path: "node_modules/.bin/x", type: "symlink" }],
+    });
   });
 });

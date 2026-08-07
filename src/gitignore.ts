@@ -45,13 +45,31 @@ export async function gitignoreVisibleFiles(root: string): Promise<string[]> {
   return out.sort();
 }
 
+export interface LocalTreeObject {
+  path: string;
+  type: "symlink" | "other";
+}
+
+export interface LocalTreeInventory {
+  /** Regular files, sorted. */
+  files: string[];
+  /** Everything that is not a regular file or directory, sorted by path. */
+  irregular: LocalTreeObject[];
+}
+
 /**
- * Inventory every physical regular file below an item, including paths hidden
- * by nested `.gitignore` rules. Destructive removal uses this view because an
- * ignored file can still be unique local state.
+ * Inventory every physical object below an installed item, including paths
+ * hidden by nested `.gitignore` rules. This is row 4 of the object-model
+ * table in `master.ts`: the population is the user's own local state, so
+ * non-regular objects are classified rather than refused and the caller
+ * decides whether to preserve, list, or delete them. `gitignoreVisibleFiles`
+ * keeps its throw — that is the row-1 trust boundary and it does not move.
  */
-export async function allRegularFiles(root: string): Promise<string[]> {
-  const out: string[] = [];
+export async function inventoryLocalTree(
+  root: string,
+): Promise<LocalTreeInventory> {
+  const files: string[] = [];
+  const irregular: LocalTreeObject[] = [];
 
   async function walk(relDir: string): Promise<void> {
     const abs = relDir ? join(root, ...relDir.split("/")) : root;
@@ -61,20 +79,23 @@ export async function allRegularFiles(root: string): Promise<string[]> {
     for (const entry of entries) {
       const rel = relDir ? `${relDir}/${entry.name}` : entry.name;
       if (entry.isDirectory()) await walk(rel);
-      else if (entry.isFile()) out.push(rel);
+      else if (entry.isFile()) files.push(rel);
       else {
-        const type = entry.isSymbolicLink()
-          ? "symlink"
-          : "unsupported filesystem object";
-        throw new PreconditionError(
-          `${root} contains an unsupported ${type}: ${rel}; copy items support regular files only`,
-        );
+        irregular.push({
+          path: rel,
+          type: entry.isSymbolicLink() ? "symlink" : "other",
+        });
       }
     }
   }
 
   await walk("");
-  return out.sort();
+  return {
+    files: files.sort(),
+    irregular: irregular.sort((left, right) =>
+      left.path.localeCompare(right.path),
+    ),
+  };
 }
 
 async function scopesWithLocalGitignore(
