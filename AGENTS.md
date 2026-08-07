@@ -43,7 +43,8 @@ More info: `docs/project-brief.md`,  `docs/architecture.md`, `docs/cli.md`,
 - `make smoke` runs all smoke tests with four worker processes.
 - `make smoke-modes`, `make smoke-skills`, and `make smoke-settings` run
   focused smoke suites.
-- `make check` runs typecheck, lint, unit tests, plus all smoke tests.
+- `make check` runs typecheck, lint, the release-docs freeze check, unit
+  tests, plus all smoke tests.
 - `bun run src/cli.ts <verb> [args]` runs the CLI from source.
 - `bun run build` or `make build` compiles `dist/capshelf`.
 - `make install` builds and copies the binary to `~/.local/bin/capshelf`
@@ -92,12 +93,22 @@ If rebase conflicts occur:
   documented exit codes when extending commands.
 - When changing command behavior, update the living docs in `docs/` and the
   relevant tests or smoke scripts in the same change.
+- Version-specific release documentation is frozen: `docs/release-notes/*` and
+  `docs/whats-new-*` describe a version that has shipped, so once committed
+  they must never be edited or deleted, restores included. If the edit is not
+  pushed, drop it from the commit that made it; if it is, the release is live
+  — cover the change in the next version's documents. `make check` enforces
+  this; `./scripts/check-release-docs-frozen.sh --audit` lists past breaches.
+  What's New pages before 0.6 predate the policy and are grandfathered.
 
 ## Local-only docs
 
 - If `local/` exists, treat it as separate, local-only context.
 - Read it before large architectural changes.
 - Never reference files under `local/` from source code, tests, or public docs.
+- Its subfolders carry their own `INDEX.md` stating a directory policy and the
+  status of each document. Read that index before adding, moving, or
+  finishing a document there, and update it in the same change.
 
 ## User Override
 
