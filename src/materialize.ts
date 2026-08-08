@@ -193,10 +193,14 @@ export async function materializeLockEntry(
       throw new Error(`system item no longer bundled: ${kind}/${name}`);
     }
     assertCanMaterializeInstalled(opts.project, kind, name);
+    // The one bundle-versus-lock check for a system item, and the reason
+    // `copyDirectoryReconciliationFiles` does not repeat it. Superseded bundled
+    // content is unrecoverable by design, so this cannot be repaired by
+    // retrying — say what the state is and name the command that re-pins it.
     const sourceSha = await shaOfSystemItem(item);
     if (sourceSha !== opts.entry.sha) {
       throw new Error(
-        `bundled ${kind}/${name} hashes to ${sourceSha}, but lock expects ${opts.entry.sha}`,
+        `bundled ${kind}/${name} in this ${PRODUCT_NAME} binary hashes to ${sourceSha}, but lock expects ${opts.entry.sha}; superseded bundled content is not recoverable — run \`${PRODUCT_NAME} update ${kind}/${name}\` to re-pin the item to the bundled content this binary carries`,
       );
     }
     reconciliationFiles = await copyDirectoryReconciliationFiles({
@@ -279,15 +283,23 @@ export async function copyDirectoryReconciliationFiles(opts: {
     opts.entry,
     opts.hooks,
   );
-  const sourceSha = shaOfNamedFiles(expected);
-  if (sourceSha !== opts.entry.sha) {
-    const sourceLabel =
-      opts.entry.source === "data"
-        ? `${opts.kind}/${opts.name} at ${opts.entry.sourceCommit}`
-        : `bundled ${opts.kind}/${opts.name}`;
-    throw new Error(
-      `source ${sourceLabel} hashes to ${sourceSha}, but lock expects ${opts.entry.sha}`,
-    );
+  // Only a data entry carries a retrieval to verify: its files are read back
+  // from `sourceCommit`, so a hash mismatch means the retrieval returned the
+  // wrong bytes. A system entry has no retrieval — `filesForEntry` returns the
+  // running binary's bundled tree whatever the entry says — so comparing that
+  // tree to `entry.sha` does not check anything this function did. It asks
+  // whether the current bundle happens to be the one the entry pins, which is
+  // the caller's policy question: `materializeLockEntry` answers it above,
+  // before any write, and `planCopyDirectoryDestruction` must be able to plan
+  // against a superseded entry without it. `sameSourceContent` below states the
+  // same assumption for the previous-entry read.
+  if (opts.entry.source === "data") {
+    const sourceSha = shaOfNamedFiles(expected);
+    if (sourceSha !== opts.entry.sha) {
+      throw new Error(
+        `source ${opts.kind}/${opts.name} at ${opts.entry.sourceCommit} hashes to ${sourceSha}, but lock expects ${opts.entry.sha}`,
+      );
+    }
   }
 
   const dst = installedPath(opts.project, opts.kind, opts.name);

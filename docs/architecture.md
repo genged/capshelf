@@ -271,7 +271,7 @@ Lock keys are prefixed, for example `data/skills/<name>`,
   is independent of the sidecar-blind content pin. Version 2 locks load with
   both fields set to `null` (unknown) and are written as version 3 only by a
   command already authorized to save the lock.
-- `cliVersion` — for system items, the capshelf binary version that wrote the entry. Drives "update available" detection when the binary upgrades.
+- `cliVersion` — for system items, the capshelf binary version that wrote the entry. Drives "update available" detection when the binary upgrades. Provenance only, never a retrieval handle: the binary carries exactly one copy of the bundled tree, so a system entry's `sha` records what capshelf last wrote rather than content it can read back, and superseded bundled content is unrecoverable by design. `update` re-pins a system item to the bundle the running binary carries; `apply` refuses an entry whose bundled content the binary no longer has.
 
 CLI-only changes in the data repo (e.g. someone edits `src/foo.ts`) don't bump `sourceCommit` for unaffected data items — `lastTouchingCommit` is path-scoped.
 
@@ -371,7 +371,7 @@ properties throughout merge and serialization so valid keys such as
   `100644` or `100755`; it is intentionally not folded into the current hash
   format.
 - For data items, the lockfile also records `sourceCommit` — the data repo commit whose tree at this item's path matches the locked sha.
-- For system items, the lockfile records `cliVersion` — the capshelf binary version that produced the bundled content.
+- For system items, the lockfile records `cliVersion` — the capshelf binary version that produced the bundled content. It is a label, not a retrieval handle; see Lock above.
 - Optional human `label` (e.g. `"v3"`) is decoration, not identity.
 
 ## Parallel-PR safety

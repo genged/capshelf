@@ -12,6 +12,7 @@ import type {
 import { showAtCommit } from "./git";
 import { inventoryLocalTree } from "./gitignore";
 import { installedPath } from "./installed";
+import { shaOfInstalledForScope } from "./item-snapshot";
 import type { DataLockEntry, LockEntry } from "./lock";
 import type { Manifest } from "./manifest";
 import {
@@ -67,6 +68,28 @@ export async function planCopyDirectoryDestruction(opts: {
     );
   }
 
+  // A system entry records what capshelf last wrote, not something it can read
+  // back: the binary carries one copy of the bundled tree, so once that content
+  // moves, the superseded bytes are gone. Per-file classification therefore
+  // compares the install against the *incoming* bundle, which would report
+  // every routine bundled update as managed-content loss.
+  //
+  // The aggregate question the entry can still answer is the one that matters:
+  // an install that still hashes to `currentEntry.sha` holds exactly the bytes
+  // capshelf wrote, so replacing them with a newer bundle destroys nothing. Any
+  // edit to a managed file changes that hash, so a real local change still
+  // reaches the consent boundary. This is the same comparison `status` uses to
+  // call an item drifted — capshelf prompts for a bundled update exactly when
+  // `status` says the install diverged.
+  const pristineSystemInstall =
+    opts.currentEntry.source === "system" &&
+    (await shaOfInstalledForScope(
+      opts.project,
+      opts.kind,
+      opts.name,
+      opts.scope,
+    )) === opts.currentEntry.sha;
+
   const expectedByPath = new Map(
     current.expected.map((file) => [file.path, file]),
   );
@@ -118,7 +141,17 @@ export async function planCopyDirectoryDestruction(opts: {
     if (!seen.has(path))
       snapshotParts.push(`copy:${join(root, ...path.split("/"))}:missing`);
   }
-  return { changes, snapshotParts };
+  return {
+    // Only content claims are dropped: the sha witnesses bytes, so an
+    // executable-mode flip or an extra local path is still real loss the user
+    // has to authorize. `snapshotParts` is built from the installed tree in
+    // both cases, so `assertDestructivePlanUnchanged` still catches an edit
+    // made between the plan and the write.
+    changes: pristineSystemInstall
+      ? changes.filter((change) => change.reason !== "managed_content")
+      : changes,
+    snapshotParts,
+  };
 }
 
 /**
