@@ -365,6 +365,7 @@ packages and a committed native Codex projection.
 
 ## Further Reading
 
+- [`docs/whats-new-0.7.md`](docs/whats-new-0.7.md) - what's new: destructive-change consent, preserved local files, keep-local intent, init recovery
 - [`docs/whats-new-0.6.md`](docs/whats-new-0.6.md) - what's new: subagents, plugin marketplaces, declared needs, stale-promote merges
 - [`docs/whats-new-0.5.1.md`](docs/whats-new-0.5.1.md) - what's new: clone-local reconciliation and recovery fixes
 - [`docs/whats-new-0.5.md`](docs/whats-new-0.5.md) - what's new: Pi extensions, user skill inventory, safer CLI behavior
