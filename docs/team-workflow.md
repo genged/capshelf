@@ -54,6 +54,24 @@ local-scope copy item, Bob keeps `--local` on each command. If the clean merge
 already equals upstream, promote reconciles the installed copy, re-pins the
 lock without a data commit, and reports `already-upstream`.
 
+Taking upstream is the option that discards work, so `update` gates it behind
+the destructive-change prompt: the installed copy is drifted by definition
+here, and overwriting it is consentable loss. Interactively, `update` lists the
+affected path with `overwrite managed content` and asks once; declining writes
+nothing and exits 0. With `--json`, in CI, or on any non-TTY it refuses with
+exit 3 instead of prompting. So Bob reviews the drift, preserves the edit
+outside the item, then authorizes the overwrite:
+
+```bash
+capshelf status security-review --diff        # what update would destroy
+capshelf update security-review --yes         # or answer y at the prompt
+```
+
+Add `--local` to both commands for a local-scope copy item; those files are
+outside project Git and are not recoverable from its diff. Step 4 of the
+proposal flow below needs no `--yes`: after a promote the installed copy
+matches the lock, so re-pinning to merged history is not a destructive change.
+
 ## Proposing a change upstream (review required, or branch-protected main)
 
 Capshelf never pushes and never creates branches. The data repo is an
