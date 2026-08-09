@@ -1,17 +1,23 @@
 {
-  "version": 2,
+  "version": 3,
   "items": {
     "system/skills/capshelf": {
       "source": "system",
-      "sha": "d3f34edf6109",
-      "cliVersion": "0.5.1",
-      "appliedAt": "2026-07-30T11:42:24.354Z"
+      "sha": "44791d4258f1",
+      "cliVersion": "0.6.0",
+      "appliedAt": "2026-08-08T19:35:34.380Z"
     },
     "data/settings/generic": {
       "source": "data",
       "sha": "309d3a528d58",
       "sourceCommit": "a1aaddd6a5bef2ed1968ef2882c0bb29c21859a3",
-      "appliedAt": "2026-06-04T15:40:02.347Z"
+      "appliedAt": "2026-07-31T20:18:46.567Z",
+      "needs": {
+        "network": [],
+        "env": [],
+        "bin": []
+      },
+      "needsSourceCommit": "00d9ded9ae8af43b4dd9cb0d1aca222ff7d95847"
     }
   }
 }
