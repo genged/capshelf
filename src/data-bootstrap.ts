@@ -4,8 +4,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { CliError, PreconditionError } from "./errors";
 import {
-  gitBuffer,
-  gitTry,
+  cloneRepository,
+  sourceRead,
   isGitWorkTreeRoot,
   normalizeRemoteUrl,
   originRemoteUrl,
@@ -133,7 +133,7 @@ export async function ensureClone(
 ): Promise<EnsureCloneResult> {
   if (await cloneTargetAbsent(clonePath)) {
     await mkdir(dirname(clonePath), { recursive: true });
-    const clone = await gitTry(null, ["clone", "--", url, clonePath]);
+    const clone = await cloneRepository(dirname(clonePath), url, clonePath);
     if (clone.exitCode !== 0) {
       throw new CliError(cloneFailedMessage(url, clone.stderr), {});
     }
@@ -171,9 +171,8 @@ export async function ensureClone(
 
   // Guard against a partial clone (e.g. a killed clone process): origin can
   // already be configured while no commit was ever checked out.
-  try {
-    await gitBuffer(clonePath, ["rev-parse", "--verify", "HEAD"]);
-  } catch (err) {
+  const head = await sourceRead(clonePath, ["rev-parse", "--verify", "HEAD"]);
+  if (head.exitCode !== 0) {
     throw new PreconditionError(
       "data repo cache path already exists but has no usable HEAD commit.\n\n" +
         "path:\n" +
@@ -181,7 +180,6 @@ export async function ensureClone(
         "the clone may be partial or corrupted; remove it and retry, or\n" +
         "use an explicit local path with:\n" +
         `  ${PRODUCT_NAME} init --data <local-path>`,
-      { cause: err },
     );
   }
 

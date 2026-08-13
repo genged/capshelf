@@ -18,15 +18,14 @@ import {
   assertFragmentSourcesClean,
   currentFragmentTargetsForItem,
   fragmentSourceCandidates,
-  lastTouchingFragmentCommit,
   planFragmentOutput,
-  shaOfFragmentItem,
 } from "./fragments";
 import type { FragmentTarget } from "./fragments";
 import { assertPathClean } from "./git";
 import { findInstallConflict } from "./installed";
 import { assertLocalInstallPathsUntracked } from "./local-config";
-import { createDataLockEntry, dataKey } from "./lock";
+import { assertLockV4, createDataLockEntry, dataKey } from "./lock";
+import { pinCurrentSource } from "./pin";
 import type { Lock } from "./lock";
 import { addManifestName } from "./manifest";
 import type { Manifest } from "./manifest";
@@ -331,19 +330,17 @@ async function preflightFragmentCollisions(
   const planFn = ctx.planFragmentOutputFn ?? planFragmentOutput;
 
   const nextManifest = structuredClone(ctx.manifest);
-  const nextLock = structuredClone(ctx.lock);
+  const nextLock = assertLockV4(
+    structuredClone(ctx.lock),
+    "capshelf add bundles/<name>",
+  );
   const targetsByRef = new Map<string, FragmentTarget[]>();
   for (const m of fragmentPlans) {
     const item = ctx.masterByRef.get(m.ref);
     if (!item || !isFragmentItemKind(item.kind)) continue;
     addManifestName(nextManifest, item.kind, item.name);
     nextLock.items[dataKey(item.kind, item.name)] = createDataLockEntry({
-      sha: await shaOfFragmentItem(ctx.dataRepo, item.kind, item.name),
-      sourceCommit: await lastTouchingFragmentCommit(
-        ctx.dataRepo,
-        item.kind,
-        item.name,
-      ),
+      pin: await pinCurrentSource(ctx.dataRepo, item.kind, item.name),
       ...(await captureCommittedItemNeeds(ctx.dataRepo, item)),
     });
     targetsByRef.set(

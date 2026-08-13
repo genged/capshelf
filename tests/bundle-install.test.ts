@@ -48,7 +48,7 @@ function lockWith(...refs: string[]): Lock {
   for (const ref of refs) {
     lock.items[`data/${ref}`] = {
       source: "data",
-      sha: "abcdefabcdef",
+      sourcePinDigest: "abcdefabcdef",
       sourceCommit: "deadbeef",
       appliedAt: "2026-06-01T00:00:00.000Z",
     };

@@ -13,6 +13,7 @@ import { homeRelative, findProjectRoot } from "../paths";
 import { resolveDataRepo } from "../data-repo";
 import { isBundleRef, loadBundle, memberRef } from "../bundles";
 import {
+  entryIdentity,
   loadLocalLock,
   loadLock,
   emptyLock,
@@ -20,6 +21,7 @@ import {
   systemKey,
 } from "../lock";
 import type { Lock } from "../lock";
+import { shortIdentity } from "../pin";
 import { loadManifest } from "../manifest";
 import {
   captureCommittedItemNeeds,
@@ -30,7 +32,7 @@ import {
 } from "../metadata";
 import type { ItemMetadata, ItemNeeds } from "../metadata";
 import { findSystemItem, shaOfSystemItem } from "../bundled";
-import { assertIsGitRepo, gitVisibleFilesUnderPath } from "../git";
+import { assertIsGitRepo, sourceVisibleFilesUnderPath } from "../git";
 import { globalOpts } from "../global-options";
 import { NotFoundError, PreconditionError } from "../errors";
 import { findMasterItemByRef, parseItemRef } from "../item-ref";
@@ -193,7 +195,7 @@ export function registerShow(program: Command): void {
               name: item.name,
               path: item.path,
               masterSha,
-              lockedSha: lockEntry?.sha ?? null,
+              lockedSha: lockEntry ? entryIdentity(lockEntry) : null,
               ...(fragmentSources.length > 0 && {
                 sources: fragmentSources.map((source) => ({
                   target: source.sourceTarget ?? source.target,
@@ -235,8 +237,9 @@ export function registerShow(program: Command): void {
       console.log(`data/${item.kind}/${item.name}`);
       console.log(`  master sha: ${masterSha}`);
       if (lockEntry) {
-        const drift = lockEntry.sha !== masterSha ? " (update available)" : "";
-        console.log(`  locked sha: ${lockEntry.sha}${drift}`);
+        const lockedSha = entryIdentity(lockEntry);
+        const drift = lockedSha !== masterSha ? " (update available)" : "";
+        console.log(`  locked sha: ${shortIdentity(lockedSha)}${drift}`);
         if (lockEntry.source === "data") {
           console.log(`  source commit: ${lockEntry.sourceCommit}`);
           if (lockEntry.label) console.log(`  label:      ${lockEntry.label}`);
@@ -295,7 +298,7 @@ export function registerShow(program: Command): void {
         console.log(`─── ${item.name} ─────────────────────`);
         console.log(await readFile(item.path, "utf-8"));
       } else {
-        const files = await gitVisibleFilesUnderPath(
+        const files = await sourceVisibleFilesUnderPath(
           dataRepo,
           item.repoRelPath,
         );
@@ -380,7 +383,7 @@ async function showBundle(
       installed: entry !== undefined,
       ...(entry && {
         scope: projectEntry ? ("project" as const) : ("local" as const),
-        lockedSha: entry.sha,
+        lockedSha: entryIdentity(entry),
       }),
     };
   });
@@ -428,7 +431,7 @@ async function showBundle(
     const state = !row.available
       ? "MISSING from data repo"
       : row.installed
-        ? `installed (${row.scope}) @ ${row.lockedSha}`
+        ? `installed (${row.scope}) @ ${shortIdentity(row.lockedSha)}`
         : "not installed";
     console.log(`    ${row.ref.padEnd(31)} ${state}`);
   }
@@ -459,7 +462,7 @@ async function showSystem(
           kind: item.kind,
           name: item.name,
           bundledSha,
-          lockedSha: lockEntry?.sha ?? null,
+          lockedSha: lockEntry ? entryIdentity(lockEntry) : null,
           cliVersion:
             lockEntry?.source === "system" ? lockEntry.cliVersion : null,
           appliedAt: lockEntry?.appliedAt ?? null,
@@ -476,8 +479,12 @@ async function showSystem(
   console.log(`  bundled sha: ${bundledSha}`);
   if (lockEntry) {
     const drift =
-      lockEntry.sha !== bundledSha ? " (cli upgraded — run apply)" : "";
-    console.log(`  locked sha:  ${lockEntry.sha}${drift}`);
+      entryIdentity(lockEntry) !== bundledSha
+        ? " (cli upgraded — run apply)"
+        : "";
+    console.log(
+      `  locked sha:  ${shortIdentity(entryIdentity(lockEntry))}${drift}`,
+    );
     if (lockEntry.source === "system") {
       console.log(`  cli version: ${lockEntry.cliVersion}`);
     }

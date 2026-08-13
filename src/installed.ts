@@ -12,8 +12,7 @@ import {
   type ItemKind,
   type MaterializedItemKind,
 } from "./master";
-import { shaOfGitVisibleItem, shaOfItem } from "./master";
-import { isGitWorkTreeRoot } from "./git";
+import { shaOfItem } from "./master";
 import {
   claudeDir,
   codexProjectConfigDir,
@@ -232,6 +231,14 @@ export function isInstalled(
   return existsSync(installedPath(project, kind, name));
 }
 
+/**
+ * PIN-5: the installed content hash is filesystem work, full stop.
+ *
+ * It used to branch on whether the project was a Git worktree and hash the
+ * Git-visible file list when it was — so an edit to the project's
+ * `.gitignore` could move an item's computed state, and a `--local` item, put
+ * in `.git/info/exclude` by capshelf itself, hashed as if it were empty.
+ */
 export async function shaOfInstalled(
   project: string,
   kind: ItemKind,
@@ -239,12 +246,6 @@ export async function shaOfInstalled(
 ): Promise<string | null> {
   const p = installedPath(project, kind, name);
   if (!existsSync(p)) return null;
-  if (await isGitWorkTreeRoot(project)) {
-    const rel = relative(project, p);
-    if (rel && !rel.startsWith("..")) {
-      return shaOfGitVisibleItem(project, rel);
-    }
-  }
   return shaOfItem(p);
 }
 

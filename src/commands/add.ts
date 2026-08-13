@@ -13,15 +13,31 @@ import { planFragmentDestruction } from "../destructive-preflight";
 import { saveManifest } from "../manifest";
 import type { Manifest } from "../manifest";
 import { addManifestName, manifestNamesForKind } from "../manifest";
-import { createDataLockEntry, dataKey, saveLocalLock, saveLock } from "../lock";
+import {
+  assertLockV4,
+  createDataLockEntry,
+  entryIdentity,
+  dataKey,
+  saveLocalLock,
+  saveLock,
+} from "../lock";
 import type { Lock } from "../lock";
+import {
+  assertNoDestinationCollisions,
+  hashWidthOf,
+  installedPinDigest,
+  pinCurrentSource,
+  shortIdentity,
+  targetsUnderRoot,
+} from "../pin";
+import type { PinnedSource } from "../pin";
+import { materializeLockEntry } from "../materialize";
 import {
   allCanonicalItemRelPaths,
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
   isFragmentItemKind,
   listMasterItems,
-  shaOfGitVisibleItem,
 } from "../master";
 import type { MasterItem } from "../master";
 import {
@@ -33,15 +49,10 @@ import {
 } from "../metadata";
 import type { ItemMetadata, ItemNeeds } from "../metadata";
 import { NotFoundError, PreconditionError, ResultExitError } from "../errors";
-import { copyItemIntoProject, targetDir } from "../sync";
-import {
-  ensureInstallAliases,
-  findInstallConflict,
-  installedPath,
-  parseLockKey,
-} from "../installed";
+import { targetDir } from "../sync";
+import { findInstallConflict, installedPath, parseLockKey } from "../installed";
 import { isSystemItemName } from "../bundled";
-import { assertPathClean, lastTouchingContentCommit } from "../git";
+import { assertPathClean } from "../git";
 import { findMasterItemByRef, lockKeyForRef, parseItemRef } from "../item-ref";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import {
@@ -66,9 +77,7 @@ import {
   currentFragmentTargetsForItem,
   fragmentContributionState,
   fragmentOutputPath,
-  lastTouchingFragmentCommit,
   planFragmentOutput,
-  shaOfFragmentItem,
 } from "../fragments";
 import type {
   FragmentApplyResult,
@@ -89,18 +98,9 @@ import { formatDeclaredNeeds } from "../needs-format";
 import {
   assertSubagentOutputAvailable,
   currentSubagentSources,
-  lastTouchingSubagentCommit,
   materializeSubagent,
-  shaOfCurrentSubagent,
   validateCurrentSubagent,
 } from "../subagents";
-import {
-  installedSnapshot,
-  namedFilesAtCommit,
-  namedFilesFromInstalledSnapshot,
-  shaOfNamedFiles,
-} from "../item-snapshot";
-import { namedFilesEqual } from "../merge-tree";
 
 interface AddOptions {
   json?: boolean;
@@ -250,7 +250,7 @@ export function registerAdd(program: Command): void {
       }
       const scope = ctx.local ? "local" : "project";
       console.log(
-        `✓ added ${scope}/data/${item.kind}/${item.name} @ ${result.sha}`,
+        `✓ added ${scope}/data/${item.kind}/${item.name} @ ${shortIdentity(result.sha)}`,
       );
       console.log(`  source commit: ${result.sourceCommit}`);
       console.log(`  ${result.dst}`);
@@ -353,7 +353,7 @@ async function printAlreadyInstalled(
     return;
   }
   console.log(
-    `= already installed ${scope}/data/${parsed.kind}/${parsed.name} @ ${entry.sha}`,
+    `= already installed ${scope}/data/${parsed.kind}/${parsed.name} @ ${shortIdentity(entryIdentity(entry))}`,
   );
   for (const line of guidance) console.log(`  ${line}`);
   printRuntimeWarnings(runtimeWarnings);
@@ -371,17 +371,18 @@ async function planStandaloneFragmentAdd(
     assertLocalScopeSupported(item.kind, item.name, "add --local");
   }
   await assertFragmentSourcesClean(ctx.dataRepo, item.kind, item.name);
-  const [sha, sourceCommit, snapshot] = await Promise.all([
-    shaOfFragmentItem(ctx.dataRepo, item.kind, item.name),
-    lastTouchingFragmentCommit(ctx.dataRepo, item.kind, item.name),
+  const [pin, snapshot] = await Promise.all([
+    pinCurrentSource(ctx.dataRepo, item.kind, item.name),
     captureCommittedItemNeeds(ctx.dataRepo, item),
   ]);
   const nextManifest = structuredClone(ctx.manifest);
   addToManifest(nextManifest, item);
-  const nextLock = structuredClone(ctx.projectLock);
+  const nextLock = assertLockV4(
+    structuredClone(ctx.projectLock),
+    "capshelf add",
+  );
   nextLock.items[dataKey(item.kind, item.name)] = createDataLockEntry({
-    sha,
-    sourceCommit,
+    pin,
     ...snapshot,
   });
   const targets = await currentFragmentTargetsForItem(
@@ -428,7 +429,7 @@ async function planStandaloneFragmentAdd(
   });
   return createDestructiveChangePlan(destruction.changes, [
     ...destruction.snapshotParts,
-    `add-source:${item.kind}/${item.name}:${sha}:${sourceCommit}`,
+    `add-source:${item.kind}/${item.name}:${pin.sourcePinDigest}:${pin.sourceCommit}`,
   ]);
 }
 
@@ -552,33 +553,33 @@ export async function installDataItem(
       ? []
       : await enforceItemRelations(dataRepo, item, projectLock, localLock);
 
-  const sha = isFragmentItemKind(item.kind)
-    ? await shaOfFragmentItem(dataRepo, item.kind, item.name)
-    : item.kind === "subagents"
-      ? await shaOfCurrentSubagent(project, dataRepo, item.name)
-      : await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
-  const sourceCommit = isFragmentItemKind(item.kind)
-    ? await lastTouchingFragmentCommit(dataRepo, item.kind, item.name)
-    : item.kind === "subagents"
-      ? await lastTouchingSubagentCommit(project, dataRepo, item.name)
-      : await lastTouchingContentCommit(dataRepo, item.repoRelPath);
+  // One pin, built in one place from the committed tree (PIN-1, PIN-2). The
+  // refusals it carries — an external filter driver (PIN-9), a symlink or
+  // gitlink in the tree — happen here, before any manifest or lock mutation.
+  const pin = await pinCurrentSource(dataRepo, item.kind, item.name);
+  if (isCopyDirectoryItemKind(item.kind)) {
+    await assertNoDestinationCollisions(
+      `${item.kind}/${item.name}`,
+      dst,
+      pin.entries.map((entry) => entry.path),
+    );
+  }
   const snapshot = await captureCommittedItemNeeds(dataRepo, item);
   let adoptMatchingInstall = false;
   if (!alreadyInLock && conflict) {
     if (isCopyDirectoryItemKind(item.kind)) {
-      adoptMatchingInstall = await matchesCommittedInstall(
+      adoptMatchingInstall = await matchesPinnedInstall(
         ctx,
         item,
         conflict,
-        sourceCommit,
-        sha,
+        pin,
       );
     }
     if (!adoptMatchingInstall) {
       throw new PreconditionError(
         `not installing ${item.kind}/${item.name} — target already exists but is not managed by capshelf and does not exactly match the commit selected for recovery\n` +
           `  existing path: ${conflict}\n` +
-          `  expected commit: ${sourceCommit}\n` +
+          `  expected commit: ${pin.sourceCommit}\n` +
           "  preserve or remove the conflicting target, then retry; capshelf will not adopt mismatched content",
       );
     }
@@ -594,10 +595,10 @@ export async function installDataItem(
   } else {
     addToManifest(manifest, item);
   }
-  const previousEntry = lock.items[key];
-  lock.items[key] = createDataLockEntry({
-    sha,
-    sourceCommit,
+  const writableLock = assertLockV4(lock, "capshelf add");
+  const previousEntry = writableLock.items[key];
+  writableLock.items[key] = createDataLockEntry({
+    pin,
     ...snapshot,
   });
 
@@ -613,24 +614,26 @@ export async function installDataItem(
           dataRepo,
           manifest,
           oldLock,
-          nextLock: lock,
+          nextLock: writableLock,
           target,
         }),
       );
     }
   } else if (isCopyDirectoryItemKind(item.kind)) {
-    if (adoptMatchingInstall) {
-      await ensureInstallAliases(
-        project,
-        item.kind,
-        item.name,
-        manifest.installMode,
-      );
-    } else {
-      await copyItemIntoProject(project, item, manifest.installMode);
-    }
+    // PIN-3: `add` materializes from the commit's blobs, exactly as `apply`
+    // does, instead of copying the data repo working tree. The asymmetry that
+    // made the original bug invisible from inside a project is gone: both
+    // routes now read the same objects, so they cannot disagree.
+    await materializeLockEntry({
+      project,
+      dataRepo,
+      manifest,
+      key,
+      entry: writableLock.items[key]!,
+      scope: ctx.local ? "local" : "project",
+    });
   } else if (item.kind === "subagents") {
-    const entry = lock.items[key];
+    const entry = writableLock.items[key];
     if (entry?.source !== "data")
       throw new Error(`expected data lock for ${key}`);
     const result = await materializeSubagent({
@@ -650,15 +653,15 @@ export async function installDataItem(
     if (!localConfig) throw new Error("expected local manifest");
     await ensureLocalExcludes(project, item.kind, item.name);
     await saveLocalConfig(project, localConfig);
-    await saveLocalLock(project, lock);
+    await saveLocalLock(project, writableLock);
   } else {
     await saveManifest(project, manifest);
-    await saveLock(project, lock);
+    await saveLock(project, writableLock);
   }
 
   return {
-    sha,
-    sourceCommit,
+    sha: pin.sourcePinDigest,
+    sourceCommit: pin.sourceCommit,
     dst,
     wasAlreadyInstalled: alreadyInManifest && alreadyInLock,
     sources,
@@ -669,12 +672,17 @@ export async function installDataItem(
   };
 }
 
-async function matchesCommittedInstall(
+/**
+ * Recovery adoption: an unmanaged target is adopted only when it already holds
+ * exactly what the pin selects. Under tree identity that is one comparison —
+ * the installed tree's digest against the pin — and it needs no blob reads,
+ * because both sides are named by Git object ids.
+ */
+async function matchesPinnedInstall(
   ctx: AddContext,
   item: MasterItem,
   conflict: string,
-  sourceCommit: string,
-  expectedSha: string,
+  pin: PinnedSource,
 ): Promise<boolean> {
   if (!isCopyDirectoryItemKind(item.kind)) return false;
   const canonicalPath = installedPath(
@@ -684,21 +692,11 @@ async function matchesCommittedInstall(
     ctx.manifest.installMode,
   );
   if (conflict !== canonicalPath) return false;
-  const installed = await installedSnapshot(
-    ctx.project,
-    item.kind,
-    item.name,
-    ctx.local ? "local" : "project",
+  const digest = await installedPinDigest(
+    targetsUnderRoot(canonicalPath, pin.entries),
+    hashWidthOf(pin.entries),
   );
-  if (installed === null) return false;
-  const [currentFiles, committedFiles] = await Promise.all([
-    namedFilesFromInstalledSnapshot(installed),
-    namedFilesAtCommit(ctx.dataRepo, item.repoRelPath, sourceCommit),
-  ]);
-  return (
-    shaOfNamedFiles(committedFiles) === expectedSha &&
-    namedFilesEqual(currentFiles, committedFiles)
-  );
+  return digest === pin.sourcePinDigest;
 }
 
 /** Expand `add bundles/<name>`: load → preflight → refuse or install. */
@@ -947,7 +945,9 @@ function printBundleSummary(
     }
     const result = results.get(member.ref);
     if (result) {
-      console.log(`  + ${member.ref.padEnd(33)} @ ${result.sha}`);
+      console.log(
+        `  + ${member.ref.padEnd(33)} @ ${shortIdentity(result.sha)}`,
+      );
       printDeclaredNeeds(result.needs, "    ");
       printRuntimeWarnings(result.runtimeWarnings, "    ");
     }

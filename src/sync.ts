@@ -2,7 +2,7 @@ import { mkdir, copyFile, readdir, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isIgnoredDotDirent } from "./dotfiles";
-import { gitVisibleFilesUnderPath, isGitRepo } from "./git";
+import { sourceVisibleFilesUnderPath, isGitRepo } from "./git";
 import { isCopyDirectoryItemKind, isMetadataSidecarPath } from "./master";
 import type { MasterItem } from "./master";
 import {
@@ -97,7 +97,7 @@ export async function replaceDirFromGitVisibleFiles(
   skip?: SkipPredicate,
 ): Promise<void> {
   if (existsSync(dst)) await rm(dst, { recursive: true, force: true });
-  const files = await gitVisibleFilesUnderPath(repo, relPath);
+  const files = await sourceVisibleFilesUnderPath(repo, relPath);
   for (const rel of files) {
     if (skip?.(rel)) continue;
     const from = join(src, ...rel.split("/"));

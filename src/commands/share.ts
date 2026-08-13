@@ -2,19 +2,22 @@ import type { Command } from "commander";
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { atomicWriteFile, lstatOrNull } from "../fs-utils";
-import { dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { homeRelative, projectRoot } from "../paths";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import { loadManifest, saveManifest, type Manifest } from "../manifest";
 import { addManifestName } from "../manifest";
 import {
+  assertLockV4,
   createDataLockEntry,
   dataKey,
   loadLock,
   saveLocalLock,
   saveLock,
 } from "../lock";
-import type { DataLockEntry, Lock } from "../lock";
+import type { DataLockEntryV4, Lock } from "../lock";
+import { pinItemAtCommit } from "../pin";
+import { assertCommittedTreeEqualsProject } from "../promote-proof";
 import { isSystemItemName } from "../bundled";
 import { isCopyDirectoryItemKind, itemRepoRelPath } from "../master";
 import type { FragmentItemKind } from "../master";
@@ -47,7 +50,6 @@ import {
   fragmentValuesForTarget,
   isFragmentKind,
   parseFragmentSourceText,
-  shaOfFragmentItem,
   sourceMatchesCliTarget,
   sourceTargetForCli,
   type FragmentSource,
@@ -66,7 +68,6 @@ import {
 import { captureCommittedItemNeeds } from "../metadata";
 import {
   isSubagentTarget,
-  shaOfCurrentSubagent,
   subagentSourceCandidates,
   validateSubagentSource,
   type SubagentSource,
@@ -183,18 +184,19 @@ export function registerShare(program: Command): void {
         kind,
         name,
       });
-      const entry = createDataLockEntry({
-        sha: adopted.sha,
-        sourceCommit: adopted.sourceCommit,
-        ...snapshot,
-      });
+      if (!adopted.pin) {
+        throw new Error(`expected a verified pin for ${kind}/${name}`);
+      }
+      const entry = createDataLockEntry({ pin: adopted.pin, ...snapshot });
       const runtimeWarnings = runtimeWarningsForItem(project, kind, name);
+      const writableProjectLock = assertLockV4(projectLock, "capshelf share");
+      const writableLocalLock = assertLockV4(localLock, "capshelf share");
       let localChanged = false;
       if (scope === "project") {
         addToManifest(manifest, kind, name);
-        projectLock.items[key] = preserveLabel(entry, localLock, key);
+        writableProjectLock.items[key] = preserveLabel(entry, localLock, key);
         if (localKey) {
-          delete localLock.items[key];
+          delete writableLocalLock.items[key];
           if (localConfig) {
             removeLocalConfigName(localConfig, kind, name);
           }
@@ -202,18 +204,18 @@ export function registerShare(program: Command): void {
           localChanged = true;
         }
         await saveManifest(project, manifest);
-        await saveLock(project, projectLock);
+        await saveLock(project, writableProjectLock);
         if (localChanged) {
-          await saveLocalLock(project, localLock);
+          await saveLocalLock(project, writableLocalLock);
           if (localConfig) await saveLocalConfig(project, localConfig);
         }
       } else {
         if (!localConfig) throw new Error("expected local manifest");
         addLocalConfigName(localConfig, kind, name);
-        localLock.items[key] = preserveLabel(entry, localLock, key);
+        writableLocalLock.items[key] = preserveLabel(entry, localLock, key);
         await ensureLocalExcludes(project, kind, name);
         await saveLocalConfig(project, localConfig);
-        await saveLocalLock(project, localLock);
+        await saveLocalLock(project, writableLocalLock);
       }
 
       if (opts.json) {
@@ -339,19 +341,29 @@ async function shareSubagent(
     pending.map(({ source }) => source.relPath),
     opts.message ?? `capshelf: subagents/${name}`,
   );
-  const sha = await shaOfCurrentSubagent(project, dataRepo, name);
+  // PIN-11: the candidate was generated from the project's own files, so what
+  // the commit holds must equal what was read. `pending` is `A`.
+  const pin = await assertCommittedTreeEqualsProject({
+    dataRepo,
+    kind: "subagents",
+    name,
+    commit: sourceCommit,
+    projectFiles: pending.map(({ source, raw }) => ({
+      path: basename(source.relPath),
+      content: Buffer.from(raw, "utf-8"),
+      mode: "100644" as const,
+    })),
+  });
+  const sha = pin.sourcePinDigest;
   const snapshot = await captureCommittedItemNeeds(dataRepo, {
     kind: "subagents",
     name,
   });
   addManifestName(manifest, "subagents", name);
-  projectLock.items[key] = createDataLockEntry({
-    sha,
-    sourceCommit,
-    ...snapshot,
-  });
+  const writableProjectLock = assertLockV4(projectLock, "capshelf share");
+  writableProjectLock.items[key] = createDataLockEntry({ pin, ...snapshot });
   await saveManifest(project, manifest);
-  await saveLock(project, projectLock);
+  await saveLock(project, writableProjectLock);
 
   if (opts.json) {
     console.log(
@@ -468,12 +480,16 @@ async function shareFragment(
     pending.map(({ source }) => source.relPath),
     opts.message ?? `capshelf: ${kind}/${name}`,
   );
-  const sha = await shaOfFragmentItem(dataRepo, kind, name);
+  // Fragments have no project snapshot: `share --from` writes the user's own
+  // file into the data repo and commits it in place, so PIN-11's `A == B` has
+  // no `A` to compare. The pin still comes from the committed tree.
+  const pin = await pinItemAtCommit(dataRepo, kind, name, sourceCommit);
+  const sha = pin.sourcePinDigest;
 
   addManifestName(manifest, kind, name);
-  projectLock.items[dataKey(kind, name)] = createDataLockEntry({
-    sha,
-    sourceCommit,
+  const writableProjectLock = assertLockV4(projectLock, "capshelf share");
+  writableProjectLock.items[dataKey(kind, name)] = createDataLockEntry({
+    pin,
     ...(await captureCommittedItemNeeds(dataRepo, { kind, name })),
   });
 
@@ -497,7 +513,7 @@ async function shareFragment(
   }
 
   await saveManifest(project, manifest);
-  await saveLock(project, projectLock);
+  await saveLock(project, writableProjectLock);
 
   if (opts.json) {
     console.log(
@@ -693,10 +709,10 @@ function parseShareScope(
 }
 
 function preserveLabel(
-  entry: DataLockEntry,
+  entry: DataLockEntryV4,
   localLock: Lock,
   key: string,
-): DataLockEntry {
+): DataLockEntryV4 {
   const existing = localLock.items[key];
   if (existing?.source !== "data" || existing.label === undefined) {
     return entry;

@@ -19,7 +19,7 @@ import { shaOfCurrentSubagent } from "../subagents";
 import type { ItemKind, MasterItem } from "../master";
 import { SYSTEM_ITEMS, shaOfSystemItem } from "../bundled";
 import type { SystemItem } from "../bundled";
-import { assertIsGitRepo, gitVisibleFilesUnderPath } from "../git";
+import { assertIsGitRepo, sourceVisibleFilesUnderPath } from "../git";
 import { globalOpts } from "../global-options";
 import { shaOfFragmentItem } from "../fragments";
 import {
@@ -315,7 +315,7 @@ async function dataContentFiles(
       await canonicalItemRelPaths(dataRepo, item.kind, item.name)
     ).map((repoRel) => posix.relative(itemRoot, repoRel));
   } else if (isCopyDirectoryItemKind(item.kind)) {
-    relPaths = await gitVisibleFilesUnderPath(dataRepo, itemRoot);
+    relPaths = await sourceVisibleFilesUnderPath(dataRepo, itemRoot);
   } else {
     throw new Error(`no search strategy for ${item.kind}/${item.name}`);
   }

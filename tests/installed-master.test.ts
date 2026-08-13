@@ -1,5 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
+import { currentPinDigest, installedPinDigestFor } from "./pin-fixtures";
 import { existsSync, lstatSync } from "node:fs";
 import { chmod, mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -18,7 +19,6 @@ import {
   findMasterItem,
   isMetadataSidecarPath,
   listMasterItems,
-  shaOfGitVisibleItem,
   shaOfItem,
 } from "../src/master";
 import type { MasterItem } from "../src/master";
@@ -106,7 +106,7 @@ describe("installed item paths and hashes", () => {
     );
   });
 
-  test("installed hashes ignore gitignored files", async () => {
+  test("the project's ignore rules do not reach the installed hash", async () => {
     const project = await tempRepo("capshelf-installed-project-");
     const skill = join(project, ".agents", "skills", "hello");
     await mkdir(skill, { recursive: true });
@@ -115,10 +115,17 @@ describe("installed item paths and hashes", () => {
     await $`git -C ${project} add .`.quiet();
     await $`git -C ${project} commit -qm baseline`.quiet();
 
+    // PIN-5 reversed this. `shaOfInstalled` used to hash the *Git-visible*
+    // file list, so an ignore rule silently removed a file from the item's
+    // computed identity — and a `--local` item, excluded wholesale by
+    // capshelf, hashed as if it were empty. It is now a plain filesystem walk,
+    // so a new file changes the hash whatever `.gitignore` says. Deciding who
+    // owns an unpinned file is a separate question, answered by the extra
+    // classifier in reconciliation.
     const before = await shaOfInstalled(project, "skills", "hello");
     await writeFile(join(skill, ".env.local"), "secret\n");
 
-    expect(await shaOfInstalled(project, "skills", "hello")).toBe(before);
+    expect(await shaOfInstalled(project, "skills", "hello")).not.toBe(before);
   });
 
   test("detects untracked Claude compatibility paths before default install", async () => {
@@ -467,28 +474,34 @@ describe("master item discovery and hashing", () => {
     expect(isMetadataSidecarPath("SKILL.md")).toBe(false);
   });
 
-  test("shaOfGitVisibleItem ignores the root sidecar but hashes nested ones", async () => {
+  test("the pin ignores the root sidecar but includes nested ones", async () => {
     const dataRepo = await tempRepo("capshelf-sidecar-git-");
     const item = join(dataRepo, "skills", "hello");
     await mkdir(item, { recursive: true });
     await writeFile(join(item, "SKILL.md"), "hello\n");
     await $`git -C ${dataRepo} add .`.quiet();
     await $`git -C ${dataRepo} commit -qm baseline`.quiet();
-    const before = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+    const before = await currentPinDigest(dataRepo, "skills", "hello");
 
     // Adding and editing a root sidecar (untracked, then committed) is
     // metadata-only and must not change the content sha.
     await writeFile(join(item, ".capshelf.yml"), "tags: [a]\n");
-    expect(await shaOfGitVisibleItem(dataRepo, "skills/hello")).toBe(before);
+    expect(await currentPinDigest(dataRepo, "skills", "hello")).toBe(before);
     await $`git -C ${dataRepo} add .`.quiet();
     await $`git -C ${dataRepo} commit -qm sidecar`.quiet();
     await writeFile(join(item, ".capshelf.yml"), "tags: [a, b]\n");
-    expect(await shaOfGitVisibleItem(dataRepo, "skills/hello")).toBe(before);
+    expect(await currentPinDigest(dataRepo, "skills", "hello")).toBe(before);
 
     // A nested sub/.capshelf.yml is item content (no basename matching).
+    // The pin reads the committed tree, so the change has to be committed
+    // before it can move the identity — which is the point: an uncommitted
+    // edit in the data repo cannot change what consumers receive.
     await mkdir(join(item, "sub"), { recursive: true });
     await writeFile(join(item, "sub", ".capshelf.yml"), "content\n");
-    expect(await shaOfGitVisibleItem(dataRepo, "skills/hello")).not.toBe(
+    expect(await currentPinDigest(dataRepo, "skills", "hello")).toBe(before);
+    await $`git -C ${dataRepo} add .`.quiet();
+    await $`git -C ${dataRepo} commit -qm nested`.quiet();
+    expect(await currentPinDigest(dataRepo, "skills", "hello")).not.toBe(
       before,
     );
   });
@@ -506,41 +519,35 @@ describe("master item discovery and hashing", () => {
     expect(await shaOfItem(item)).not.toBe(before);
   });
 
-  test("shaOfInstalled in a git worktree agrees with the locked sha despite a sidecar", async () => {
-    const dataRepo = await tempRepo("capshelf-sidecar-data-");
-    const project = await tempRepo("capshelf-sidecar-project-");
-    const dataItem = join(dataRepo, "skills", "hello");
-    await mkdir(dataItem, { recursive: true });
-    await writeFile(join(dataItem, "SKILL.md"), "hello\n");
-    await $`git -C ${dataRepo} add .`.quiet();
-    await $`git -C ${dataRepo} commit -qm baseline`.quiet();
-    const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+  // PIN-5: the installed identity is filesystem work over the pinned path
+  // set. It must be the same value whether the project is a Git repository or
+  // a plain directory, and the project's own ignore rules must not reach it.
+  for (const projectKind of ["git worktree", "plain directory"] as const) {
+    test(`the installed identity equals the pin in a ${projectKind}`, async () => {
+      const dataRepo = await tempRepo("capshelf-sidecar-data-");
+      const project =
+        projectKind === "git worktree"
+          ? await tempRepo("capshelf-sidecar-project-")
+          : await tempDir("capshelf-sidecar-nogit-project-");
+      const dataItem = join(dataRepo, "skills", "hello");
+      await mkdir(dataItem, { recursive: true });
+      await writeFile(join(dataItem, "SKILL.md"), "hello\n");
+      await $`git -C ${dataRepo} add .`.quiet();
+      await $`git -C ${dataRepo} commit -qm baseline`.quiet();
+      const lockedSha = await currentPinDigest(dataRepo, "skills", "hello");
 
-    const installed = join(project, ".agents", "skills", "hello");
-    await mkdir(installed, { recursive: true });
-    await writeFile(join(installed, "SKILL.md"), "hello\n");
-    await writeFile(join(installed, ".capshelf.yml"), "tags: [a]\n");
+      const installed = join(project, ".agents", "skills", "hello");
+      await mkdir(installed, { recursive: true });
+      await writeFile(join(installed, "SKILL.md"), "hello\n");
+      await writeFile(join(installed, ".capshelf.yml"), "tags: [a]\n");
+      // An ignore rule covering the whole managed tree must change nothing.
+      await writeFile(join(project, ".gitignore"), ".agents/\n");
 
-    expect(await shaOfInstalled(project, "skills", "hello")).toBe(lockedSha);
-  });
-
-  test("shaOfInstalled outside a git worktree agrees with the locked sha despite a sidecar", async () => {
-    const dataRepo = await tempRepo("capshelf-sidecar-data-");
-    const project = await tempDir("capshelf-sidecar-nogit-project-");
-    const dataItem = join(dataRepo, "skills", "hello");
-    await mkdir(dataItem, { recursive: true });
-    await writeFile(join(dataItem, "SKILL.md"), "hello\n");
-    await $`git -C ${dataRepo} add .`.quiet();
-    await $`git -C ${dataRepo} commit -qm baseline`.quiet();
-    const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
-
-    const installed = join(project, ".agents", "skills", "hello");
-    await mkdir(installed, { recursive: true });
-    await writeFile(join(installed, "SKILL.md"), "hello\n");
-    await writeFile(join(installed, ".capshelf.yml"), "tags: [a]\n");
-
-    expect(await shaOfInstalled(project, "skills", "hello")).toBe(lockedSha);
-  });
+      expect(
+        await installedPinDigestFor(project, dataRepo, "skills", "hello"),
+      ).toBe(lockedSha);
+    });
+  }
 
   test("copyItemIntoProject never materializes the root sidecar but keeps nested ones", async () => {
     const project = await tempDir();

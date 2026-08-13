@@ -1,7 +1,7 @@
 BIN_DIR ?= $(HOME)/.local/bin
 
 SMOKE_JOBS ?= 4
-SMOKE_TARGETS := smoke-modes smoke-skills smoke-settings smoke-mcp smoke-codex-config smoke-bootstrap smoke-metadata smoke-needs smoke-team-sync smoke-bundles smoke-pi-extensions smoke-subagents smoke-marketplace
+SMOKE_TARGETS := smoke-modes smoke-skills smoke-settings smoke-mcp smoke-codex-config smoke-bootstrap smoke-metadata smoke-needs smoke-team-sync smoke-bundles smoke-pi-extensions smoke-subagents smoke-marketplace smoke-pins
 
 .PHONY: install dev build test typecheck lint check check-release-docs smoke $(SMOKE_TARGETS) clean deps
 
@@ -77,6 +77,9 @@ smoke-pi-extensions: deps
 
 smoke-subagents: deps
 	@./scripts/smoke-subagents.sh
+
+smoke-pins: deps
+	@./scripts/smoke-pins.sh
 
 smoke-marketplace: deps
 	@./scripts/smoke-marketplace.sh

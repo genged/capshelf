@@ -23,6 +23,14 @@ export interface DestructiveChange {
   item?: string;
   path: string;
   reason: DestructiveChangeReason;
+  /**
+   * PIN-7: a one-line explanation of *what kind* of difference this is, from
+   * `installDifferenceLabel`. It labels the prompt and never gates it —
+   * whether a write destroys something is decided by `reason` alone, because
+   * the cause of a difference is not decidable from bytes and a wrong guess
+   * would silently discard a deliberate change.
+   */
+  detail?: string;
   reviewCommand?: string;
 }
 
@@ -69,6 +77,7 @@ export function normalizeDestructiveChanges(
       ...(change.item && { item: change.item }),
       path: change.path,
       reason: change.reason,
+      ...(change.detail && { detail: change.detail }),
       ...(change.reviewCommand && { reviewCommand: change.reviewCommand }),
     } satisfies DestructiveChange;
     const key = changeKey(normalized);
@@ -179,9 +188,10 @@ export function renderDestructiveChanges(
   const normalized = normalizeDestructiveChanges(changes);
   return [
     `${operation} would destroy local state:`,
-    ...normalized.map((change) => {
+    ...normalized.flatMap((change) => {
       const item = change.item ? `${change.item} — ` : "";
-      return `  ${item}${change.path} — ${DESTRUCTIVE_CHANGE_REASON_LABELS[change.reason]}`;
+      const line = `  ${item}${change.path} — ${DESTRUCTIVE_CHANGE_REASON_LABELS[change.reason]}`;
+      return change.detail ? [line, `      ${change.detail}`] : [line];
     }),
     ...(normalized.some((change) => change.scope === "local")
       ? [

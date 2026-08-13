@@ -1,6 +1,7 @@
 import { homeRelative } from "./paths";
 import { assertNever } from "./assert";
 import { formatRuntimeWarnings } from "./runtime-warnings";
+import { shortIdentity } from "./pin";
 import type {
   ExternalClaudePlugin,
   ExternalSkill,
@@ -17,6 +18,8 @@ export function glyph(s: State): string {
     case "ok":
       return "✓";
     case "missing_source_commit":
+      return "!";
+    case "source_filtered":
       return "!";
     case "update_available":
       return "⚠";
@@ -53,12 +56,14 @@ export function describe(r: StatusRow): string {
       return "up-to-date";
     case "missing_source_commit":
       return `locked sourceCommit ${shortCommit(r.sourceCommit)} is not present in the data repo`;
+    case "source_filtered":
+      return "a managed path declares a git content filter — content is not portable";
     case "update_available":
       return r.source === "system"
         ? `update available → ${r.upstreamSha} (cli upgraded)`
         : `update available → ${r.upstreamSha}`;
     case "drifted_local":
-      return `drifted (current ${r.currentSha})`;
+      return driftDescription(r);
     case "drifted_and_update":
       return `drifted + update available → ${r.upstreamSha}`;
     case "missing_installed":
@@ -84,6 +89,21 @@ export function describe(r: StatusRow): string {
     default:
       return assertNever(r.state);
   }
+}
+
+/**
+ * PIN-6: name the *kinds* of difference, not just that there is one. The row
+ * lists at most three paths and then a count, because the complete list is
+ * what `--json` and `--diff` are for.
+ */
+function driftDescription(r: StatusRow): string {
+  const differences = r.installDifferences ?? [];
+  if (differences.length === 0) {
+    return `drifted (current ${shortIdentity(r.currentSha ?? "missing")})`;
+  }
+  const kinds = [...new Set(differences.map((d) => d.kind))].join(", ");
+  const count = differences.length;
+  return `drifted (${count} ${count === 1 ? "file" : "files"}: ${kinds})`;
 }
 
 export interface FormatStatusHumanInput {
@@ -237,7 +257,7 @@ function formatRow(r: StatusRow): string[] {
   const id = `${r.source}/${r.kind}/${r.name}`.padEnd(39);
   const label = r.label ? ` ${r.label}` : "";
   return [
-    `  ${g} ${id} ${r.lockedSha}${label}  ${describe(r)}`,
+    `  ${g} ${id} ${shortIdentity(r.lockedSha)}${label}  ${describe(r)}`,
     ...missingSourceCommitGuidance(r),
     ...needsStateGuidance(r),
     ...formatRuntimeWarnings(r.runtimeWarnings, "    "),

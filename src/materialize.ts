@@ -7,10 +7,11 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, posix } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { existsSync } from "node:fs";
 import type { Stats } from "node:fs";
-import type { LockEntry } from "./lock";
+import { entryIdentity } from "./lock";
+import type { DataLockEntry, LockEntry } from "./lock";
 import type { Manifest } from "./manifest";
 import {
   assertCanMaterializeInstalled,
@@ -28,22 +29,26 @@ import {
   itemRepoRelPath,
 } from "./master";
 import type { CopyDirectoryItemKind } from "./master";
-import { installedSnapshot, shaOfInstalledForScope } from "./item-snapshot";
+import { hashNamedContents } from "./content-hash";
 import type { Scope } from "./promote-core";
 import { findSystemItem, shaOfSystemItem } from "./bundled";
 import {
-  assertRegularBlobEntries,
-  lsTreeEntriesAtCommit,
-  showAtCommit,
-} from "./git";
-import type { GitTreeEntry } from "./git";
-import { hasIgnoredDotSegment } from "./dotfiles";
+  abbreviatePin,
+  hashWidthOf,
+  installedPinDigest,
+  itemTreeEntriesAtCommit,
+  readEntryBytes,
+  sourcePinDigest,
+  targetsUnderRoot,
+} from "./pin";
+import type { PinTreeEntry } from "./pin";
 import { runtimeWarningsForItem } from "./runtime-warnings";
 import type { RuntimeWarning } from "./runtime-warnings";
 import { missingSourceCommitMessage } from "./upstream-check";
 import type { NamedFile } from "./merge-tree";
 import { namedFilesEqual } from "./merge-tree";
 import { gitignoreVisibleFiles, inventoryLocalTree } from "./gitignore";
+import { gitPolicyVisiblePathsUnderPath } from "./git";
 import { beginDirectoryReplacement } from "./promote-transaction";
 import { shaOfNamedFiles } from "./item-snapshot";
 import { PRODUCT_NAME } from "./identity";
@@ -117,6 +122,8 @@ export interface CopyDirectoryReconciliationFiles {
   expected: NamedFile[];
   /** Rows 4–5. */
   preserved: PreservedEntry[];
+  /** The pinned tree entries `expected` was read from; empty for a system item. */
+  entries: readonly PinTreeEntry[];
 }
 
 export async function materializeLockEntry(
@@ -156,19 +163,22 @@ export async function materializeLockEntry(
       name,
       action: "kept-local",
       path: dst,
-      sha: await shaOfInstalledForScope(opts.project, kind, name, opts.scope),
+      sha: await installedIdentityForEntry(
+        dst,
+        opts.entry,
+        await itemContentForEntry(
+          opts.dataRepo,
+          opts.manifest,
+          kind,
+          name,
+          opts.entry,
+        ).catch(() => null),
+      ),
       message: opts.entry.localReason,
       ...runtimeWarningFields(opts.project, kind, name),
     };
   }
 
-  let before: string | null;
-  try {
-    before = await shaOfInstalledForScope(opts.project, kind, name, opts.scope);
-  } catch (error) {
-    if (!(error instanceof PreconditionError)) throw error;
-    before = null;
-  }
   let dataBeforeMatches = false;
   let reconciliationFiles: CopyDirectoryReconciliationFiles;
   if (opts.entry.source === "data") {
@@ -214,6 +224,33 @@ export async function materializeLockEntry(
     });
   }
 
+  // PIN-5: the installed identity is filesystem work over the *managed* path
+  // set. It used to route through project Git, which meant an edit to the
+  // project's `.gitignore` could move an item's computed state and a
+  // `--local` item — deliberately listed in `.git/info/exclude` — hashed as if
+  // it were empty.
+  // Reported as `current:` next to `planned:`, so it names the install in the
+  // model of the entry the install was written from — the previous pin when
+  // there is one. Naming it in the incoming entry's model instead would make
+  // an untouched install look drifted for the ordinary reason that the
+  // upstream content changed.
+  const basisEntry = opts.previousEntry ?? opts.entry;
+  const before = await installedIdentityForEntry(
+    dst,
+    basisEntry,
+    basisEntry === opts.entry
+      ? {
+          entries: reconciliationFiles.entries,
+          files: reconciliationFiles.expected,
+        }
+      : await itemContentForEntry(
+          opts.dataRepo,
+          opts.manifest,
+          kind,
+          name,
+          basisEntry,
+        ).catch(() => null),
+  );
   dataBeforeMatches = await installedFilesMatch(
     dst,
     reconciliationFiles.expected,
@@ -254,14 +291,91 @@ export async function materializeLockEntry(
         ? "reconciled"
         : "already-current",
     path: dst,
-    sha: opts.dryRun ? before : opts.entry.sha,
+    sha: opts.dryRun ? before : entryIdentity(opts.entry),
     ...(opts.dryRun && {
       currentSha: before,
-      plannedSha: opts.entry.sha,
+      plannedSha: entryIdentity(opts.entry),
       dryRun: true as const,
     }),
     ...runtimeWarningFields(opts.project, kind, name),
   };
+}
+
+/**
+ * PIN-5's classifier for *unpinned* paths under an installed item.
+ *
+ * | destination                        | classifier                                                          |
+ * | ---------------------------------- | ------------------------------------------------------------------- |
+ * | project scope in a Git worktree    | project Git, with the complete ignore stack                          |
+ * | local scope                        | the item-root ignore walker — capshelf excludes the whole local item |
+ * | project scope outside Git          | the item-root ignore walker                                          |
+ *
+ * Reimplementing Git's ignore stack in process was rejected: exact parity needs
+ * nested and parent `.gitignore` files, `.git/info/exclude`,
+ * `core.excludesFile`, negation, directory pruning, and the tracked-file rule.
+ * Git owns that policy and answers it exactly. Using project Git for *every*
+ * scope is equally wrong: capshelf puts a local-scope item in
+ * `.git/info/exclude`, so project Git sees the whole item as ignored and cannot
+ * tell a user-owned extra from a visible one.
+ *
+ * A project ignore edit may therefore move an extra between visible and
+ * ignored. That is intentional — it changes who owns an unpinned file, not what
+ * the lock manages.
+ */
+async function visibleExtraPaths(
+  project: string,
+  root: string,
+  extras: readonly string[],
+  scope: Scope,
+): Promise<Set<string>> {
+  if (extras.length === 0) return new Set();
+  const candidates = new Set(extras);
+  const gitPolicyPaths =
+    scope === "project"
+      ? await gitPolicyVisiblePathsUnderPath(project, relative(project, root))
+      : null;
+  const visible =
+    gitPolicyPaths ??
+    // Outside project Git the fallback walker still does not consult parent
+    // ignore files, `.git/info/exclude`, or `core.excludesFile`. That
+    // limitation now applies only where no usable project Git policy exists.
+    (await gitignoreVisibleFiles(root).catch(() => [...candidates]));
+  return new Set(visible.filter((path) => candidates.has(path)));
+}
+
+/**
+ * The installed identity of a copy-directory item, expressed in whichever
+ * model the entry itself uses, so `currentSha` and `plannedSha` in a report are
+ * always comparable values rather than two different kinds of hash.
+ *
+ * Version 4 names the install the way Git names a tree — a blob id and mode per
+ * pinned path — so a clean install digests to exactly `sourcePinDigest`.
+ * Version 3 and system entries keep the legacy content hash over the same
+ * managed path set.
+ */
+async function installedIdentityForEntry(
+  root: string,
+  entry: LockEntry,
+  content: { entries: readonly PinTreeEntry[]; files: NamedFile[] } | null,
+): Promise<string | null> {
+  if (content === null || !existsSync(root)) return null;
+  if (entry.source === "data" && entry.sourcePinDigest !== undefined) {
+    return await installedPinDigest(
+      targetsUnderRoot(root, content.entries),
+      hashWidthOf(content.entries),
+    );
+  }
+  // Legacy model: hash the managed paths that are actually present, which is
+  // what the version-3 install hash always did — an absent managed file simply
+  // does not participate, and the resulting mismatch is the drift signal.
+  const present: Array<{ name: string; content: Buffer }> = [];
+  for (const file of content.files) {
+    const fullPath = join(root, ...file.path.split("/"));
+    const stats = await lstatOrNullAsync(fullPath);
+    if (stats === null || !stats.isFile()) continue;
+    present.push({ name: file.path, content: await readFile(fullPath) });
+  }
+  return hashNamedContents(present);
 }
 
 export async function copyDirectoryReconciliationFiles(opts: {
@@ -275,7 +389,7 @@ export async function copyDirectoryReconciliationFiles(opts: {
   scope: Scope;
   hooks?: MaterializeHooks;
 }): Promise<CopyDirectoryReconciliationFiles> {
-  const expected = await filesForEntry(
+  const content = await itemContentForEntry(
     opts.dataRepo,
     opts.manifest,
     opts.kind,
@@ -283,9 +397,10 @@ export async function copyDirectoryReconciliationFiles(opts: {
     opts.entry,
     opts.hooks,
   );
+  const expected = content.files;
   // Only a data entry carries a retrieval to verify: its files are read back
-  // from `sourceCommit`, so a hash mismatch means the retrieval returned the
-  // wrong bytes. A system entry has no retrieval — `filesForEntry` returns the
+  // from `sourceCommit`, so a mismatch means the retrieval returned the wrong
+  // bytes. A system entry has no retrieval — `filesForEntry` returns the
   // running binary's bundled tree whatever the entry says — so comparing that
   // tree to `entry.sha` does not check anything this function did. It asks
   // whether the current bundle happens to be the one the entry pins, which is
@@ -293,46 +408,74 @@ export async function copyDirectoryReconciliationFiles(opts: {
   // before any write, and `planCopyDirectoryDestruction` must be able to plan
   // against a superseded entry without it. `sameSourceContent` below states the
   // same assumption for the previous-entry read.
-  if (opts.entry.source === "data") {
-    const sourceSha = shaOfNamedFiles(expected);
-    if (sourceSha !== opts.entry.sha) {
-      throw new Error(
-        `source ${opts.kind}/${opts.name} at ${opts.entry.sourceCommit} hashes to ${sourceSha}, but lock expects ${opts.entry.sha}`,
-      );
-    }
+  if (opts.entry.source === "data" && opts.dataRepo) {
+    // The entries were read by the call above and cached with the bytes, so
+    // verification adds no subprocess: version 4 digests what is already in
+    // hand, and version 3 hashes the bytes it already holds.
+    assertSourceMatchesEntry(
+      opts.kind,
+      opts.name,
+      opts.entry,
+      content.entries,
+      expected,
+    );
   }
 
   const dst = installedPath(opts.project, opts.kind, opts.name);
-  if (!existsSync(dst)) return { expected, preserved: [] };
+  if (!existsSync(dst)) {
+    return { expected, preserved: [], entries: content.entries };
+  }
 
   // Reading the previous tree is one `git ls-tree` plus one `git show` per
   // file. `apply` and `revert` always pass the same entry twice, so aliasing
   // rather than re-reading removes half the source reads on those paths.
+  //
+  // PIN-8: the previous entry is not this function's target — it only names
+  // which installed paths were managed before, so ignored local state can be
+  // told apart from stale managed content. An unresolvable previous pin (a
+  // garbage-collected commit, a contradictory digest) therefore degrades to
+  // "nothing was managed before" rather than failing the command that is
+  // trying to replace it. The consequence is that a stale managed path the
+  // project ignores is preserved instead of deleted, which is the safe
+  // direction, and every Git-visible one still reaches the consent boundary.
   const previous = sameSourceContent(opts.entry, opts.previousEntry)
     ? expected
-    : await filesForEntry(
+    : await itemContentForEntry(
         opts.dataRepo,
         opts.manifest,
         opts.kind,
         opts.name,
         opts.previousEntry,
+      ).then(
+        (content) => content.files,
+        () => [],
       );
   const previousPaths = new Set(previous.map((file) => file.path));
-  const snapshot = await installedSnapshot(
+  // PIN-5's set operation. The pinned path set is always managed — an ignore
+  // rule cannot hide a pinned path or change its drift result — so only the
+  // *extras* are classified, and only they can be owned by the user.
+  const managedPaths = new Set([
+    ...expected.map((file) => file.path),
+    ...previousPaths,
+  ]);
+  const inventory = await inventoryLocalTree(dst);
+  const extras = [
+    ...inventory.files,
+    ...inventory.irregular.map((object) => object.path),
+  ].filter((path) => !managedPaths.has(path));
+  const visibleExtras = await visibleExtraPaths(
     opts.project,
-    opts.kind,
-    opts.name,
+    dst,
+    extras,
     opts.scope,
   );
-  const visiblePaths = new Set(snapshot?.files ?? []);
-  const inventory = await inventoryLocalTree(dst);
   const preserved: PreservedEntry[] = [];
   for (const path of inventory.files) {
     // Row 5: the sidecar is excluded from hashing and materialization
     // everywhere, so it is carried across regardless of Git visibility. Every
-    // other Git-visible path is row 3 — drift the caller reconciles away.
-    if (!isMetadataSidecarPath(path) && visiblePaths.has(path)) continue;
-    if (previousPaths.has(path)) continue;
+    // other Git-visible extra is row 3 — drift the caller reconciles away.
+    if (!isMetadataSidecarPath(path) && visibleExtras.has(path)) continue;
+    if (managedPaths.has(path)) continue;
     const fullPath = join(dst, ...path.split("/"));
     const info = await lstat(fullPath);
     preserved.push({
@@ -343,6 +486,9 @@ export async function copyDirectoryReconciliationFiles(opts: {
     });
   }
   for (const object of inventory.irregular) {
+    // A non-recreatable object is refused whatever its ignore status: a
+    // directory replacement cannot put a fifo, socket, or device node back,
+    // and deleting one silently is not a thing consent can authorize.
     if (object.type !== "symlink") {
       throw new PreconditionError(
         `${dst} contains an unsupported filesystem object: ${object.path}; fifos, sockets, and device nodes cannot be recreated by a directory replacement`,
@@ -351,6 +497,10 @@ export async function copyDirectoryReconciliationFiles(opts: {
         },
       );
     }
+    // A Git-visible symlink is an extra the project owns through its own
+    // policy, so reconciliation removes it (row 3) rather than carrying it.
+    if (visibleExtras.has(object.path)) continue;
+    if (managedPaths.has(object.path)) continue;
     const fullPath = join(dst, ...object.path.split("/"));
     preserved.push({
       kind: "symlink",
@@ -375,6 +525,7 @@ export async function copyDirectoryReconciliationFiles(opts: {
 
   return {
     expected,
+    entries: content.entries,
     preserved: preserved.sort((left, right) =>
       left.path.localeCompare(right.path),
     ),
@@ -394,13 +545,15 @@ export async function lockedCopyDirectoryFiles(opts: {
   name: string;
   entry: LockEntry;
 }): Promise<NamedFile[]> {
-  return await filesForEntry(
-    opts.dataRepo,
-    opts.manifest,
-    opts.kind,
-    opts.name,
-    opts.entry,
-  );
+  return (
+    await itemContentForEntry(
+      opts.dataRepo,
+      opts.manifest,
+      opts.kind,
+      opts.name,
+      opts.entry,
+    )
+  ).files;
 }
 
 /**
@@ -430,9 +583,9 @@ function sameSourceContent(entry: LockEntry, previous: LockEntry): boolean {
  * Peak memory becomes the managed content one command touches rather than one
  * item's worth; for the item kinds capshelf manages that is kilobytes.
  */
-const atCommitFiles = new Map<string, NamedFile[]>();
+const atCommitFiles = new Map<string, CommitItemContent>();
 
-async function readDataFilesAtCommit(
+async function _readDataFilesAtCommit(
   dataRepo: string,
   manifest: Manifest | undefined,
   kind: CopyDirectoryItemKind,
@@ -440,6 +593,32 @@ async function readDataFilesAtCommit(
   commit: string,
   hooks?: MaterializeHooks,
 ): Promise<NamedFile[]> {
+  return (
+    await readItemContentAtCommit(dataRepo, manifest, kind, name, commit, hooks)
+  ).files;
+}
+
+interface CommitItemContent {
+  entries: PinTreeEntry[];
+  files: NamedFile[];
+}
+
+/**
+ * PIN-3: one `ls-tree` for the entries, one `cat-file --batch` for the bytes.
+ *
+ * `cat-file` reads objects directly and applies no smudge filter, so what
+ * lands in the project is exactly what the commit holds — and, because `add`
+ * now comes through here too, byte-identical to what `apply` writes by
+ * construction rather than by agreement.
+ */
+async function readItemContentAtCommit(
+  dataRepo: string,
+  manifest: Manifest | undefined,
+  kind: CopyDirectoryItemKind,
+  name: string,
+  commit: string,
+  hooks?: MaterializeHooks,
+): Promise<CommitItemContent> {
   const repoRelPath = itemRepoRelPath(kind, name);
   const cacheKey = `${dataRepo}\0${commit}\0${repoRelPath}`;
   const cached = atCommitFiles.get(cacheKey);
@@ -447,38 +626,74 @@ async function readDataFilesAtCommit(
     // Hooks still fire on a cache hit: they are how the transaction tests
     // inject a failure at a specific source read, and skipping them would
     // make a cached pass behave differently from a cold one.
-    for (const [index, file] of cached.entries()) {
-      await hooks?.beforeSourceRead?.(`${repoRelPath}/${file.path}`, index);
+    for (const [index, entry] of cached.entries.entries()) {
+      await hooks?.beforeSourceRead?.(entry.repoRelPath, index);
     }
     // A fresh array per caller, on both the hit and the miss path: the entries
     // are immutable content, but callers own their list and one of them
     // sorting in place must not reorder another's.
-    return [...cached];
+    return { entries: [...cached.entries], files: [...cached.files] };
   }
 
-  const entries = await materializableFilesAtCommit(
-    dataRepo,
-    manifest,
-    commit,
-    repoRelPath,
-  );
-  const files: NamedFile[] = [];
-  for (const [index, entry] of entries.entries()) {
-    await hooks?.beforeSourceRead?.(entry.path, index);
-    let content: Buffer;
-    try {
-      content = await showAtCommit(dataRepo, commit, entry.path);
-    } catch {
-      throwMissingCommit(dataRepo, manifest, commit);
-    }
-    files.push({
-      path: posix.relative(repoRelPath, entry.path),
-      content,
-      mode: entry.mode === "100755" ? "100755" : "100644",
-    });
+  let entries: PinTreeEntry[];
+  try {
+    entries = await itemTreeEntriesAtCommit(dataRepo, kind, name, commit);
+  } catch (error) {
+    if (error instanceof PreconditionError) throw error;
+    throwMissingCommit(dataRepo, manifest, commit, { kind, name });
   }
-  atCommitFiles.set(cacheKey, files);
-  return [...files];
+  if (entries.length === 0) {
+    throw new Error(`${repoRelPath} has no materializable files at ${commit}`);
+  }
+  for (const [index, entry] of entries.entries()) {
+    await hooks?.beforeSourceRead?.(entry.repoRelPath, index);
+  }
+  let files: NamedFile[];
+  try {
+    files = (await readEntryBytes(dataRepo, entries)).map((file) => ({
+      path: file.path,
+      content: file.content,
+      mode: file.mode,
+    }));
+  } catch {
+    throwMissingCommit(dataRepo, manifest, commit, { kind, name });
+  }
+  const content: CommitItemContent = { entries, files };
+  atCommitFiles.set(cacheKey, content);
+  return { entries: [...entries], files: [...files] };
+}
+
+/**
+ * The one place a data entry's recorded identity is checked against what the
+ * repository actually holds.
+ *
+ * Version 4 compares the committed tree's `sourcePinDigest` — no file content
+ * is read to answer it, and no working-tree state can change the answer.
+ * Version 3 keeps the legacy working-tree hash so a project that has not run
+ * `lock migrate` can still `apply`; the two are never mixed, because a lock
+ * file carries exactly one of them.
+ */
+function assertSourceMatchesEntry(
+  kind: CopyDirectoryItemKind,
+  name: string,
+  entry: DataLockEntry,
+  entries: readonly PinTreeEntry[],
+  expected: NamedFile[],
+): void {
+  if (entry.sourcePinDigest !== undefined) {
+    const digest = sourcePinDigest(entries);
+    if (digest === entry.sourcePinDigest) return;
+    throw new Error(
+      `source ${kind}/${name} at ${entry.sourceCommit} pins to ${abbreviatePin(digest)}, but lock expects ${abbreviatePin(entry.sourcePinDigest)}\n` +
+        `  ${unprovablePinGuidance(kind, name)}`,
+    );
+  }
+  const sourceSha = shaOfNamedFiles(expected);
+  if (sourceSha === entry.sha) return;
+  throw new Error(
+    `source ${kind}/${name} at ${entry.sourceCommit} hashes to ${sourceSha}, but lock expects ${entry.sha}\n` +
+      `  ${unprovablePinGuidance(kind, name)}`,
+  );
 }
 
 async function materializeCopyDirectory(
@@ -529,18 +744,18 @@ async function materializeCopyDirectory(
   }
 }
 
-async function filesForEntry(
+async function itemContentForEntry(
   dataRepo: string | undefined,
   manifest: Manifest | undefined,
   kind: CopyDirectoryItemKind,
   name: string,
   entry: LockEntry,
   hooks?: MaterializeHooks,
-): Promise<NamedFile[]> {
+): Promise<CommitItemContent> {
   if (entry.source === "data") {
     if (!dataRepo)
       throw new Error(`data repo is required to apply ${kind}/${name}`);
-    return await readDataFilesAtCommit(
+    return await readItemContentAtCommit(
       dataRepo,
       manifest,
       kind,
@@ -553,50 +768,19 @@ async function filesForEntry(
   if (!item || item.kind !== kind) {
     throw new Error(`system item no longer bundled: ${kind}/${name}`);
   }
-  return item.files
-    .map((file) => ({
-      path: file.relPath,
-      content: Buffer.from(file.content),
-      mode: "100644" as const,
-    }))
-    .sort((left, right) => left.path.localeCompare(right.path));
-}
-
-async function materializableFilesAtCommit(
-  dataRepo: string,
-  manifest: Manifest | undefined,
-  commit: string,
-  repoRelPath: string,
-): Promise<GitTreeEntry[]> {
-  let entries: GitTreeEntry[];
-  try {
-    entries = await lsTreeEntriesAtCommit(dataRepo, commit, repoRelPath);
-  } catch {
-    throwMissingCommit(dataRepo, manifest, commit);
-  }
-  assertRegularBlobEntries(entries, repoRelPath);
-
-  const files = entries
-    .filter((file) => {
-      const rel = posix.relative(repoRelPath, file.path);
-      return (
-        file.type === "blob" &&
-        rel &&
-        !rel.startsWith("..") &&
-        !hasIgnoredDotSegment(rel) &&
-        // The metadata sidecar is catalog data: apply/revert never copy it
-        // into the project and the at-commit sha never includes it, keeping
-        // both consistent with the working-tree sha.
-        !isMetadataSidecarPath(rel)
-      );
-    })
-    .sort((a, b) => a.path.localeCompare(b.path));
-
-  if (files.length === 0) {
-    throw new Error(`${repoRelPath} has no materializable files at ${commit}`);
-  }
-
-  return files;
+  // A system item has no commit and therefore no tree entries: its identity
+  // stays the bundled `sha`, checked by `materializeLockEntry` before any
+  // write.
+  return {
+    entries: [],
+    files: item.files
+      .map((file) => ({
+        path: file.relPath,
+        content: Buffer.from(file.content),
+        mode: "100644" as const,
+      }))
+      .sort((left, right) => left.path.localeCompare(right.path)),
+  };
 }
 
 function runtimeWarningFields(
@@ -612,11 +796,29 @@ function throwMissingCommit(
   dataRepo: string,
   manifest: Manifest | undefined,
   commit: string,
+  item?: { kind: CopyDirectoryItemKind; name: string },
 ): never {
-  if (manifest) {
-    throw new Error(missingSourceCommitMessage(dataRepo, commit, manifest));
-  }
-  throw new Error(`data repo at ${dataRepo} does not contain commit ${commit}`);
+  const detail = manifest
+    ? missingSourceCommitMessage(dataRepo, commit, manifest)
+    : `data repo at ${dataRepo} does not contain commit ${commit}`;
+  throw new Error(
+    item
+      ? `${detail}\n  ${unprovablePinGuidance(item.kind, item.name)}`
+      : detail,
+  );
+}
+
+/**
+ * PIN-8. `apply` and `revert` take the locked commit as their target, so they
+ * cannot repair a pin that commit does not support: consent cannot create
+ * missing bytes or choose between two contradictory identities. `update`
+ * selects a new commit, which is a verified target, so it can.
+ */
+function unprovablePinGuidance(
+  kind: CopyDirectoryItemKind,
+  name: string,
+): string {
+  return `the locked source cannot supply a verified target — repair the pin with: ${PRODUCT_NAME} update ${kind}/${name}`;
 }
 
 function fileModeFromGit(mode: string): number {

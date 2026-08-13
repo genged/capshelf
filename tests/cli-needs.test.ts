@@ -8,6 +8,7 @@ import {
   runInProcess,
   tempRepo,
 } from "./cli-fixtures";
+import { shaOfGitVisibleItem } from "../src/master";
 
 describe("declared needs CLI lifecycle", () => {
   test("pins, displays, and refreshes needs without rewriting content", async () => {
@@ -65,7 +66,7 @@ describe("declared needs CLI lifecycle", () => {
     const lockPath = join(project, ".capshelf", "capshelf.lock.json");
     const addedLock = await file(lockPath).json();
     const addedEntry = addedLock.items["data/pi-extensions/exa-mcp"];
-    expect(addedLock.version).toBe(3);
+    expect(addedLock.version).toBe(4);
     expect(addedEntry.needs).toEqual({
       network: ["mcp.exa.ai"],
       env: ["EXA_API_KEY"],
@@ -120,7 +121,7 @@ describe("declared needs CLI lifecycle", () => {
     const updatedEntry = (await file(lockPath).json()).items[
       "data/pi-extensions/exa-mcp"
     ];
-    expect(updatedEntry.sha).toBe(addedEntry.sha);
+    expect(updatedEntry.sourcePinDigest).toBe(addedEntry.sourcePinDigest);
     expect(updatedEntry.sourceCommit).toBe(addedEntry.sourceCommit);
     expect(updatedEntry.needs.network).toEqual([
       "api.example.com",
@@ -165,7 +166,7 @@ describe("declared needs CLI lifecycle", () => {
     ).toEqual(["api.example.com", "mcp.exa.ai"]);
   });
 
-  test("v2 status stays read-only and update captures an unknown snapshot", async () => {
+  test("a legacy lock stays readable, and every writer points at lock migrate", async () => {
     const project = await tempRepo("capshelf-needs-v2-project-");
     const dataRepo = await tempRepo("capshelf-needs-v2-data-");
     await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
@@ -181,10 +182,18 @@ describe("declared needs CLI lifecycle", () => {
 
     const lockPath = join(project, ".capshelf", "capshelf.lock.json");
     const lock = await file(lockPath).json();
-    delete lock.items["data/skills/hello"].needs;
-    delete lock.items["data/skills/hello"].needsSourceCommit;
+    const entry = lock.items["data/skills/hello"];
+    // A genuine version-2 entry: identity is the working-tree hash, and there
+    // is no needs snapshot at all.
+    lock.items["data/skills/hello"] = {
+      source: "data",
+      sha: await shaOfGitVisibleItem(dataRepo, "skills/hello"),
+      sourceCommit: entry.sourceCommit,
+      appliedAt: entry.appliedAt,
+    };
     lock.version = 2;
-    await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+    const legacyBytes = `${JSON.stringify(lock, null, 2)}\n`;
+    await writeFile(lockPath, legacyBytes);
 
     const status = await run(["status", "--json"]);
     expect(status.exitCode).toBe(0);
@@ -195,12 +204,13 @@ describe("declared needs CLI lifecycle", () => {
     expect(row.lockedNeeds).toBeNull();
     expect((await file(lockPath).json()).version).toBe(2);
 
-    expect((await run(["update", "skills/hello"])).exitCode).toBe(0);
-    const refreshed = await file(lockPath).json();
-    expect(refreshed.version).toBe(3);
-    expect(refreshed.items["data/skills/hello"].needs.network).toEqual([
-      "api.example.com",
-    ]);
+    // PIN-12: no ordinary lock write migrates. `update` refuses and names the
+    // one command that converts the project, and the lock is byte-identical
+    // afterwards.
+    const refused = await run(["update", "skills/hello"]);
+    expect(refused.exitCode).toBe(3);
+    expect(refused.stderr.toString()).toContain("capshelf lock migrate");
+    expect(await file(lockPath).text()).toBe(legacyBytes);
   });
 
   test(

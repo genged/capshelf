@@ -136,12 +136,14 @@ describe("user-level inventory CLI", () => {
       join(project, ".capshelf", "capshelf.lock.json"),
       `${JSON.stringify(
         {
-          version: 2,
+          version: 4,
           items: {
             "data/skills/alpha": {
               source: "data",
-              sha: "abc",
-              sourceCommit: "abc1234",
+              sourcePinDigest: "a".repeat(64),
+              sourceCommit: "b".repeat(40),
+              needs: null,
+              needsSourceCommit: null,
               appliedAt: "now",
             },
           },
@@ -182,12 +184,14 @@ describe("user-level inventory CLI", () => {
       join(project, ".capshelf", "capshelf.lock.json"),
       `${JSON.stringify(
         {
-          version: 2,
+          version: 4,
           items: {
             "data/skills/alpha": {
               source: "data",
-              sha: "abc",
-              sourceCommit: "abc1234",
+              sourcePinDigest: "a".repeat(64),
+              sourceCommit: "b".repeat(40),
+              needs: null,
+              needsSourceCommit: null,
               appliedAt: "now",
             },
           },

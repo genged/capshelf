@@ -1,5 +1,6 @@
 import { file } from "bun";
 import { describe, expect, test } from "bun:test";
+import { currentPinDigest } from "./pin-fixtures";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
@@ -7,7 +8,6 @@ import {
   type FragmentOutputPlan,
 } from "../src/fragments";
 import { lastTouchingContentCommit } from "../src/git";
-import { shaOfGitVisibleItem } from "../src/master";
 import { materializeLockEntry } from "../src/materialize";
 import { dataKey } from "../src/lock";
 import {
@@ -152,7 +152,7 @@ describe("materialization transactions", () => {
       dataRepo,
       "skills/atomic",
     );
-    const sha = await shaOfGitVisibleItem(dataRepo, "skills/atomic");
+    const sha = await currentPinDigest(dataRepo, "skills", "atomic");
 
     for (const failure of ["read", "write", "chmod"] as const) {
       const project = await tempDir(`capshelf-stage-${failure}-`);
@@ -162,7 +162,7 @@ describe("materialization transactions", () => {
       await writeFile(join(installed, "old.txt"), "old extra\n");
       const entry = {
         source: "data" as const,
-        sha,
+        sourcePinDigest: sha,
         sourceCommit,
         appliedAt: "2026-08-03T00:00:00.000Z",
       };

@@ -10,7 +10,8 @@ import {
   shaOfCurrentSubagent,
   validateSubagentSource,
 } from "../src/subagents";
-import { createDataLockEntry, loadLock } from "../src/lock";
+import { assertLockV4, createDataLockEntry, loadLock } from "../src/lock";
+import { pinItemAtCommit } from "../src/pin";
 import { emptyNeeds } from "../src/metadata";
 import { commitAll, runInProcess, tempRepo } from "./cli-fixtures";
 
@@ -151,8 +152,12 @@ describe("subagent validation and identity", () => {
       "reviewer",
     );
     const firstEntry = createDataLockEntry({
-      sha: await shaOfCurrentSubagent(project, dataRepo, "reviewer"),
-      sourceCommit: firstCommit,
+      pin: await pinItemAtCommit(
+        dataRepo,
+        "subagents",
+        "reviewer",
+        firstCommit,
+      ),
       needs: emptyNeeds(),
       needsSourceCommit: firstCommit,
     });
@@ -174,8 +179,12 @@ describe("subagent validation and identity", () => {
       "reviewer",
     );
     const secondEntry = createDataLockEntry({
-      sha: await shaOfCurrentSubagent(project, dataRepo, "reviewer"),
-      sourceCommit: secondCommit,
+      pin: await pinItemAtCommit(
+        dataRepo,
+        "subagents",
+        "reviewer",
+        secondCommit,
+      ),
       needs: emptyNeeds(),
       needsSourceCommit: secondCommit,
     });
@@ -213,8 +222,12 @@ describe("subagent validation and identity", () => {
       "reviewer",
     );
     const firstEntry = createDataLockEntry({
-      sha: await shaOfCurrentSubagent(project, dataRepo, "reviewer"),
-      sourceCommit: firstCommit,
+      pin: await pinItemAtCommit(
+        dataRepo,
+        "subagents",
+        "reviewer",
+        firstCommit,
+      ),
       needs: emptyNeeds(),
       needsSourceCommit: firstCommit,
     });
@@ -242,8 +255,12 @@ describe("subagent validation and identity", () => {
       "reviewer",
     );
     const secondEntry = createDataLockEntry({
-      sha: await shaOfCurrentSubagent(project, dataRepo, "reviewer"),
-      sourceCommit: secondCommit,
+      pin: await pinItemAtCommit(
+        dataRepo,
+        "subagents",
+        "reviewer",
+        secondCommit,
+      ),
       needs: emptyNeeds(),
       needsSourceCommit: secondCommit,
     });
@@ -679,7 +696,7 @@ describe("subagent CLI lifecycle", () => {
     await commitAll(dataRepo, "break Codex reviewer upstream");
 
     const lockPath = join(project, ".capshelf", "capshelf.lock.json");
-    const lock = await loadLock(project);
+    const lock = assertLockV4(await loadLock(project), "test");
     const lockBefore = await file(lockPath).text();
     const claudeBefore = await file(canonicalClaude).text();
     const codexBefore = await file(canonicalCodex).text();

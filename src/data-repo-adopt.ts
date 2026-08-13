@@ -34,7 +34,12 @@ import {
   type ItemSnapshot,
   type PromoteResult,
 } from "./promote-core";
-import { adoptionSnapshot } from "./item-snapshot";
+import {
+  adoptionSnapshot,
+  namedFilesFromInstalledSnapshot,
+} from "./item-snapshot";
+import { assertCommittedTreeEqualsProject } from "./promote-proof";
+import type { PinnedSource } from "./pin";
 import { lstatOrNull } from "./fs-utils";
 import {
   CODEX_PROJECTION_ROOTS,
@@ -129,14 +134,29 @@ export async function adoptIntoDataRepo(
     }
     if (kind === "skills") await refreshCodexProjection(dataRepo);
   };
+  // PIN-11: `A`, captured from the project *before* the copy. The bytes are
+  // held so their Git ids can be computed after the commit, using whatever
+  // object-name width the committed tree turns out to use.
+  const projectSnapshot = await namedFilesFromInstalledSnapshot(snapshot);
   const expectedHead = await headSha(dataRepo).catch(() => null);
+  let pin: PinnedSource | undefined;
   const sourceCommit = await commitDataRepoMutation({
     dataRepo,
     expectedHead,
     ownedRoots: [repoRelPath, ...projectionRoots],
     message: opts.message ?? `capshelf: ${kind}/${name}`,
     mutate: mutateSource,
+    verify: async (commit) => {
+      pin = await assertCommittedTreeEqualsProject({
+        dataRepo,
+        kind,
+        name,
+        commit,
+        projectFiles: projectSnapshot,
+      });
+    },
   });
+  if (!pin) throw new Error(`expected a verified pin for ${kind}/${name}`);
 
   if (kind === "skills") {
     await normalizeAdoptedSkill(
@@ -154,8 +174,9 @@ export async function adoptIntoDataRepo(
     kind,
     name,
     action: "created",
-    sha: snapshot.sha,
+    sha: pin.sourcePinDigest,
     sourceCommit,
+    pin,
     committed: true,
     ...(runtimeWarnings.length > 0 && { runtimeWarnings }),
     ...(privateDotenvWarnings.length > 0 && { privateDotenvWarnings }),

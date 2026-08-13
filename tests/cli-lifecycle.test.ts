@@ -54,8 +54,8 @@ describe("cli integration", () => {
       "data/skills/hello"
     ];
     expect(lockedAfter.sourceCommit).toBe(newHead);
-    expect(lockedAfter.sha).not.toBe(lockedBefore.sha);
-    expect(lockedAfter.sha).toBe(item.sha);
+    expect(lockedAfter.sourcePinDigest).not.toBe(lockedBefore.sourcePinDigest);
+    expect(lockedAfter.sourcePinDigest).toBe(item.sha);
 
     const status = await run(["status", "skills/hello", "--json"]);
     expect(status.exitCode).toBe(0);
@@ -203,7 +203,7 @@ describe("cli integration", () => {
     const lock = await file(
       join(clone, ".capshelf", "capshelf.lock.json"),
     ).json();
-    expect(item.sha).toBe(lock.items["data/skills/hello"].sha);
+    expect(item.sha).toBe(lock.items["data/skills/hello"].sourcePinDigest);
     expect(
       await file(join(clone, ".agents", "skills", "hello", "SKILL.md")).text(),
     ).toBe("hello\n");
@@ -310,7 +310,7 @@ describe("cli integration", () => {
     const afterUpdate = (await file(lockPath).json()).items[
       "data/skills/hello"
     ];
-    expect(afterUpdate.sha).toBe(entry.sha);
+    expect(afterUpdate.sourcePinDigest).toBe(entry.sourcePinDigest);
     expect(afterUpdate.sourceCommit).toBe(entry.sourceCommit);
 
     const apply = await run(["apply", "skills/hello", "--json"]);

@@ -33,6 +33,7 @@ describe("apply destructive-change preflight", () => {
         item?: string;
         path: string;
         reason: string;
+        detail?: string;
         reviewCommand?: string;
       }>;
     };
@@ -41,6 +42,7 @@ describe("apply destructive-change preflight", () => {
       item: "project/data/skills/hello",
       path: ".agents/skills/hello/SKILL.md",
       reason: "managed_content",
+      detail: "content edit",
       reviewCommand: "capshelf status skills/hello --diff",
     });
     expect(await file(installed).text()).toBe("local edit\n");
@@ -174,6 +176,7 @@ describe("apply destructive-change preflight", () => {
           item?: string;
           path: string;
           reason: string;
+          detail?: string;
           reviewCommand?: string;
         }>;
       };
@@ -182,6 +185,7 @@ describe("apply destructive-change preflight", () => {
         item: "project/data/skills/hello",
         path: ".agents/skills/hello/sub-notes.md",
         reason: "extra_local_path",
+        detail: "not part of the item — reconciliation removes it",
         reviewCommand: "capshelf status skills/hello --diff",
       });
       expect(

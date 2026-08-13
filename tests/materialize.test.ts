@@ -14,6 +14,8 @@ import { tmpdir } from "node:os";
 import { dataKey } from "../src/lock";
 import { lastTouchingCommit } from "../src/git";
 import { shaOfItem } from "../src/master";
+import { currentPinDigest } from "./pin-fixtures";
+import { planCopyDirectoryDestruction } from "../src/destructive-preflight";
 import { materializeLockEntry } from "../src/materialize";
 import { CLI_INTEGRATION_TEST_TIMEOUT_MS } from "./cli-fixtures";
 import { inventoryLocalTree } from "../src/gitignore";
@@ -202,7 +204,7 @@ describe("materializeLockEntry", () => {
     await commitAll(dataRepo, "hello v1");
     const v1 = {
       source: "data" as const,
-      sha: await shaOfItem(dataItem),
+      sourcePinDigest: await currentPinDigest(dataRepo, "skills", "hello"),
       sourceCommit: await lastTouchingCommit(dataRepo, "skills/hello"),
       appliedAt: new Date().toISOString(),
     };
@@ -220,7 +222,7 @@ describe("materializeLockEntry", () => {
     await commitAll(dataRepo, "hello v2");
     const v2 = {
       source: "data" as const,
-      sha: await shaOfItem(dataItem),
+      sourcePinDigest: await currentPinDigest(dataRepo, "skills", "hello"),
       sourceCommit: await lastTouchingCommit(dataRepo, "skills/hello"),
       appliedAt: new Date().toISOString(),
     };
@@ -253,7 +255,7 @@ describe("materializeLockEntry", () => {
     await commitAll(dataRepo, "hello v1");
     const v1 = {
       source: "data" as const,
-      sha: await shaOfItem(dataItem),
+      sourcePinDigest: await currentPinDigest(dataRepo, "skills", "hello"),
       sourceCommit: await lastTouchingCommit(dataRepo, "skills/hello"),
       appliedAt: new Date().toISOString(),
     };
@@ -284,7 +286,7 @@ describe("materializeLockEntry", () => {
     await commitAll(dataRepo, "hello v2");
     const v2 = {
       source: "data" as const,
-      sha: await shaOfItem(dataItem),
+      sourcePinDigest: await currentPinDigest(dataRepo, "skills", "hello"),
       sourceCommit: await lastTouchingCommit(dataRepo, "skills/hello"),
       appliedAt: new Date().toISOString(),
     };
@@ -332,7 +334,7 @@ describe("materializeLockEntry", () => {
     await commitAll(dataRepo, "hello v1");
     const entry = {
       source: "data" as const,
-      sha: await shaOfItem(dataItem),
+      sourcePinDigest: await currentPinDigest(dataRepo, "skills", "hello"),
       sourceCommit: await lastTouchingCommit(dataRepo, "skills/hello"),
       appliedAt: new Date().toISOString(),
     };
@@ -363,7 +365,7 @@ describe("materializeLockEntry", () => {
     });
   });
 
-  test("refuses collisions between ignored local files and selected managed content", async () => {
+  test("a newly pinned path stops being local state, ignore rule or not", async () => {
     const dataRepo = await tempRepo();
     const project = await tempDir("capshelf-materialize-collision-");
     const dataItem = join(dataRepo, "skills", "hello");
@@ -375,7 +377,7 @@ describe("materializeLockEntry", () => {
     await commitAll(dataRepo, "hello v1");
     const v1 = {
       source: "data" as const,
-      sha: await shaOfItem(dataItem),
+      sourcePinDigest: await currentPinDigest(dataRepo, "skills", "hello"),
       sourceCommit: await lastTouchingCommit(dataRepo, "skills/hello"),
       appliedAt: new Date().toISOString(),
     };
@@ -396,25 +398,49 @@ describe("materializeLockEntry", () => {
     await commitAll(dataRepo, "hello v2");
     const v2 = {
       source: "data" as const,
-      sha: await shaOfItem(dataItem),
+      sourcePinDigest: await currentPinDigest(dataRepo, "skills", "hello"),
       sourceCommit: await lastTouchingCommit(dataRepo, "skills/hello"),
       appliedAt: new Date().toISOString(),
     };
 
-    await expect(
-      materializeLockEntry({
-        project,
-        dataRepo,
-        key: dataKey("skills", "hello"),
-        entry: v2,
-        previousEntry: v1,
+    // PIN-5: the pinned path set is always managed, so the item's own
+    // `cache/` ignore rule cannot keep `cache/state.db` as local state once
+    // the new pin includes it. Before PIN-5 the two populations could overlap
+    // and reconciliation refused outright; now the path is simply managed, the
+    // replacement writes it, and the loss reaches the ordinary consent
+    // boundary as `managed_content` rather than a hard error.
+    const planned = await planCopyDirectoryDestruction({
+      project,
+      dataRepo,
+      kind: "skills",
+      name: "hello",
+      key: dataKey("skills", "hello"),
+      scope: "project",
+      currentEntry: v1,
+      selectedEntry: v2,
+      reviewCommand: "capshelf status skills/hello --diff",
+    });
+    expect(planned.changes).toEqual([
+      {
         scope: "project",
-        dryRun: true,
-      }),
-    ).rejects.toThrow(/ignored local path cache\/state\.db collides/);
-    expect(await file(join(installed, "SKILL.md")).text()).toBe("hello v1\n");
+        item: `project/${dataKey("skills", "hello")}`,
+        path: ".agents/skills/hello/cache/state.db",
+        reason: "managed_content",
+        reviewCommand: "capshelf status skills/hello --diff",
+      },
+    ]);
+
+    await materializeLockEntry({
+      project,
+      dataRepo,
+      key: dataKey("skills", "hello"),
+      entry: v2,
+      previousEntry: v1,
+      scope: "project",
+    });
+    expect(await file(join(installed, "SKILL.md")).text()).toBe("hello v2\n");
     expect(await file(join(installed, "cache", "state.db")).text()).toBe(
-      "local state\n",
+      "managed state\n",
     );
   });
 
@@ -482,7 +508,7 @@ describe("materializeLockEntry", () => {
       key: dataKey("skills", "hello"),
       entry: {
         source: "data",
-        sha: "locked",
+        sourcePinDigest: "locked",
         sourceCommit: "commit",
         appliedAt: new Date().toISOString(),
         local: true,
@@ -555,14 +581,21 @@ describe("materialization source reads", () => {
       }
 
       const calls = (await file(log).text()).split("\n").filter(Boolean);
-      // One `git ls-tree` and one `git show` per file for the whole command.
-      // Plan, revalidate, and materialize used to re-read the tree each time,
-      // and each pass ran two planners: 14 full reads per copy item.
+      // One `git ls-tree` and one `git cat-file --batch` for the whole
+      // command, whatever the file count. Plan, revalidate, and materialize
+      // used to re-read the tree each time, and each pass ran two planners:
+      // 14 full reads per copy item. PIN-3 then replaced the per-file
+      // `git show` loop with a single batched object read, so the subprocess
+      // count no longer grows with the item.
       expect(calls.filter((line) => line.includes("ls-tree")).length).toBe(1);
-      expect(calls.filter((line) => line.includes(" show ")).length).toBe(
-        fileCount,
-      );
-      expect(calls.length).toBeLessThan(fileCount * 4);
+      expect(calls.filter((line) => line.includes(" show ")).length).toBe(0);
+      expect(
+        calls.filter((line) => line.includes("cat-file --batch")).length,
+      ).toBe(1);
+      // PIN-5 removes project Git from drift and reconciliation, so the
+      // project side contributes no subprocess at all here.
+      expect(calls.filter((line) => line.includes(project)).length).toBe(0);
+      expect(calls.length).toBeLessThan(fileCount);
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );

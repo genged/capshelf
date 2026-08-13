@@ -20,7 +20,12 @@ import {
   isMetadataSidecarPath,
   itemRepoRelPath,
 } from "./master";
-import type { CopyDirectoryItemKind, FragmentItemKind } from "./master";
+import type {
+  CopyDirectoryItemKind,
+  FragmentItemKind,
+  ItemKind,
+} from "./master";
+import { itemTreeEntriesAtCommit, sourcePinDigest } from "./pin";
 import { loadCommittedItemNeeds } from "./metadata";
 import { shaOfSubagentAtCommit } from "./subagents";
 
@@ -33,39 +38,39 @@ export async function verifyDataLockEntries(
     if (entry.source !== "data") continue;
     const parsed = parseLockKey(key);
     const relPath = itemRepoRelPath(parsed.kind, parsed.name);
-    let sha: string;
-    if (isFragmentItemKind(parsed.kind)) {
-      sha = await shaOfFragmentAtCommit(
-        dataRepo,
-        manifest,
-        parsed.kind,
-        parsed.name,
-        entry.sourceCommit,
+    if (entry.sourcePinDigest !== undefined) {
+      // Lock version 4: one `ls-tree` and a digest — no blob is read, and no
+      // working-tree state participates.
+      const digest = sourcePinDigest(
+        await itemTreeEntriesAtCommit(
+          dataRepo,
+          parsed.kind,
+          parsed.name,
+          entry.sourceCommit,
+        ).catch(() => {
+          throw new Error(
+            missingSourceCommitMessage(dataRepo, entry.sourceCommit, manifest),
+          );
+        }),
       );
-    } else if (isCopyDirectoryItemKind(parsed.kind)) {
-      sha = await shaOfDataAtCommit(
-        dataRepo,
-        manifest,
-        parsed.kind,
-        parsed.name,
-        entry.sourceCommit,
-      );
-    } else if (isCopyTargetFileItemKind(parsed.kind)) {
-      sha = await shaOfSubagentAtCommit(
-        "",
-        dataRepo,
-        parsed.name,
-        entry.sourceCommit,
-      );
+      if (digest !== entry.sourcePinDigest) {
+        throw new Error(
+          `source ${relPath} at ${entry.sourceCommit} pins to ${digest}, but lock expects ${entry.sourcePinDigest}`,
+        );
+      }
     } else {
-      throw new Error(
-        `lock verification has no strategy for ${parsed.kind}/${parsed.name}`,
+      const sha = await legacyShaAtCommit(
+        dataRepo,
+        manifest,
+        parsed.kind,
+        parsed.name,
+        entry.sourceCommit,
       );
-    }
-    if (sha !== entry.sha) {
-      throw new Error(
-        `source ${relPath} at ${entry.sourceCommit} hashes to ${sha}, but lock expects ${entry.sha}`,
-      );
+      if (sha !== entry.sha) {
+        throw new Error(
+          `source ${relPath} at ${entry.sourceCommit} hashes to ${sha}, but lock expects ${entry.sha}`,
+        );
+      }
     }
     if (entry.needs != null && entry.needsSourceCommit != null) {
       const needsSourceCommit = entry.needsSourceCommit;
@@ -86,6 +91,34 @@ export async function verifyDataLockEntries(
       }
     }
   }
+}
+
+/**
+ * The lock version 2/3 content hash of an item at a commit, per kind.
+ *
+ * Version 4 no longer uses this to decide anything, but `lock migrate` needs
+ * it once, to audit the old `sha` before discarding it: an entry whose legacy
+ * hash disagrees with the commit it names is exactly the failure this whole
+ * design exists to repair, and the migration reports it as
+ * `repaired-legacy-identity` rather than silently dropping the evidence.
+ */
+export async function legacyShaAtCommit(
+  dataRepo: string,
+  manifest: Manifest,
+  kind: ItemKind,
+  name: string,
+  commit: string,
+): Promise<string> {
+  if (isFragmentItemKind(kind)) {
+    return await shaOfFragmentAtCommit(dataRepo, manifest, kind, name, commit);
+  }
+  if (isCopyDirectoryItemKind(kind)) {
+    return await shaOfDataAtCommit(dataRepo, manifest, kind, name, commit);
+  }
+  if (isCopyTargetFileItemKind(kind)) {
+    return await shaOfSubagentAtCommit("", dataRepo, name, commit);
+  }
+  throw new Error(`lock verification has no strategy for ${kind}/${name}`);
 }
 
 async function shaOfFragmentAtCommit(

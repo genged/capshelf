@@ -131,11 +131,11 @@ describe("findMasterItemByRef", () => {
 
 describe("lockKeysForRef", () => {
   const lock: Lock = {
-    version: 3,
+    version: 4,
     items: {
       "data/skills/hello": {
         source: "data",
-        sha: "abc",
+        sourcePinDigest: "abc",
         sourceCommit: "def",
         appliedAt: "2026-04-30T00:00:00.000Z",
       },
@@ -176,11 +176,11 @@ describe("lockKeysForRef", () => {
 
 describe("lockKeyForRef", () => {
   const lock: Lock = {
-    version: 3,
+    version: 4,
     items: {
       "data/skills/shared": {
         source: "data",
-        sha: "abc",
+        sourcePinDigest: "abc",
         sourceCommit: "def",
         appliedAt: "2026-04-30T00:00:00.000Z",
       },

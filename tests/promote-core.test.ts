@@ -17,14 +17,19 @@ import {
   expectedAdoptionPath,
 } from "../src/promote-core";
 import { dataKey } from "../src/lock";
-import type { DataLockEntry, Lock, LockEntry } from "../src/lock";
+import type {
+  DataLockEntry,
+  DataLockEntryV4,
+  Lock,
+  LockEntry,
+  LockV4,
+} from "../src/lock";
 import {
   headSha,
   lastTouchingCommit,
   lastTouchingContentCommit,
 } from "../src/git";
-import { shaOfGitVisibleItem } from "../src/master";
-import { shaOfInstalled } from "../src/installed";
+import { currentPinDigest, installedPinDigestFor } from "./pin-fixtures";
 import {
   promoteFragmentSource,
   syncTrackedIntoDataRepo,
@@ -40,8 +45,8 @@ import { upstreamFactsForItem } from "../src/upstream-facts";
 
 const dataEntry: DataLockEntry = {
   source: "data",
-  sha: "sha1",
-  sourceCommit: "commit1",
+  sourcePinDigest: "a".repeat(64),
+  sourceCommit: "c".repeat(40),
   appliedAt: "t",
 };
 
@@ -53,9 +58,12 @@ describe("dataEntriesMatch", () => {
   });
 
   test("false when sha differs", () => {
-    expect(dataEntriesMatch(dataEntry, { ...dataEntry, sha: "sha2" })).toBe(
-      false,
-    );
+    expect(
+      dataEntriesMatch(dataEntry, {
+        ...dataEntry,
+        sourcePinDigest: "b".repeat(64),
+      }),
+    ).toBe(false);
   });
 
   test("false when sourceCommit differs", () => {
@@ -122,8 +130,8 @@ async function commitAll(repo: string, message: string): Promise<void> {
   await $`git -C ${repo} commit -qm ${message}`.quiet();
 }
 
-function lockWith(entry: DataLockEntry): Lock {
-  return { version: 3, items: { [dataKey("skills", "hello")]: entry } };
+function lockWith(entry: DataLockEntryV4): LockV4 {
+  return { version: 4, items: { [dataKey("skills", "hello")]: entry } };
 }
 
 async function promotionSafetyFixture(prefix: string): Promise<{
@@ -131,10 +139,10 @@ async function promotionSafetyFixture(prefix: string): Promise<{
   project: string;
   dataItem: string;
   installed: string;
-  lock: Lock;
+  lock: LockV4;
   headBefore: string;
   indexBefore: Buffer;
-  lockBefore: Lock;
+  lockBefore: LockV4;
 }> {
   const dataRepo = await tempRepo(`${prefix}-data-`);
   const project = await tempRepo(`${prefix}-project-`);
@@ -152,7 +160,7 @@ async function promotionSafetyFixture(prefix: string): Promise<{
 
   const lock = lockWith({
     source: "data",
-    sha: await shaOfGitVisibleItem(dataRepo, "skills/hello"),
+    sourcePinDigest: await currentPinDigest(dataRepo, "skills", "hello"),
     sourceCommit: await lastTouchingContentCommit(dataRepo, "skills/hello"),
     appliedAt: "2026-08-01T00:00:00.000Z",
   });
@@ -203,7 +211,7 @@ describe("syncTrackedIntoDataRepo sidecar preservation", () => {
     await writeFile(join(dataItem, "SKILL.md"), "hello v1\n");
     await writeFile(join(dataItem, ".capshelf.yml"), "tags: [upstream]\n");
     await commitAll(dataRepo, "hello v1");
-    const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+    const lockedSha = await currentPinDigest(dataRepo, "skills", "hello");
     const sourceCommit = await lastTouchingContentCommit(
       dataRepo,
       "skills/hello",
@@ -215,7 +223,7 @@ describe("syncTrackedIntoDataRepo sidecar preservation", () => {
 
     const lock = lockWith({
       source: "data",
-      sha: lockedSha,
+      sourcePinDigest: lockedSha,
       sourceCommit,
       appliedAt: "2026-06-01T00:00:00.000Z",
     });
@@ -254,7 +262,7 @@ describe("syncTrackedIntoDataRepo sidecar preservation", () => {
     await writeFile(join(dataItem, "SKILL.md"), "hello v1\n");
     await writeFile(join(dataItem, ".capshelf.yml"), "tags: [upstream]\n");
     await commitAll(dataRepo, "hello v1");
-    const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+    const lockedSha = await currentPinDigest(dataRepo, "skills", "hello");
     const sourceCommit = await lastTouchingContentCommit(
       dataRepo,
       "skills/hello",
@@ -267,7 +275,7 @@ describe("syncTrackedIntoDataRepo sidecar preservation", () => {
 
     const lock = lockWith({
       source: "data",
-      sha: lockedSha,
+      sourcePinDigest: lockedSha,
       sourceCommit,
       appliedAt: "2026-06-01T00:00:00.000Z",
     });
@@ -311,7 +319,7 @@ describe("syncTrackedIntoDataRepo sidecar preservation", () => {
 
     const lock = lockWith({
       source: "data",
-      sha: "stale-sha-000",
+      sourcePinDigest: "stale-sha-000",
       sourceCommit: contentCommit,
       appliedAt: "2026-06-01T00:00:00.000Z",
     });
@@ -343,7 +351,7 @@ describe("syncTrackedIntoDataRepo sidecar preservation", () => {
     await mkdir(dataItem, { recursive: true });
     await writeFile(join(dataItem, "SKILL.md"), "hello v1\n");
     await commitAll(dataRepo, "hello v1");
-    const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+    const lockedSha = await currentPinDigest(dataRepo, "skills", "hello");
     const sourceCommit = await lastTouchingContentCommit(
       dataRepo,
       "skills/hello",
@@ -356,7 +364,7 @@ describe("syncTrackedIntoDataRepo sidecar preservation", () => {
 
     const lock = lockWith({
       source: "data",
-      sha: lockedSha,
+      sourcePinDigest: lockedSha,
       sourceCommit,
       appliedAt: "2026-06-01T00:00:00.000Z",
     });
@@ -374,10 +382,15 @@ describe("syncTrackedIntoDataRepo sidecar preservation", () => {
     // post-promote upstream sha and the installed-copy sha, so status stays
     // ok instead of reporting permanent drift.
     expect(result.sha).toBe(
-      await shaOfGitVisibleItem(dataRepo, "skills/hello"),
+      await currentPinDigest(dataRepo, "skills", "hello"),
     );
-    expect(await shaOfInstalled(project, "skills", "hello")).toBe(result.sha);
-    expect(lock.items[dataKey("skills", "hello")]?.sha).toBe(result.sha);
+    expect(
+      await installedPinDigestFor(project, dataRepo, "skills", "hello"),
+    ).toBe(result.sha);
+    expect(
+      dataEntryOrThrow(lock.items[dataKey("skills", "hello")], "test")
+        .sourcePinDigest,
+    ).toBe(result.sha);
     // The authored sidecar still traveled up (the files list is unfiltered).
     expect(await file(join(dataItem, ".capshelf.yml")).text()).toBe(
       "tags: [authored]\n",
@@ -427,9 +440,15 @@ describe("syncTrackedIntoDataRepo promotion safety", () => {
         error: /installed snapshot changed while it was being read/,
       },
       {
+        // The refusal moved but did not weaken. This used to be caught by a
+        // destination-side hash of the data repo worktree taken after the
+        // copy; PIN-11 removed that check because it compared one working-tree
+        // hash against another and a `pre-commit` hook could change both. The
+        // race is now caught by the post-copy installed-snapshot comparison
+        // before anything is committed, and by `A == B` after it.
         name: "before canonical copy",
         hook: "beforeCanonicalCopy",
-        error: /copied content does not match the installed snapshot/,
+        error: /installed snapshot changed during promotion/,
       },
       {
         name: "after canonical copy",
@@ -487,7 +506,7 @@ describe("syncTrackedIntoDataRepo promotion safety", () => {
 
     const lock = lockWith({
       source: "data",
-      sha: await shaOfGitVisibleItem(dataRepo, "skills/hello"),
+      sourcePinDigest: await currentPinDigest(dataRepo, "skills", "hello"),
       sourceCommit: await lastTouchingContentCommit(dataRepo, "skills/hello"),
       appliedAt: "2026-08-01T00:00:00.000Z",
     });
@@ -526,7 +545,7 @@ describe("syncTrackedIntoDataRepo promotion safety", () => {
 
     const lock = lockWith({
       source: "data",
-      sha: await shaOfGitVisibleItem(dataRepo, "skills/hello"),
+      sourcePinDigest: await currentPinDigest(dataRepo, "skills", "hello"),
       sourceCommit: await lastTouchingContentCommit(dataRepo, "skills/hello"),
       appliedAt: "2026-08-01T00:00:00.000Z",
     });
@@ -657,7 +676,7 @@ describe("adoptIntoDataRepo sidecar handling", () => {
 async function staleFixture(): Promise<{
   dataRepo: string;
   project: string;
-  lock: Lock;
+  lock: LockV4;
   lockedSha: string;
   upstreamCommit: string;
   upstreamSha: string;
@@ -668,7 +687,7 @@ async function staleFixture(): Promise<{
   await mkdir(dataItem, { recursive: true });
   await writeFile(join(dataItem, "SKILL.md"), "hello v1\n");
   await commitAll(dataRepo, "hello v1");
-  const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+  const lockedSha = await currentPinDigest(dataRepo, "skills", "hello");
   const lockedCommit = await lastTouchingContentCommit(
     dataRepo,
     "skills/hello",
@@ -681,7 +700,7 @@ async function staleFixture(): Promise<{
     dataRepo,
     "skills/hello",
   );
-  const upstreamSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+  const upstreamSha = await currentPinDigest(dataRepo, "skills", "hello");
 
   // This project edited from the old base without updating first.
   const installed = join(project, ".agents", "skills", "hello");
@@ -690,7 +709,7 @@ async function staleFixture(): Promise<{
 
   const lock = lockWith({
     source: "data",
-    sha: lockedSha,
+    sourcePinDigest: lockedSha,
     sourceCommit: lockedCommit,
     appliedAt: "2026-06-01T00:00:00.000Z",
     label: "v1",
@@ -701,7 +720,7 @@ async function staleFixture(): Promise<{
 async function subsumedMergeFixture(): Promise<{
   dataRepo: string;
   project: string;
-  lock: Lock;
+  lock: LockV4;
   installed: string;
   lockedCommit: string;
   upstreamCommit: string;
@@ -715,7 +734,7 @@ async function subsumedMergeFixture(): Promise<{
   await writeFile(join(dataItem, "local.txt"), "value=base\n");
   await writeFile(join(dataItem, "upstream.txt"), "value=base\n");
   await commitAll(dataRepo, "base");
-  const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+  const lockedSha = await currentPinDigest(dataRepo, "skills", "hello");
   const lockedCommit = await lastTouchingContentCommit(
     dataRepo,
     "skills/hello",
@@ -727,7 +746,7 @@ async function subsumedMergeFixture(): Promise<{
     dataRepo,
     "skills/hello",
   );
-  const upstreamSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+  const upstreamSha = await currentPinDigest(dataRepo, "skills", "hello");
   const installedDir = join(project, ".agents", "skills", "hello");
   const installed = join(installedDir, "local.txt");
   await mkdir(installedDir, {
@@ -741,7 +760,7 @@ async function subsumedMergeFixture(): Promise<{
     project,
     lock: lockWith({
       source: "data",
-      sha: lockedSha,
+      sourcePinDigest: lockedSha,
       sourceCommit: lockedCommit,
       appliedAt: "2026-06-01T00:00:00.000Z",
       label: "v1",
@@ -758,7 +777,7 @@ async function disjointMergeFixture(prefix: string): Promise<{
   project: string;
   dataItem: string;
   installed: string;
-  lock: Lock;
+  lock: LockV4;
   lockedCommit: string;
   upstreamHead: string;
 }> {
@@ -768,7 +787,7 @@ async function disjointMergeFixture(prefix: string): Promise<{
   await mkdir(dataItem, { recursive: true });
   await writeFile(join(dataItem, "SKILL.md"), "base\n");
   await commitAll(dataRepo, "base");
-  const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+  const lockedSha = await currentPinDigest(dataRepo, "skills", "hello");
   const lockedCommit = await lastTouchingContentCommit(
     dataRepo,
     "skills/hello",
@@ -787,7 +806,7 @@ async function disjointMergeFixture(prefix: string): Promise<{
     installed,
     lock: lockWith({
       source: "data",
-      sha: lockedSha,
+      sourcePinDigest: lockedSha,
       sourceCommit: lockedCommit,
       appliedAt: "2026-06-01T00:00:00.000Z",
     }),
@@ -805,7 +824,7 @@ describe("stale-promote guard (copy items)", () => {
     await writeFile(join(dataItem, "SKILL.md"), "base\n");
     await writeFile(join(dataItem, "delete.txt"), "remove me\n");
     await commitAll(dataRepo, "base");
-    const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+    const lockedSha = await currentPinDigest(dataRepo, "skills", "hello");
     const lockedCommit = await lastTouchingContentCommit(
       dataRepo,
       "skills/hello",
@@ -821,7 +840,7 @@ describe("stale-promote guard (copy items)", () => {
     await rm(join(installed, "delete.txt"));
     const lock = lockWith({
       source: "data",
-      sha: lockedSha,
+      sourcePinDigest: lockedSha,
       sourceCommit: lockedCommit,
       appliedAt: "2026-06-01T00:00:00.000Z",
     });
@@ -855,7 +874,7 @@ describe("stale-promote guard (copy items)", () => {
     await writeFile(join(dataItem, "SKILL.md"), "base\n");
     await writeFile(join(dataItem, ".capshelf.yml"), "tags: [base]\n");
     await commitAll(dataRepo, "base");
-    const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+    const lockedSha = await currentPinDigest(dataRepo, "skills", "hello");
     const lockedCommit = await lastTouchingContentCommit(
       dataRepo,
       "skills/hello",
@@ -875,7 +894,7 @@ describe("stale-promote guard (copy items)", () => {
     await writeFile(join(installed, ".venv", "generated.txt"), "generated\n");
     const lock = lockWith({
       source: "data",
-      sha: lockedSha,
+      sourcePinDigest: lockedSha,
       sourceCommit: lockedCommit,
       appliedAt: "2026-06-01T00:00:00.000Z",
       label: "v1",
@@ -920,7 +939,10 @@ describe("stale-promote guard (copy items)", () => {
         .trim()
         .split(" "),
     ).toHaveLength(2);
-    expect(lock.items[dataKey("skills", "hello")]?.sha).toBe(result.sha);
+    expect(
+      dataEntryOrThrow(lock.items[dataKey("skills", "hello")], "test")
+        .sourcePinDigest,
+    ).toBe(result.sha);
 
     const mergedHead = await headSha(dataRepo);
     lock.items[dataKey("skills", "hello")] = originalEntry;
@@ -1033,7 +1055,10 @@ describe("stale-promote guard (copy items)", () => {
     expect(result.committed).toBe(false);
     expect(await headSha(f.dataRepo)).toBe(headBefore);
     expect(persisted).toBe(0);
-    expect(f.lock.items[dataKey("skills", "hello")]?.sha).toBe(f.upstreamSha);
+    expect(
+      dataEntryOrThrow(f.lock.items[dataKey("skills", "hello")], "test")
+        .sourcePinDigest,
+    ).toBe(f.upstreamSha);
   });
 
   test("--merge convergence reconciles and persists the lock without a commit", async () => {
@@ -1067,7 +1092,10 @@ describe("stale-promote guard (copy items)", () => {
         join(f.project, ".agents", "skills", "hello", "upstream.txt"),
       ).text(),
     ).toBe("value=upstream\n");
-    expect(f.lock.items[dataKey("skills", "hello")]?.sha).toBe(f.upstreamSha);
+    expect(
+      dataEntryOrThrow(f.lock.items[dataKey("skills", "hello")], "test")
+        .sourcePinDigest,
+    ).toBe(f.upstreamSha);
   });
 
   test("--merge convergence rolls installed content and lock state back when persistence fails", async () => {
@@ -1185,7 +1213,7 @@ describe("stale-promote guard (copy items)", () => {
     await mkdir(dataItem, { recursive: true });
     await writeFile(join(dataItem, "SKILL.md"), "base\n");
     await commitAll(dataRepo, "item base");
-    const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+    const lockedSha = await currentPinDigest(dataRepo, "skills", "hello");
     await writeFile(join(dataItem, "upstream.txt"), "upstream\n");
     await commitAll(dataRepo, "upstream");
     const installed = join(project, ".agents", "skills", "hello");
@@ -1193,7 +1221,7 @@ describe("stale-promote guard (copy items)", () => {
     await writeFile(join(installed, "SKILL.md"), "local\n");
     const lock = lockWith({
       source: "data",
-      sha: lockedSha,
+      sourcePinDigest: lockedSha,
       sourceCommit: missingItemCommit,
       appliedAt: "2026-06-01T00:00:00.000Z",
     });
@@ -1381,7 +1409,10 @@ describe("stale-promote guard (copy items)", () => {
     expect(await $`git -C ${f.dataRepo} rev-parse HEAD`.quiet().text()).toBe(
       headBefore,
     );
-    expect(f.lock.items[dataKey("skills", "hello")]?.sha).toBe(f.lockedSha);
+    expect(
+      dataEntryOrThrow(f.lock.items[dataKey("skills", "hello")], "test")
+        .sourcePinDigest,
+    ).toBe(f.lockedSha);
   });
 
   test("local-scope refusals preserve scope and warn that update replaces untracked edits", async () => {
@@ -1429,7 +1460,10 @@ describe("stale-promote guard (copy items)", () => {
     expect(
       await file(join(f.dataRepo, "skills", "hello", "SKILL.md")).text(),
     ).toBe("hello v2 local edit\n");
-    expect(f.lock.items[dataKey("skills", "hello")]?.sha).toBe(result.sha);
+    expect(
+      dataEntryOrThrow(f.lock.items[dataKey("skills", "hello")], "test")
+        .sourcePinDigest,
+    ).toBe(result.sha);
   });
 
   test("staleOverride is absent when --stale-ok is passed but nothing is stale", async () => {
@@ -1444,7 +1478,7 @@ describe("stale-promote guard (copy items)", () => {
     await writeFile(join(installed, "SKILL.md"), "hello v2 local edit\n");
     const lock = lockWith({
       source: "data",
-      sha: await shaOfGitVisibleItem(dataRepo, "skills/hello"),
+      sourcePinDigest: await currentPinDigest(dataRepo, "skills", "hello"),
       sourceCommit: await lastTouchingContentCommit(dataRepo, "skills/hello"),
       appliedAt: "2026-06-01T00:00:00.000Z",
     });
@@ -1526,7 +1560,7 @@ describe("stale-promote guard (copy items)", () => {
     const entry = f.lock.items[dataKey("skills", "hello")];
     expect(entry).toEqual({
       source: "data",
-      sha: f.upstreamSha,
+      sourcePinDigest: f.upstreamSha,
       sourceCommit: f.upstreamCommit,
       appliedAt: expect.any(String),
       label: "v1",
@@ -1541,7 +1575,7 @@ describe("stale-promote guard (fragments)", () => {
   async function fragmentStaleFixture(): Promise<{
     dataRepo: string;
     project: string;
-    lock: Lock;
+    lock: LockV4;
     lockedSha: string;
   }> {
     const dataRepo = await tempRepo("capshelf-frag-stale-data-");
@@ -1553,18 +1587,18 @@ describe("stale-promote guard (fragments)", () => {
       JSON.stringify({ theme: "v1" }),
     );
     await commitAll(dataRepo, "theme v1");
-    const lockedSha = await shaOfFragmentItem(dataRepo, "settings", "theme");
+    const lockedSha = await currentPinDigest(dataRepo, "settings", "theme");
     const lockedCommit = await lastTouchingFragmentCommit(
       dataRepo,
       "settings",
       "theme",
     );
     const lock: Lock = {
-      version: 3,
+      version: 4,
       items: {
         [dataKey("settings", "theme")]: {
           source: "data",
-          sha: lockedSha,
+          sourcePinDigest: lockedSha,
           sourceCommit: lockedCommit,
           appliedAt: "2026-06-01T00:00:00.000Z",
         },
@@ -1606,7 +1640,10 @@ describe("stale-promote guard (fragments)", () => {
     expect(await $`git -C ${f.dataRepo} rev-parse HEAD`.quiet().text()).toBe(
       headBefore,
     );
-    expect(f.lock.items[dataKey("settings", "theme")]?.sha).toBe(f.lockedSha);
+    expect(
+      dataEntryOrThrow(f.lock.items[dataKey("settings", "theme")], "test")
+        .sourcePinDigest,
+    ).toBe(f.lockedSha);
 
     // --stale-ok bypasses it and records the override.
     const result = await promoteFragmentSource(
@@ -1672,13 +1709,24 @@ describe("upstreamFactsForItem", () => {
     await writeFile(join(dataItem, "SKILL.md"), "hello v1\n");
     await commitAll(dataRepo, "hello v1");
 
-    expect(await upstreamFactsForItem(dataRepo, "skills", "hello")).toEqual({
-      upstreamSha: await shaOfGitVisibleItem(dataRepo, "skills/hello"),
+    const clean = {
+      upstreamSha: await currentPinDigest(dataRepo, "skills", "hello"),
       upstreamDirty: false,
       sourceCommit: await lastTouchingContentCommit(dataRepo, "skills/hello"),
-    });
+    };
+    expect(
+      await upstreamFactsForItem(dataRepo, "skills", "hello", "tree"),
+    ).toEqual(clean);
 
+    // Under tree identity a dirty working copy no longer suppresses the
+    // answer: the identity comes from the commit, so what consumers would
+    // receive is unchanged and the divergence is advisory. The legacy
+    // `worktree` model still nulls it out, because there the working copy
+    // *was* the identity.
     await writeFile(join(dataItem, "SKILL.md"), "dirty\n");
+    expect(
+      await upstreamFactsForItem(dataRepo, "skills", "hello", "tree"),
+    ).toEqual({ ...clean, upstreamDirty: true });
     expect(await upstreamFactsForItem(dataRepo, "skills", "hello")).toEqual({
       upstreamSha: null,
       upstreamDirty: true,

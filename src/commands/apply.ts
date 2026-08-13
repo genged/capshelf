@@ -15,6 +15,7 @@ import {
 } from "../destructive-preflight";
 import { parseLockKey } from "../installed";
 import { PRODUCT_NAME } from "../identity";
+import { entryIdentity } from "../lock";
 import type { Lock } from "../lock";
 import type { Manifest } from "../manifest";
 import { assertNoScopeCollisions } from "../status-core";
@@ -324,7 +325,7 @@ export function registerApply(program: Command): void {
                   name: parsed.name,
                   action: applied.changed ? "reconciled" : "already-current",
                   path: applied.paths.join(", "),
-                  sha: entry.sha,
+                  sha: entryIdentity(entry),
                 }),
               );
               continue;

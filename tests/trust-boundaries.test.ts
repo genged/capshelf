@@ -71,7 +71,7 @@ describe("trust boundaries", () => {
         key: dataKey("skills", "unsafe"),
         entry: {
           source: "data",
-          sha: "not-read",
+          sourcePinDigest: "not-read",
           sourceCommit: commit,
           appliedAt: "2026-08-03T00:00:00.000Z",
         },

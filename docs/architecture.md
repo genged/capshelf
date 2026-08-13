@@ -250,27 +250,37 @@ scheme/host URLs all canonicalize to `https://github.com/org/repo`. The scheme
 and host are lowercased, credentials and one trailing `.git` are stripped, and
 path case is preserved.
 
-## Lock schema (v3)
+## Lock schema (v4)
 
 Each entry is a discriminated union on `source`:
 
 ```ts
-data:   { source: "data",   sha, sourceCommit, needs, needsSourceCommit, appliedAt, label? }
-system: { source: "system", sha, cliVersion,   appliedAt }
+data:   { source: "data",   sourcePinDigest, sourceCommit, needs, needsSourceCommit, appliedAt, label? }
+system: { source: "system", sha,             cliVersion,   appliedAt }
 ```
+
+The lock version describes **every entry in the file**. Version 4 has no
+legacy data-entry variant: a union would keep two identity models alive in
+every consumer until the last entry happened to re-pin, and a project holding
+one unreachable historical commit could stay mixed forever. `capshelf lock
+migrate` builds a complete version-4 candidate for the project lock and the
+local lock, or writes nothing.
 
 Lock keys are prefixed, for example `data/skills/<name>`,
 `data/pi-extensions/<name>`, `data/settings/<name>`, `data/mcp/<name>`,
 `data/codex-config/<name>`, `data/subagents/<name>`, or
 `system/skills/<name>`. This avoids collisions and makes the source obvious.
 
-- `sha` — content hash (identity).
+- `sourcePinDigest` — the item's identity: sha-256 over its committed tree
+  entries, sorted by item-relative name, each contributing `(name, mode,
+  blobId)`. Computing it reads no file content, so nothing outside the commit
+  can change it. See *Identity is the Git tree* below.
 - `sourceCommit` — for data items, the **last-touching commit** in the data repo (`git log -1 --format=%H -- <path>`). Fragment items use only canonical source files such as `settings/<name>/settings.json`, `mcp/<name>/claude.json`, `mcp/<name>/codex.toml`, and `codex/config/<name>/config.toml`. Subagents watch both canonical target pathspecs so a target deletion is pinned while metadata-only commits remain invisible. Lets `apply`/`revert` retrieve historical content via `git show <commit>:<path>` even if the data repo's HEAD has moved past the locked version.
 - `needs` / `needsSourceCommit` — a normalized snapshot of the item's declared
   runtime requirements and the data-repo commit it came from. This provenance
   is independent of the sidecar-blind content pin. Version 2 locks load with
-  both fields set to `null` (unknown) and are written as version 3 only by a
-  command already authorized to save the lock.
+  both fields set to `null` (unknown); only `lock migrate` writes them
+  forward.
 - `cliVersion` — for system items, the capshelf binary version that wrote the entry. Drives "update available" detection when the binary upgrades. Provenance only, never a retrieval handle: the binary carries exactly one copy of the bundled tree, so a system entry's `sha` records what capshelf last wrote rather than content it can read back, and superseded bundled content is unrecoverable by design. `update` re-pins a system item to the bundle the running binary carries; `apply` refuses an entry whose bundled content the binary no longer has.
 
 CLI-only changes in the data repo (e.g. someone edits `src/foo.ts`) don't bump `sourceCommit` for unaffected data items — `lastTouchingCommit` is path-scoped.
@@ -364,13 +374,83 @@ only after all target writes succeed. Configuration maps use own data
 properties throughout merge and serialization so valid keys such as
 `__proto__` and `constructor` are not lost or mistaken for inherited values.
 
-## Versioning: content-hash + last-touching-commit
+## Identity is the Git tree
 
-- Each item has a `sha` over its sorted file list. Truncated `sha256`, 12 hex chars.
-- Copy-item executable mode is compared separately as normalized Git mode
-  `100644` or `100755`; it is intentionally not folded into the current hash
-  format.
-- For data items, the lockfile also records `sourceCommit` — the data repo commit whose tree at this item's path matches the locked sha.
+Every consumer of a data lock entry depends on one claim: the identity it
+records is what the commit it names holds. Before version 4 nothing verified
+that where entries were written — identity came from the data repo's *working
+tree* and the commit from `git log -1`, with a clean `git status` treated as
+proof the two agreed. Git's cleanliness is not byte equality, so a clean
+filter, an index bit, or a sparse checkout produced a lock that reported
+`up-to-date` forever and that no later command could apply.
+
+Version 4 removes the second input set instead of policing it:
+
+```
+sourcePinDigest = sha256 over sorted (name, mode, blobId)     from one ls-tree
+```
+
+- `add` materializes from the commit's blobs, exactly as `apply` does. The
+  asymmetry that made the original defect invisible from inside a project is
+  gone: both routes read the same objects.
+- Mode is inside identity, where it used to sit outside. An executable-bit flip
+  is a real content change, and `ls-tree` already carries the mode.
+- Hash width is inferred from the object names `ls-tree` returns — 40 hex for
+  SHA-1, 64 for SHA-256 — so a SHA-256 repository needs no configuration.
+- The working tree is an identity input in exactly one command, `promote`,
+  which is the only place a human can act on the answer. There it is proved:
+  the project snapshot `A` is compared against the tree the commit produced
+  (`B`) *inside the transaction*, so a `pre-commit` hook or a clean filter that
+  rewrote the content between the copy and the commit unwinds the promotion
+  rather than publishing bytes the project never held.
+- A managed path that declares an external filter driver is refused at pin
+  time, in every clone. Git stores a placeholder for such a path, so faithful
+  delivery would deliver the placeholder.
+
+### Git execution profiles
+
+Every Git call names one execution profile, because a repository path is not a
+complete safety policy:
+
+| profile | binding | policy |
+|---|---|---|
+| `source-read` | `-C <dataRepo>` | replacement refs disabled; repository-selecting environment stripped |
+| `source-write` | `-C <dataRepo>` | fixed binding; index and hook policy owned by the caller's transaction |
+| `project-policy` | `-C <project>` | fixed binding; project ignore and tracking configuration retained |
+| `repository-free` | explicit cwd | repository-selecting environment stripped; transport configuration retained |
+| `isolated-diff` | disposable directory | neutral attributes and line endings; no external diff or textconv |
+| `isolated-merge` | disposable repository | neutral config, hooks, attributes, and environment |
+
+There is no default and no fallback to the process working directory. A
+nullable repository argument could not express this: `null` meant both "no
+repository needed" and "use whatever repository the current directory is in",
+which is why `status --diff` once rendered its answer under the user's own
+`core.autocrlf` and reported nothing for the very difference being
+investigated.
+
+Git 2.40.0 is a runtime dependency, because filter attributes are read from the
+pinned commit with `check-attr --source`. The query is additionally bound to a
+throwaway bare repository that reaches the real objects through
+`objects/info/alternates`, because `$GIT_DIR/info/attributes` still outranks a
+commit's own `.gitattributes` and would otherwise let a machine-local file
+decide whether a pin is portable.
+
+### Project Git never defines managed content
+
+The consuming project may be a plain directory, and managed paths may be
+untracked, gitignored, or deliberately excluded. Project Git therefore may not
+decide an item's identity, whether an install has drifted, or which bytes a
+write reconciles to. Those are filesystem work over the pinned path set.
+
+It keeps four jobs, all of them about what the *author* can see and publish:
+refusing a `--local` install that would shadow a tracked file, writing
+`.git/info/exclude`, classifying **unpinned** extras inside a project-scope
+item with the complete ignore stack, and gating `promote` on a file the project
+ignores.
+
+## Versioning: pin digest + last-touching-commit
+
+- For data items, the lockfile records `sourceCommit` — the data repo commit whose tree at this item's path the digest was taken from.
 - For system items, the lockfile records `cliVersion` — the capshelf binary version that produced the bundled content. It is a label, not a retrieval handle; see Lock above.
 - Optional human `label` (e.g. `"v3"`) is decoration, not identity.
 

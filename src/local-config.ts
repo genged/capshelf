@@ -11,7 +11,7 @@ import { assertNever, isSafeItemName } from "./assert";
 import type { ItemKind } from "./master";
 import {
   gitInfoExcludePath,
-  gitTry,
+  projectPolicy,
   isGitWorkTreeRoot,
   literalPathspec,
 } from "./git";
@@ -250,7 +250,11 @@ async function trackedPathExists(
   repo: string,
   relPath: string,
 ): Promise<boolean> {
-  const r = await gitTry(repo, ["ls-files", "--", literalPathspec(relPath)]);
+  const r = await projectPolicy(repo, [
+    "ls-files",
+    "--",
+    literalPathspec(relPath),
+  ]);
   if (r.exitCode !== 0) return false;
   return r.stdout.toString().trim().length > 0;
 }

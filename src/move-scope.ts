@@ -2,7 +2,8 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { isCopyDirectoryItemKind, itemRepoRelPath } from "./master";
 import type { ItemKind } from "./master";
-import { dataKey } from "./lock";
+import { dataKey, entryIdentity } from "./lock";
+import { installedTreeIdentity } from "./install-identity";
 import type { DataLockEntry } from "./lock";
 import { CheckFailedError, NotFoundError, PreconditionError } from "./errors";
 import {
@@ -72,7 +73,7 @@ export async function moveScope(
         name,
         from,
         to,
-        sha: entry.sha,
+        sha: entryIdentity(entry),
         sourceCommit: entry.sourceCommit,
         alreadyCurrent: true,
       };
@@ -95,14 +96,27 @@ export async function moveScope(
     );
   }
 
-  const currentSnapshot = await installedSnapshot(
-    project,
-    kind,
-    name,
-    localEntry ? "local" : from,
-  );
-  const currentSha = currentSnapshot?.sha ?? null;
-  if (currentSha !== sourceEntry.sha) {
+  // PIN-5: the drift gate is filesystem work over the pinned path set, not a
+  // Git-visible snapshot of the project. A `--local` item is excluded from
+  // project Git by capshelf itself, so the old snapshot hashed it as empty.
+  const currentSha =
+    sourceEntry.sourcePinDigest !== undefined
+      ? await installedTreeIdentity(
+          project,
+          dataRepo,
+          kind,
+          name,
+          sourceEntry.sourceCommit,
+        )
+      : ((
+          await installedSnapshot(
+            project,
+            kind,
+            name,
+            localEntry ? "local" : from,
+          )
+        )?.sha ?? null);
+  if (currentSha !== entryIdentity(sourceEntry)) {
     throw new CheckFailedError(
       `${kind}/${name} has uncommitted local edits; run "capshelf promote" or "capshelf revert" first`,
     );
@@ -146,7 +160,7 @@ export async function moveScope(
     name,
     from,
     to,
-    sha: sourceEntry.sha,
+    sha: entryIdentity(sourceEntry),
     sourceCommit: sourceEntry.sourceCommit,
   };
 }

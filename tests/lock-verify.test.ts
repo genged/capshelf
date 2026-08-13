@@ -4,9 +4,8 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { verifyDataLockEntries } from "../src/lock-verify";
-import { shaOfGitVisibleItem } from "../src/master";
-import { lastTouchingContentCommit } from "../src/git";
-import { dataKey, type Lock } from "../src/lock";
+import { dataKey, type LockV4 } from "../src/lock";
+import { currentPin } from "./pin-fixtures";
 import { ManifestSchema, type Manifest } from "../src/manifest";
 import { captureCommittedItemNeeds } from "../src/metadata";
 
@@ -26,18 +25,17 @@ function manifestWith(name: string): Manifest {
   });
 }
 
-// The lock sha `add` records is shaOfGitVisibleItem; set-data recomputes it at
-// the pinned commit via verifyDataLockEntries -> shaOfDataAtCommit. The two
-// must agree, including file ordering and sidecar exclusion.
-async function lockFromAdd(dataRepo: string, name: string): Promise<Lock> {
-  const repoRelPath = `skills/${name}`;
+// The pin `add` records comes from the committed tree; set-data re-derives it
+// at the same commit through `verifyDataLockEntries`. The two must agree,
+// including file ordering and sidecar exclusion.
+async function lockFromAdd(dataRepo: string, name: string): Promise<LockV4> {
+  const _repoRelPath = `skills/${name}`;
   return {
-    version: 3,
+    version: 4,
     items: {
       [dataKey("skills", name)]: {
         source: "data",
-        sha: await shaOfGitVisibleItem(dataRepo, repoRelPath),
-        sourceCommit: await lastTouchingContentCommit(dataRepo, repoRelPath),
+        ...(await currentPin(dataRepo, "skills", name)),
         appliedAt: "2026-07-02T00:00:00.000Z",
         ...(await captureCommittedItemNeeds(dataRepo, {
           kind: "skills",
@@ -77,11 +75,13 @@ describe("verifyDataLockEntries", () => {
     await $`git -C ${dataRepo} commit -qm init`.quiet();
 
     const lock = await lockFromAdd(dataRepo, "greet");
-    lock.items[dataKey("skills", "greet")]!.sha = "000000000000";
+    const entry = lock.items[dataKey("skills", "greet")]!;
+    if (entry.source !== "data") throw new Error("expected a data entry");
+    entry.sourcePinDigest = "0".repeat(64);
 
     await expect(
       verifyDataLockEntries(dataRepo, manifestWith("greet"), lock),
-    ).rejects.toThrow(/hashes to .* but lock expects/);
+    ).rejects.toThrow(/pins to .* but lock expects/);
   });
 
   test("rejects a needs snapshot that does not match its provenance commit", async () => {

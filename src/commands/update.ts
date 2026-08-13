@@ -15,21 +15,33 @@ import {
 } from "../destructive-preflight";
 import type { Manifest } from "../manifest";
 import {
+  assertLockV4,
+  entryIdentity,
   needsEqual,
   refreshDataLockEntry,
   saveLocalLock,
   saveLock,
 } from "../lock";
-import type { DataLockEntry, Lock, LockEntry, SystemLockEntry } from "../lock";
-import { parseLockKey, shaOfInstalled } from "../installed";
+import {
+  assertNoDestinationCollisions,
+  pinCurrentSource,
+  shortIdentity,
+} from "../pin";
+import type {
+  DataLockEntryV4,
+  LockEntry,
+  LockEntryV4,
+  LockV4,
+  SystemLockEntry,
+} from "../lock";
+import { installedPath, parseLockKey, shaOfInstalled } from "../installed";
 import {
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
   isFragmentItemKind,
   isFragmentKindName,
-  shaOfGitVisibleItem,
 } from "../master";
-import { assertRepoClean, lastTouchingContentCommit } from "../git";
+import { assertRepoClean } from "../git";
 import { PRODUCT_NAME } from "../identity";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
 import { PreconditionError, ResultExitError } from "../errors";
@@ -50,21 +62,14 @@ import {
   fragmentContributionState,
   fragmentKindForTarget,
   fragmentTargetKey,
-  lastTouchingFragmentCommit,
   planFragmentOutput,
-  shaOfFragmentItem,
   touchedFragmentTargetsForItem,
   type FragmentApplyResult,
   type FragmentOutputPlan,
   type FragmentTarget,
 } from "../fragments";
 import { captureCommittedItemNeeds } from "../metadata";
-import {
-  lastTouchingSubagentCommit,
-  materializeSubagent,
-  shaOfCurrentSubagent,
-  shaOfInstalledSubagent,
-} from "../subagents";
+import { materializeSubagent, shaOfInstalledSubagent } from "../subagents";
 
 interface UpdateOptions {
   json?: boolean;
@@ -130,6 +135,14 @@ export function registerUpdate(program: Command): void {
         }
         const { project, manifest, projectLock, localLock } =
           await loadProjectContext({ cmd });
+        // PIN-12: no ordinary lock write migrates. `update` reads either
+        // version but writes only version 4, so it refuses here with the
+        // migration command rather than rewriting entries as a side effect.
+        const writableProjectLock = assertLockV4(
+          projectLock,
+          "capshelf update",
+        );
+        const writableLocalLock = assertLockV4(localLock, "capshelf update");
         const explicit = refs.length > 0;
 
         const targets: ScopedTarget[] = [];
@@ -177,7 +190,7 @@ export function registerUpdate(program: Command): void {
         );
         const originalLock = structuredClone(projectLock);
         const fragmentNextLock = structuredClone(projectLock);
-        const pendingFragmentEntries = new Map<string, LockEntry>();
+        const pendingFragmentEntries = new Map<string, LockEntryV4>();
         const touchedFragmentTargets = new Set<FragmentTarget>();
         let fragmentLockChanged = false;
 
@@ -193,8 +206,8 @@ export function registerUpdate(program: Command): void {
         const preflight = await planUpdatePreflight(
           ctx,
           targets,
-          projectLock,
-          localLock,
+          writableProjectLock,
+          writableLocalLock,
         );
         if (opts.dryRun) {
           printUpdateOutput({
@@ -250,8 +263,8 @@ export function registerUpdate(program: Command): void {
         const revalidated = await planUpdatePreflight(
           ctx,
           targets,
-          projectLock,
-          localLock,
+          writableProjectLock,
+          writableLocalLock,
         );
         assertDestructivePlanUnchanged(
           preflight.destructivePlan,
@@ -263,7 +276,8 @@ export function registerUpdate(program: Command): void {
         // their consistency no longer depends on reading a 380-line body.
         for (const target of targets) {
           const { scope, key } = target;
-          const lock = scope === "local" ? localLock : projectLock;
+          const lock =
+            scope === "local" ? writableLocalLock : writableProjectLock;
           const entry = lock.items[key]!;
           const outcome = await updateOneTarget(ctx, target, entry);
           results.push(outcome.result);
@@ -343,14 +357,14 @@ export function registerUpdate(program: Command): void {
           }
           if (!opts.dryRun && !reconcileFailed) {
             for (const [key, entry] of pendingFragmentEntries) {
-              projectLock.items[key] = entry;
+              writableProjectLock.items[key] = entry;
             }
             projectChanged = projectChanged || fragmentLockChanged;
           }
         }
 
-        if (projectChanged) await saveLock(project, projectLock);
-        if (localChanged) await saveLocalLock(project, localLock);
+        if (projectChanged) await saveLock(project, writableProjectLock);
+        if (localChanged) await saveLocalLock(project, writableLocalLock);
 
         printUpdateOutput({
           project,
@@ -384,8 +398,8 @@ interface UpdatePreflight {
 async function planUpdatePreflight(
   ctx: UpdateContext,
   targets: ScopedTarget[],
-  projectLock: Lock,
-  localLock: Lock,
+  projectLock: LockV4,
+  localLock: LockV4,
 ): Promise<UpdatePreflight> {
   const dryContext = { ...ctx, dryRun: true };
   const results: UpdateResult[] = [];
@@ -429,39 +443,65 @@ async function planUpdatePreflight(
       parsed.name,
       target.scope,
     );
-    if (isCopyDirectoryItemKind(parsed.kind)) {
-      const planned = await planCopyDirectoryDestruction({
-        project: ctx.project,
-        dataRepo: ctx.dataRepo,
-        manifest: ctx.manifest,
+    // A planner failure is this item's failure, not the run's. Before PIN-8 an
+    // unresolvable pin threw straight through `planUpdatePreflight` to the CLI
+    // boundary, so one wedged item stopped every healthy item in the project
+    // from being written.
+    try {
+      if (isCopyDirectoryItemKind(parsed.kind)) {
+        const planned = await planCopyDirectoryDestruction({
+          project: ctx.project,
+          dataRepo: ctx.dataRepo,
+          manifest: ctx.manifest,
+          kind: parsed.kind,
+          name: parsed.name,
+          key: target.key,
+          scope: target.scope,
+          currentEntry,
+          selectedEntry,
+          reviewCommand,
+          repairUnresolvableCurrent: true,
+        });
+        changes.push(...planned.changes);
+        snapshotParts.push(...planned.snapshotParts);
+      } else if (
+        isCopyTargetFileItemKind(parsed.kind) &&
+        currentEntry.source === "data" &&
+        selectedEntry.source === "data" &&
+        ctx.dataRepo
+      ) {
+        const planned = await planSubagentDestruction({
+          project: ctx.project,
+          dataRepo: ctx.dataRepo,
+          name: parsed.name,
+          key: target.key,
+          scope: target.scope,
+          currentEntry,
+          selectedEntry,
+          reviewCommand,
+          repairUnresolvableCurrent: true,
+        });
+        changes.push(...planned.changes);
+        snapshotParts.push(...planned.snapshotParts);
+      }
+    } catch (error) {
+      const failed = results.findIndex(
+        (result) => result.key === target.key && result.scope === target.scope,
+      );
+      const errorResult: UpdateResult = {
+        key: target.key,
+        scope: target.scope,
+        source: parsed.source,
         kind: parsed.kind,
         name: parsed.name,
-        key: target.key,
-        scope: target.scope,
-        currentEntry,
-        selectedEntry,
-        reviewCommand,
-      });
-      changes.push(...planned.changes);
-      snapshotParts.push(...planned.snapshotParts);
-    } else if (
-      isCopyTargetFileItemKind(parsed.kind) &&
-      currentEntry.source === "data" &&
-      selectedEntry.source === "data" &&
-      ctx.dataRepo
-    ) {
-      const planned = await planSubagentDestruction({
-        project: ctx.project,
-        dataRepo: ctx.dataRepo,
-        name: parsed.name,
-        key: target.key,
-        scope: target.scope,
-        currentEntry,
-        selectedEntry,
-        reviewCommand,
-      });
-      changes.push(...planned.changes);
-      snapshotParts.push(...planned.snapshotParts);
+        action: "error",
+        error: error instanceof Error ? error.message : String(error),
+      };
+      if (failed === -1) results.push(errorResult);
+      else results[failed] = errorResult;
+      snapshotParts.push(
+        `update-plan-error:${target.scope}:${target.key}:${errorResult.error}`,
+      );
     }
   }
 
@@ -586,7 +626,7 @@ function printUpdateOutput(opts: {
 
 interface FragmentContribution {
   key: string;
-  entry: LockEntry;
+  entry: LockEntryV4;
   targets: FragmentTarget[];
   lockChanged: boolean;
 }
@@ -594,7 +634,7 @@ interface FragmentContribution {
 interface TargetOutcome {
   result: UpdateResult;
   /** Lock entry to write into the target's scope when this is not a dry run. */
-  newEntry?: LockEntry;
+  newEntry?: LockEntryV4;
   /** Whether the pinned content changed (marks the scope's lock dirty). */
   changed?: boolean;
   /** Fragment items defer their lock write and reconcile after the loop. */
@@ -604,7 +644,7 @@ interface TargetOutcome {
 async function updateOneTarget(
   ctx: UpdateContext,
   target: ScopedTarget,
-  entry: LockEntry,
+  entry: LockEntryV4,
 ): Promise<TargetOutcome> {
   const { scope, key } = target;
   const parsed = parseLockKey(key);
@@ -654,7 +694,7 @@ async function updateDataTarget(
   scope: "project" | "local",
   key: string,
   parsed: ReturnType<typeof parseLockKey>,
-  entry: DataLockEntry,
+  entry: DataLockEntryV4,
 ): Promise<TargetOutcome> {
   if (scope === "local") {
     assertLocalScopeSupported(parsed.kind, parsed.name, "update --local");
@@ -673,7 +713,7 @@ async function updateDataTarget(
         kind: parsed.kind,
         name: parsed.name,
         action: "kept-local",
-        sha: entry.sha,
+        sha: entryIdentity(entry),
         sourceCommit: entry.sourceCommit,
         ...(entry.localReason !== undefined && {
           localReason: entry.localReason,
@@ -698,16 +738,20 @@ async function updateDataTarget(
     throw new Error(`no update strategy for ${parsed.kind}/${parsed.name}`);
   }
 
-  const sha = isFragmentItemKind(parsed.kind)
-    ? await shaOfFragmentItem(ctx.dataRepo, parsed.kind, parsed.name)
-    : parsed.kind === "subagents"
-      ? await shaOfCurrentSubagent(ctx.project, ctx.dataRepo, parsed.name)
-      : await shaOfGitVisibleItem(ctx.dataRepo, item.repoRelPath);
-  const sourceCommit = isFragmentItemKind(parsed.kind)
-    ? await lastTouchingFragmentCommit(ctx.dataRepo, parsed.kind, parsed.name)
-    : parsed.kind === "subagents"
-      ? await lastTouchingSubagentCommit(ctx.project, ctx.dataRepo, parsed.name)
-      : await lastTouchingContentCommit(ctx.dataRepo, item.repoRelPath);
+  // One pin from the committed tree, exactly as `add` builds it. Under lock
+  // version 4 there is no second identity to keep in step: the working tree is
+  // not consulted, so a checkout filter or an index bit cannot move the value
+  // this records.
+  const pin = await pinCurrentSource(ctx.dataRepo, parsed.kind, parsed.name);
+  const sha = pin.sourcePinDigest;
+  const sourceCommit = pin.sourceCommit;
+  if (isCopyDirectoryItemKind(parsed.kind)) {
+    await assertNoDestinationCollisions(
+      `${parsed.kind}/${parsed.name}`,
+      installedPath(ctx.project, parsed.kind, parsed.name),
+      pin.entries.map((treeEntry) => treeEntry.path),
+    );
+  }
   const currentSnapshot = await captureCommittedItemNeeds(ctx.dataRepo, item);
   const lockedNeeds = entry.needs ?? null;
   const needsWouldChange =
@@ -720,12 +764,11 @@ async function updateDataTarget(
           entry.needsSourceCommit ?? currentSnapshot.needsSourceCommit,
       };
   const contentWouldChange =
-    sha !== entry.sha || sourceCommit !== entry.sourceCommit;
+    sha !== entry.sourcePinDigest || sourceCommit !== entry.sourceCommit;
   const lockWouldChange =
     contentWouldChange || needsWouldChange || entry.needsSourceCommit === null;
   const newEntry = refreshDataLockEntry(entry, {
-    sha,
-    sourceCommit,
+    pin,
     ...snapshot,
     ...(!lockWouldChange && { appliedAt: entry.appliedAt }),
   });
@@ -741,13 +784,28 @@ async function updateDataTarget(
         `--local is not supported for ${parsed.kind} fragments`,
       );
     }
+    // PIN-8 stops here for fragments. A fragment's installed state is merged
+    // into a shared output alongside other fragments and the project's own
+    // values, so with the previous pin unreadable capshelf cannot tell this
+    // item's former contribution from a project-local value: removing it may
+    // discard the user's configuration and keeping it may leave dead managed
+    // state. The consent prompt cannot describe that choice, so the item is
+    // refused with the one path that is unambiguous.
     const targets = await touchedFragmentTargetsForItem(
       ctx.dataRepo,
       parsed.kind,
       parsed.name,
       entry,
       ctx.manifest,
-    );
+    ).catch((error: unknown) => {
+      throw new PreconditionError(
+        `not updating ${parsed.kind}/${parsed.name} — its locked source commit ${entry.sourceCommit} cannot be resolved, and a fragment's contribution cannot be recovered from the merged output\n` +
+          `  ${error instanceof Error ? error.message : String(error)}\n` +
+          "  remove and re-add the item instead:\n" +
+          `    ${PRODUCT_NAME} rm ${parsed.kind}/${parsed.name}\n` +
+          `    ${PRODUCT_NAME} add ${parsed.kind}/${parsed.name}`,
+      );
+    });
     return {
       result: {
         key,
@@ -757,7 +815,7 @@ async function updateDataTarget(
         name: parsed.name,
         action: changedAction ?? "already-current",
         sha,
-        lockedSha: entry.sha,
+        lockedSha: entryIdentity(entry),
         plannedSha: sha,
         sourceCommit,
         ...(ctx.dryRun && { dryRun: true as const }),
@@ -768,7 +826,7 @@ async function updateDataTarget(
 
   const installedSha = needsWouldChange
     ? parsed.kind === "subagents"
-      ? await shaOfInstalledSubagent(
+      ? await installedSubagentShaAtPin(
           ctx.project,
           ctx.dataRepo,
           parsed.name,
@@ -792,7 +850,7 @@ async function updateDataTarget(
       ? await (async () => {
           const dataRepo = ctx.dataRepo;
           if (!dataRepo) throw new Error("data repo is required");
-          const before = await shaOfInstalledSubagent(
+          const before = await installedSubagentShaAtPin(
             ctx.project,
             dataRepo,
             parsed.name,
@@ -845,7 +903,7 @@ async function updateDataTarget(
       action: changedAction ?? materialized.action,
       sha,
       currentSha: materialized.currentSha,
-      lockedSha: entry.sha,
+      lockedSha: entryIdentity(entry),
       plannedSha: sha,
       sourceCommit,
       runtimeWarnings,
@@ -854,6 +912,23 @@ async function updateDataTarget(
     newEntry,
     changed: lockWouldChange,
   };
+}
+
+/**
+ * The installed subagent sha as the *previous* pin describes it. PIN-8: an
+ * unresolvable previous commit makes the installed state unclassifiable, which
+ * is a missing "current" value in the report, not a reason to refuse the
+ * update whose target is the new commit.
+ */
+async function installedSubagentShaAtPin(
+  project: string,
+  dataRepo: string,
+  name: string,
+  commit: string,
+): Promise<string | null> {
+  return await shaOfInstalledSubagent(project, dataRepo, name, commit).catch(
+    () => null,
+  );
 }
 
 async function updateSystemTarget(
@@ -900,7 +975,7 @@ async function updateSystemTarget(
         : materialized.action,
       sha,
       currentSha: materialized.currentSha,
-      lockedSha: entry.sha,
+      lockedSha: entryIdentity(entry),
       plannedSha: sha,
       cliVersion: CLI_VERSION,
       runtimeWarnings: materialized.runtimeWarnings,
@@ -957,10 +1032,10 @@ function printKeptLocalHint(results: UpdateResult[]): void {
 
 function printUpdateDetails(r: UpdateResult): void {
   if (r.currentSha !== undefined) {
-    console.log(`  current: ${r.currentSha ?? "(missing)"}`);
+    console.log(`  current: ${shortIdentity(r.currentSha)}`);
   }
-  if (r.lockedSha) console.log(`  locked: ${r.lockedSha}`);
-  if (r.plannedSha) console.log(`  planned: ${r.plannedSha}`);
+  if (r.lockedSha) console.log(`  locked: ${shortIdentity(r.lockedSha)}`);
+  if (r.plannedSha) console.log(`  planned: ${shortIdentity(r.plannedSha)}`);
   if (r.sourceCommit) console.log(`  source commit: ${r.sourceCommit}`);
   if (r.cliVersion) console.log(`  cli version: ${r.cliVersion}`);
   printRuntimeWarnings(r.runtimeWarnings);

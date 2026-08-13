@@ -33,7 +33,7 @@ import { resolveDataRepo } from "../data-repo";
 import { NotFoundError, PreconditionError, ResultExitError } from "../errors";
 import {
   assertIsGitRepo,
-  gitVisibleFilesUnderPath,
+  sourceVisibleFilesUnderPath,
   headSha,
   isRepoClean,
   originRemoteUrl,
@@ -1561,7 +1561,7 @@ async function gitVisibleStats(
   dataRepo: string,
   relRoot: string,
 ): Promise<{ files: number; bytes: number }> {
-  const paths = await gitVisibleFilesUnderPath(dataRepo, relRoot);
+  const paths = await sourceVisibleFilesUnderPath(dataRepo, relRoot);
   let bytes = 0;
   for (const path of paths) {
     const fullPath = relRoot === "." ? path : `${relRoot}/${path}`;

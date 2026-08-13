@@ -17,7 +17,7 @@ import { join } from "node:path";
 import { YAMLParseError, parse as parseYaml } from "yaml";
 import { z } from "zod";
 import type { SystemItem } from "./bundled";
-import { gitTry, headSha } from "./git";
+import { headSha, sourceRead } from "./git";
 import { isItemKind, itemRepoRelPath } from "./master";
 import type { MasterItem } from "./master";
 
@@ -215,7 +215,7 @@ export async function loadCommittedItemNeeds(
 ): Promise<ItemMetadata> {
   const label = `${item.kind}/${item.name}`;
   const relPath = `${itemRepoRelPath(item.kind, item.name)}/${METADATA_SIDECAR}`;
-  const result = await gitTry(dataRepo, ["show", `${commit}:${relPath}`]);
+  const result = await sourceRead(dataRepo, ["show", `${commit}:${relPath}`]);
   if (result.exitCode !== 0) return emptyMetadata();
   return parseSidecar(result.stdout.toString("utf-8"), label, item.name);
 }

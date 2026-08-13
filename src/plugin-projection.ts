@@ -4,8 +4,8 @@ import { join } from "node:path";
 import { PreconditionError } from "./errors";
 import {
   assertRegularBlobEntries,
-  gitVisibleFilesUnderPath,
-  gitText,
+  sourceVisibleFilesUnderPath,
+  sourceReadText,
   literalPathspec,
   lsTreeEntriesAtCommit,
   showAtCommit,
@@ -184,7 +184,7 @@ async function collectWorkingFiles(
     }
     throw error;
   }
-  const relPaths = await gitVisibleFilesUnderPath(dataRepo, ref);
+  const relPaths = await sourceVisibleFilesUnderPath(dataRepo, ref);
   const trackedModes = await trackedModesUnderPath(dataRepo, ref);
   const files: ProjectionFile[] = [];
   for (const relPath of relPaths) {
@@ -245,7 +245,7 @@ async function trackedModesUnderPath(
   dataRepo: string,
   ref: string,
 ): Promise<Map<string, string>> {
-  const out = await gitText(dataRepo, [
+  const out = await sourceReadText(dataRepo, [
     "ls-files",
     "--stage",
     "-z",

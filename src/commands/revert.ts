@@ -12,7 +12,13 @@ import {
 import { projectRoot } from "../paths";
 import { resolveDataRepo } from "../data-repo";
 import { loadManifest } from "../manifest";
-import { loadLocalLock, loadLock, saveLocalLock, saveLock } from "../lock";
+import {
+  assertLockV4,
+  loadLocalLock,
+  loadLock,
+  saveLocalLock,
+  saveLock,
+} from "../lock";
 import type { LockEntry } from "../lock";
 import { parseLockKey } from "../installed";
 import { assertIsGitRepo } from "../git";
@@ -95,6 +101,9 @@ export function registerRevert(program: Command): void {
           : undefined;
       if (dataRepo) await assertIsGitRepo(dataRepo);
 
+      // PIN-12: before the source is read, so an unmigrated project is told to
+      // migrate rather than shown a pin mismatch it cannot repair here.
+      assertLockV4(lock, `${PRODUCT_NAME} revert`);
       const entry = lock.items[key]!;
       const scope = opts.local ? "local" : "project";
       const reviewCommand = `${PRODUCT_NAME} status ${parsed.kind}/${parsed.name}${
@@ -295,7 +304,10 @@ export function registerRevert(program: Command): void {
       // The keep-local marker records intent, not a fact about current
       // content, so revert restores bytes and leaves it alone. Only
       // `keep-local --unset` clears it. See the field doc in lock.ts.
-      const nextLock = structuredClone(lock);
+      const nextLock = assertLockV4(
+        structuredClone(lock),
+        `${PRODUCT_NAME} revert`,
+      );
       const nextEntry = nextLock.items[key]!;
 
       if (isFragmentKind(parsed.kind)) {

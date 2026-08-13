@@ -113,7 +113,7 @@ describe("settings fragments", () => {
     const nextLock = emptyLock();
     nextLock.items[dataKey("settings", "security")] = {
       source: "data",
-      sha: v1Sha,
+      sourcePinDigest: v1Sha,
       sourceCommit: v1Commit,
       appliedAt: new Date().toISOString(),
     };
@@ -193,14 +193,14 @@ describe("settings fragments", () => {
     const oldLock = emptyLock();
     oldLock.items[dataKey("settings", "security")] = {
       source: "data",
-      sha: v1Sha,
+      sourcePinDigest: v1Sha,
       sourceCommit: v1Commit,
       appliedAt: new Date().toISOString(),
     };
     const nextLock = emptyLock();
     nextLock.items[dataKey("settings", "security")] = {
       source: "data",
-      sha: v2Sha,
+      sourcePinDigest: v2Sha,
       sourceCommit: v2Commit,
       appliedAt: new Date().toISOString(),
     };

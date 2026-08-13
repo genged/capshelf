@@ -18,8 +18,9 @@ import {
   assertRepoClean,
   assertRepoCleanOutsidePaths,
   commitLiteralPathsInRepo,
-  gitBuffer,
-  gitTry,
+  sourceRead,
+  sourceReadText,
+  sourceWriteBuffer,
   headSha,
   literalPathspec,
 } from "./git";
@@ -153,8 +154,17 @@ export async function commitDataRepoMutation(options: {
   message: string;
   ownedRoots: string[];
   mutate: () => Promise<void>;
+  /**
+   * Runs after the commit exists and inside the same transaction, so a
+   * refusal unwinds through the established rollback: HEAD returns to
+   * `expectedHead`, the owned files are restored, and the index is put back.
+   * PIN-11's `A == B` proof is the only caller — the thing it checks cannot be
+   * known before the commit it is checking.
+   */
+  verify?: (commit: string) => Promise<void>;
 }): Promise<string> {
-  const { dataRepo, expectedHead, message, ownedRoots, mutate } = options;
+  const { dataRepo, expectedHead, message, ownedRoots, mutate, verify } =
+    options;
   await assertRepoClean(dataRepo);
   if ((await currentHead(dataRepo)) !== expectedHead) {
     throw new PreconditionError(
@@ -162,9 +172,9 @@ export async function commitDataRepoMutation(options: {
     );
   }
   const before = await readFilesBelow(dataRepo, ownedRoots);
-  const gitDir = (await gitBuffer(dataRepo, ["rev-parse", "--git-dir"]))
-    .toString()
-    .trim();
+  const gitDir = (
+    await sourceReadText(dataRepo, ["rev-parse", "--git-dir"])
+  ).trim();
   const indexPath = resolve(dataRepo, gitDir, "index");
   const backupRoot = await mkdtemp(join(tmpdir(), "capshelf-marketplace-"));
   const backupIndex = join(backupRoot, "index");
@@ -189,6 +199,7 @@ export async function commitDataRepoMutation(options: {
       ownedRoots,
       message,
     );
+    await verify?.(createdCommit);
     return createdCommit;
   } catch (error) {
     const current = await currentHead(dataRepo);
@@ -197,13 +208,13 @@ export async function commitDataRepoMutation(options: {
         expectedHead === null
           ? ["update-ref", "-d", "HEAD", createdCommit]
           : ["update-ref", "HEAD", expectedHead, createdCommit];
-      const reverted = await gitBuffer(dataRepo, revertArgs)
+      const reverted = await sourceWriteBuffer(dataRepo, revertArgs)
         .then(() => true)
         .catch(() => false);
       if (!reverted) throw error;
     } else if (current !== expectedHead) {
       if (expectedHead === null || current === null) throw error;
-      const ownedTrees = await gitTry(dataRepo, [
+      const ownedTrees = await sourceRead(dataRepo, [
         "diff",
         "--quiet",
         expectedHead,

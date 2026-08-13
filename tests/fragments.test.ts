@@ -1,5 +1,6 @@
 import { $, file } from "bun";
 import { describe, expect, test } from "bun:test";
+import { currentPin, pinDigestAtCommit } from "./pin-fixtures";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -45,8 +46,8 @@ describe("fragment output planning", () => {
     const lock = emptyLock();
     const entry = {
       source: "data" as const,
-      sha: "locked",
-      sourceCommit: "abc123",
+      sourcePinDigest: "1".repeat(64),
+      sourceCommit: "a".repeat(40),
       appliedAt: new Date().toISOString(),
     };
     lock.items[dataKey("settings", "security")] = entry;
@@ -70,7 +71,7 @@ describe("fragment output planning", () => {
         lock,
         "claude-settings",
       ),
-    ).rejects.toThrow(/does not contain commit abc123/);
+    ).rejects.toThrow(/does not contain commit a{40}/);
   });
 
   test("rejects unmanaged scalar collision without writing output", async () => {
@@ -87,13 +88,18 @@ describe("fragment output planning", () => {
       "settings",
       "theme",
     );
-    const sha = await shaOfFragmentItem(dataRepo, "settings", "theme");
+    const sha = await pinDigestAtCommit(
+      dataRepo,
+      "settings",
+      "theme",
+      sourceCommit,
+    );
     const manifest = { ...emptyManifest(), settings: ["theme"] };
     const oldLock = emptyLock();
     const nextLock = emptyLock();
     nextLock.items[dataKey("settings", "theme")] = {
       source: "data",
-      sha,
+      sourcePinDigest: sha,
       sourceCommit,
       appliedAt: new Date().toISOString(),
     };
@@ -134,12 +140,7 @@ describe("fragment output planning", () => {
     for (const name of ["base", "strict"]) {
       nextLock.items[dataKey("settings", name)] = {
         source: "data",
-        sha: await shaOfFragmentItem(dataRepo, "settings", name),
-        sourceCommit: await lastTouchingFragmentCommit(
-          dataRepo,
-          "settings",
-          name,
-        ),
+        ...(await currentPin(dataRepo, "settings", name)),
         appliedAt: new Date().toISOString(),
       };
     }
@@ -178,12 +179,7 @@ describe("fragment output planning", () => {
     for (const name of ["base", "go"]) {
       nextLock.items[dataKey("settings", name)] = {
         source: "data",
-        sha: await shaOfFragmentItem(dataRepo, "settings", name),
-        sourceCommit: await lastTouchingFragmentCommit(
-          dataRepo,
-          "settings",
-          name,
-        ),
+        ...(await currentPin(dataRepo, "settings", name)),
         appliedAt: new Date().toISOString(),
       };
     }
@@ -233,14 +229,14 @@ describe("fragment output planning", () => {
     const oldLock = emptyLock();
     oldLock.items[dataKey("settings", "theme")] = {
       source: "data",
-      sha: v1Sha,
+      sourcePinDigest: v1Sha,
       sourceCommit: v1Commit,
       appliedAt: new Date().toISOString(),
     };
     const nextLock = emptyLock();
     nextLock.items[dataKey("settings", "theme")] = {
       source: "data",
-      sha: v2Sha,
+      sourcePinDigest: v2Sha,
       sourceCommit: v2Commit,
       appliedAt: new Date().toISOString(),
     };
@@ -275,13 +271,18 @@ describe("fragment output planning", () => {
       "settings",
       "theme",
     );
-    const sha = await shaOfFragmentItem(dataRepo, "settings", "theme");
+    const sha = await pinDigestAtCommit(
+      dataRepo,
+      "settings",
+      "theme",
+      sourceCommit,
+    );
     const oldManifest = { ...emptyManifest(), settings: ["theme"] };
     const nextManifest = emptyManifest();
     const oldLock = emptyLock();
     oldLock.items[dataKey("settings", "theme")] = {
       source: "data",
-      sha,
+      sourcePinDigest: sha,
       sourceCommit,
       appliedAt: new Date().toISOString(),
     };
@@ -354,13 +355,13 @@ describe("fragment output planning", () => {
     const lock = emptyLock();
     lock.items[dataKey("mcp", "github")] = {
       source: "data",
-      sha: mcpSha,
+      sourcePinDigest: mcpSha,
       sourceCommit: mcpCommit,
       appliedAt: new Date().toISOString(),
     };
     lock.items[dataKey("codex-config", "defaults")] = {
       source: "data",
-      sha: codexSha,
+      sourcePinDigest: codexSha,
       sourceCommit: codexCommit,
       appliedAt: new Date().toISOString(),
     };
@@ -413,12 +414,7 @@ describe("fragment output planning", () => {
     const oldLock = emptyLock();
     oldLock.items[dataKey("codex-config", "defaults")] = {
       source: "data",
-      sha: await shaOfFragmentItem(dataRepo, "codex-config", "defaults"),
-      sourceCommit: await lastTouchingFragmentCommit(
-        dataRepo,
-        "codex-config",
-        "defaults",
-      ),
+      ...(await currentPin(dataRepo, "codex-config", "defaults")),
       appliedAt: new Date().toISOString(),
     };
     await applyFragmentOutput({
@@ -437,12 +433,7 @@ describe("fragment output planning", () => {
     const nextLock = structuredClone(oldLock);
     nextLock.items[dataKey("codex-config", "defaults")] = {
       source: "data",
-      sha: await shaOfFragmentItem(dataRepo, "codex-config", "defaults"),
-      sourceCommit: await lastTouchingFragmentCommit(
-        dataRepo,
-        "codex-config",
-        "defaults",
-      ),
+      ...(await currentPin(dataRepo, "codex-config", "defaults")),
       appliedAt: new Date().toISOString(),
     };
 
@@ -473,12 +464,17 @@ describe("fragment output planning", () => {
       "mcp",
       "github",
     );
-    const sha = await shaOfFragmentItem(dataRepo, "mcp", "github");
+    const sha = await pinDigestAtCommit(
+      dataRepo,
+      "mcp",
+      "github",
+      sourceCommit,
+    );
     const manifest = { ...emptyManifest(), mcp: ["github"] };
     const nextLock = emptyLock();
     nextLock.items[dataKey("mcp", "github")] = {
       source: "data",
-      sha,
+      sourcePinDigest: sha,
       sourceCommit,
       appliedAt: new Date().toISOString(),
     };
@@ -533,12 +529,17 @@ describe("fragmentContributionState", () => {
       "mcp",
       "github",
     );
-    const sha = await shaOfFragmentItem(dataRepo, "mcp", "github");
+    const sha = await pinDigestAtCommit(
+      dataRepo,
+      "mcp",
+      "github",
+      sourceCommit,
+    );
     const manifest = { ...emptyManifest(), mcp: ["github"] };
     const lock = emptyLock();
     lock.items[dataKey("mcp", "github")] = {
       source: "data",
-      sha,
+      sourcePinDigest: sha,
       sourceCommit,
       appliedAt: new Date().toISOString(),
     };

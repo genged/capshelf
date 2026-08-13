@@ -11,7 +11,12 @@ import {
 } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import { gitBuffer, gitText, headSha, literalPathspec } from "./git";
+import {
+  headSha,
+  literalPathspec,
+  sourceWriteBuffer,
+  sourceWriteText,
+} from "./git";
 import type { NamedFile } from "./merge-tree";
 import { METADATA_SIDECAR } from "./metadata";
 
@@ -46,7 +51,7 @@ export async function promoteTransactionLocations(
   const dataDir = join(repo, ...repoRelPath.split("/"));
   const indexPath = resolve(
     repo,
-    (await gitText(repo, ["rev-parse", "--git-path", "index"])).trim(),
+    (await sourceWriteText(repo, ["rev-parse", "--git-path", "index"])).trim(),
   );
   return {
     dataDir,
@@ -70,9 +75,11 @@ export async function commitNamedFilesTransaction(
   let headAdvanced = false;
 
   try {
-    await gitBuffer(input.repo, ["read-tree", input.expectedHead], { env });
+    await sourceWriteBuffer(input.repo, ["read-tree", input.expectedHead], {
+      env,
+    });
     const tracked = (
-      await gitText(
+      await sourceWriteText(
         input.repo,
         ["ls-files", "-z", "--", literalPathspec(input.repoRelPath)],
         { env },
@@ -81,7 +88,7 @@ export async function commitNamedFilesTransaction(
       .split("\0")
       .filter(Boolean);
     if (tracked.length > 0) {
-      await gitBuffer(
+      await sourceWriteBuffer(
         input.repo,
         ["update-index", "--force-remove", "--", ...tracked],
         { env },
@@ -100,12 +107,12 @@ export async function commitNamedFilesTransaction(
           ]),
     ]) {
       const object = (
-        await gitText(input.repo, ["hash-object", "-w", "--stdin"], {
+        await sourceWriteText(input.repo, ["hash-object", "-w", "--stdin"], {
           env,
           stdin: file.content,
         })
       ).trim();
-      await gitBuffer(
+      await sourceWriteBuffer(
         input.repo,
         [
           "update-index",
@@ -118,9 +125,11 @@ export async function commitNamedFilesTransaction(
         { env },
       );
     }
-    const tree = (await gitText(input.repo, ["write-tree"], { env })).trim();
+    const tree = (
+      await sourceWriteText(input.repo, ["write-tree"], { env })
+    ).trim();
     const candidate = (
-      await gitText(
+      await sourceWriteText(
         input.repo,
         ["commit-tree", tree, "-p", input.expectedHead, "-m", input.message],
         { env },
@@ -151,7 +160,7 @@ export async function commitNamedFilesTransaction(
       await writeNamedFiles(locations.dataDir, input.files, input.sidecar);
       await input.hooks?.afterPathReplaced?.();
       await input.hooks?.beforeHeadAdvance?.();
-      await gitBuffer(input.repo, [
+      await sourceWriteBuffer(input.repo, [
         "update-ref",
         "HEAD",
         candidate,
@@ -162,7 +171,7 @@ export async function commitNamedFilesTransaction(
       await rename(replacementIndex, locations.indexPath);
     } catch (error) {
       if (headAdvanced) {
-        await gitBuffer(input.repo, [
+        await sourceWriteBuffer(input.repo, [
           "update-ref",
           "HEAD",
           input.expectedHead,

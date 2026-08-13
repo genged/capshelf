@@ -1,7 +1,13 @@
 import type { Command } from "commander";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import { saveManifest } from "../manifest";
-import { dataKey, saveLocalLock, saveLock } from "../lock";
+import {
+  assertLockV4,
+  dataKey,
+  entryIdentity,
+  saveLocalLock,
+  saveLock,
+} from "../lock";
 import type { Lock } from "../lock";
 import { ensureInstallAliases, parseLockKey } from "../installed";
 import { NotFoundError, PreconditionError } from "../errors";
@@ -55,6 +61,10 @@ export function registerMove(program: Command): void {
       if (to === "local") {
         assertLocalScopeSupported(resolved.kind, resolved.name, "move");
       }
+      // PIN-12: before the drift comparison, so an unmigrated project gets the
+      // migration guidance rather than a drift refusal it cannot act on.
+      const writableProjectLock = assertLockV4(projectLock, "capshelf move");
+      const writableLocalLock = assertLockV4(localLock, "capshelf move");
       const alreadyCurrent = alreadyInDestinationScope(
         resolved.kind,
         resolved.name,
@@ -85,7 +95,7 @@ export function registerMove(program: Command): void {
 
       if (!result.alreadyCurrent) {
         if (result.to === "project") {
-          await saveLock(project, projectLock);
+          await saveLock(project, writableProjectLock);
           await saveManifest(project, manifest);
           await removeLocalExcludes(project, result.kind, result.name);
           await ensureInstallAliases(
@@ -94,10 +104,10 @@ export function registerMove(program: Command): void {
             result.name,
             manifest.installMode,
           );
-          await saveLocalLock(project, localLock);
+          await saveLocalLock(project, writableLocalLock);
           if (localConfig) await saveLocalConfig(project, localConfig);
         } else {
-          await saveLocalLock(project, localLock);
+          await saveLocalLock(project, writableLocalLock);
           if (localConfig) await saveLocalConfig(project, localConfig);
           await ensureLocalExcludes(project, result.kind, result.name);
           await ensureInstallAliases(
@@ -106,7 +116,7 @@ export function registerMove(program: Command): void {
             result.name,
             manifest.installMode,
           );
-          await saveLock(project, projectLock);
+          await saveLock(project, writableProjectLock);
           await saveManifest(project, manifest);
         }
       }
@@ -182,7 +192,7 @@ function alreadyInDestinationScope(
       name,
       from: "project",
       to,
-      sha: projectEntry.sha,
+      sha: entryIdentity(projectEntry),
       sourceCommit: projectEntry.sourceCommit,
       alreadyCurrent: true,
     };
@@ -196,7 +206,7 @@ function alreadyInDestinationScope(
       name,
       from: "local",
       to,
-      sha: localEntry.sha,
+      sha: entryIdentity(localEntry),
       sourceCommit: localEntry.sourceCommit,
       alreadyCurrent: true,
     };

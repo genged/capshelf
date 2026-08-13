@@ -4,8 +4,9 @@ import { existsSync } from "node:fs";
 import { relative } from "node:path";
 import { findProjectRoot, projectRoot } from "../paths";
 import { resolveDataRepoOptional } from "../data-repo";
-import { loadLocalLock, loadLock } from "../lock";
+import { entryIdentity, loadLocalLock, loadLock } from "../lock";
 import type { Lock, LockEntry } from "../lock";
+import { describeInstallation, isTreePinned } from "../install-identity";
 import { loadManifest } from "../manifest";
 import type { Manifest } from "../manifest";
 import type { ItemKind } from "../master";
@@ -52,8 +53,14 @@ import {
   deriveState,
   personalClaudeExternals,
   statusTargets,
+  type StatusAxes,
   type StatusRow,
 } from "../status-core";
+import {
+  filteredPathsAtCommit,
+  itemTreeEntriesAtCommit,
+  type FilteredPath,
+} from "../pin";
 import { formatStatusHuman, formatUserSkillsHuman } from "../status-format";
 import { captureCommittedItemNeeds } from "../metadata";
 import type { ItemNeeds } from "../metadata";
@@ -171,9 +178,31 @@ export function registerStatus(program: Command): void {
             entry.source === "data" && dataRepo
               ? await commitExists(dataRepo, entry.sourceCommit)
               : null;
+          // Under lock version 4 the installed state is named the way Git
+          // names it — a blob id per pinned path plus its mode — so the same
+          // `sourcePinDigest` formula covers the pin, the install, and the
+          // upstream. Mode is inside the digest, which is why `modeDrifted`
+          // stays false on that path: an executable-bit flip is already a
+          // different identity rather than a separate flag.
+          const treeIdentity = entry.source === "data" && isTreePinned(entry);
+          const installation =
+            treeIdentity && entry.source === "data" && dataRepo
+              ? await describeInstallation(
+                  project,
+                  dataRepo,
+                  kind,
+                  itemName,
+                  entry.sourceCommit,
+                )
+              : null;
           let currentSha: string | null;
           let modeDrifted = false;
-          if (isFragmentItemKind(kind)) {
+          if (treeIdentity && entry.source === "data" && dataRepo) {
+            currentSha =
+              sourceCommitPresent === false
+                ? null
+                : (installation?.currentSha ?? null);
+          } else if (isFragmentItemKind(kind)) {
             currentSha = await shaOfInstalled(project, kind, itemName);
           } else if (isCopyDirectoryItemKind(kind)) {
             currentSha = await currentCopyDirectoryItemSha({
@@ -213,14 +242,14 @@ export function registerStatus(program: Command): void {
                     itemName,
                     entry.sourceCommit,
                   )
-                : entry.sha;
+                : entryIdentity(entry);
           } else {
             throw new Error(`no status strategy for ${kind}/${itemName}`);
           }
           let fragmentOutputState: FragmentContributionState | null = null;
           if (source === "data" && isFragmentItemKind(kind)) {
             if (sourceCommitPresent === false) {
-              currentSha = entry.sha;
+              currentSha = entryIdentity(entry);
             } else if (dataRepo) {
               const stateKey = `${scope}/${key}`;
               if (!fragmentStates.has(stateKey)) {
@@ -240,12 +269,12 @@ export function registerStatus(program: Command): void {
               fragmentOutputState = fragmentStates.get(stateKey)!;
               currentSha =
                 fragmentOutputState === "ok"
-                  ? entry.sha
+                  ? entryIdentity(entry)
                   : fragmentOutputState === "missing"
                     ? null
                     : "fragment-output-drift";
             } else {
-              currentSha = entry.sha;
+              currentSha = entryIdentity(entry);
             }
           }
 
@@ -259,11 +288,12 @@ export function registerStatus(program: Command): void {
                 dataRepo,
                 kind,
                 itemName,
+                treeIdentity ? "tree" : "worktree",
               );
               upstreamSha = upstream.upstreamSha;
               upstreamDirty = upstream.upstreamDirty;
               upstreamChanged =
-                upstreamSha !== entry.sha ||
+                upstreamSha !== entryIdentity(entry) ||
                 (entry.source === "data" &&
                   upstream.sourceCommit !== null &&
                   upstream.sourceCommit !== entry.sourceCommit);
@@ -284,14 +314,53 @@ export function registerStatus(program: Command): void {
             const sys = findSystemItem(itemName);
             upstreamSha =
               sys && sys.kind === kind ? await shaOfSystemItem(sys) : null;
-            upstreamChanged = upstreamSha !== entry.sha;
+            upstreamChanged = upstreamSha !== entryIdentity(entry);
           }
 
+          // PIN-9 on the reporting path: one `check-attr` per item, against
+          // the commit the pin names, so the verdict is identical in every
+          // clone whether or not that clone holds the driver's key.
+          const filteredPaths =
+            treeIdentity &&
+            entry.source === "data" &&
+            dataRepo &&
+            sourceCommitPresent !== false
+              ? await filteredPathsForEntry(
+                  dataRepo,
+                  kind,
+                  itemName,
+                  entry.sourceCommit,
+                )
+              : [];
+          const axes: StatusAxes | undefined =
+            entry.source === "data" && treeIdentity
+              ? {
+                  pin:
+                    sourceCommitPresent === false || installation === null
+                      ? "unresolvable"
+                      : installation.pinnedSha === entryIdentity(entry)
+                        ? "valid"
+                        : "mismatch",
+                  sourceState:
+                    filteredPaths.length > 0
+                      ? "filtered"
+                      : upstreamDirty
+                        ? "dirty"
+                        : "exact",
+                  ...(installation !== null && {
+                    installation: installation.axis,
+                    installDifferences: installation.differences.filter(
+                      (difference) => difference.kind !== "untouched",
+                    ),
+                  }),
+                  ...(filteredPaths.length > 0 && { filteredPaths }),
+                }
+              : undefined;
           const state = deriveState({
             kind,
             source: entry.source,
             local: entry.source === "data" && entry.local === true,
-            lockedSha: entry.sha,
+            lockedSha: entryIdentity(entry),
             currentSha,
             modeDrifted,
             upstreamSha,
@@ -299,6 +368,7 @@ export function registerStatus(program: Command): void {
             upstreamChanged,
             fragmentOutputState,
             sourceCommitPresent,
+            sourceFiltered: filteredPaths.length > 0,
           });
           const subagentTargets =
             kind === "subagents" &&
@@ -335,6 +405,7 @@ export function registerStatus(program: Command): void {
                   ? deriveNeedsState(entry.needs ?? null, currentNeeds)
                   : undefined,
               targets: subagentTargets,
+              ...(axes !== undefined && { axes }),
               runtimeWarnings: [
                 ...runtimeWarningsForItem(project, kind, itemName),
                 ...codexWarningsForItem(project, kind, itemName),
@@ -408,6 +479,28 @@ export function registerStatus(program: Command): void {
         }
       },
     );
+}
+
+/**
+ * PIN-9 for one item at one commit. `status` calls this per row rather than
+ * grouping by commit: a project's items rarely share a source commit, so the
+ * grouping the spec's cost table describes would save nothing here — the
+ * saving is in a multi-item `update`, which pins them all at once.
+ */
+async function filteredPathsForEntry(
+  dataRepo: string,
+  kind: ItemKind,
+  name: string,
+  commit: string,
+): Promise<FilteredPath[]> {
+  try {
+    const entries = await itemTreeEntriesAtCommit(dataRepo, kind, name, commit);
+    return await filteredPathsAtCommit(dataRepo, commit, [
+      { kind, name, entries },
+    ]);
+  } catch {
+    return [];
+  }
 }
 
 async function statusUser(

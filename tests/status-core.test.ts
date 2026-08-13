@@ -9,7 +9,7 @@ import {
   type StateFacts,
   type StatusRow,
 } from "../src/status-core";
-import type { Lock, LockEntry } from "../src/lock";
+import type { LockEntry, LockEntryV4, LockV4 } from "../src/lock";
 import type { RuntimeWarning } from "../src/runtime-warnings";
 
 function facts(overrides: Partial<StateFacts> = {}): StateFacts {
@@ -248,13 +248,13 @@ describe("deriveNeedsState", () => {
   });
 });
 
-function lock(items: Record<string, LockEntry>): Lock {
-  return { version: 3, items };
+function lock(items: Record<string, LockEntryV4>): LockV4 {
+  return { version: 4, items };
 }
 
-const dataEntry: LockEntry = {
+const dataEntry: LockEntryV4 = {
   source: "data",
-  sha: "L",
+  sourcePinDigest: "L",
   sourceCommit: "c1",
   appliedAt: "t",
 };
@@ -323,7 +323,7 @@ describe("buildStatusRow", () => {
   test("assembles a data row with optional fields and warnings", () => {
     const entry: LockEntry = {
       source: "data",
-      sha: "L",
+      sourcePinDigest: "L",
       sourceCommit: "c1",
       appliedAt: "t",
       label: "lbl",

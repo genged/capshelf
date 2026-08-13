@@ -265,6 +265,7 @@ describe("interactive destructive-change consent", () => {
         item?: string;
         path: string;
         reason: string;
+        detail?: string;
         reviewCommand?: string;
       }>;
     };
@@ -273,6 +274,7 @@ describe("interactive destructive-change consent", () => {
       item: "project/data/skills/extra",
       path: ".agents/skills/extra/notes.txt",
       reason: "extra_local_path",
+      detail: "not part of the item — reconciliation removes it",
       reviewCommand: "capshelf status skills/extra --diff",
     });
 
@@ -330,6 +332,7 @@ describe("interactive destructive-change consent", () => {
           item?: string;
           path: string;
           reason: string;
+          detail?: string;
           reviewCommand?: string;
         }>;
       };

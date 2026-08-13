@@ -1,5 +1,6 @@
 import { $, file } from "bun";
 import { describe, expect, test } from "bun:test";
+import { currentPinDigest } from "./pin-fixtures";
 import {
   chmod,
   mkdtemp,
@@ -18,7 +19,7 @@ import {
   runtimeWarningsForItem,
   type RuntimeWarningType,
 } from "../src/runtime-warnings";
-import { listMasterItems, shaOfGitVisibleItem } from "../src/master";
+import { listMasterItems } from "../src/master";
 import { lastTouchingContentCommit, lastTouchingCommit } from "../src/git";
 import { CLI_INTEGRATION_TEST_TIMEOUT_MS, runInProcess } from "./cli-fixtures";
 
@@ -119,9 +120,10 @@ describe("pi extension item contracts", () => {
       dataRepo,
       "pi/extensions/guard",
     );
-    const initialSha = await shaOfGitVisibleItem(
+    const initialSha = await currentPinDigest(
       dataRepo,
-      "pi/extensions/guard",
+      "pi-extensions",
+      "guard",
     );
 
     await writeFile(join(extension, ".capshelf.yml"), "tags: [safety]\n");
@@ -132,7 +134,7 @@ describe("pi extension item contracts", () => {
     expect(
       await lastTouchingContentCommit(dataRepo, "pi/extensions/guard"),
     ).toBe(contentCommit);
-    expect(await shaOfGitVisibleItem(dataRepo, "pi/extensions/guard")).toBe(
+    expect(await currentPinDigest(dataRepo, "pi-extensions", "guard")).toBe(
       initialSha,
     );
 
@@ -140,7 +142,8 @@ describe("pi extension item contracts", () => {
       join(extension, "src", ".capshelf.yml"),
       "nested content\n",
     );
-    expect(await shaOfGitVisibleItem(dataRepo, "pi/extensions/guard")).not.toBe(
+    await commitAll(dataRepo, "nested sidecar is content");
+    expect(await currentPinDigest(dataRepo, "pi-extensions", "guard")).not.toBe(
       initialSha,
     );
   });

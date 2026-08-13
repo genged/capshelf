@@ -122,7 +122,9 @@ describe("cli integration", () => {
     for (const key of memberKeys) {
       expect(lock.items[key]?.source).toBe("data");
     }
-    expect(new Set(memberKeys.map((k) => lock.items[k].sha)).size).toBe(5);
+    expect(
+      new Set(memberKeys.map((k) => lock.items[k].sourcePinDigest)).size,
+    ).toBe(5);
     // Separate commits produced distinct sourceCommits.
     expect(
       new Set(memberKeys.map((k) => lock.items[k].sourceCommit)).size,
@@ -194,7 +196,7 @@ describe("cli integration", () => {
       (m: { ref: string }) => m.ref === "skills/extra",
     );
     expect(extra.status).toBe("added");
-    expect(extra.sha).toMatch(/^[0-9a-f]{12}$/);
+    expect(extra.sha).toMatch(/^[0-9a-f]{64}$/);
     expect(extra.sourceCommit).toMatch(/^[0-9a-f]{40}$/);
     expect(extra.dst).toBe(".agents/skills/extra");
     expect(
@@ -545,7 +547,7 @@ describe("cli integration", () => {
         available: true,
         installed: true,
         scope: "project",
-        lockedSha: expect.stringMatching(/^[0-9a-f]{12}$/),
+        lockedSha: expect.stringMatching(/^[0-9a-f]{64}$/),
       },
       { ref: "mcp/postgres-local", available: false, installed: false },
     ]);

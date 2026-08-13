@@ -1,5 +1,6 @@
 import { $, file } from "bun";
 import { describe, expect, test } from "bun:test";
+import { currentPinDigest } from "./pin-fixtures";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -91,7 +92,7 @@ describe("status diff helpers", () => {
     await writeFile(join(dataItem, "scripts", ".gitignore"), ".venv/\n");
     await commitAll(dataRepo, "hello v1");
     const sourceCommit = await lastTouchingCommit(dataRepo, "skills/hello");
-    const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+    const lockedSha = await currentPinDigest(dataRepo, "skills", "hello");
 
     await writeFile(join(dataItem, "SKILL.md"), "upstream v2\n");
     await writeFile(join(dataItem, "deleted.md"), "upstream delete\n");
@@ -132,11 +133,11 @@ describe("status diff helpers", () => {
         codexConfig: [],
       },
       lock: {
-        version: 3,
+        version: 4,
         items: {
           [dataKey("skills", "hello")]: {
             source: "data",
-            sha: lockedSha,
+            sourcePinDigest: lockedSha,
             sourceCommit,
             appliedAt: "2026-05-08T00:00:00.000Z",
           },
@@ -182,6 +183,8 @@ describe("status diff helpers", () => {
     await writeFile(join(dataItem, ".capshelf.yml"), "tags: [a]\n");
     await commitAll(dataRepo, "hello v1");
     const sourceCommit = await lastTouchingCommit(dataRepo, "skills/hello");
+    // `currentCopyDirectoryItemSha` is the *legacy* installed hash, still used
+    // for lock version 3 entries, so the expectation is the legacy hash too.
     const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
 
     await mkdir(installed, { recursive: true });
@@ -213,11 +216,11 @@ describe("status diff helpers", () => {
       dataRepo,
       manifest,
       lock: {
-        version: 3,
+        version: 4,
         items: {
           [dataKey("skills", "hello")]: {
             source: "data",
-            sha: lockedSha,
+            sourcePinDigest: lockedSha,
             sourceCommit,
             appliedAt: "2026-05-08T00:00:00.000Z",
           },
@@ -245,7 +248,7 @@ describe("status diff helpers", () => {
     await writeFile(join(dataItem, "SKILL.md"), "locked file\n");
     await commitAll(dataRepo, "hello skill");
     const sourceCommit = await lastTouchingCommit(dataRepo, "skills/hello");
-    const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
+    const lockedSha = await currentPinDigest(dataRepo, "skills", "hello");
 
     await mkdir(join(installed, "SKILL.md"), { recursive: true });
     await writeFile(join(installed, "SKILL.md", "nested.txt"), "local dir\n");
@@ -279,11 +282,11 @@ describe("status diff helpers", () => {
         codexConfig: [],
       },
       lock: {
-        version: 3,
+        version: 4,
         items: {
           [dataKey("skills", "hello")]: {
             source: "data",
-            sha: lockedSha,
+            sourcePinDigest: lockedSha,
             sourceCommit,
             appliedAt: "2026-05-08T00:00:00.000Z",
           },
@@ -342,11 +345,11 @@ describe("status diff helpers", () => {
         codexConfig: [],
       },
       lock: {
-        version: 3,
+        version: 4,
         items: {
           [dataKey("settings", "security")]: {
             source: "data",
-            sha: lockedSha,
+            sourcePinDigest: lockedSha,
             sourceCommit,
             appliedAt: "2026-05-08T00:00:00.000Z",
           },
@@ -387,7 +390,7 @@ describe("status diff helpers", () => {
         mcp: [],
         codexConfig: [],
       },
-      lock: { version: 3, items: {} },
+      lock: { version: 4, items: {} },
       row: {
         source: "data",
         kind: "skills",
@@ -441,11 +444,11 @@ describe("status diff helpers", () => {
         codexConfig: [],
       },
       lock: {
-        version: 3,
+        version: 4,
         items: {
           [dataKey("mcp", "server")]: {
             source: "data",
-            sha: lockedSha,
+            sourcePinDigest: lockedSha,
             sourceCommit,
             appliedAt: "2026-05-08T00:00:00.000Z",
           },
@@ -483,11 +486,11 @@ describe("status diff helpers", () => {
           codexConfig: [],
         },
         lock: {
-          version: 3,
+          version: 4,
           items: {
             [dataKey("skills", "hello")]: {
               source: "data",
-              sha: "missing",
+              sourcePinDigest: "missing",
               sourceCommit: "abc123",
               appliedAt: "2026-05-08T00:00:00.000Z",
             },

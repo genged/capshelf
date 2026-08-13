@@ -9,7 +9,32 @@ import {
 } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
 import { tmpdir } from "node:os";
-import { gitBuffer, gitText, gitTry } from "./git";
+import { isolatedMerge, isolatedMergeText } from "./git";
+
+/**
+ * One step of the merge sandbox. `repo === null` is the `git init` that
+ * creates it, which by definition does not start inside a repository — the
+ * only place in the codebase where an unbound git invocation is correct, and
+ * it is bound instead to a disposable working directory and a neutral
+ * environment (`isolatedGitEnv`).
+ */
+async function isolatedMergeStep(
+  repo: string | null,
+  args: string[],
+  env: Record<string, string>,
+): Promise<void> {
+  const result = await isolatedMerge(
+    repo === null ? { cwd: tmpdir() } : { repo },
+    args,
+    env,
+  );
+  if (result.exitCode !== 0) {
+    throw new Error(
+      result.stderr ||
+        `isolated git ${args.join(" ")} exited ${result.exitCode}`,
+    );
+  }
+}
 
 export type GitFileMode = "100644" | "100755";
 
@@ -64,7 +89,7 @@ export async function mergeNamedTrees(
       mkdir(hooks),
       writeFile(config, ""),
     ]);
-    await gitBuffer(
+    await isolatedMergeStep(
       null,
       [
         ...gitConfigArgs,
@@ -74,45 +99,47 @@ export async function mergeNamedTrees(
         "--initial-branch=base",
         repo,
       ],
-      { env },
+      env,
     );
-    await gitBuffer(
+    await isolatedMergeStep(
       repo,
       [...gitConfigArgs, "config", "core.hooksPath", hooks],
-      { env },
+      env,
     );
     await writeNamedTree(repo, base);
-    await gitBuffer(repo, [...gitConfigArgs, "add", "-A"], { env });
-    await gitBuffer(
+    await isolatedMergeStep(repo, [...gitConfigArgs, "add", "-A"], env);
+    await isolatedMergeStep(
       repo,
       [...gitConfigArgs, "commit", "--quiet", "--allow-empty", "-m", "base"],
-      { env },
+      env,
     );
 
-    await gitBuffer(
+    await isolatedMergeStep(
       repo,
       [...gitConfigArgs, "checkout", "--quiet", "-b", "local"],
-      { env },
+      env,
     );
     await writeNamedTree(repo, local);
-    await gitBuffer(repo, [...gitConfigArgs, "add", "-A"], { env });
-    await gitBuffer(
+    await isolatedMergeStep(repo, [...gitConfigArgs, "add", "-A"], env);
+    await isolatedMergeStep(
       repo,
       [...gitConfigArgs, "commit", "--quiet", "--allow-empty", "-m", "local"],
-      { env },
+      env,
     );
 
-    await gitBuffer(repo, [...gitConfigArgs, "checkout", "--quiet", "base"], {
+    await isolatedMergeStep(
+      repo,
+      [...gitConfigArgs, "checkout", "--quiet", "base"],
       env,
-    });
-    await gitBuffer(
+    );
+    await isolatedMergeStep(
       repo,
       [...gitConfigArgs, "checkout", "--quiet", "-b", "upstream"],
-      { env },
+      env,
     );
     await writeNamedTree(repo, upstream);
-    await gitBuffer(repo, [...gitConfigArgs, "add", "-A"], { env });
-    await gitBuffer(
+    await isolatedMergeStep(repo, [...gitConfigArgs, "add", "-A"], env);
+    await isolatedMergeStep(
       repo,
       [
         ...gitConfigArgs,
@@ -122,14 +149,16 @@ export async function mergeNamedTrees(
         "-m",
         "upstream",
       ],
-      { env },
-    );
-    await gitBuffer(repo, [...gitConfigArgs, "checkout", "--quiet", "local"], {
       env,
-    });
-
-    const merged = await gitTry(
+    );
+    await isolatedMergeStep(
       repo,
+      [...gitConfigArgs, "checkout", "--quiet", "local"],
+      env,
+    );
+
+    const merged = await isolatedMerge(
+      { repo },
       [
         ...gitConfigArgs,
         "merge",
@@ -138,14 +167,14 @@ export async function mergeNamedTrees(
         "--no-edit",
         "upstream",
       ],
-      { env },
+      env,
     );
     if (merged.exitCode === 1) {
       const conflicts = (
-        await gitText(
-          repo,
+        await isolatedMergeText(
+          { repo },
           [...gitConfigArgs, "diff", "--name-only", "--diff-filter=U", "-z"],
-          { env },
+          env,
         )
       )
         .split("\0")
@@ -195,10 +224,10 @@ async function readNamedTree(
   repo: string,
   env: Record<string, string>,
 ): Promise<NamedFile[]> {
-  const output = await gitText(
-    repo,
+  const output = await isolatedMergeText(
+    { repo },
     [...gitConfigArgs, "ls-files", "-s", "-z"],
-    { env },
+    env,
   );
   const files: NamedFile[] = [];
   for (const record of output.split("\0").filter(Boolean)) {

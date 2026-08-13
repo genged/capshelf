@@ -12,7 +12,10 @@ import {
   showAtCommit,
 } from "./git";
 import { itemOutputTargets } from "./installed";
+import { entryIdentity } from "./lock";
 import type { DataLockEntry } from "./lock";
+import { itemTreeEntriesAtCommit, sourcePinDigest } from "./pin";
+import { installedTreeIdentity } from "./install-identity";
 
 export const SUBAGENT_TARGETS = ["claude", "codex"] as const;
 export type SubagentTarget = (typeof SUBAGENT_TARGETS)[number];
@@ -199,6 +202,12 @@ export interface MaterializeSubagentOptions {
       source: SubagentSource,
       index: number,
     ) => void | Promise<void>;
+    /**
+     * Test seam for write-then-verify: it runs after every target is written
+     * and before the post-write identity check, which is the only window in
+     * which that check can be made to fail.
+     */
+    afterReplace?: () => void | Promise<void>;
   };
 }
 
@@ -253,13 +262,19 @@ export async function materializeSubagent(
     options.name,
     options.entry.sourceCommit,
   );
+  // PIN-8: the previous commit only names which targets capshelf already owns,
+  // so an unresolvable previous pin degrades to the desired target set instead
+  // of failing the write that would replace it. `desired` is the conservative
+  // fallback — it never claims ownership of a target the new pin does not
+  // write, so the "target already exists and is not managed" guard below still
+  // fires for anything outside it.
   const previous = options.previousEntry
     ? await subagentSourcesAtCommit(
         options.project,
         options.dataRepo,
         options.name,
         options.previousEntry.sourceCommit,
-      )
+      ).catch(() => desired)
     : desired;
   const managedTargets = new Set(previous.map((source) => source.target));
   const desiredTargets = new Set(desired.map((source) => source.target));
@@ -293,17 +308,13 @@ export async function materializeSubagent(
     }
   }
 
-  const sourceSha = hashNamedContents(
-    desired.map((source) => ({
-      name: source.relPath,
-      content: contents.get(source.target)!,
-    })),
+  await assertSubagentSourceMatchesEntry(
+    options.dataRepo,
+    options.name,
+    options.entry,
+    desired,
+    contents,
   );
-  if (sourceSha !== options.entry.sha) {
-    throw new Error(
-      `locked sha mismatch for data/subagents/${options.name}: expected ${options.entry.sha}, got ${sourceSha}`,
-    );
-  }
 
   const stale = previous.filter((source) => !desiredTargets.has(source.target));
   for (const source of stale) {
@@ -347,15 +358,29 @@ export async function materializeSubagent(
     for (const source of stale) {
       await rm(source.outputPath, { force: true });
     }
-    const installedSha = await shaOfInstalledSubagent(
-      options.project,
-      options.dataRepo,
-      options.name,
-      options.entry.sourceCommit,
-    );
-    if (installedSha !== options.entry.sha) {
+    await options.hooks?.afterReplace?.();
+    // Write-then-verify: the claim this write establishes is re-derived here,
+    // in the same command, before it returns. A verification that lives in a
+    // different command is how the original bug survived for weeks.
+    const expected = entryIdentity(options.entry);
+    const installedSha =
+      options.entry.sourcePinDigest !== undefined
+        ? await installedTreeIdentity(
+            options.project,
+            options.dataRepo,
+            "subagents",
+            options.name,
+            options.entry.sourceCommit,
+          )
+        : await shaOfInstalledSubagent(
+            options.project,
+            options.dataRepo,
+            options.name,
+            options.entry.sourceCommit,
+          );
+    if (installedSha !== expected) {
       throw new Error(
-        `post-materialization sha mismatch for data/subagents/${options.name}: expected ${options.entry.sha}, got ${installedSha ?? "missing"}`,
+        `post-materialization identity mismatch for data/subagents/${options.name}: expected ${expected}, got ${installedSha ?? "missing"}`,
       );
     }
   } catch (error) {
@@ -376,6 +401,46 @@ export async function materializeSubagent(
     warnings,
     changed: true,
   };
+}
+
+/**
+ * The identity check `materializeSubagent` runs before it writes anything.
+ *
+ * Version 4 digests the committed tree — the same value the pin recorded, and
+ * one no working-tree state can move. Version 3 keeps the legacy hash of the
+ * bytes about to be written, so an unmigrated project still applies.
+ */
+async function assertSubagentSourceMatchesEntry(
+  dataRepo: string,
+  name: string,
+  entry: DataLockEntry,
+  desired: SubagentSource[],
+  contents: Map<SubagentTarget, Buffer>,
+): Promise<void> {
+  if (entry.sourcePinDigest !== undefined) {
+    const digest = sourcePinDigest(
+      await itemTreeEntriesAtCommit(
+        dataRepo,
+        "subagents",
+        name,
+        entry.sourceCommit,
+      ),
+    );
+    if (digest === entry.sourcePinDigest) return;
+    throw new Error(
+      `locked pin mismatch for data/subagents/${name}: expected ${entry.sourcePinDigest}, got ${digest}`,
+    );
+  }
+  const sourceSha = hashNamedContents(
+    desired.map((source) => ({
+      name: source.relPath,
+      content: contents.get(source.target)!,
+    })),
+  );
+  if (sourceSha === entry.sha) return;
+  throw new Error(
+    `locked sha mismatch for data/subagents/${name}: expected ${entry.sha}, got ${sourceSha}`,
+  );
 }
 
 export interface SubagentTargetStatus {

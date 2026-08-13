@@ -6,7 +6,7 @@ import type { InstallMode } from "../paths";
 import { ensureClone, resolveDataInput } from "../data-bootstrap";
 import { LOCAL_CONFIG_FILE, METADATA_DIR } from "../identity";
 import { loadManifest, saveManifest } from "../manifest";
-import { loadLock, saveLock, systemKey } from "../lock";
+import { assertLockV4, loadLock, saveLock, systemKey } from "../lock";
 import {
   SYSTEM_ITEMS,
   installSystemItem,
@@ -236,7 +236,7 @@ export function registerInit(program: Command): void {
       // "already initialized" is true exactly when init finished, and a plain
       // re-run is the recovery.
       await saveManifest(project, manifest);
-      await saveLock(project, lock);
+      await saveLock(project, assertLockV4(lock, "capshelf init"));
       await saveLocalConfig(project, {
         dataRepo,
         skills: [],

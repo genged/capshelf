@@ -4,7 +4,10 @@ import { join, basename } from "node:path";
 import { hashNamedContents } from "./content-hash";
 import { assertNever, assertSafeItemName } from "./assert";
 import { isIgnoredDotDirent } from "./dotfiles";
-import { gitVisibleFilesUnderPath } from "./git";
+import {
+  projectVisibleFilesUnderPath,
+  sourceVisibleFilesUnderPath,
+} from "./git";
 import { METADATA_SIDECAR } from "./identity";
 import { PreconditionError } from "./errors";
 
@@ -238,14 +241,36 @@ export async function shaOfItem(itemPath: string): Promise<string> {
   );
 }
 
+/**
+ * The legacy (lock version 3) content hash of a data-repo item, taken over the
+ * files Git treats as owned in the *data repo working tree*. Bound to the
+ * `source-read` profile.
+ *
+ * Under lock version 4 this is no longer an identity: `sourcePinDigest`
+ * (`src/pin.ts`) is, and it comes from the committed tree. This survives for
+ * catalog display and for the one-time migration audit in `lock migrate`.
+ */
 export async function shaOfGitVisibleItem(
   repo: string,
   relPath: string,
 ): Promise<string> {
   return shaOfItemFiles(
     join(repo, ...relPath.split("/")),
-    (await gitVisibleFilesUnderPath(repo, relPath)).filter(
-      (rel) => !isMetadataSidecarPath(rel),
+    (await sourceVisibleFilesUnderPath(repo, relPath)).filter(
+      (rel: string) => !isMetadataSidecarPath(rel),
+    ),
+  );
+}
+
+/** The same hash over an installed item, using the *project's* Git policy. */
+export async function shaOfProjectVisibleItem(
+  project: string,
+  relPath: string,
+): Promise<string> {
+  return shaOfItemFiles(
+    join(project, ...relPath.split("/")),
+    (await projectVisibleFilesUnderPath(project, relPath)).filter(
+      (rel: string) => !isMetadataSidecarPath(rel),
     ),
   );
 }

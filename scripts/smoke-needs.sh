@@ -66,13 +66,16 @@ import sys
 before = json.load(open(sys.argv[1], encoding="utf-8"))
 after = json.load(open(sys.argv[2], encoding="utf-8"))
 key = "data/pi-extensions/exa-mcp"
-assert before["items"][key]["sha"] == after["items"][key]["sha"]
+assert (
+    before["items"][key]["sourcePinDigest"]
+    == after["items"][key]["sourcePinDigest"]
+)
 assert before["items"][key]["sourceCommit"] == after["items"][key]["sourceCommit"]
 assert after["items"][key]["needs"]["network"] == [
     "api.example.com",
     "mcp.exa.ai",
 ]
-assert after["version"] == 3
+assert after["version"] == 4
 PY
 
 echo "✓ smoke-needs ok ($TMP)"

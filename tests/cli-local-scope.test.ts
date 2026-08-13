@@ -397,7 +397,7 @@ describe("cli integration", () => {
     expect(dry.exitCode).toBe(0);
     const dryJson = JSON.parse(dry.stdout.toString());
     expect(dryJson.items[0].action).toBe("would-update");
-    expect(dryJson.items[0].currentSha).toBe(oldEntry.sha);
+    expect(dryJson.items[0].currentSha).toBe(oldEntry.sourcePinDigest);
     expect(dryJson.items[0].currentSha).not.toBe("e3b0c44298fc");
     expect(
       await file(
@@ -424,7 +424,7 @@ describe("cli integration", () => {
       join(project, ".capshelf", "local.lock.json"),
     ).json();
     const newEntry = lockAfter.items["data/skills/hello"];
-    expect(newEntry.sha).not.toBe(oldEntry.sha);
+    expect(newEntry.sourcePinDigest).not.toBe(oldEntry.sourcePinDigest);
     expect(newEntry.sourceCommit).not.toBe(oldEntry.sourceCommit);
     // Local-scope operations never leak into committed project policy.
     const projectManifest = await file(
@@ -843,7 +843,11 @@ describe("cli integration", () => {
     const projectLockPath = join(project, ".capshelf", "capshelf.lock.json");
     const projectLock = await file(projectLockPath).json();
     const localLock = {
-      version: 2,
+      // The partial-recovery fixture mirrors the project lock, so it carries
+      // the same lock version. A version-2 envelope here would now be refused
+      // by the writer gate before `move` could recover anything, which is a
+      // different scenario (`lock migrate`).
+      version: 4,
       items: {
         "data/skills/partial-local":
           projectLock.items["data/skills/partial-local"],
@@ -964,8 +968,8 @@ describe("cli integration", () => {
     const afterLock = await file(
       join(project, ".capshelf", "local.lock.json"),
     ).json();
-    expect(afterLock.items["data/skills/local-edit"].sha).not.toBe(
-      beforeLock.items["data/skills/local-edit"].sha,
+    expect(afterLock.items["data/skills/local-edit"].sourcePinDigest).not.toBe(
+      beforeLock.items["data/skills/local-edit"].sourcePinDigest,
     );
     const manifest = await file(
       join(project, ".capshelf", "capshelf.json"),

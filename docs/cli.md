@@ -72,6 +72,7 @@ hash format.
 | `promote <item>` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects clone-local copy items; stale copy items can use `--merge` or intentional overwrite with `--stale-ok` | implemented |
 | `keep-local <item>` | mark drifted copy-item content as intentional divergence; supports project and clone-local skills/Pi extensions, and rejects fragments; `--unset` is the only thing that clears the marker, and `promote` refuses a marked item | implemented |
 | `revert <item>` | restore one locked version; the lock is never rewritten, so a keep-local marker survives; discarding local state requires consent or `--yes`; supports `--local` | implemented |
+| `lock migrate` | convert this project's lock files to version 4 in one transaction; supports `--dry-run`, `--repin`, `--remove-item`, `--yes`, and `--json` | implemented |
 | `self-update` | check for and install a Homebrew update for the capshelf binary; supports `--check` and `--yes` | implemented |
 | `marketplace ...` | author, validate, sync, rename/retire, and package independent Claude/Cowork and Codex plugin catalogs in the data repo | implemented |
 | `validate <name>` | lint an item (frontmatter, structure, broken refs) | roadmap |
@@ -672,7 +673,7 @@ this command closes.
 | 4 | drift detected (for `status --strict`), upstream verification failed, or `sync-data` needs human action (diverged history, or upstream commits blocked by a dirty worktree) |
 | 5 | reserved for future unmet-requires checks (`add` with unmet `requires` warns and exits 0) |
 | 6 | no data repo configured for this project (pass `--data`, set `.capshelf/local.json`, or `$CAPSHELF_HOME`) |
-| 7 | required dependency missing (`git` not found on `PATH`) |
+| 7 | required dependency missing (`git` not found on `PATH`, or older than 2.40.0) |
 
 Initializing with no portable data repo origin:
 
@@ -736,6 +737,119 @@ data repo at <path> is bound to the wrong upstream.
         capshelf set-upstream <new-url>
 ```
 
+## Source pins and lock version 4
+
+A data lock entry records a content identity and a source commit, and every
+command depends on one claim: the identity is what that commit holds.
+
+Lock version 4 makes the claim true by construction. Identity is
+`sourcePinDigest`, a sha-256 over the item's committed tree entries — for each
+file, its item-relative name, its mode, and its Git blob id — read with one
+`git ls-tree`. Computing it reads no file content at all, so working-tree
+state, Git configuration, checkout filters, ignore rules, and the filesystem
+cannot reach it. `add`, `apply`, `update`, and `revert` all write bytes read
+from those same blob ids, so they cannot disagree about what an item is.
+
+Version 3 recorded `sha`, a hash of the data repo's *working tree*, next to a
+commit chosen separately. Git's cleanliness is not byte equality, so a clean
+filter, an index bit, or a sparse checkout produced a lock that reported
+`up-to-date` forever and that `update`, `apply`, and `revert` all refused.
+
+What this changes for a user:
+
+- An item whose repository uses `core.autocrlf`, `text` attributes, or
+  `eol=crlf` installs and updates normally. Every project receives what Git
+  stores, which is what every `git clone` of that repository produces.
+- A managed path that declares an **external filter driver** (`git-lfs`,
+  `git-crypt`) is refused at pin time, in every clone, whether or not that
+  clone can run the driver. Git stores a placeholder for such a path, so
+  delivering it faithfully would deliver the placeholder. Commit the file
+  already encrypted with no filter attribute (`sops`, `age`) instead.
+- The executable bit is part of identity. Flipping it upstream is a real
+  content change and shows as an update.
+- Git 2.40.0 or newer is required, because the filter check reads attributes
+  from the pinned commit (`git check-attr --source`) rather than from the
+  machine.
+
+### lock migrate
+
+```text
+capshelf lock migrate [--dry-run] [--repin <ref>...] [--remove-item <ref>...] \
+  [--yes] [--json]
+```
+
+`lock migrate` is the only path from version 2 or 3 to version 4. It converts
+the project lock and the local lock as **one transaction**: version applies to
+a whole file, so a partial conversion would leave two identity models alive in
+the same project.
+
+The default migration selects no new content. For each data entry it resolves
+the recorded commit, reads the item's committed tree, checks committed filter
+attributes, and writes the pin — keeping `appliedAt`, `needs`, `label`, and the
+keep-local marker exactly as they were. It also audits the old `sha` against
+the commit it names: a disagreement is reported as `repaired legacy identity`,
+because that contradiction is precisely the failure version 4 removes.
+
+A missing or invalid source blocks the run. Every blocker is reported in one
+pass and nothing is written. Three explicit choices resolve one:
+
+- restore or fetch the exact source commit, then retry;
+- `--repin <ref>` re-pins a copy item or subagent to its current committed
+  source, through the ordinary consent boundary;
+- `--remove-item <ref>` drops the entry.
+
+A fragment cannot be re-pinned: its installed state lives inside a merged
+output file, so once its commit is gone capshelf cannot tell its former
+contribution from a project-local value. Remove it and `add` it again.
+
+Until a project migrates, `status`, `ls`, `show`, and `apply` keep working
+against the old lock, and every command that would *write* a lock — `add`,
+`update`, `promote`, `share`, `move`, `keep-local`, `rm`, `revert`, bundle
+installs, and `init` — refuses with migration guidance. No ordinary command
+silently upgrades a project.
+
+Recommended team rollout:
+
+```text
+1. upgrade capshelf on every machine and in CI
+2. capshelf lock migrate --dry-run
+3. resolve every blocker
+4. capshelf lock migrate
+5. commit the project lock as a lock-only change
+```
+
+The upgrade is one-way. An older binary refuses a version-4 lock outright
+(`lock version 4 is newer than this capshelf supports`) rather than parsing it
+through a strict schema that would strip every pin it touched — so upgrade
+every writer before committing the migrated lock.
+
+### Repairing an unprovable pin
+
+Only `update` repairs. Its target is the *current* source commit, which is a
+new, verified target, so it can replace both pin fields after consent.
+
+`apply` and `revert` refuse. Their target is the locked commit: if that commit
+is missing, no target bytes exist, and if it resolves but its tree does not
+match the lock, capshelf cannot prove which identity the user selected. Consent
+cannot create missing bytes or choose between two contradictory identities.
+
+```console
+$ capshelf apply skills/csv-report
+✗ ...
+  the locked source cannot supply a verified target — repair the pin with: capshelf update skills/csv-report
+
+$ capshelf update skills/csv-report
+Update would destroy local state:
+  project/data/skills/csv-report — .agents/skills/csv-report/template.csv — overwrite managed content
+      line endings differ — a checkout may have rewritten this file
+Review local changes with:
+  capshelf status skills/csv-report --diff
+Continue? [y/N]
+```
+
+One wedged item no longer stops the rest: a whole-project `update` reports the
+failing item and still writes every healthy one, exiting 1.
+
 ## The edit loop
 
 The core agent-driven flow. Works on data items only — system items are read-only from the project's perspective.
@@ -795,6 +909,32 @@ item must use local scope before it can be promoted. Capshelf also rechecks the
 installed snapshot and copied content before committing; a concurrent edit
 aborts and restores the canonical data-repo path and Git index.
 Executable-mode-only edits count as local drift and are promotable changes.
+
+### Install differences
+
+`status` reports three independent axes so a script never loses one to a
+precedence rule. `--json` carries all three; the human row prints one derived
+headline.
+
+| axis | values |
+|---|---|
+| `pin` | `valid`, `mismatch`, `unresolvable` |
+| `sourceState` | `exact`, `filtered`, `dirty` |
+| `installation` | `clean`, `modified`, `missing`, `hidden-extra`, `unsupported` |
+
+The axis the spec calls `source` is `sourceState` in the row and in `--json`,
+because `source` already means the entry's origin (`data` or `system`).
+
+When an install differs from its pin, `installDifferences` names the kind of
+each difference: `content-edit`, `line-endings`, `encoding`, `ident`, `mode`,
+`filter-artifact`, `missing`, `unsupported-type`, or `unreadable`. Those are
+best-effort *explanations*, not a taxonomy — two transformations can compose —
+so an entry carries a primary kind plus secondary facts.
+
+They never decide anything. Whether a file was rewritten by a person or by a
+checkout is not decidable from bytes: a user who deliberately converts a file
+to CRLF for a Windows tool produces exactly what `core.autocrlf=true` produces.
+So the classification labels the consent prompt and never suppresses it.
 
 ### Destructive-change consent
 

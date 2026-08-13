@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { lstat, readFile, readlink } from "node:fs/promises";
 import { join, relative } from "node:path";
 import type { DestructiveChange } from "./destructive-change";
+import { classifyInstalledFile, installDifferenceLabel } from "./install-diff";
 import { PreconditionError } from "./errors";
 import type {
   FragmentContributionState,
@@ -40,17 +41,37 @@ export async function planCopyDirectoryDestruction(opts: {
   currentEntry: LockEntry;
   selectedEntry: LockEntry;
   reviewCommand: string;
+  /**
+   * PIN-8. `update` alone sets this: its target is the *selected* commit, so
+   * an unprovable previous pin is a thing to repair rather than a reason to
+   * refuse. Reading the previous entry here is classification, not target
+   * verification, so when it fails the plan is rebuilt against the selected
+   * entry — every installed file that differs from the incoming content is
+   * still reported as loss, and ignored local state is still preserved.
+   *
+   * `apply` and `revert` leave it unset: the previous entry *is* their
+   * target, so a failure to read it must reach the caller.
+   */
+  repairUnresolvableCurrent?: boolean;
 }): Promise<PlannedDestruction> {
-  const current = await copyDirectoryReconciliationFiles({
-    project: opts.project,
-    dataRepo: opts.dataRepo,
-    manifest: opts.manifest,
-    kind: opts.kind,
-    name: opts.name,
-    entry: opts.currentEntry,
-    previousEntry: opts.currentEntry,
-    scope: opts.scope,
-  });
+  const readReconciliationFiles = (entry: LockEntry) =>
+    copyDirectoryReconciliationFiles({
+      project: opts.project,
+      dataRepo: opts.dataRepo,
+      manifest: opts.manifest,
+      kind: opts.kind,
+      name: opts.name,
+      entry,
+      previousEntry: entry,
+      scope: opts.scope,
+    });
+  const current =
+    opts.repairUnresolvableCurrent === true &&
+    opts.currentEntry !== opts.selectedEntry
+      ? await readReconciliationFiles(opts.currentEntry).catch(() =>
+          readReconciliationFiles(opts.selectedEntry),
+        )
+      : await readReconciliationFiles(opts.currentEntry);
 
   const root = installedPath(
     opts.project,
@@ -94,6 +115,17 @@ export async function planCopyDirectoryDestruction(opts: {
     current.expected.map((file) => [file.path, file]),
   );
   const preservedPaths = new Set(current.preserved.map((entry) => entry.path));
+  // What the *selected* entry will write. Managed paths are still classified
+  // against the current entry — otherwise every routine content update would
+  // read as loss — but a path that is local state today and pinned by the
+  // selected entry really is destroyed by the write, and only the selected
+  // entry knows that.
+  const selectedPaths =
+    opts.currentEntry === opts.selectedEntry
+      ? null
+      : await readReconciliationFiles(opts.selectedEntry)
+          .then((files) => new Set(files.expected.map((file) => file.path)))
+          .catch(() => null);
   const seen = new Set<string>();
   const changes: DestructiveChange[] = [];
   const snapshotParts: string[] = [];
@@ -109,14 +141,36 @@ export async function planCopyDirectoryDestruction(opts: {
     snapshotParts.push(`copy:${fullPath}:${mode}:${contentDigest(content)}`);
     const expected = expectedByPath.get(path);
     if (expected) {
+      // PIN-6 stage 2, free here: both sides are already in memory. The
+      // classification explains what is being asked, and changes nothing about
+      // whether it is asked.
+      const difference = classifyInstalledFile({
+        path,
+        installed: content,
+        pinned: expected.content,
+        installedMode: mode,
+        pinnedMode: expected.mode,
+      });
+      const detail = installDifferenceLabel(difference);
       if (!content.equals(expected.content)) {
-        changes.push(copyChange(opts, fullPath, "managed_content"));
+        changes.push(
+          copyChange(opts, fullPath, "managed_content", detail ?? undefined),
+        );
       }
       if (mode !== expected.mode) {
         changes.push(copyChange(opts, fullPath, "executable_mode"));
       }
     } else if (!preservedPaths.has(path)) {
-      changes.push(copyChange(opts, fullPath, "extra_local_path"));
+      changes.push(
+        copyChange(
+          opts,
+          fullPath,
+          "extra_local_path",
+          installDifferenceLabel({ path, kind: "visible-extra" }) ?? undefined,
+        ),
+      );
+    } else if (selectedPaths?.has(path) === true) {
+      changes.push(copyChange(opts, fullPath, "managed_content"));
     }
   }
   for (const object of inventory.irregular) {
@@ -278,7 +332,12 @@ export async function planSubagentDestruction(opts: {
   currentEntry: DataLockEntry;
   selectedEntry: DataLockEntry;
   reviewCommand: string;
+  /** PIN-8, as in `planCopyDirectoryDestruction`. */
+  repairUnresolvableCurrent?: boolean;
 }): Promise<PlannedDestruction> {
+  const repairable =
+    opts.repairUnresolvableCurrent === true &&
+    opts.currentEntry !== opts.selectedEntry;
   await materializeSubagent({
     project: opts.project,
     dataRepo: opts.dataRepo,
@@ -287,13 +346,29 @@ export async function planSubagentDestruction(opts: {
     previousEntry: opts.currentEntry,
     dryRun: true,
   });
+  // The commit the installed bytes are compared against. Normally the previous
+  // pin, because that is what capshelf last wrote; when that pin cannot be
+  // resolved and the caller is repairing it, the selected commit — so a target
+  // that already holds the incoming bytes is not reported as loss and every
+  // other one still is.
+  const basisEntry = repairable
+    ? await subagentSourcesAtCommit(
+        opts.project,
+        opts.dataRepo,
+        opts.name,
+        opts.currentEntry.sourceCommit,
+      ).then(
+        () => opts.currentEntry,
+        () => opts.selectedEntry,
+      )
+    : opts.currentEntry;
   const changes: DestructiveChange[] = [];
   const snapshotParts: string[] = [];
   for (const source of await subagentSourcesAtCommit(
     opts.project,
     opts.dataRepo,
     opts.name,
-    opts.currentEntry.sourceCommit,
+    basisEntry.sourceCommit,
   )) {
     if (!existsSync(source.outputPath)) {
       snapshotParts.push(`subagent:${source.outputPath}:missing`);
@@ -307,11 +382,7 @@ export async function planSubagentDestruction(opts: {
     }
     const [current, expected] = await Promise.all([
       readFile(source.outputPath),
-      showAtCommit(
-        opts.dataRepo,
-        opts.currentEntry.sourceCommit,
-        source.relPath,
-      ),
+      showAtCommit(opts.dataRepo, basisEntry.sourceCommit, source.relPath),
     ]);
     snapshotParts.push(
       `subagent:${source.outputPath}:${contentDigest(current)}`,
@@ -379,12 +450,14 @@ function copyChange(
   },
   fullPath: string,
   reason: "managed_content" | "executable_mode" | "extra_local_path",
+  detail?: string,
 ): DestructiveChange {
   return {
     scope: opts.scope,
     item: `${opts.scope}/${opts.key}`,
     path: projectRelative(opts.project, fullPath),
     reason,
+    ...(detail !== undefined && { detail }),
     reviewCommand: opts.reviewCommand,
   };
 }

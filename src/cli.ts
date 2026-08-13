@@ -12,6 +12,7 @@ import { registerGetPath } from "./commands/get-path";
 import { registerApply } from "./commands/apply";
 import { registerRevert } from "./commands/revert";
 import { registerKeepLocal } from "./commands/keep-local";
+import { registerLock } from "./commands/lock";
 import { registerUpdate } from "./commands/update";
 import { registerPromote } from "./commands/promote";
 import { registerShare } from "./commands/share";
@@ -54,6 +55,7 @@ export function createProgram(): Command {
   registerApply(program);
   registerRevert(program);
   registerKeepLocal(program);
+  registerLock(program);
   registerUpdate(program);
   registerPromote(program);
   registerShare(program);

@@ -1,8 +1,18 @@
 import type { Command } from "commander";
 import { projectRoot } from "../paths";
-import { loadLocalLock, loadLock, saveLocalLock, saveLock } from "../lock";
+import {
+  assertLockV4,
+  loadLocalLock,
+  loadLock,
+  saveLocalLock,
+  saveLock,
+} from "../lock";
 import { parseLockKey } from "../installed";
 import { shaOfInstalledForScope } from "../item-snapshot";
+import { installedTreeIdentity } from "../install-identity";
+import { entryIdentity } from "../lock";
+import { loadManifest } from "../manifest";
+import { resolveProjectDataRepo } from "../command-context";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
 import {
   isCopyDirectoryItemKind,
@@ -29,7 +39,7 @@ export function registerKeepLocal(program: Command): void {
     .option("--unset", "clear the keep-local marker")
     .option("--local", "mark a local-scope item")
     .option("--json", "output JSON")
-    .action(async (itemRef: string, opts: KeepLocalOptions) => {
+    .action(async (itemRef: string, opts: KeepLocalOptions, cmd: Command) => {
       const project = projectRoot();
       const lock = opts.local
         ? await loadLocalLock(project)
@@ -83,13 +93,30 @@ export function registerKeepLocal(program: Command): void {
       // non-drifted item silently flips it to "≠ kept local" and suppresses
       // future update signals for no reason — refuse instead of doing that.
       if (!opts.unset && entry.local !== true) {
-        const installedSha = await shaOfInstalledForScope(
+        // PIN-5: filesystem work over the pinned path set, in the entry's own
+        // identity model, so a `--local` item — which project Git is told to
+        // ignore — is compared against real bytes rather than an empty set.
+        const dataRepo = await resolveProjectDataRepo(
           project,
-          parsed.kind,
-          parsed.name,
-          opts.local ? "local" : "project",
+          await loadManifest(project),
+          cmd,
         );
-        if (installedSha === entry.sha) {
+        const installedSha =
+          entry.sourcePinDigest !== undefined
+            ? await installedTreeIdentity(
+                project,
+                dataRepo,
+                parsed.kind,
+                parsed.name,
+                entry.sourceCommit,
+              )
+            : await shaOfInstalledForScope(
+                project,
+                parsed.kind,
+                parsed.name,
+                opts.local ? "local" : "project",
+              );
+        if (installedSha === entryIdentity(entry)) {
           throw new PreconditionError(
             `${parsed.kind}/${parsed.name} has no local divergence — its installed content matches the lock, so there is nothing to keep.\n` +
               "  keep-local marks existing drift as intentional; edit the files first, or use --unset to clear a marker.",
@@ -105,8 +132,9 @@ export function registerKeepLocal(program: Command): void {
         if (opts.reason !== undefined) entry.localReason = opts.reason;
       }
 
-      if (opts.local) await saveLocalLock(project, lock);
-      else await saveLock(project, lock);
+      const writableLock = assertLockV4(lock, "capshelf keep-local");
+      if (opts.local) await saveLocalLock(project, writableLock);
+      else await saveLock(project, writableLock);
 
       const result = {
         source: "data",

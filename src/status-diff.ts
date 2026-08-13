@@ -16,7 +16,8 @@ import { installedPath } from "./installed";
 import { findSystemItem } from "./bundled";
 import {
   assertRegularBlobEntries,
-  gitTry,
+  isolatedNoIndexDiff,
+  sourceRead,
   literalPathspec,
   lsTreeEntriesAtCommit,
   showAtCommit,
@@ -251,7 +252,7 @@ async function dataRepoDiff(
   dataRepo: string,
   relPaths: string[],
 ): Promise<string> {
-  const result = await gitTry(dataRepo, [
+  const result = await sourceRead(dataRepo, [
     "diff",
     "HEAD",
     "--",
@@ -262,7 +263,7 @@ async function dataRepoDiff(
   }
   const parts = [result.stdout.toString()].filter((text) => text.length > 0);
   for (const relPath of await untrackedDataRepoFiles(dataRepo, relPaths)) {
-    const untracked = await gitTry(dataRepo, [
+    const untracked = await sourceRead(dataRepo, [
       "diff",
       "--no-index",
       "--",
@@ -282,7 +283,7 @@ async function untrackedDataRepoFiles(
   dataRepo: string,
   relPaths: string[],
 ): Promise<string[]> {
-  const result = await gitTry(dataRepo, [
+  const result = await sourceRead(dataRepo, [
     "ls-files",
     "-z",
     "--others",
@@ -527,14 +528,13 @@ export async function unifiedDiff(
   try {
     await writeFile(currentPath, fromText);
     await writeFile(expectedPath, toText);
-    const result = await gitTry(null, [
-      "diff",
-      "--no-index",
-      "--unified=3",
-      "--",
-      currentPath,
-      expectedPath,
-    ]);
+    // The `isolated-diff` profile owns every flag and environment decision
+    // here (`src/git.ts`). This used to run under `repo === null`, which meant
+    // "in the user's own directory, under their global config" — so on the
+    // machine that produced the original bug report `--diff` printed nothing
+    // for a CRLF-versus-LF difference, because `core.autocrlf=input`
+    // normalized it away before the comparison.
+    const result = await isolatedNoIndexDiff(dir, currentPath, expectedPath);
     if (result.exitCode === 0) return "";
     if (result.exitCode !== 1) {
       throw new Error(result.stderr || "git diff failed");

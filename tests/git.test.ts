@@ -14,8 +14,8 @@ import {
   currentBranch,
   fastForwardTo,
   fetchOrigin,
-  gitBuffer,
-  gitVisibleFilesUnderPath,
+  sourceWriteBuffer,
+  sourceVisibleFilesUnderPath,
   headSha,
   isPathClean,
   isRepoClean,
@@ -144,7 +144,7 @@ describe("git cleanliness helpers", () => {
     expect(committedFiles.trim()).toBe("skills/hello/SKILL.md");
   });
 
-  test("gitVisibleFilesUnderPath returns tracked and untracked non-ignored files", async () => {
+  test("sourceVisibleFilesUnderPath returns tracked and untracked non-ignored files", async () => {
     const repo = await tempRepo();
     await mkdir(join(repo, "skills", "hello"), { recursive: true });
     await writeFile(join(repo, ".gitignore"), "*.local\nignored-dir/\n");
@@ -159,14 +159,14 @@ describe("git cleanliness helpers", () => {
 
     await writeFile(join(repo, "skills", "hello", "notes.md"), "notes\n");
 
-    expect(await gitVisibleFilesUnderPath(repo, "skills/hello")).toEqual([
+    expect(await sourceVisibleFilesUnderPath(repo, "skills/hello")).toEqual([
       ".env.1password",
       "SKILL.md",
       "notes.md",
     ]);
   });
 
-  test("gitVisibleFilesUnderPath excludes deleted tracked files from the working snapshot", async () => {
+  test("sourceVisibleFilesUnderPath excludes deleted tracked files from the working snapshot", async () => {
     const repo = await tempRepo();
     const item = join(repo, "skills", "hello");
     await mkdir(item, { recursive: true });
@@ -180,7 +180,7 @@ describe("git cleanliness helpers", () => {
     await writeFile(join(item, "new.txt"), "untracked\n");
     await writeFile(join(item, "secret.ignored"), "ignored\n");
 
-    expect(await gitVisibleFilesUnderPath(repo, "skills/hello")).toEqual([
+    expect(await sourceVisibleFilesUnderPath(repo, "skills/hello")).toEqual([
       "keep.txt",
       "new.txt",
     ]);
@@ -359,7 +359,7 @@ describe("git historical content helpers", () => {
     await commitAll(repo, "baseline");
     // Bun's `$` mis-serializes some non-Latin1 argv strings, which is why
     // capshelf runs git through Bun.spawn — see the note on gitTry.
-    await gitBuffer(repo, ["mv", "d/café.txt", "d/rénamed.txt"]);
+    await sourceWriteBuffer(repo, ["mv", "d/café.txt", "d/rénamed.txt"]);
     await writeFile(join(repo, "d", "a -> b.txt"), "edited\n");
     await writeFile(join(repo, "d", 'qu"ote.txt'), "three\n");
 

@@ -111,6 +111,7 @@ describe("update moves a system item off superseded bundled content", () => {
           item?: string;
           path: string;
           reason: string;
+          detail?: string;
           reviewCommand?: string;
         }>;
       };
@@ -119,6 +120,7 @@ describe("update moves a system item off superseded bundled content", () => {
         item: "project/system/skills/capshelf",
         path: ".agents/skills/capshelf/SKILL.md",
         reason: "managed_content",
+        detail: "content edit",
         reviewCommand: "capshelf status skills/capshelf --diff",
       });
 
@@ -236,7 +238,7 @@ describe("apply still refuses content the binary no longer carries", () => {
 
       const lockPath = join(project, ".capshelf", "capshelf.lock.json");
       const lock = await file(lockPath).json();
-      lock.items["data/skills/hello"].sha = "0123456789ab";
+      lock.items["data/skills/hello"].sourcePinDigest = "0".repeat(64);
       await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
 
       const applied = await run(["apply", "skills/hello", "--json"]);
@@ -246,7 +248,7 @@ describe("apply still refuses content the binary no longer carries", () => {
       };
       expect(report.items[0]!.action).toBe("error");
       expect(report.items[0]!.error).toMatch(
-        /source skills\/hello at [0-9a-f]+ hashes to [0-9a-f]+, but lock expects 0123456789ab/,
+        /source skills\/hello at [0-9a-f]+ pins to [0-9a-f]+, but lock expects 000000000000/,
       );
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,

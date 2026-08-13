@@ -17,6 +17,7 @@ const first: DestructiveChange = {
   item: "data/skills/first",
   path: ".agents/skills/first/SKILL.md",
   reason: "managed_content",
+  detail: "content edit",
   reviewCommand: "capshelf status skills/first --diff",
 };
 

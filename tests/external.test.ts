@@ -274,7 +274,7 @@ describe("user skill reader", () => {
   test("annotates user skills that shadow capshelf-managed project or local skills", async () => {
     const entry: LockEntry = {
       source: "data",
-      sha: "abc",
+      sourcePinDigest: "abc",
       sourceCommit: "commit",
       appliedAt: "now",
     };
@@ -302,8 +302,8 @@ describe("user skill reader", () => {
     expect(
       withUserSkillShadows(
         skills,
-        { version: 3, items: { "data/skills/alpha": entry } },
-        { version: 3, items: { "data/skills/beta": entry } },
+        { version: 4, items: { "data/skills/alpha": entry } },
+        { version: 4, items: { "data/skills/beta": entry } },
       ),
     ).toEqual([
       {

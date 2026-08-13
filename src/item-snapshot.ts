@@ -12,12 +12,11 @@ import { METADATA_SIDECAR } from "./metadata";
 import type { CopyDirectoryItemKind } from "./master";
 import {
   isMetadataSidecarPath,
-  shaOfGitVisibleItem,
-  shaOfItem,
+  shaOfProjectVisibleItem,
   shaOfItemFiles,
 } from "./master";
-import { installedPath, shaOfInstalled } from "./installed";
-import { gitVisibleFilesUnderPath, isGitWorkTreeRoot } from "./git";
+import { installedPath } from "./installed";
+import { isProjectWorkTreeRoot, projectVisibleFilesUnderPath } from "./git";
 import { gitignoreVisibleFiles } from "./gitignore";
 import type { ItemSnapshot, Scope } from "./promote-core";
 import { PreconditionError } from "./errors";
@@ -31,16 +30,21 @@ export async function installedSnapshot(
   const localPath = installedPath(project, kind, name);
   if (!existsSync(localPath)) return null;
   const relPath = relative(project, localPath);
-  if (scope === "local" || !(await isGitWorkTreeRoot(project))) {
+  if (scope === "local" || !(await isProjectWorkTreeRoot(project))) {
     return await filesystemSnapshot(localPath);
   }
+  // The sha is taken over exactly `files`, never over a separately computed
+  // set: promote re-derives it as a TOCTOU guard, and two different input sets
+  // would make that guard fail on any item that holds an ignored file.
+  const files = await projectVisibleFilesUnderPath(project, relPath);
   return {
     source: "git-visible",
     localPath,
-    sha:
-      (await shaOfInstalled(project, kind, name)) ??
-      (await shaOfItem(localPath)),
-    files: await gitVisibleFilesUnderPath(project, relPath),
+    sha: await shaOfItemFiles(
+      localPath,
+      files.filter((rel) => !isMetadataSidecarPath(rel)),
+    ),
+    files,
   };
 }
 
@@ -67,14 +71,14 @@ export async function adoptionSnapshot(
   relPath: string,
   scope: Scope,
 ): Promise<ItemSnapshot> {
-  if (scope === "local" || !(await isGitWorkTreeRoot(project))) {
+  if (scope === "local" || !(await isProjectWorkTreeRoot(project))) {
     return await filesystemSnapshot(path);
   }
   return {
     source: "git-visible",
     localPath: path,
-    sha: await shaOfGitVisibleItem(project, relPath),
-    files: await gitVisibleFilesUnderPath(project, relPath),
+    sha: await shaOfProjectVisibleItem(project, relPath),
+    files: await projectVisibleFilesUnderPath(project, relPath),
   };
 }
 

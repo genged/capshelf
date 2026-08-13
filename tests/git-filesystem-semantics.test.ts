@@ -1,5 +1,6 @@
 import { $, file } from "bun";
 import { describe, expect, test } from "bun:test";
+import { currentPinDigest } from "./pin-fixtures";
 import { lstatSync } from "node:fs";
 import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -7,7 +8,7 @@ import {
   assertDataRepoRoot,
   commitInRepo,
   gitInfoExcludePath,
-  gitVisibleFilesUnderPath,
+  sourceVisibleFilesUnderPath,
   lastTouchingContentCommit,
   statusPorcelain,
 } from "../src/git";
@@ -67,9 +68,9 @@ describe("Git and filesystem semantics", () => {
     await commitAll(repo, "metacharacter items");
     const original = await lastTouchingContentCommit(repo, "skills/a*");
     for (const [literal] of pairs) {
-      expect(await gitVisibleFilesUnderPath(repo, `skills/${literal}`)).toEqual(
-        ["SKILL.md"],
-      );
+      expect(
+        await sourceVisibleFilesUnderPath(repo, `skills/${literal}`),
+      ).toEqual(["SKILL.md"]);
       expect(await shaOfGitVisibleItem(repo, `skills/${literal}`)).toMatch(
         /^[0-9a-f]{12}$/u,
       );
@@ -110,7 +111,7 @@ describe("Git and filesystem semantics", () => {
       dataRepo,
       "skills/mode",
     );
-    const sha = await shaOfGitVisibleItem(dataRepo, "skills/mode");
+    const sha = await currentPinDigest(dataRepo, "skills", "mode");
     const consumer = await tempRepo("capshelf-mode-consumer-", {
       origin: null,
     });
@@ -125,11 +126,11 @@ describe("Git and filesystem semantics", () => {
     await writeFile(join(installed, "SKILL.md"), "mode skill\n");
     await chmod(join(installed, "SKILL.md"), 0o755);
     const lock: Lock = {
-      version: 3,
+      version: 4,
       items: {
         [dataKey("skills", "mode")]: {
           source: "data",
-          sha,
+          sourcePinDigest: sha,
           sourceCommit,
           appliedAt: "2026-08-03T00:00:00.000Z",
         },
@@ -157,7 +158,13 @@ describe("Git and filesystem semantics", () => {
     );
     expect(promoted.action).toBe("promoted");
     expect(executable(join(dataSkill, "SKILL.md"))).toBe(true);
-    expect(promoted.sha).toBe(sha);
+    // PIN-1 puts the mode inside identity, where it used to sit outside: an
+    // executable-bit flip is a real content change, so promoting one produces
+    // a different pin rather than the same one with a separate mode flag.
+    expect(promoted.sha).not.toBe(sha);
+    expect(promoted.sha).toBe(
+      await currentPinDigest(dataRepo, "skills", "mode"),
+    );
     expect(consume(["update", "skills/mode"]).exitCode).toBe(0);
     expect(
       executable(join(consumer, ".agents", "skills", "mode", "SKILL.md")),
@@ -208,7 +215,9 @@ describe("Git and filesystem semantics", () => {
     });
     expect(applied.action).toBe("reconciled");
     expect(executable(join(installed, "SKILL.md"))).toBe(true);
-    expect(await shaOfGitVisibleItem(dataRepo, "skills/mode")).toBe(sha);
+    expect(await currentPinDigest(dataRepo, "skills", "mode")).toBe(
+      promoted.sha,
+    );
   });
 
   test("linked worktrees remove entries from the resolved exclude file", async () => {

@@ -8,11 +8,31 @@ import { matchRefAcrossScopes } from "./targets";
 import type { ScopedTarget } from "./targets";
 import type { RuntimeWarning } from "./runtime-warnings";
 import type { FragmentContributionState } from "./fragments";
-import { needsEqual } from "./lock";
+import { entryIdentity, needsEqual } from "./lock";
 import type { ItemNeeds } from "./metadata";
+import type { InstallationAxis } from "./install-identity";
+import type { InstallDifference } from "./install-diff";
+import type { FilteredPath } from "./pin";
+
+/*
+ * PIN-6 axes. `status` reports pin, source, and installation separately and
+ * derives one headline from them. A precedence chain evaluated in place would
+ * report whichever condition it tested first and lose the more actionable one,
+ * so `--json` always carries all three and a script never loses one to a rule.
+ *
+ * Deviation from the spec, recorded here because the name matters to
+ * consumers: the spec calls the second axis `source`, but `StatusRow.source`
+ * already means the entry's origin (`data` | `system`) and predates this
+ * design. The axis is `sourceState` in the row and in `--json`; reusing
+ * `source` would silently change the meaning of an existing field.
+ */
+export type PinAxis = "valid" | "mismatch" | "unresolvable";
+export type SourceAxis = "exact" | "filtered" | "dirty";
+export type { InstallationAxis } from "./install-identity";
 
 export type State =
   | "ok"
+  | "source_filtered"
   | "missing_source_commit"
   | "update_available"
   | "drifted_local"
@@ -43,6 +63,14 @@ export interface StatusRow {
   currentSha: string | null;
   /** Executable modes differ even when the byte-only lock sha is unchanged. */
   modeDrifted?: boolean;
+  /** PIN-6: the three axes, evaluated independently. */
+  pin?: PinAxis;
+  sourceState?: SourceAxis;
+  installation?: InstallationAxis;
+  /** What kind of difference each drifted path carries (PIN-6 stage 2). */
+  installDifferences?: InstallDifference[];
+  /** Managed paths that declare an external filter driver (PIN-9). */
+  filteredPaths?: FilteredPath[];
   /** master sha (data) or bundled sha (system); null if upstream is gone */
   upstreamSha: string | null;
   /** true when the data-repo item path has uncommitted changes */
@@ -99,6 +127,8 @@ export interface StateFacts {
    * existing callers backwards compatible.
    */
   sourceCommitPresent?: boolean | null;
+  /** PIN-9: a managed path declares an external filter driver. */
+  sourceFiltered?: boolean;
 }
 
 /**
@@ -110,6 +140,10 @@ export function deriveState(f: StateFacts): State {
   if (f.source === "data" && f.local && f.currentSha !== null) {
     return "kept-local";
   }
+  // Ahead of every other condition, because a filtered source makes a re-pin
+  // pointless: every consumer would receive the placeholder Git stores, so
+  // there is nothing else worth acting on until it is fixed upstream.
+  if (f.sourceFiltered === true) return "source_filtered";
   // After kept-local (an explicit user pin keeps its strict exemption),
   // before all upstream/drift comparisons — those are unreliable when the
   // pinned provenance is gone (e.g. squash-orphaned or unpushed elsewhere).
@@ -151,6 +185,14 @@ export function runtimeWarningFields(
   return runtimeWarnings.length > 0 ? { runtimeWarnings } : {};
 }
 
+export interface StatusAxes {
+  pin: PinAxis;
+  sourceState: SourceAxis;
+  installation?: InstallationAxis;
+  installDifferences?: InstallDifference[];
+  filteredPaths?: FilteredPath[];
+}
+
 export interface BuildStatusRowInput {
   scope: "project" | "local";
   source: ItemSource;
@@ -165,6 +207,7 @@ export interface BuildStatusRowInput {
   runtimeWarnings: RuntimeWarning[];
   needsState?: NeedsState;
   targets?: StatusTargetDetail[];
+  axes?: StatusAxes;
 }
 
 /** Pure assembly of a StatusRow from a lock entry and the computed facts. */
@@ -176,7 +219,7 @@ export function buildStatusRow(input: BuildStatusRowInput): StatusRow {
     kind,
     name,
     state,
-    lockedSha: entry.sha,
+    lockedSha: entryIdentity(entry),
     currentSha: input.currentSha,
     upstreamSha: input.upstreamSha,
     ...(input.modeDrifted && { modeDrifted: true }),
@@ -195,6 +238,21 @@ export function buildStatusRow(input: BuildStatusRowInput): StatusRow {
       cliVersion: entry.cliVersion,
     }),
     ...(input.targets !== undefined && { targets: input.targets }),
+    ...(input.axes !== undefined && {
+      pin: input.axes.pin,
+      sourceState: input.axes.sourceState,
+      ...(input.axes.installation !== undefined && {
+        installation: input.axes.installation,
+      }),
+      ...(input.axes.installDifferences !== undefined &&
+        input.axes.installDifferences.length > 0 && {
+          installDifferences: input.axes.installDifferences,
+        }),
+      ...(input.axes.filteredPaths !== undefined &&
+        input.axes.filteredPaths.length > 0 && {
+          filteredPaths: input.axes.filteredPaths,
+        }),
+    }),
     ...runtimeWarningFields(input.runtimeWarnings),
   };
 }
