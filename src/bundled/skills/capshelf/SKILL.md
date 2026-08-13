@@ -93,11 +93,72 @@ Always check the current surface with `capshelf --help` and `capshelf <verb> --h
 | `data bind` / `data upstream` / `data path` | inspect or change the explicit data-repo binding (old `set-data`/`set-upstream`/`data-path` still work as aliases) |
 | `ls` / `show` / `search` / `status` | inspect and discover (all support `--json`; `ls` and `status` include user-level runtime skills by default, `--user` narrows to them only) |
 | `add` / `rm` / `apply` / `update` / `revert` | converge the project on its locks |
+| `lock migrate` | one-time conversion of this project's locks to version 4; required before any lock-writing command works on an older project |
 | `share` / `move` / `promote` / `keep-local` | flow content and intent between project and data repo |
 | `data sync [--json]` | explicitly fetch the bound data repo's origin and fast-forward when safe; the **only** capshelf command that touches the network besides the `init` bootstrap clone and `self-update`. Run it when the user asks to pick up teammates' changes, then `capshelf status` to see `update_available` |
 | `get-path` | print the editable path for an item; use `--target claude|codex` for multi-target subagents |
 | `self-update` | update the Homebrew-installed binary (not project pins) |
 | `marketplace ...` | author, validate, sync, and package data-repo Claude/Cowork or Codex plugin catalogs; never installs runtime plugins |
+
+## Lock version 4 migration
+
+Locks written before version 4 identified an item by a hash of the data repo
+working tree. Version 4 identifies it by the item's committed Git tree. One
+lock file carries one identity model, never both, so the conversion is an
+explicit command instead of a side effect of the next write.
+
+On a project whose lock is version 2 or 3, **every command that writes a lock
+refuses with exit 3**: `add`, `rm`, `update`, `revert`, `promote`, `share`,
+`move`, `keep-local`, bundle installs, and `init`. The refusal reads:
+
+```text
+✗ this project's lock is version 3; capshelf add writes lock version 4
+  Convert the project and local locks first: capshelf lock migrate (preview it with --dry-run).
+```
+
+`status`, `ls`, `show`, `search`, `get-path`, and `apply` keep working against
+the old lock. Because `status` does not print the lock version, read the
+`version` field of `.capshelf/capshelf.lock.json` when you must know it before
+a write. Read it only; do not hand-edit it.
+
+Convert in two steps:
+
+```bash
+capshelf lock migrate --dry-run   # plan the complete migration, write nothing
+capshelf lock migrate             # convert both lock files in one transaction
+```
+
+The default conversion **selects no new content**. For each entry it re-derives
+the pin from the commit that entry already names and keeps `appliedAt`,
+`needs`, `label`, and the keep-local marker unchanged. A recorded hash that
+disagrees with its own commit is reported as `repaired legacy identity`. The
+project lock and the clone-local lock convert together or neither does. On a
+project that is already current the command prints `✓ already version 4` and
+exits 0, so it is safe to run when unsure.
+
+An entry whose source commit is unreachable, or whose committed content is
+missing or filter-refused, blocks the run. Every blocker is reported in one
+pass, the command exits 3, and no lock or installed file changes. Prefer the
+non-destructive fix: restore the commit (`capshelf data sync`, or push the
+clone that holds it), then retry. The repair flags are the user's decision, not
+yours:
+
+- `--repin <ref>` re-pins a copy item or subagent to its **current** committed
+  source and re-materializes it. That is an update, not a conversion — the
+  installed content changes.
+- `--remove-item <ref>` drops the entry. It is the only choice for a fragment
+  (`settings/`, `mcp/`, `codex-config/`): a fragment's former contribution
+  cannot be told apart from a project-local value in the merged output. Add the
+  item again after the migration.
+- `--yes` authorizes the installed-state loss a repair causes. Show
+  `capshelf status <item> --diff` and get permission before you pass it.
+
+Refs accept a bare kind ref (`skills/hello`) or a scope-qualified one
+(`local/skills/hello`, `project/skills/hello`).
+
+The upgrade is one-way: an older binary refuses a version-4 lock outright.
+Upgrade capshelf on every machine and in CI first, then commit the migrated
+project lock as a lock-only change.
 
 ## Plugin marketplaces
 
@@ -213,6 +274,9 @@ Codex only loads `.codex/config.toml` in trusted projects; `status` warns non-fa
   `data` or `update` command; install-mode changes need a dedicated migration.
 - **Never pass `promote --stale-ok` without explicit user direction** — it intentionally overwrites a teammate's newer upstream version.
 - **Never pass `--yes` merely to route around a destructive-change refusal.** Show every affected path, use `capshelf status <item> --diff` for managed item drift (or marketplace sync dry-run for projections), explain what will be lost, and get the user's permission first. `--yes` does not bypass hard safety refusals.
+- **Never clear a `lock migrate` blocker with `--repin` or `--remove-item` on
+  your own.** One changes installed content, the other drops an item. Restore
+  the missing source commit first; take the repair flags to the user.
 - **The lock is the source of truth** for what capshelf owns.
 - **Review Pi extension source before adding or promoting it.** The runtime warning is a trust boundary, not proof of safety; capshelf never installs extension dependencies or reloads Pi.
 - **Treat declared needs as metadata.** Capshelf records expected network,
@@ -236,6 +300,13 @@ Codex only loads `.codex/config.toml` in trusted projects; `status` warns non-fa
 - `data repo at <path> is bound to the wrong upstream` — `capshelf set-data <correct-clone>` or intentionally change committed state with `capshelf set-upstream <url>`.
 - `data repo has uncommitted metadata changes: <item>/.capshelf.yml` — commit the sidecar in the data repo; no item content is at risk.
 - `missing_source_commit` in `status` — the locked `sourceCommit` is unreachable in the data repo (unpushed in another clone, or squash-orphaned after a merged proposal). Fix with `capshelf sync-data && capshelf update <item>`; if the commit only exists in another clone, push or fetch that clone first.
+- `this project's lock is version 3; <verb> writes lock version 4` — the
+  project predates lock version 4. Run `capshelf lock migrate --dry-run`, then
+  `capshelf lock migrate`. Never hand-edit the lock's `version` field to route
+  around it.
+- `lock version 4 is newer than this capshelf supports` — the binary is older
+  than the project's lock. Upgrade it (`capshelf self-update`, or
+  `brew upgrade capshelf`); never downgrade the lock.
 - `git is required but was not found on PATH` — install Git or fix `PATH`.
 - `not a git repository: <path>` — data repos must be git repos (`sourceCommit` provenance); `git init` it first.
 - `⚠ <item>: invalid .capshelf.yml … — metadata ignored` — the item still works; fix the sidecar in the data repo when convenient.

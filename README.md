@@ -278,14 +278,17 @@ Each project gets a `.capshelf/` directory:
 ```text
 .capshelf/
   capshelf.json        committed manifest: install mode, upstream, declared items
-  capshelf.lock.json   committed lock: exact content hash and source commit
+  capshelf.lock.json   committed lock: committed-tree digest and source commit
   local.json           gitignored: data repo path plus clone-local copy-item intent
   local.lock.json      gitignored: clone-local item pins
 ```
 
-The lockfile is the safety boundary. Data items are pinned by content hash plus
-the data-repo commit that last touched the item path. System items bundled
-inside the CLI are pinned by content hash plus CLI version.
+The lockfile is the safety boundary. A data item's identity is the committed
+Git tree: a SHA-256 digest over the sorted `(name, mode, blobId)` entries the
+data repo holds at the pinned commit. Computing it reads no file content, so
+working-tree state, Git configuration, and checkout filters cannot change what
+a pin means. System items bundled inside the CLI are pinned by content hash
+plus CLI version.
 
 ## Mental Model
 
@@ -326,13 +329,15 @@ reported as external state instead of overwritten.
 | `keep-local` | mark drift as intentional |
 | `revert` | restore one item to its locked version |
 | `get-path` | print the editable path; subagents and multi-target fragments use `--target`, and `--output` returns runtime outputs |
+| `lock` | inspect this project's lock files; `lock migrate` converts the project and local locks to version 4 in one transaction — the one-way upgrade every project on lock version 2 or 3 must run once |
 | `self-update` | check for and install a Homebrew update for the capshelf binary |
 | `marketplace ...` | author, validate, sync, and package Claude/Cowork or Codex plugin catalogs in the data repo |
 
 Commands support `--json` where useful for agent consumption. Exit codes are
-stable: `0` success, `2` not found, `3` conflict, `4` drift or upstream
-mismatch, `5` reserved for future unmet-requires checks, `7` missing `git`. Full reference:
-[`docs/cli.md`](docs/cli.md).
+stable: `0` success, `1` generic error, `2` not found, `3` conflict or refused
+precondition, `4` drift or upstream mismatch, `5` reserved for future
+unmet-requires checks, `6` no data repo configured, `7` missing or too-old
+`git`. Full reference: [`docs/cli.md`](docs/cli.md).
 
 Startup self-update prompts are best-effort, cached, and only shown for
 interactive Homebrew installs. Set `CAPSHELF_NO_SELF_UPDATE=1` to disable them.
@@ -402,6 +407,7 @@ packages and a committed native Codex projection.
 
 ## Further Reading
 
+- [`docs/whats-new-0.8.md`](docs/whats-new-0.8.md) - what's new: Git-tree source pins, lock version 4 and `lock migrate`, filtered-content refusal, classified drift
 - [`docs/whats-new-0.7.md`](docs/whats-new-0.7.md) - what's new: destructive-change consent, preserved local files, keep-local intent, init recovery
 - [`docs/whats-new-0.6.md`](docs/whats-new-0.6.md) - what's new: subagents, plugin marketplaces, declared needs, stale-promote merges
 - [`docs/whats-new-0.5.1.md`](docs/whats-new-0.5.1.md) - what's new: clone-local reconciliation and recovery fixes
