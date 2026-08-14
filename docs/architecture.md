@@ -435,6 +435,22 @@ throwaway bare repository that reaches the real objects through
 commit's own `.gitattributes` and would otherwise let a machine-local file
 decide whether a pin is portable.
 
+### A read-only command runs no user program
+
+`status`, `ls`, `show`, `search`, and `get-path` execute no program the
+repository names: no `diff.external`, no textconv driver, no clean filter, no
+hook. Beyond the plain objection to a look-only command running configured
+code, such a program decides what a diff *says*, so its answer can disagree
+with the bytes — the same failure as the `core.autocrlf` case above, by a
+different route.
+
+That rules out asking Git for a working-tree diff at all. Git converts the
+working-tree file before comparing it, so a `filter` attribute always applies,
+and no per-invocation flag disables a driver whose name is unknown. Both sides
+are read as bytes instead — the commit through `cat-file`, which applies no
+filter, and the working tree from the filesystem — and compared under
+`isolated-diff`.
+
 ### Project Git never defines managed content
 
 The consuming project may be a plain directory, and managed paths may be
@@ -477,11 +493,33 @@ standard Git merge behavior in a disposable synthetic repository. That
 process receives no inherited system/global Git configuration, templates,
 hooks, filters, merge drivers, fsmonitor, or signing commands. Before writing,
 promote revalidates data-repo HEAD and cleanliness plus the local snapshot and
-sidecar. Conflicts are read-only. A clean content result is installed through
-a path transaction and committed by a conditional HEAD update with an
-alternate index, producing at most one normal single-parent commit; a
-pre-commit failure restores the exact item path and index. Other projects'
-files and locks remain pinned until their own `update`.
+sidecar. Conflicts are read-only. A clean content result is committed like
+every other data-repo commit — one ordinary single-parent commit that runs the
+repository's own hooks and is proved against the merge candidate inside the
+transaction — and the calling project's installed copy is reconciled after it
+succeeds. A refusal at any of those points restores the item path, the index,
+and `HEAD`. Other projects' files and locks remain pinned until their own
+`update`.
+
+### Two commit operations, one hook policy
+
+Capshelf publishes to the data repo in exactly two shapes, and both run the
+repository's normal commit hooks:
+
+| operation | used by | owns | restores on failure |
+|---|---|---|---|
+| generated commit | share and promote of copy items and subagents, `promote --merge`, marketplace | the files it wrote | `HEAD`, those files, the index |
+| existing-worktree commit | fragment promote | nothing | `HEAD` and the index only |
+
+The difference is who authored the content. A generated commit builds a tree
+from the project, so restoring its files on failure restores what capshelf
+itself put there. A fragment promote commits the user's own edit where they
+made it, so restoring the file would throw their work away — the index is put
+back, the working tree is not.
+
+A hook is trusted user code, but it does not get to change what is published
+silently: wherever a validated candidate exists, the committed tree is compared
+against it, and a rewrite unwinds the operation.
 
 See `docs/team-workflow.md` for the team loop built on these guarantees.
 

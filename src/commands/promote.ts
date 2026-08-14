@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { atomicWriteFile, lstatOrNull } from "../fs-utils";
 import { homeRelative } from "../paths";
@@ -36,7 +36,7 @@ import { NotFoundError, PreconditionError } from "../errors";
 import {
   assertRepoCleanOutsidePath,
   assertRepoCleanOutsidePaths,
-  commitInRepo,
+  commitExistingPaths,
   headSha,
   isAncestor,
   lastTouchingContentCommit,
@@ -89,10 +89,7 @@ import {
 } from "../item-snapshot";
 import { mergeNamedTrees, namedFilesEqual } from "../merge-tree";
 import type { NamedFile } from "../merge-tree";
-import {
-  beginInstalledReconciliation,
-  commitNamedFilesTransaction,
-} from "../promote-transaction";
+import { beginInstalledReconciliation } from "../promote-transaction";
 import type { PromoteTransactionHooks } from "../promote-transaction";
 import {
   CODEX_PROJECTION_ROOTS,
@@ -478,49 +475,45 @@ export async function promoteSubagent(
   }
   const canonicalPaths = allCanonicalItemRelPaths("subagents", name);
   await assertRepoCleanOutsidePaths(dataRepo, canonicalPaths);
-  const snapshots = new Map<string, Buffer | null>();
-  for (const { relPath } of pending) {
-    const path = join(dataRepo, ...relPath.split("/"));
-    snapshots.set(path, existsSync(path) ? await readFile(path) : null);
-  }
-  await opts.beforeCanonicalWrite?.();
-  try {
-    for (const { relPath, raw } of pending) {
-      const path = join(dataRepo, ...relPath.split("/"));
-      await mkdir(dirname(path), { recursive: true });
-      await atomicWriteFile(path, raw);
-    }
-    await commitInRepo(
-      dataRepo,
-      pending.map(({ relPath }) => relPath),
-      opts.message ?? `capshelf: subagents/${name}`,
-    );
-  } catch (error) {
-    for (const [path, snapshot] of snapshots) {
-      if (snapshot === null) {
-        await rm(path, { force: true }).catch(() => {});
-      } else {
-        await atomicWriteFile(path, snapshot).catch(() => {});
+  // PIN-11: the candidate came from the project's target files, so the commit
+  // must hold exactly those bytes. `pending` carries only the files that
+  // differed, so the comparison runs over every canonical source, taking the
+  // unchanged ones from the data repo.
+  const projectFiles = await promotedSubagentFiles(
+    project,
+    dataRepo,
+    name,
+    pending,
+  );
+  await commitDataRepoMutation({
+    dataRepo,
+    expectedHead: await headSha(dataRepo),
+    ownedRoots: pending.map(({ relPath }) => relPath),
+    message: opts.message ?? `capshelf: subagents/${name}`,
+    mutate: async () => {
+      await opts.beforeCanonicalWrite?.();
+      for (const { relPath, raw } of pending) {
+        const path = join(dataRepo, ...relPath.split("/"));
+        await mkdir(dirname(path), { recursive: true });
+        await atomicWriteFile(path, raw);
       }
-    }
-    throw error;
-  }
+    },
+    verify: async (commit) => {
+      await assertCommittedTreeEqualsProject({
+        dataRepo,
+        kind: "subagents",
+        name,
+        commit,
+        projectFiles,
+      });
+    },
+  });
   const sourceCommit = await lastTouchingSubagentCommit(
     project,
     dataRepo,
     name,
   );
-  // PIN-11: the candidate came from the project's target files, so the commit
-  // must hold exactly those bytes. `pending` carries only the files that
-  // differed, so the comparison runs over every canonical source at the
-  // commit, taking the unchanged ones from the data repo.
-  const pin = await assertCommittedTreeEqualsProject({
-    dataRepo,
-    kind: "subagents",
-    name,
-    commit: sourceCommit,
-    projectFiles: await promotedSubagentFiles(project, dataRepo, name, pending),
-  });
+  const pin = await pinItemAtCommit(dataRepo, "subagents", name, sourceCommit);
   const sha = pin.sourcePinDigest;
   const snapshot = await captureCommittedItemNeeds(dataRepo, {
     kind: "subagents",
@@ -732,11 +725,15 @@ export async function promoteFragmentSource(
   }
 
   const oldLock = structuredClone(lock);
-  const sourceCommit = await commitInRepo(
-    dataRepo,
-    commitPaths,
-    opts.message ?? `capshelf: ${kind}/${name}`,
-  );
+  // The canonical file is the user's own edit, sitting where they made it, so
+  // a failure here restores the index and leaves the working tree alone
+  // (GIT-7). Restoring the file would discard the edit being promoted.
+  const sourceCommit = await commitExistingPaths({
+    repo: dataRepo,
+    relPaths: commitPaths,
+    message: opts.message ?? `capshelf: ${kind}/${name}`,
+    expectedHead: await headSha(dataRepo),
+  });
   // PIN-11's `A == B` does not apply here: a fragment promote commits the
   // user's own edits where they already live in the data repo worktree, so
   // there is no project snapshot to compare against. The pin still comes from
@@ -1254,53 +1251,59 @@ async function mergeStalePromote(input: {
       throw error;
     }
   } else {
-    if (kind === "skills" && hasCodexMarketplace(dataRepo)) {
-      await commitDataRepoMutation({
-        dataRepo,
-        expectedHead: plannedHead,
-        ownedRoots: [repoRelPath, ...CODEX_PROJECTION_ROOTS],
-        message: opts.message ?? `capshelf: ${kind}/${name}`,
-        mutate: async () => {
-          await revalidateInputs();
-          await opts.transactionHooks?.afterPrepared?.();
-          await replaceSkillWithNamedFiles(
-            dataRepo,
-            repoRelPath,
-            mergedFiles,
-            mergedSidecar,
-          );
-          await refreshCodexProjection(dataRepo);
-          await opts.transactionHooks?.afterPathReplaced?.();
-          await opts.transactionHooks?.beforeHeadAdvance?.();
-        },
-      });
-    } else {
-      await commitNamedFilesTransaction({
-        repo: dataRepo,
-        repoRelPath,
-        files: mergedFiles,
-        sidecar: mergedSidecar,
-        expectedHead: plannedHead,
-        message: opts.message ?? `capshelf: ${kind}/${name}`,
-        beforePersistentMutation: revalidateInputs,
-        hooks: opts.transactionHooks,
-      });
-    }
+    // GIT-9. One commit mechanism, whatever else the data repo is configured
+    // for: a Codex marketplace decides which files the commit owns, and
+    // nothing else. The merge used to commit through `commit-tree` when no
+    // marketplace was configured, which runs none of the repository's hooks —
+    // the same command trusted the user's `pre-commit` in one repository and
+    // bypassed it in another, selected by a setting about plugins.
+    const codexConfigured = kind === "skills" && hasCodexMarketplace(dataRepo);
+    await commitDataRepoMutation({
+      dataRepo,
+      expectedHead: plannedHead,
+      ownedRoots: codexConfigured
+        ? [repoRelPath, ...CODEX_PROJECTION_ROOTS]
+        : [repoRelPath],
+      message: opts.message ?? `capshelf: ${kind}/${name}`,
+      mutate: async () => {
+        await revalidateInputs();
+        await opts.transactionHooks?.afterPrepared?.();
+        await replaceSkillWithNamedFiles(
+          dataRepo,
+          repoRelPath,
+          mergedFiles,
+          mergedSidecar,
+        );
+        if (codexConfigured) await refreshCodexProjection(dataRepo);
+        await opts.transactionHooks?.afterPathReplaced?.();
+        await opts.transactionHooks?.beforeHeadAdvance?.();
+      },
+      // PIN-11 for a merge candidate: `A` is the merge result, and the commit
+      // must hold exactly those bytes. Inside the transaction, so a hook that
+      // rewrites a merged file unwinds the commit instead of leaving the data
+      // repo a commit ahead of a lock this project never recorded.
+      verify: async (commit) => {
+        await assertCommittedTreeEqualsProject({
+          dataRepo,
+          kind,
+          name,
+          commit,
+          projectFiles: mergedFiles,
+        });
+      },
+    });
     const installedTransaction = await beginInstalledReconciliation(
       snapshot.localPath,
       localFiles,
       mergedFiles,
     );
     await installedTransaction.commit();
+    // The pin is recorded against the last commit touching item *content*, so
+    // a sidecar-only merge does not move it. `verify` already proved the tree,
+    // and no commit since has changed it.
     sourceCommit = await lastTouchingContentCommit(dataRepo, repoRelPath);
     needsSnapshot = await captureCommittedItemNeeds(dataRepo, { kind, name });
-    pin = await assertCommittedTreeEqualsProject({
-      dataRepo,
-      kind,
-      name,
-      commit: sourceCommit,
-      projectFiles: mergedFiles,
-    });
+    pin = await pinItemAtCommit(dataRepo, kind, name, sourceCommit);
     lock.items[key] = refreshDataLockEntry(entry, { pin, ...needsSnapshot });
   }
 

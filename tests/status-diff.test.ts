@@ -1,8 +1,9 @@
 import { $, file } from "bun";
 import { describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { currentPinDigest } from "./pin-fixtures";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { dataKey } from "../src/lock";
 import { lastTouchingCommit } from "../src/git";
@@ -468,6 +469,256 @@ describe("status diff helpers", () => {
     expect(diff?.text).toContain("mcp/server/codex.toml");
     expect(diff?.text).toContain('+command = "untracked-mcp"');
   });
+
+  test("no read-only diff runs a program the data repo configures", async () => {
+    const dataRepo = await tempRepo("capshelf-status-hostile-data-");
+    const project = await tempRepo("capshelf-status-hostile-project-");
+    const sentinel = join(dataRepo, "helper-ran");
+    const helper = join(dataRepo, "helper.sh");
+    await writeFile(helper, `#!/bin/sh\ntouch ${sentinel}\nexit 0\n`);
+    await chmod(helper, 0o755);
+    const textconv = join(dataRepo, "textconv.sh");
+    await writeFile(textconv, `#!/bin/sh\ntouch ${sentinel}\necho redacted\n`);
+    await chmod(textconv, 0o755);
+    // A clean filter is the one an argument to `git diff` cannot switch off:
+    // the worktree file is converted before it is compared, so this both runs
+    // a configured program and rewrites what the diff says.
+    const clean = join(dataRepo, "clean.sh");
+    await writeFile(
+      clean,
+      `#!/bin/sh\ntouch ${sentinel}\nsed 's/dirty-mcp/REDACTED/'\n`,
+    );
+    await chmod(clean, 0o755);
+    await writeFile(
+      join(dataRepo, ".gitattributes"),
+      "* diff=redact\n*.json filter=redact\n",
+    );
+
+    const fragment = join(dataRepo, "mcp", "server");
+    await mkdir(fragment, { recursive: true });
+    await writeFile(
+      join(fragment, "claude.json"),
+      `${JSON.stringify({ mcpServers: { server: { command: "locked-mcp" } } })}\n`,
+    );
+    const skill = join(dataRepo, "skills", "hello");
+    await mkdir(skill, { recursive: true });
+    await writeFile(join(skill, "SKILL.md"), "locked skill\n");
+    await commitAll(dataRepo, "sources");
+    await $`git -C ${dataRepo} config diff.external ${helper}`.quiet();
+    await $`git -C ${dataRepo} config diff.redact.textconv ${textconv}`.quiet();
+    await $`git -C ${dataRepo} config filter.redact.clean ${clean}`.quiet();
+
+    const fragmentCommit = await lastTouchingFragmentCommit(
+      dataRepo,
+      "mcp",
+      "server",
+    );
+    const skillCommit = await lastTouchingCommit(dataRepo, "skills/hello");
+    const manifest = {
+      installMode: "codex-compatible" as const,
+      skills: ["hello"],
+      settings: [],
+      mcp: ["server"],
+      codexConfig: [],
+    };
+    const lock = {
+      version: 4 as const,
+      items: {
+        [dataKey("mcp", "server")]: {
+          source: "data" as const,
+          sourcePinDigest: await shaOfFragmentItem(dataRepo, "mcp", "server"),
+          sourceCommit: fragmentCommit,
+          appliedAt: "2026-08-01T00:00:00.000Z",
+        },
+        [dataKey("skills", "hello")]: {
+          source: "data" as const,
+          sourcePinDigest: await currentPinDigest(dataRepo, "skills", "hello"),
+          sourceCommit: skillCommit,
+          appliedAt: "2026-08-01T00:00:00.000Z",
+        },
+      },
+    };
+
+    // A dirty canonical source (tracked edit plus an untracked sibling) and a
+    // drifted install, so both diff paths run.
+    await writeFile(
+      join(fragment, "claude.json"),
+      `${JSON.stringify({ mcpServers: { server: { command: "dirty-mcp" } } })}\n`,
+    );
+    await writeFile(
+      join(fragment, "codex.toml"),
+      '[mcp_servers.server]\ncommand = "untracked-mcp"\n',
+    );
+    const installed = join(project, ".agents", "skills", "hello");
+    await mkdir(installed, { recursive: true });
+    await writeFile(join(installed, "SKILL.md"), "drifted skill\n");
+
+    const oldExternalDiff = process.env.GIT_EXTERNAL_DIFF;
+    process.env.GIT_EXTERNAL_DIFF = helper;
+    try {
+      const sourceDirty = await buildStatusDiff({
+        project,
+        dataRepo,
+        manifest,
+        lock,
+        row: {
+          source: "data",
+          kind: "mcp",
+          name: "server",
+          state: "source_dirty",
+          sourceCommit: fragmentCommit,
+        },
+      });
+      // The bytes, not the filter's version of them.
+      expect(sourceDirty?.text).toContain("-");
+      expect(sourceDirty?.text).toContain("dirty-mcp");
+      expect(sourceDirty?.text).toContain('+command = "untracked-mcp"');
+      expect(sourceDirty?.text).not.toContain("redacted");
+      expect(sourceDirty?.text).not.toContain("REDACTED");
+
+      const drifted = await buildStatusDiff({
+        project,
+        dataRepo,
+        manifest,
+        lock,
+        row: {
+          source: "data",
+          kind: "skills",
+          name: "hello",
+          state: "drifted_local",
+          sourceCommit: skillCommit,
+        },
+      });
+      expect(drifted?.text).toContain("-locked skill");
+      expect(drifted?.text).toContain("+drifted skill");
+    } finally {
+      if (oldExternalDiff === undefined) delete process.env.GIT_EXTERNAL_DIFF;
+      else process.env.GIT_EXTERNAL_DIFF = oldExternalDiff;
+    }
+
+    expect(existsSync(sentinel)).toBe(false);
+  });
+
+  // Every state that makes `status` call a fragment source dirty should get a
+  // non-empty explanation. `git diff HEAD` gave most of these for free; reading
+  // bytes has to earn each one back. Each case names what it exercises.
+  const SOURCE_STATES: Array<{
+    name: string;
+    apply: (source: string, dataRepo: string) => Promise<void>;
+    expect: string[];
+  }> = [
+    {
+      name: "an edit to a tracked source",
+      apply: async (source) => {
+        await writeFile(source, '{"edited":true}\n');
+      },
+      expect: ["claude.json (HEAD)", '+{"edited":true}'],
+    },
+    {
+      name: "a deleted source",
+      apply: async (source) => {
+        await rm(source);
+      },
+      expect: ["claude.json (HEAD)", '-{"mcpServers"'],
+    },
+    {
+      name: "a deleted empty source",
+      apply: async (source) => {
+        await writeFile(source, "");
+        await $`git -C ${dirname(dirname(dirname(source)))} add -A`.quiet();
+        await $`git -C ${dirname(dirname(dirname(source)))} commit -qm empty`.quiet();
+        await rm(source);
+      },
+      expect: ["claude.json (HEAD)", "deleted file mode"],
+    },
+    {
+      name: "a mode-only change",
+      apply: async (source) => {
+        await chmod(source, 0o755);
+      },
+      expect: ["claude.json (HEAD)", "old mode 100644", "new mode 100755"],
+    },
+    {
+      name: "a mode change alongside a content change",
+      apply: async (source) => {
+        await writeFile(source, '{"edited":true}\n');
+        await chmod(source, 0o755);
+      },
+      expect: ["old mode 100644", "new mode 100755", '+{"edited":true}'],
+    },
+    {
+      name: "a source staged for addition",
+      apply: async (source, dataRepo) => {
+        const added = join(dirname(source), "codex.toml");
+        await writeFile(added, '[mcp_servers.server]\ncommand = "staged"\n');
+        await $`git -C ${dataRepo} add mcp/server/codex.toml`.quiet();
+      },
+      expect: ["codex.toml (HEAD)", '+command = "staged"'],
+    },
+    {
+      name: "a source removed from the index but left on disk",
+      apply: async (_source, dataRepo) => {
+        await $`git -C ${dataRepo} rm --cached -q mcp/server/claude.json`.quiet();
+      },
+      expect: ["staged for deletion", "still in the working tree"],
+    },
+  ];
+
+  for (const state of SOURCE_STATES) {
+    test(`source diff explains ${state.name}`, async () => {
+      const dataRepo = await tempRepo("capshelf-status-state-data-");
+      const project = await tempRepo("capshelf-status-state-project-");
+      const fragment = join(dataRepo, "mcp", "server");
+      await mkdir(fragment, { recursive: true });
+      const source = join(fragment, "claude.json");
+      await writeFile(
+        source,
+        `${JSON.stringify({ mcpServers: { server: { command: "locked" } } })}\n`,
+      );
+      await commitAll(dataRepo, "server mcp");
+      const sourceCommit = await lastTouchingFragmentCommit(
+        dataRepo,
+        "mcp",
+        "server",
+      );
+      const lockedSha = await shaOfFragmentItem(dataRepo, "mcp", "server");
+      await state.apply(source, dataRepo);
+
+      const diff = await buildStatusDiff({
+        project,
+        dataRepo,
+        manifest: {
+          installMode: "codex-compatible",
+          skills: [],
+          settings: [],
+          mcp: ["server"],
+          codexConfig: [],
+        },
+        lock: {
+          version: 4,
+          items: {
+            [dataKey("mcp", "server")]: {
+              source: "data",
+              sourcePinDigest: lockedSha,
+              sourceCommit,
+              appliedAt: "2026-08-01T00:00:00.000Z",
+            },
+          },
+        },
+        row: {
+          source: "data",
+          kind: "mcp",
+          name: "server",
+          state: "source_dirty",
+          sourceCommit,
+        },
+      });
+
+      for (const fragmentText of state.expect) {
+        expect(diff?.text).toContain(fragmentText);
+      }
+    });
+  }
 
   test("buildStatusDiff explains when a locked data commit is absent", async () => {
     const dataRepo = await tempRepo("capshelf-status-missing-commit-data-");

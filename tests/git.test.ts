@@ -1,6 +1,13 @@
 import { $, file } from "bun";
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  mkdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -10,7 +17,9 @@ import {
   assertPathClean,
   assertRepoClean,
   assertRepoCleanOutsidePath,
+  commitExistingPaths,
   commitInRepo,
+  commitParents,
   currentBranch,
   fastForwardTo,
   fetchOrigin,
@@ -386,6 +395,167 @@ describe("git historical content helpers", () => {
     await expect(lastTouchingCommit(repo, "skills/hello")).rejects.toThrow(
       /no commit touches/,
     );
+  });
+});
+
+/**
+ * GIT-7 for a commit of files the user authored in place: the index and HEAD
+ * are restored, the working tree is not. Restoring the working tree would
+ * discard the edit the command exists to publish.
+ */
+describe("commitExistingPaths", () => {
+  async function fixture(): Promise<{ repo: string; source: string }> {
+    const repo = await tempRepo();
+    await mkdir(join(repo, "settings", "theme"), { recursive: true });
+    const source = join(repo, "settings", "theme", "settings.json");
+    await writeFile(source, '{"v":1}\n');
+    await writeFile(join(repo, "README.md"), "readme\n");
+    await commitAll(repo, "baseline");
+    await writeFile(source, '{"v":2}\n');
+    // Force any stat-cache refresh to happen before the index is captured.
+    await $`git -C ${repo} status --porcelain`.quiet();
+    return { repo, source };
+  }
+
+  async function writeHook(repo: string, body: string[]): Promise<void> {
+    const hook = join(repo, ".git", "hooks", "pre-commit");
+    await mkdir(join(repo, ".git", "hooks"), { recursive: true });
+    await writeFile(hook, ["#!/bin/sh", ...body, ""].join("\n"));
+    await chmod(hook, 0o755);
+  }
+
+  test("commits the edit and leaves nothing staged behind", async () => {
+    const { repo, source } = await fixture();
+    const before = await headSha(repo);
+
+    const commit = await commitExistingPaths({
+      repo,
+      relPaths: ["settings/theme/settings.json"],
+      message: "theme v2",
+      expectedHead: before,
+    });
+
+    expect(commit).toBe(await headSha(repo));
+    expect(await file(source).text()).toBe('{"v":2}\n');
+    expect((await $`git -C ${repo} status --porcelain`.quiet().text()).trim()) //
+      .toBe("");
+  });
+
+  test("a rejecting hook keeps the edit and puts the index back", async () => {
+    const { repo, source } = await fixture();
+    const before = await headSha(repo);
+    const indexBefore = await readFile(join(repo, ".git", "index"));
+    await writeHook(repo, ["echo 'hook says no' >&2", "exit 1"]);
+
+    await expect(
+      commitExistingPaths({
+        repo,
+        relPaths: ["settings/theme/settings.json"],
+        message: "theme v2",
+        expectedHead: before,
+      }),
+    ).rejects.toThrow(/hook says no/);
+
+    expect(await headSha(repo)).toBe(before);
+    // The user's edit is untouched; the staging capshelf did is not.
+    expect(await file(source).text()).toBe('{"v":2}\n');
+    expect(await readFile(join(repo, ".git", "index"))).toEqual(indexBefore);
+    expect(
+      (await $`git -C ${repo} diff --cached --name-only`.quiet().text()).trim(),
+    ).toBe("");
+  });
+
+  test("refuses a commit a hook widened past the allowed paths", async () => {
+    const { repo, source } = await fixture();
+    const before = await headSha(repo);
+    const indexBefore = await readFile(join(repo, ".git", "index"));
+    // git runs pre-commit against the temporary index it builds for a partial
+    // commit, so what the hook stages lands in the commit.
+    await writeHook(repo, [
+      "printf 'sneaked\\n' > sneak.txt",
+      "git add sneak.txt",
+    ]);
+
+    await expect(
+      commitExistingPaths({
+        repo,
+        relPaths: ["settings/theme/settings.json"],
+        message: "theme v2",
+        expectedHead: before,
+      }),
+    ).rejects.toThrow(/does not own[\s\S]*sneak\.txt/);
+
+    expect(await headSha(repo)).toBe(before);
+    expect(await file(source).text()).toBe('{"v":2}\n');
+    expect(await readFile(join(repo, ".git", "index"))).toEqual(indexBefore);
+  });
+
+  test("never clobbers a commit another writer landed during this one", async () => {
+    const { repo, source } = await fixture();
+    const before = await headSha(repo);
+    // Stand in for a concurrent writer: `pre-commit` runs inside `git commit`,
+    // which is the narrowest point another commit can land.
+    await writeHook(repo, [
+      "printf 'theirs\\n' > README.md",
+      "git -c core.hooksPath=/dev/null commit -qm 'concurrent user commit' -- README.md",
+    ]);
+
+    await expect(
+      commitExistingPaths({
+        repo,
+        relPaths: ["settings/theme/settings.json"],
+        message: "theme v2",
+        expectedHead: before,
+      }),
+    ).rejects.toThrow();
+
+    // Their commit is HEAD and intact; ours does not exist; the user's edit
+    // is untouched. `git commit` compare-and-swaps HEAD against the value it
+    // read, which is what refuses here — the parent check in
+    // `commitExistingPaths` covers the remaining window, before that read.
+    expect(
+      (await $`git -C ${repo} log -1 --format=%s`.quiet().text()).trim(),
+    ).toBe("concurrent user commit");
+    expect(
+      (await $`git -C ${repo} show HEAD:README.md`.quiet().text()).trim(),
+    ).toBe("theirs");
+    expect(
+      (await $`git -C ${repo} log --format=%s`.quiet().text()).includes(
+        "theme v2",
+      ),
+    ).toBe(false);
+    expect(await file(source).text()).toBe('{"v":2}\n');
+  });
+
+  test("commitParents reports the real parent, and none for a root commit", async () => {
+    const { repo } = await fixture();
+    const root = (
+      await $`git -C ${repo} rev-list --max-parents=0 HEAD`.quiet().text()
+    ).trim();
+    expect(await commitParents(repo, root)).toEqual([]);
+
+    const before = await headSha(repo);
+    const commit = await commitExistingPaths({
+      repo,
+      relPaths: ["settings/theme/settings.json"],
+      message: "theme v2",
+      expectedHead: before,
+    });
+    expect(await commitParents(repo, commit)).toEqual([before]);
+  });
+
+  test("refuses when anything outside the allowed paths is dirty", async () => {
+    const { repo } = await fixture();
+    await writeFile(join(repo, "README.md"), "unrelated edit\n");
+
+    await expect(
+      commitExistingPaths({
+        repo,
+        relPaths: ["settings/theme/settings.json"],
+        message: "theme v2",
+        expectedHead: await headSha(repo),
+      }),
+    ).rejects.toThrow(/uncommitted changes outside/);
   });
 });
 

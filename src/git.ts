@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import {
   access,
+  copyFile,
   lstat,
   mkdir,
   mkdtemp,
@@ -565,12 +566,9 @@ export async function lastTouchingContentCommit(
   repo: string,
   relPath: string,
 ): Promise<string> {
-  // `literal` disables glob interpretation so item names containing pathspec
-  // metacharacters cannot widen the exclusion (git accepts combined magic
-  // words, verified).
   const sha = await tryLastTouchingCommitForPathspecs(repo, [
     literalPathspec(relPath),
-    `:(literal,exclude)${relPath}/.capshelf.yml`,
+    excludePathspec(`${relPath}/.capshelf.yml`),
   ]);
   if (sha) return sha;
   return await lastTouchingCommit(repo, relPath);
@@ -1116,15 +1114,12 @@ export async function statusPorcelainOutsidePaths(
   repo: string,
   relPaths: string[],
 ): Promise<string> {
-  const excludes = relPaths.map(
-    (relPath) => `:(literal,exclude)${normalizeGitPath(relPath)}`,
-  );
   return await sourceReadText(repo, [
     "status",
     "--porcelain",
     "--",
     ".",
-    ...excludes,
+    ...relPaths.map(excludePathspec),
   ]);
 }
 
@@ -1307,6 +1302,148 @@ export async function commitLiteralPathsInRepo(
   return (await sourceReadText(repo, ["rev-parse", "HEAD"])).trim();
 }
 
+export interface CommitExistingPathsInput {
+  repo: string;
+  /** Repository-relative paths the user edited where they already live. */
+  relPaths: string[];
+  message: string;
+  expectedHead: string;
+}
+
+/**
+ * Commit content the user authored in place inside the data repo.
+ *
+ * The other commit operation, `commitDataRepoMutation`, owns the files it
+ * writes and restores them on failure. That is exactly wrong here: the
+ * canonical file *is* the user's own edit, and putting back the version
+ * capshelf found would throw their work away. So "what it changed" is the index
+ * and `HEAD` only (GIT-7); the working tree is never touched.
+ *
+ * The commit runs the repository's normal hooks (GIT-9), which is the whole
+ * point of the rollback — a `pre-commit` hook that rejects used to leave the
+ * paths staged in the user's index after a command that failed. A hook can also
+ * *add* to a partial commit, because git runs it against the temporary index it
+ * built for the named paths, so the resulting commit is checked against the
+ * paths this operation was allowed to publish.
+ */
+export async function commitExistingPaths(
+  input: CommitExistingPathsInput,
+): Promise<string> {
+  const { repo, relPaths, message, expectedHead } = input;
+  if (relPaths.length === 0) {
+    throw new Error("commitExistingPaths needs at least one path");
+  }
+  if ((await headSha(repo)) !== expectedHead) {
+    throw new PreconditionError("data repo HEAD changed during the commit");
+  }
+  await assertRepoCleanOutsidePaths(repo, relPaths);
+
+  const indexPath = resolve(
+    repo,
+    (await sourceReadText(repo, ["rev-parse", "--git-path", "index"])).trim(),
+  );
+  const backupRoot = await mkdtemp(join(tmpdir(), "capshelf-commit-"));
+  const backupIndex = join(backupRoot, "index");
+  let hadIndex = true;
+  try {
+    await copyFile(indexPath, backupIndex);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") hadIndex = false;
+    else throw error;
+  }
+  let createdCommit: string | null = null;
+  let createdParent: string | null = null;
+  try {
+    createdCommit = await commitLiteralPathsInRepo(repo, relPaths, message);
+    createdParent = (await commitParents(repo, createdCommit))[0] ?? null;
+    // The `expectedHead` check above cannot bind the commit that happens
+    // after it. Reading the parent can: if another writer advanced HEAD in
+    // between, this commit sits on their work rather than on the state the
+    // caller validated, and publishing it would fold an unreviewed advance
+    // into the lock.
+    if (createdParent !== expectedHead) {
+      throw new PreconditionError("data repo HEAD changed during the commit");
+    }
+    await assertCommitTouchedOnly(repo, expectedHead, createdCommit, relPaths);
+    return createdCommit;
+  } catch (error) {
+    const current = await headSha(repo).catch(() => null);
+    if (createdCommit !== null && current === createdCommit) {
+      // Back to this commit's own parent, not to `expectedHead`: they are the
+      // same in the ordinary case, and where they differ the parent is a
+      // commit somebody else landed, which is not this operation's to delete.
+      const reverted =
+        createdParent === null
+          ? false
+          : await sourceWriteBuffer(repo, [
+              "update-ref",
+              "HEAD",
+              createdParent,
+              createdCommit,
+            ])
+              .then(() => true)
+              .catch(() => false);
+      if (!reverted) throw error;
+    } else if (current !== expectedHead) {
+      // Something outside this operation moved HEAD. Its index state is not
+      // ours to put back.
+      throw error;
+    }
+    if (hadIndex) await copyFile(backupIndex, indexPath).catch(() => {});
+    else await rm(indexPath, { force: true }).catch(() => {});
+    throw error;
+  } finally {
+    await rm(backupRoot, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** The parent commits of `commit`, in order; empty for a root commit. */
+export async function commitParents(
+  repo: string,
+  commit: string,
+): Promise<string[]> {
+  const out = await sourceReadText(repo, [
+    "rev-list",
+    "--parents",
+    "-n",
+    "1",
+    commit,
+  ]);
+  return out.trim().split(/\s+/).slice(1);
+}
+
+async function assertCommitTouchedOnly(
+  repo: string,
+  base: string,
+  commit: string,
+  relPaths: string[],
+): Promise<void> {
+  const out = await sourceReadText(repo, [
+    "diff-tree",
+    "-r",
+    "--name-only",
+    "-z",
+    base,
+    commit,
+    "--",
+    ".",
+    ...relPaths.map(excludePathspec),
+  ]);
+  const stray = out.split("\0").filter((path) => path.length > 0);
+  if (stray.length === 0) return;
+  throw new PreconditionError(
+    [
+      `not publishing ${relPaths.join(", ")}`,
+      "  the commit changed paths this operation does not own",
+      "",
+      ...stray.map((path) => `    ${path}`),
+      "",
+      "  something between staging and the commit added them — a pre-commit hook",
+      "  the data repo was rolled back; nothing was published",
+    ].join("\n"),
+  );
+}
+
 /** `git clone`, which by definition does not start inside a repository. */
 export async function cloneRepository(
   cwd: string,
@@ -1418,6 +1555,17 @@ function normalizeGitPath(path: string): string {
 
 export function literalPathspec(path: string): string {
   return `:(literal)${normalizeGitPath(path)}`;
+}
+
+/**
+ * The same renderer for the other direction (GIT-4). Item names reach pathspecs
+ * from user data, so an exclusion built by string concatenation is a pathspec
+ * whose meaning depends on the name — `literal` disables the glob and magic
+ * interpretation that would otherwise widen or narrow what is excluded. Git
+ * accepts the combined magic words, verified.
+ */
+export function excludePathspec(path: string): string {
+  return `:(literal,exclude)${normalizeGitPath(path)}`;
 }
 
 function relativeToGitPath(path: string, root: string): string {

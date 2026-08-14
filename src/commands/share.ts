@@ -17,11 +17,13 @@ import {
 } from "../lock";
 import type { DataLockEntryV4, Lock } from "../lock";
 import { pinItemAtCommit } from "../pin";
+import type { PinnedSource } from "../pin";
 import { assertCommittedTreeEqualsProject } from "../promote-proof";
 import { isSystemItemName } from "../bundled";
 import { isCopyDirectoryItemKind, itemRepoRelPath } from "../master";
 import type { FragmentItemKind } from "../master";
-import { assertRepoClean, commitInRepo, originRemoteUrl } from "../git";
+import { assertRepoClean, headSha, originRemoteUrl } from "../git";
+import { commitDataRepoMutation } from "../marketplace-files";
 import { PreconditionError } from "../errors";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import {
@@ -331,29 +333,40 @@ async function shareSubagent(
       console.error(`⚠ ${warning}`);
     }
   }
-  for (const { source, raw } of pending) {
-    const path = join(dataRepo, ...source.relPath.split("/"));
-    await mkdir(dirname(path), { recursive: true });
-    await atomicWriteFile(path, raw);
-  }
-  const sourceCommit = await commitInRepo(
+  // A generated commit: capshelf chose these paths and wrote them, so the
+  // transaction owns them and a failure removes them again. `verify` runs
+  // inside it, so a hook that rewrites a shared file unwinds instead of
+  // leaving the data repo holding content the project never had.
+  let pin: PinnedSource | undefined;
+  const sourceCommit = await commitDataRepoMutation({
     dataRepo,
-    pending.map(({ source }) => source.relPath),
-    opts.message ?? `capshelf: subagents/${name}`,
-  );
-  // PIN-11: the candidate was generated from the project's own files, so what
-  // the commit holds must equal what was read. `pending` is `A`.
-  const pin = await assertCommittedTreeEqualsProject({
-    dataRepo,
-    kind: "subagents",
-    name,
-    commit: sourceCommit,
-    projectFiles: pending.map(({ source, raw }) => ({
-      path: basename(source.relPath),
-      content: Buffer.from(raw, "utf-8"),
-      mode: "100644" as const,
-    })),
+    expectedHead: await headSha(dataRepo).catch(() => null),
+    ownedRoots: pending.map(({ source }) => source.relPath),
+    message: opts.message ?? `capshelf: subagents/${name}`,
+    mutate: async () => {
+      for (const { source, raw } of pending) {
+        const path = join(dataRepo, ...source.relPath.split("/"));
+        await mkdir(dirname(path), { recursive: true });
+        await atomicWriteFile(path, raw);
+      }
+    },
+    // PIN-11: the candidate was generated from the project's own files, so
+    // what the commit holds must equal what was read. `pending` is `A`.
+    verify: async (commit) => {
+      pin = await assertCommittedTreeEqualsProject({
+        dataRepo,
+        kind: "subagents",
+        name,
+        commit,
+        projectFiles: pending.map(({ source, raw }) => ({
+          path: basename(source.relPath),
+          content: Buffer.from(raw, "utf-8"),
+          mode: "100644" as const,
+        })),
+      });
+    },
   });
+  if (!pin) throw new Error(`expected a verified pin for subagents/${name}`);
   const sha = pin.sourcePinDigest;
   const snapshot = await captureCommittedItemNeeds(dataRepo, {
     kind: "subagents",
@@ -470,19 +483,27 @@ async function shareFragment(
     }
     parseFragmentSourceText(source, raw);
   }
-  for (const { source, raw } of pending) {
-    const canonicalPath = join(dataRepo, ...source.relPath.split("/"));
-    await mkdir(dirname(canonicalPath), { recursive: true });
-    await atomicWriteFile(canonicalPath, raw);
-  }
-  const sourceCommit = await commitInRepo(
+  // A generated commit: share chose these canonical paths and wrote them, so
+  // the transaction owns them and a rejected commit takes them back out. The
+  // alternative leaves an untracked source behind that the retry then refuses
+  // as already existing.
+  const sourceCommit = await commitDataRepoMutation({
     dataRepo,
-    pending.map(({ source }) => source.relPath),
-    opts.message ?? `capshelf: ${kind}/${name}`,
-  );
+    expectedHead: await headSha(dataRepo).catch(() => null),
+    ownedRoots: pending.map(({ source }) => source.relPath),
+    message: opts.message ?? `capshelf: ${kind}/${name}`,
+    mutate: async () => {
+      for (const { source, raw } of pending) {
+        const canonicalPath = join(dataRepo, ...source.relPath.split("/"));
+        await mkdir(dirname(canonicalPath), { recursive: true });
+        await atomicWriteFile(canonicalPath, raw);
+      }
+    },
+  });
   // Fragments have no project snapshot: `share --from` writes the user's own
   // file into the data repo and commits it in place, so PIN-11's `A == B` has
-  // no `A` to compare. The pin still comes from the committed tree.
+  // no `A` to compare — the pending set can be a subset of the canonical paths
+  // the item ends up with. The pin still comes from the committed tree.
   const pin = await pinItemAtCommit(dataRepo, kind, name, sourceCommit);
   const sha = pin.sourcePinDigest;
 

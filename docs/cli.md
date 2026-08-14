@@ -183,7 +183,9 @@ result.
   runtime skills only, without requiring a capshelf project or data repo
 - `--diff` — supported by `status`; shows local drift against the locked
   content without changing files. For copy items, extra current files are
-  filtered through `.gitignore` files inside the installed item.
+  filtered through `.gitignore` files inside the installed item. Both sides are
+  read as bytes and compared in isolation, so nothing the data repo configures
+  can decide what the diff says.
 - `--target claude|codex` — used by multi-target MCP and subagent commands such as `show`, `get-path`, and `share`
 - `--tag <tag>` — supported by `ls` (including `--here`); repeatable, and
   repeated tags narrow with AND. Comparison is case-insensitive; combine with
@@ -1028,8 +1030,11 @@ sorted item-relative paths and changes no data-repo, installed, manifest, or
 lock state. On a clean result, capshelf makes at most one ordinary
 single-parent data-repo commit and reconciles the calling project's installed
 copy while preserving ignored/generated files outside its managed snapshot.
-The root `.capshelf.yml` remains outside content identity; an installed
-sidecar wins over upstream when the merged item is committed.
+That commit runs the data repo's own hooks: a hook that rejects it stops the
+promote (exit 3) and leaves `HEAD`, the item path, the index, the installed
+copy, and the lock as they were. The root `.capshelf.yml` remains outside
+content identity; an installed sidecar wins over upstream when the merged item
+is committed.
 
 Two related behaviors:
 
@@ -1310,6 +1315,11 @@ edit the path from `capshelf get-path mcp/github --target codex`, then run
 `capshelf promote mcp/github -m "update github mcp"`. `keep-local` and local
 scope are rejected for fragments; put project-only values directly in
 `.claude/settings.json`, `.mcp.json`, or `.codex/config.toml`.
+
+`status <fragment> --diff` compares the data repo's committed source with its
+working tree. A change that exists only in the data repo's index — one you
+staged there and then reverted in the working tree — is reported as dirty and
+rendered as nothing.
 
 Codex only loads `.codex/config.toml` from trusted projects. When `codex` is on
 `PATH` and the current project does not appear trusted in Codex user config,

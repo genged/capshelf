@@ -11,6 +11,7 @@ import {
   sourceVisibleFilesUnderPath,
   lastTouchingContentCommit,
   statusPorcelain,
+  statusPorcelainOutsidePaths,
 } from "../src/git";
 import { ensureLocalExcludes, removeLocalExcludes } from "../src/local-config";
 import { ManifestSchema } from "../src/manifest";
@@ -100,6 +101,36 @@ describe("Git and filesystem semantics", () => {
     expect(await file(join(repo, "skills", "abc", "SKILL.md")).text()).toBe(
       "sibling dirty\n",
     );
+  });
+
+  test("exclusion pathspecs isolate metacharacter item names", async () => {
+    const repo = await baselineRepo("capshelf-exclude-paths-");
+    // Each excluded name is a glob that would swallow its sibling if the
+    // exclusion were rendered without `literal`.
+    const pairs = [
+      ["a*", "abc"],
+      ["q?", "qa"],
+      ["[ab]", "a"],
+      [":(exclude)x", "x"],
+    ] as const;
+    for (const [literal, sibling] of pairs) {
+      await addSkill(repo, literal, `${literal}\n`);
+      await addSkill(repo, sibling, `${sibling}\n`);
+    }
+    await commitAll(repo, "metacharacter items");
+    for (const [literal, sibling] of pairs) {
+      for (const name of [literal, sibling]) {
+        await writeFile(join(repo, "skills", name, "SKILL.md"), "dirty\n");
+      }
+    }
+
+    for (const [literal, sibling] of pairs) {
+      const out = await statusPorcelainOutsidePaths(repo, [
+        `skills/${literal}`,
+      ]);
+      expect(out).not.toContain(`skills/${literal}/SKILL.md`);
+      expect(out).toContain(`skills/${sibling}/SKILL.md`);
+    }
   });
 
   test("status, promote, and apply observe executable-mode-only changes", async () => {

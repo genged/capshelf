@@ -18,6 +18,7 @@ import {
   assertRepoClean,
   assertRepoCleanOutsidePaths,
   commitLiteralPathsInRepo,
+  commitParents,
   sourceRead,
   sourceReadText,
   sourceWriteBuffer,
@@ -179,6 +180,7 @@ export async function commitDataRepoMutation(options: {
   const backupRoot = await mkdtemp(join(tmpdir(), "capshelf-marketplace-"));
   const backupIndex = join(backupRoot, "index");
   let createdCommit: string | null = null;
+  let createdParent: string | null = null;
   let hadIndex = true;
   try {
     await copyFile(indexPath, backupIndex);
@@ -199,15 +201,27 @@ export async function commitDataRepoMutation(options: {
       ownedRoots,
       message,
     );
+    createdParent = (await commitParents(dataRepo, createdCommit))[0] ?? null;
+    // The HEAD check above cannot bind the commit that happens after it. The
+    // created commit's parent can: a writer that advanced HEAD in the gap
+    // would otherwise have its work folded into this publication, and then
+    // deleted by the rollback below.
+    if (createdParent !== expectedHead) {
+      throw new PreconditionError(
+        "data repo HEAD changed during marketplace mutation",
+      );
+    }
     await verify?.(createdCommit);
     return createdCommit;
   } catch (error) {
     const current = await currentHead(dataRepo);
     if (createdCommit !== null && current === createdCommit) {
+      // To this commit's own parent, not to `expectedHead`: where they differ
+      // the parent is somebody else's commit, not this operation's to delete.
       const revertArgs =
-        expectedHead === null
+        createdParent === null
           ? ["update-ref", "-d", "HEAD", createdCommit]
-          : ["update-ref", "HEAD", expectedHead, createdCommit];
+          : ["update-ref", "HEAD", createdParent, createdCommit];
       const reverted = await sourceWriteBuffer(dataRepo, revertArgs)
         .then(() => true)
         .catch(() => false);

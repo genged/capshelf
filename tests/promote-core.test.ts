@@ -6,6 +6,7 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  readdir,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -1337,44 +1338,109 @@ describe("stale-promote guard (copy items)", () => {
     expect(existsSync(join(sidecarChange.dataItem, "local.txt"))).toBe(false);
   });
 
-  test("--merge transaction failure restores path, index, HEAD, installed content, and lock", async () => {
-    const f = await disjointMergeFixture("capshelf-merge-failure");
-    const headBefore = await headSha(f.dataRepo);
-    const lockBefore = structuredClone(f.lock);
-    const installedBefore = await file(join(f.installed, "local.txt")).text();
-    const indexPath = (
-      await $`git -C ${f.dataRepo} rev-parse --git-path index`.text()
-    ).trim();
-    const indexBefore = await readFile(join(f.dataRepo, indexPath));
+  // The injection points moved with the merge commit itself: they fire at the
+  // end of `commitDataRepoMutation`'s `mutate`, immediately before staging and
+  // commit, which is where `beforeHeadAdvance` sat under the retired
+  // `commit-tree` transaction. The assertion set is unchanged.
+  for (const phase of ["afterPathReplaced", "beforeHeadAdvance"] as const) {
+    test(`--merge ${phase} failure restores path, index, HEAD, installed content, and lock`, async () => {
+      const f = await disjointMergeFixture(`capshelf-merge-failure-${phase}`);
+      const headBefore = await headSha(f.dataRepo);
+      const lockBefore = structuredClone(f.lock);
+      const installedBefore = await file(join(f.installed, "local.txt")).text();
+      const indexPath = (
+        await $`git -C ${f.dataRepo} rev-parse --git-path index`.text()
+      ).trim();
+      const indexBefore = await readFile(join(f.dataRepo, indexPath));
 
-    await expect(
-      syncTrackedIntoDataRepo(
-        f.project,
-        f.dataRepo,
-        "skills",
-        "hello",
-        f.lock,
-        {
-          merge: true,
-          transactionHooks: {
-            beforeHeadAdvance: async () => {
-              throw new Error("injected commit failure");
+      await expect(
+        syncTrackedIntoDataRepo(
+          f.project,
+          f.dataRepo,
+          "skills",
+          "hello",
+          f.lock,
+          {
+            merge: true,
+            transactionHooks: {
+              [phase]: async () => {
+                throw new Error("injected commit failure");
+              },
             },
           },
-        },
-      ),
-    ).rejects.toThrow("injected commit failure");
+        ),
+      ).rejects.toThrow("injected commit failure");
 
-    expect(await headSha(f.dataRepo)).toBe(headBefore);
-    expect(await readFile(join(f.dataRepo, indexPath))).toEqual(indexBefore);
-    expect(f.lock).toEqual(lockBefore);
-    expect(await file(join(f.installed, "local.txt")).text()).toBe(
-      installedBefore,
+      expect(await headSha(f.dataRepo)).toBe(headBefore);
+      expect(await readFile(join(f.dataRepo, indexPath))).toEqual(indexBefore);
+      expect(f.lock).toEqual(lockBefore);
+      expect(await file(join(f.installed, "local.txt")).text()).toBe(
+        installedBefore,
+      );
+      expect(existsSync(join(f.dataItem, "local.txt"))).toBe(false);
+      // The item directory is replaced wholesale before the commit, so every
+      // file it held has to come back, not just the ones the merge touched.
+      expect(await file(join(f.dataItem, "SKILL.md")).text()).toBe("base\n");
+      expect(await file(join(f.dataItem, "upstream.txt")).text()).toBe(
+        "upstream\n",
+      );
+      expect(
+        (await $`git -C ${f.dataRepo} status --porcelain`.text()).trim(),
+      ).toBe("");
+    });
+  }
+
+  test("--merge commits in a repository whose git dir is elsewhere", async () => {
+    const root = await mkdtemp(join(tmpdir(), "capshelf-merge-separate-git-"));
+    const dataRepo = join(root, "worktree");
+    const gitDir = join(root, "separate-git");
+    await mkdir(dataRepo);
+    await $`git init -q --separate-git-dir=${gitDir} ${dataRepo}`.quiet();
+    await $`git -C ${dataRepo} config user.email capshelf@example.invalid`.quiet();
+    await $`git -C ${dataRepo} config user.name capshelf`.quiet();
+    const project = await tempRepo("capshelf-merge-separate-project-");
+    const dataItem = join(dataRepo, "skills", "hello");
+    await mkdir(dataItem, { recursive: true });
+    await writeFile(join(dataItem, "SKILL.md"), "base\n");
+    await commitAll(dataRepo, "base");
+    const lock = lockWith({
+      source: "data",
+      sourcePinDigest: await currentPinDigest(dataRepo, "skills", "hello"),
+      sourceCommit: await lastTouchingContentCommit(dataRepo, "skills/hello"),
+      appliedAt: "2026-06-01T00:00:00.000Z",
+    });
+    await writeFile(join(dataItem, "upstream.txt"), "upstream\n");
+    await commitAll(dataRepo, "upstream");
+    const installed = join(project, ".agents", "skills", "hello");
+    await mkdir(installed, { recursive: true });
+    await writeFile(join(installed, "SKILL.md"), "base\n");
+    await writeFile(join(installed, "local.txt"), "local\n");
+
+    const result = await syncTrackedIntoDataRepo(
+      project,
+      dataRepo,
+      "skills",
+      "hello",
+      lock,
+      { merge: true },
     );
-    expect(existsSync(join(f.dataItem, "local.txt"))).toBe(false);
+
+    expect(result.committed).toBe(true);
+    expect(await file(join(dataItem, "local.txt")).text()).toBe("local\n");
+    expect(await file(join(dataItem, "upstream.txt")).text()).toBe(
+      "upstream\n",
+    );
+    expect((await $`git -C ${dataRepo} status --porcelain`.text()).trim()).toBe(
+      "",
+    );
     expect(
-      (await $`git -C ${f.dataRepo} status --porcelain`.text()).trim(),
-    ).toBe("");
+      (await readdir(join(dataRepo, "skills"))).some((name) =>
+        name.startsWith(".capshelf-"),
+      ),
+    ).toBe(false);
+    expect(
+      (await readdir(gitDir)).some((name) => name.startsWith(".capshelf-")),
+    ).toBe(false);
   });
 
   test("blocks when upstream is clean and advanced past the lock", async () => {

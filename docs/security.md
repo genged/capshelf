@@ -37,6 +37,12 @@ content reaches the data repo's default branch. For Pi extensions that boundary
 is explicit: capshelf warns, Pi asks for project trust, and then the extension
 runs without a capshelf sandbox or reviewed/trusted marker.
 
+The one thing capshelf does run is your data repo's own commit hooks, on every
+commit it makes there — your code, in a repository you control, and no
+command picks a mechanism that skips them. Read-only commands run nothing:
+`status`, `ls`, `show`, `search`, and `get-path` execute no hook, no
+`diff.external` helper, no textconv driver, and no clean filter.
+
 ## The control plane is your git host
 
 This is a deliberate architecture, not a gap: capshelf delegates

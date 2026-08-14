@@ -1,5 +1,12 @@
 import { existsSync } from "node:fs";
-import { lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import type { Lock } from "./lock";
@@ -16,10 +23,13 @@ import { installedPath } from "./installed";
 import { findSystemItem } from "./bundled";
 import {
   assertRegularBlobEntries,
+  catFileBlobs,
   isolatedNoIndexDiff,
   sourceRead,
+  sourceReadText,
   literalPathspec,
   lsTreeEntriesAtCommit,
+  lsTreeEntriesForPathspecs,
   showAtCommit,
 } from "./git";
 import { hasIgnoredDotSegment } from "./dotfiles";
@@ -77,6 +87,9 @@ export interface StatusDiff {
 }
 
 type FileMap = Map<string, Buffer>;
+
+/** The path git prints, and accepts, for a side that does not exist. */
+const DEV_NULL = "/dev/null";
 
 export function shouldShowLocalDiff(state: string): state is LocalDiffState {
   return (
@@ -248,35 +261,135 @@ export async function copyDirectoryModeDrifted(
   return false;
 }
 
+/**
+ * The dirty canonical sources of a fragment item, as text.
+ *
+ * `status` is read-only, so it runs no program the data repo names (GIT-11).
+ * That rules out asking Git for the diff: `git diff HEAD` converts the
+ * working-tree file with `convert_to_git` before comparing it, so a
+ * `filter=<driver>` attribute starts `filter.<driver>.clean`, and no
+ * per-invocation flag disables a driver whose name is unknown. Reproduced —
+ * with a rewriting clean filter the diff reported `{"v":REDACTED}` for a file
+ * holding `{"v":2}`, which is the exact failure this design exists to close:
+ * the one command a user runs to investigate disagreeing with the bytes.
+ *
+ * So both sides are read as bytes — the commit from the object database, which
+ * applies no smudge filter, and the working tree from the filesystem — and
+ * compared in the disposable, attribute-free directory `unifiedDiff` owns.
+ */
 async function dataRepoDiff(
   dataRepo: string,
   relPaths: string[],
 ): Promise<string> {
-  const result = await sourceRead(dataRepo, [
-    "diff",
-    "HEAD",
+  const committed = await committedSources(dataRepo, relPaths);
+  const staged = await stagedSourcePaths(dataRepo, relPaths);
+  const untracked = await untrackedDataRepoFiles(dataRepo, relPaths);
+  // A file you staged but did not commit is in none of git's other answers:
+  // `HEAD` does not hold it, and `ls-files --others` skips it because git
+  // tracks it now. Without the index the path is compared by nothing.
+  const paths = [
+    ...new Set([...committed.keys(), ...staged.keys(), ...untracked]),
+  ].sort();
+  const parts: string[] = [];
+  for (const relPath of paths) {
+    const before = committed.get(relPath) ?? null;
+    const current = await worktreeSource(dataRepo, relPath);
+    const text = await unifiedDiff(
+      `${relPath} (HEAD)`,
+      `${relPath} (current)`,
+      before === null ? null : before.content,
+      current === null ? null : current.content,
+      {
+        ...(before !== null && { fromExecutable: before.executable }),
+        ...(current !== null && { toExecutable: current.executable }),
+      },
+    );
+    if (text) parts.push(text);
+    // `git rm --cached` leaves the file on disk, so neither side of the
+    // comparison above moves and the staged removal renders as nothing.
+    if (before !== null && current !== null && !staged.has(relPath)) {
+      parts.push(
+        `${relPath}: staged for deletion; the file is still in the working tree`,
+      );
+    }
+  }
+  return parts.join("\n");
+}
+
+interface SourceSide {
+  content: string;
+  executable: boolean;
+}
+
+/**
+ * The canonical sources as `HEAD` holds them, read through `cat-file`, which
+ * runs no smudge filter and consults no working tree.
+ */
+async function committedSources(
+  dataRepo: string,
+  relPaths: string[],
+): Promise<Map<string, SourceSide>> {
+  const entries = (
+    await lsTreeEntriesForPathspecs(
+      dataRepo,
+      "HEAD",
+      relPaths.map(literalPathspec),
+    )
+  ).filter((entry) => entry.type === "blob");
+  const blobs = await catFileBlobs(
+    dataRepo,
+    entries.map((entry) => entry.object),
+  );
+  return new Map(
+    entries.map((entry) => [
+      entry.path,
+      {
+        content: (blobs.get(entry.object) ?? Buffer.alloc(0)).toString("utf-8"),
+        executable: entry.mode === "100755",
+      },
+    ]),
+  );
+}
+
+/**
+ * The canonical paths the index holds. `ls-files --stage` reads the index
+ * alone: it opens no working-tree file, so no clean filter runs. Only the
+ * path set is used, which is why unmerged stages need no policy here.
+ */
+async function stagedSourcePaths(
+  dataRepo: string,
+  relPaths: string[],
+): Promise<Set<string>> {
+  const out = await sourceReadText(dataRepo, [
+    "ls-files",
+    "--stage",
+    "-z",
     "--",
     ...relPaths.map(literalPathspec),
   ]);
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr || "git diff failed");
+  const paths = new Set<string>();
+  for (const record of out.split("\0")) {
+    if (record.length === 0) continue;
+    // "<mode> <object> <stage>\t<path>", verbatim under -z.
+    const match = /^\d{6} [0-9a-f]+ \d\t([\s\S]+)$/.exec(record);
+    if (!match) throw new Error(`unexpected git ls-files output: ${record}`);
+    paths.add(match[1]!);
   }
-  const parts = [result.stdout.toString()].filter((text) => text.length > 0);
-  for (const relPath of await untrackedDataRepoFiles(dataRepo, relPaths)) {
-    const untracked = await sourceRead(dataRepo, [
-      "diff",
-      "--no-index",
-      "--",
-      "/dev/null",
-      relPath,
-    ]);
-    if (untracked.exitCode !== 0 && untracked.exitCode !== 1) {
-      throw new Error(untracked.stderr || "git diff failed");
-    }
-    const text = untracked.stdout.toString();
-    if (text.length > 0) parts.push(text);
-  }
-  return parts.join("\n");
+  return paths;
+}
+
+/** The working-tree side, read from the filesystem rather than through git. */
+async function worktreeSource(
+  dataRepo: string,
+  relPath: string,
+): Promise<SourceSide | null> {
+  const path = join(dataRepo, ...relPath.split("/"));
+  const stat = lstatOrNull(path);
+  if (stat?.isFile() !== true) return null;
+  return {
+    content: await readFile(path, "utf-8"),
+    executable: (Number(stat.mode) & 0o111) !== 0,
+  };
 }
 
 async function untrackedDataRepoFiles(
@@ -514,20 +627,41 @@ function shaOfFileMap(files: FileMap): string {
   return hasher.digest("hex").slice(0, 12);
 }
 
+export interface UnifiedDiffOptions {
+  fromExecutable?: boolean;
+  toExecutable?: boolean;
+}
+
+/**
+ * A side is `null` when the file does not exist on that side. That is not the
+ * same as an empty file, and collapsing the two hides a real change: comparing
+ * two empty files reports nothing, while comparing `/dev/null` with an empty
+ * file reports `new file mode 100644`. Git renders existence and mode itself
+ * once it is given them, so neither is reconstructed here.
+ */
 export async function unifiedDiff(
   fromLabel: string,
   toLabel: string,
-  fromText: string,
-  toText: string,
+  fromText: string | null,
+  toText: string | null,
+  options: UnifiedDiffOptions = {},
 ): Promise<string> {
-  if (fromText === toText) return "";
+  const fromExecutable = options.fromExecutable === true;
+  const toExecutable = options.toExecutable === true;
+  if (fromText === toText && fromExecutable === toExecutable) return "";
 
   const dir = await mkdtemp(join(tmpdir(), "capshelf-diff-"));
-  const currentPath = join(dir, "current");
-  const expectedPath = join(dir, "locked");
+  const currentPath = fromText === null ? DEV_NULL : join(dir, "current");
+  const expectedPath = toText === null ? DEV_NULL : join(dir, "locked");
   try {
-    await writeFile(currentPath, fromText);
-    await writeFile(expectedPath, toText);
+    if (fromText !== null) {
+      await writeFile(currentPath, fromText);
+      if (fromExecutable) await chmod(currentPath, 0o755);
+    }
+    if (toText !== null) {
+      await writeFile(expectedPath, toText);
+      if (toExecutable) await chmod(expectedPath, 0o755);
+    }
     // The `isolated-diff` profile owns every flag and environment decision
     // here (`src/git.ts`). This used to run under `repo === null`, which meant
     // "in the user's own directory, under their global config" — so on the
@@ -561,16 +695,23 @@ function normalizeDiffHeaders(
 ): string {
   const lines = text.split("\n");
   const out: string[] = [];
+  let labelled = false;
   for (const line of lines) {
     if (line.startsWith("diff --git ")) continue;
     if (line.startsWith("index ")) continue;
     if (line === `--- ${currentPath}` || line.startsWith(`--- a/`)) {
       out.push(`--- ${fromLabel}`);
+      labelled = true;
     } else if (line === `+++ ${expectedPath}` || line.startsWith(`+++ b/`)) {
       out.push(`+++ ${toLabel}`);
     } else {
       out.push(line);
     }
+  }
+  // A mode-only change carries no `---`/`+++` pair, so without this the output
+  // would be two mode lines with nothing naming the file they describe.
+  if (!labelled && out.some((line) => line.trim().length > 0)) {
+    out.unshift(`--- ${fromLabel}`, `+++ ${toLabel}`);
   }
   return out.join("\n");
 }
