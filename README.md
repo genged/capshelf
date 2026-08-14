@@ -348,6 +348,43 @@ make check                          # tests plus smoke suites
 make build                          # compile dist/capshelf
 ```
 
+### CLI source repo
+
+The capshelf source repository contains:
+
+```
+<capshelf-source>/
+├── src/
+│   ├── bundled/                    bundled system items compiled into the binary
+│   │   └── skills/capshelf/SKILL.md
+│   ├── cli.ts
+│   ├── git.ts                      git wrapper module
+│   └── …
+├── dist/                           built binary (gitignored)
+├── package.json
+├── Makefile
+├── docs/                           this folder
+└── .git/
+```
+
+**Code only** — no `skills/`, `settings/`, `mcp/`, etc. at the top level. Data lives in a separate directory.
+
+### Smoke-test data repo
+
+The source repo's smoke tests need *some* data repo to point at. A common local
+fixture is `~/code/capshelf-data/`:
+
+```
+~/code/capshelf-data/
+├── skills/
+│   └── hello/SKILL.md            smoke-test dummy
+└── .git/
+```
+
+There is no implicit default. The `Makefile`'s smoke targets each create their own temporary data repo so regression tests do not depend on this fixture. For day-to-day dev, set `CAPSHELF_HOME=~/code/capshelf-data` in your shell so `init` doesn't need `--data` every time.
+
+A real user creates their own data repos (`~/code/work-skills/`, `~/code/personal-skills/`, etc.) — `capshelf-data` is just the test fixture for this codebase.
+
 ## Project Status
 
 Skills, project-local Pi extensions, Claude/Codex subagents, settings
@@ -373,6 +410,7 @@ packages and a committed native Codex projection.
 - [`docs/project-brief.md`](docs/project-brief.md) - one-page overview
 - [`docs/architecture.md`](docs/architecture.md) - data model and rationale
 - [`docs/cli.md`](docs/cli.md) - full command reference, flags, exit codes
+- [`docs/marketplaces.md`](docs/marketplaces.md) - Claude/Cowork and Codex plugin catalogs in the data repo
 - [`docs/team-workflow.md`](docs/team-workflow.md) - team loop: sync-data, propose-upstream recipe, CI drift gate
 - [`docs/security.md`](docs/security.md) - trust model, threat model per item kind, guidance for teams
 - [`AGENTS.md`](AGENTS.md) - guidance for coding agents working in this repo

@@ -139,6 +139,25 @@ mutating them. Pi extensions execute arbitrary code after Pi project trust;
 capshelf reports that boundary but does not imply that an extension was reviewed
 or trusted.
 
+## Why no MCP server in v1
+
+An MCP server would let agents call `capshelf_add`, `capshelf_status`, etc. as first-class tools without shelling out. It's a better interface long-term. But:
+
+- The bootstrap skill (bundled into the CLI binary, installed by every `init`) tells any agent reading it how to use the CLI — that's enough for v1.
+- Agents already have `Bash` tool, so `bash(capshelf status)` works today.
+- Adding MCP is straightforward later — same operations, different transport. Defer until the CLI is stable.
+
+## What a human still does
+
+1. Approve a `promote` when the agent surfaces it.
+2. Glance at `capshelf status` when starting a project.
+3. Make project-specific policy decisions for new projects.
+
+Everything else in the current CLI surface — inspect, edit, share, move,
+promote, and reconcile — is the agent's job, and `search` plus item metadata
+and bundles give it the discovery loop. Validation is a roadmap workflow
+extension.
+
 ## One-Sentence Summary
 
 This is a Git-backed CLI for sharing, scoping, pinning, diffing, updating, and
