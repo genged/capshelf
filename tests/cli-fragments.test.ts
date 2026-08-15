@@ -1,8 +1,8 @@
 import { $, file } from "bun";
 import { describe, expect, test } from "bun:test";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { commitAll, tempDir, tempRepo } from "./cli-fixtures";
+import { commitAll, runInProcess, tempDir, tempRepo } from "./cli-fixtures";
 
 describe("cli integration", () => {
   test("promote prints where the commit landed and a push hint with origin", async () => {
@@ -988,5 +988,90 @@ describe("cli integration", () => {
     expect(status.stderr.toString()).toContain(
       "multi-shelf federation, which this capshelf version does not support; upgrade capshelf",
     );
+  });
+
+  /**
+   * A canonical source deleted in the data-repo worktree but still present at
+   * the pinned commit. `assertFragmentSourcesClean` cannot see it, so `add`
+   * accepts the item and pins a commit that still contains the file.
+   */
+  async function dirtyDeletedCodexSource(prefix: string): Promise<{
+    project: string;
+    dataRepo: string;
+  }> {
+    const project = await tempRepo(`${prefix}-project-`);
+    const dataRepo = await tempRepo(`${prefix}-data-`);
+    await mkdir(join(dataRepo, "mcp", "github"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "mcp", "github", "claude.json"),
+      JSON.stringify({ mcpServers: { github: { command: "github-mcp" } } }),
+    );
+    await writeFile(
+      join(dataRepo, "mcp", "github", "codex.toml"),
+      '[mcp_servers.github]\ncommand = "github-mcp"\n',
+    );
+    await mkdir(join(dataRepo, "bundles"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "bundles", "everything.yml"),
+      ["includes:", "  mcp: [github]", ""].join("\n"),
+    );
+    await commitAll(dataRepo, "mcp github with both targets");
+
+    const init = await runInProcess(project)([
+      "init",
+      "--data",
+      dataRepo,
+      "--no-upstream",
+    ]);
+    expect(init.exitCode).toBe(0);
+    await rm(join(dataRepo, "mcp", "github", "codex.toml"));
+    return { project, dataRepo };
+  }
+
+  test("add materializes every target the pin contains, not the worktree", async () => {
+    const { project } = await dirtyDeletedCodexSource("capshelf-add-pin");
+    const run = runInProcess(project);
+
+    const add = await run(["add", "mcp/github"]);
+    expect(add.exitCode).toBe(0);
+    expect(await file(join(project, ".codex", "config.toml")).text()).toContain(
+      "[mcp_servers.github]",
+    );
+
+    // The install is complete: apply has nothing left to write.
+    const apply = await run(["apply", "--json"]);
+    expect(apply.exitCode).toBe(0);
+    const applied = JSON.parse(apply.stdout.toString());
+    const codexRow = applied.items.find(
+      (row: { kind: string }) => row.kind === "codex-config",
+    );
+    expect(codexRow.action).toBe("already-current");
+  });
+
+  test("add preflight gates comment loss on a pinned-but-worktree-deleted target", async () => {
+    const { project } = await dirtyDeletedCodexSource("capshelf-add-gate");
+    const run = runInProcess(project);
+    const codexOutput = join(project, ".codex", "config.toml");
+    const withComments = '# keep me\n[mcp_servers.other]\ncommand = "other"\n';
+    await mkdir(join(project, ".codex"), { recursive: true });
+    await writeFile(codexOutput, withComments);
+
+    const add = await run(["add", "mcp/github"]);
+    expect(add.exitCode).toBe(3);
+    expect(add.stderr.toString()).toContain("remove config comments");
+    expect(add.stderr.toString()).toContain(".codex/config.toml");
+    expect(await readFile(codexOutput, "utf-8")).toBe(withComments);
+
+    // Bundle preflight shares planStandaloneFragmentAdd, so it inherits it.
+    const bundle = await run(["add", "bundles/everything"]);
+    expect(bundle.exitCode).toBe(3);
+    expect(bundle.stderr.toString()).toContain("remove config comments");
+    expect(await readFile(codexOutput, "utf-8")).toBe(withComments);
+
+    const authorized = await run(["add", "mcp/github", "--yes"]);
+    expect(authorized.exitCode).toBe(0);
+    const written = await readFile(codexOutput, "utf-8");
+    expect(written).toContain("[mcp_servers.github]");
+    expect(written).toContain("[mcp_servers.other]");
   });
 });

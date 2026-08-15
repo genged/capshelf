@@ -435,6 +435,13 @@ fragment sources: capshelf's merge and hash pipeline round-trips values through
 JSON, which cannot preserve TOML date types (a local date would silently become
 a string or an offset date-time on re-emit).
 
+`add` materializes exactly what the pin contains. Both the destructive-change
+preflight and the install itself derive the target set from the commit `add`
+pins, not from the data repo's working tree — the same source `apply` reads
+from the lock. A canonical source deleted in the working tree but still present
+at that commit is therefore written by `add`, and consent for any collateral
+loss is asked for before it is.
+
 Commands that reconcile multiple fragment outputs preflight every target
 before writing any of them. If a later output swap fails, earlier swaps are
 rolled back and lock changes are not persisted. That all-or-nothing rule is

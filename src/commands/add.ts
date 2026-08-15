@@ -73,10 +73,10 @@ import type { RuntimeWarning } from "../runtime-warnings";
 import {
   applyFragmentOutput,
   assertFragmentSourcesClean,
-  currentFragmentSourcesForItem,
-  currentFragmentTargetsForItem,
   fragmentContributionState,
   fragmentOutputPath,
+  fragmentSourcesAtCommit,
+  lockedFragmentTargetsForItem,
   planFragmentOutput,
 } from "../fragments";
 import type {
@@ -381,14 +381,21 @@ async function planStandaloneFragmentAdd(
     structuredClone(ctx.projectLock),
     "capshelf add",
   );
-  nextLock.items[dataKey(item.kind, item.name)] = createDataLockEntry({
-    pin,
-    ...snapshot,
-  });
-  const targets = await currentFragmentTargetsForItem(
+  const nextEntry = createDataLockEntry({ pin, ...snapshot });
+  nextLock.items[dataKey(item.kind, item.name)] = nextEntry;
+  // Read the pin, not the worktree. `assertFragmentSourcesClean` cannot see a
+  // dirty deletion — `canonicalItemRelPaths` drops the missing path before the
+  // cleanliness check runs (`src/master.ts:355-357`,
+  // `src/fragments.ts:341-349`) — so a worktree read would plan no destruction
+  // for a target the install then writes from the pin, and a commented
+  // `.codex/config.toml` would be rewritten without the consent gate TOML
+  // comment loss requires (`src/fragments.ts:112-114`).
+  const targets = await lockedFragmentTargetsForItem(
     ctx.dataRepo,
     item.kind,
     item.name,
+    nextEntry,
+    ctx.manifest,
   );
   const plans: FragmentOutputPlan[] = [];
   const contributionStates = new Map<
@@ -512,16 +519,6 @@ export async function installDataItem(
     item.kind === "subagents"
       ? await currentSubagentSources(project, dataRepo, item.name)
       : [];
-  const dst = isFragmentItemKind(item.kind)
-    ? fragmentOutputPath(
-        project,
-        (
-          await currentFragmentTargetsForItem(dataRepo, item.kind, item.name)
-        )[0]!,
-      )
-    : item.kind === "subagents"
-      ? subagentSources[0]!.outputPath
-      : targetDir(project, item, manifest.installMode);
 
   if (item.kind === "skills") {
     const external = await findSkillsShSkill(project, item.name);
@@ -557,6 +554,30 @@ export async function installDataItem(
   // refusals it carries — an external filter driver (PIN-9), a symlink or
   // gitlink in the tree — happen here, before any manifest or lock mutation.
   const pin = await pinCurrentSource(dataRepo, item.kind, item.name);
+  // PIN-3 for fragments: the target set comes from the commit this install
+  // pins, exactly as `apply` derives it from the lock. A worktree read made
+  // `add` and `apply` disagree about one lock entry — a dirty-deleted
+  // `mcp/<n>/codex.toml` left `.codex/config.toml` unwritten until an
+  // unrelated `apply` ran.
+  const sources = isFragmentItemKind(item.kind)
+    ? await fragmentSourcesAtCommit(
+        dataRepo,
+        item.kind,
+        item.name,
+        pin.sourceCommit,
+        manifest,
+      )
+    : [];
+  if (isFragmentItemKind(item.kind) && sources.length === 0) {
+    throw new PreconditionError(
+      `${item.kind}/${item.name} has no canonical source files at ${pin.sourceCommit}`,
+    );
+  }
+  const dst = isFragmentItemKind(item.kind)
+    ? fragmentOutputPath(project, sources[0]!.target)
+    : item.kind === "subagents"
+      ? subagentSources[0]!.outputPath
+      : targetDir(project, item, manifest.installMode);
   if (isCopyDirectoryItemKind(item.kind)) {
     await assertNoDestinationCollisions(
       `${item.kind}/${item.name}`,
@@ -602,9 +623,6 @@ export async function installDataItem(
     ...snapshot,
   });
 
-  const sources = isFragmentItemKind(item.kind)
-    ? await currentFragmentSourcesForItem(dataRepo, item.kind, item.name)
-    : [];
   const outputResults: FragmentApplyResult[] = [];
   if (isFragmentItemKind(item.kind)) {
     for (const target of [...new Set(sources.map((source) => source.target))]) {
