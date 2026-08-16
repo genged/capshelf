@@ -277,7 +277,30 @@ export function fragmentTargetPresence(
   }));
 }
 
-export async function fragmentTargetPresenceAtCommit(
+/**
+ * Presence read from a set of repo-relative paths that some *single* tree
+ * listing already produced — `add` passes its pin's entries.
+ *
+ * This is not the same question as probing each candidate with `git show`.
+ * `sourceExistsAtCommit` catches every git failure, which is the right answer
+ * for "is this path in the tree" and the wrong one for "did the read work": an
+ * unreadable object database would be reported as a missing source. One
+ * `ls-tree` raises instead, and cannot observe two repository states.
+ */
+export function fragmentTargetPresenceInPaths(
+  kind: FragmentItemKind,
+  name: string,
+  repoRelPaths: Iterable<string>,
+): TargetPresence[] {
+  const present = new Set(repoRelPaths);
+  return fragmentSourceCandidates(kind, name).map((source) => ({
+    source,
+    runtimeTarget: source.sourceTarget ?? null,
+    present: present.has(source.relPath),
+  }));
+}
+
+async function fragmentTargetPresenceAtCommit(
   dataRepo: string,
   kind: FragmentItemKind,
   name: string,

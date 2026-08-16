@@ -93,7 +93,19 @@ export function subagentTargetPresence(
   }));
 }
 
-export async function subagentTargetPresenceAtCommit(
+/** Presence from a single tree listing — see `fragmentTargetPresenceInPaths`. */
+export function subagentTargetPresenceInPaths(
+  name: string,
+  repoRelPaths: Iterable<string>,
+): SubagentTargetPresence[] {
+  const present = new Set(repoRelPaths);
+  return subagentCandidates(name).map((candidate) => ({
+    candidate,
+    present: present.has(candidate.relPath),
+  }));
+}
+
+async function subagentTargetPresenceAtCommit(
   dataRepo: string,
   name: string,
   commit: string,

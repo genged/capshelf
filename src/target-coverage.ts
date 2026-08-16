@@ -1,19 +1,25 @@
 import { relative } from "node:path";
-import { commitExists } from "./git";
+import {
+  commitExists,
+  literalPathspec,
+  lsTreeEntriesForPathspecs,
+} from "./git";
 import {
   fragmentOutputPath,
   fragmentSourceCandidates,
-  fragmentTargetPresence,
-  fragmentTargetPresenceAtCommit,
+  fragmentTargetPresenceInPaths,
   type FragmentSourceTarget,
   type TargetPresence,
 } from "./fragments";
 import { itemOutputTargets } from "./installed";
-import { isFragmentItemKind, type ItemKind } from "./master";
+import {
+  allCanonicalItemRelPaths,
+  isFragmentItemKind,
+  type ItemKind,
+} from "./master";
 import {
   subagentCandidates,
-  subagentTargetPresence,
-  subagentTargetPresenceAtCommit,
+  subagentTargetPresenceInPaths,
   type SubagentTargetPresence,
 } from "./subagents";
 
@@ -104,12 +110,32 @@ export async function itemTargetCoverageAtCommit(
       "locked commit unreachable",
     );
   }
+  const paths = await canonicalPathsAtCommit(dataRepo, kind, name, commit);
+  if (paths === null) {
+    return unknownTargetCoverage(project, kind, name, "source tree unreadable");
+  }
+  return itemTargetCoverageInPaths(project, kind, name, paths);
+}
+
+/**
+ * Coverage from a tree listing the caller already has. `add` passes its pin's
+ * entries: the pin is one `ls-tree` over the item's canonical paths, so it is
+ * both the tree the install writes and a read that raises rather than
+ * reporting a failure as an absent source.
+ */
+export function itemTargetCoverageInPaths(
+  project: string | null,
+  kind: ItemKind,
+  name: string,
+  repoRelPaths: Iterable<string>,
+): TargetCoverageReport | null {
+  if (!hasTargetCoverage(kind, name)) return null;
   if (kind === "subagents") {
     return known(
       subagentCoverage(
         project,
         name,
-        await subagentTargetPresenceAtCommit(dataRepo, name, commit),
+        subagentTargetPresenceInPaths(name, repoRelPaths),
       ),
     );
   }
@@ -117,32 +143,40 @@ export async function itemTargetCoverageAtCommit(
   return known(
     fragmentCoverage(
       project,
-      await fragmentTargetPresenceAtCommit(dataRepo, kind, name, commit),
+      fragmentTargetPresenceInPaths(kind, name, repoRelPaths),
     ),
   );
 }
 
 /**
- * Coverage read from the data repo's working tree. Only for an item that is
- * not pinned anywhere — `share` before it commits, `show` for an uninstalled
- * item — where there is no commit to prefer.
+ * Which of an item's canonical paths are blobs at `commit`, in one `ls-tree`.
+ *
+ * `null` means the read failed, which is not the same as "the file is not
+ * there". Probing each path with `git show` cannot tell the two apart — it
+ * catches every git failure — and coverage that claims a known absence on a
+ * failed read would let the Codex trust warning be suppressed on no evidence
+ * and would report a gap that does not exist. Unmatched pathspecs are not an
+ * error to `ls-tree`, so a genuinely absent file is an empty result, not a
+ * failure.
  */
-export function itemTargetCoverageInWorktree(
-  project: string | null,
+async function canonicalPathsAtCommit(
   dataRepo: string,
   kind: ItemKind,
   name: string,
-): TargetCoverageReport | null {
-  if (!hasTargetCoverage(kind, name)) return null;
-  if (kind === "subagents") {
-    return known(
-      subagentCoverage(project, name, subagentTargetPresence(dataRepo, name)),
+  commit: string,
+): Promise<Set<string> | null> {
+  try {
+    const entries = await lsTreeEntriesForPathspecs(
+      dataRepo,
+      commit,
+      allCanonicalItemRelPaths(kind, name).map(literalPathspec),
     );
+    return new Set(
+      entries.filter((entry) => entry.type === "blob").map((e) => e.path),
+    );
+  } catch {
+    return null;
   }
-  if (!isFragmentItemKind(kind)) return null;
-  return known(
-    fragmentCoverage(project, fragmentTargetPresence(dataRepo, kind, name)),
-  );
 }
 
 /** Every candidate row with `present: null`, for a state that cannot be read. */

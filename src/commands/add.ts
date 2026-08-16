@@ -75,7 +75,7 @@ import {
   assertFragmentSourcesClean,
   fragmentContributionState,
   fragmentOutputPath,
-  fragmentTargetPresenceAtCommit,
+  fragmentTargetPresenceInPaths,
   lockedFragmentTargetsForItem,
   planFragmentOutput,
   presentSources,
@@ -84,6 +84,7 @@ import {
   formatCoverageGap,
   formatTargetCoverageBlock,
   itemTargetCoverageAtCommit,
+  itemTargetCoverageInPaths,
   targetCoverageJson,
 } from "../target-coverage";
 import type { TargetCoverageReport } from "../target-coverage";
@@ -206,10 +207,11 @@ export function registerAdd(program: Command): void {
         );
       }
 
+      let approvedPin: PinnedSource | null = null;
       if (isFragmentItemKind(item.kind)) {
         const preflight = await planStandaloneFragmentAdd(ctx, item);
         if (
-          !(await confirmDestructiveChanges(preflight, {
+          !(await confirmDestructiveChanges(preflight.plan, {
             operation: "Add",
             json: opts.json === true,
             yes: opts.yes === true,
@@ -219,13 +221,14 @@ export function registerAdd(program: Command): void {
         ) {
           return;
         }
-        assertDestructivePlanUnchanged(
-          preflight,
-          await planStandaloneFragmentAdd(ctx, item),
-        );
+        const revalidated = await planStandaloneFragmentAdd(ctx, item);
+        assertDestructivePlanUnchanged(preflight.plan, revalidated.plan);
+        approvedPin = revalidated.pin;
       }
 
-      const result = await installDataItem(ctx, item);
+      const result = await installDataItem(ctx, item, {
+        ...(approvedPin && { pin: approvedPin }),
+      });
 
       if (opts.json) {
         console.log(
@@ -405,12 +408,24 @@ async function printAlreadyInstalled(
   printMissingRequires(`${parsed.kind}/${parsed.name}`, missingRequires);
 }
 
+/**
+ * The preflight plan and the pin it was built from. The pin travels to
+ * `installDataItem` so the tree the user consented to is the tree that gets
+ * written: pinning again after `assertDestructivePlanUnchanged` would let a
+ * data-repo commit landing in that window add a target the consent gate never
+ * saw, and TOML comment loss is gated, not announced.
+ */
+interface FragmentAddPreflight {
+  plan: DestructiveChangePlan;
+  pin: PinnedSource | null;
+}
+
 async function planStandaloneFragmentAdd(
   ctx: AddContext,
   item: MasterItem,
-): Promise<DestructiveChangePlan> {
+): Promise<FragmentAddPreflight> {
   if (!isFragmentItemKind(item.kind)) {
-    return createDestructiveChangePlan([]);
+    return { plan: createDestructiveChangePlan([]), pin: null };
   }
   if (ctx.local) {
     assertLocalScopeSupported(item.kind, item.name, "add --local");
@@ -479,10 +494,13 @@ async function planStandaloneFragmentAdd(
     contributionStates,
     reviewCommands,
   });
-  return createDestructiveChangePlan(destruction.changes, [
-    ...destruction.snapshotParts,
-    `add-source:${item.kind}/${item.name}:${pin.sourcePinDigest}:${pin.sourceCommit}`,
-  ]);
+  return {
+    plan: createDestructiveChangePlan(destruction.changes, [
+      ...destruction.snapshotParts,
+      `add-source:${item.kind}/${item.name}:${pin.sourcePinDigest}:${pin.sourceCommit}`,
+    ]),
+    pin,
+  };
 }
 
 export interface InstallDataItemOptions {
@@ -493,6 +511,12 @@ export interface InstallDataItemOptions {
    * `requires` warnings are computed against installed ∪ members.
    */
   enforceRelations?: boolean;
+  /**
+   * The pin the destructive-change preflight was accepted against. Reusing it
+   * makes the approved tree the written tree; pinning again here would reopen
+   * the window between revalidation and the write.
+   */
+  pin?: PinnedSource;
 }
 
 /**
@@ -598,30 +622,28 @@ export async function installDataItem(
   // One pin, built in one place from the committed tree (PIN-1, PIN-2). The
   // refusals it carries — an external filter driver (PIN-9), a symlink or
   // gitlink in the tree — happen here, before any manifest or lock mutation.
-  const pin = await pinCurrentSource(dataRepo, item.kind, item.name);
-  // PIN-3 for fragments: the target set comes from the commit this install
-  // pins, exactly as `apply` derives it from the lock. A worktree read made
-  // `add` and `apply` disagree about one lock entry — a dirty-deleted
-  // `mcp/<n>/codex.toml` left `.codex/config.toml` unwritten until an
-  // unrelated `apply` ran.
-  const presence = isFragmentItemKind(item.kind)
-    ? await fragmentTargetPresenceAtCommit(
-        dataRepo,
-        item.kind,
-        item.name,
-        pin.sourceCommit,
-        manifest,
+  const pin =
+    opts.pin ?? (await pinCurrentSource(dataRepo, item.kind, item.name));
+  // PIN-3 for fragments: the target set comes from the tree this install pins,
+  // exactly as `apply` derives it from the lock. A worktree read made `add` and
+  // `apply` disagree about one lock entry — a dirty-deleted
+  // `mcp/<n>/codex.toml` left `.codex/config.toml` unwritten until an unrelated
+  // `apply` ran. The pin's own `ls-tree` is the reading: it is the tree that
+  // gets written, and it raises on a failed read rather than reporting one as
+  // an absent source.
+  const pinnedPaths = pin.entries.map((entry) => entry.repoRelPath);
+  const sources = isFragmentItemKind(item.kind)
+    ? presentSources(
+        fragmentTargetPresenceInPaths(item.kind, item.name, pinnedPaths),
       )
     : [];
-  const sources = presentSources(presence);
-  // The install branch always resolves the item and pins a fresh commit, so
+  // The install branch always resolves the item and pins a fresh tree, so
   // coverage is never unknown here.
-  const targetCoverage = await itemTargetCoverageAtCommit(
+  const targetCoverage = itemTargetCoverageInPaths(
     project,
-    dataRepo,
     item.kind,
     item.name,
-    pin.sourceCommit,
+    pinnedPaths,
   );
   if (isFragmentItemKind(item.kind) && sources.length === 0) {
     throw new PreconditionError(
@@ -832,23 +854,28 @@ async function addBundle(
   // `capshelf add bundles/<name>`), so the consent boundary has to be reached
   // here too. Without this, the same fragment destruction was gated for
   // `add settings/extra` and ungated for the bundle that contains it.
-  const planBundleDestruction = async (): Promise<DestructiveChangePlan> => {
+  const planBundleDestruction = async (): Promise<{
+    plan: DestructiveChangePlan;
+    pins: Map<string, PinnedSource>;
+  }> => {
     const changes: DestructiveChange[] = [];
     const snapshotParts: string[] = [];
+    const pins = new Map<string, PinnedSource>();
     for (const member of plan.members) {
       if (member.status !== "install") continue;
       if (!isFragmentItemKind(member.kind)) continue;
       const item = masterByRef.get(member.ref);
       if (!item) continue;
       const memberPlan = await planStandaloneFragmentAdd(ctx, item);
-      changes.push(...memberPlan.changes);
-      snapshotParts.push(memberPlan.snapshot);
+      changes.push(...memberPlan.plan.changes);
+      snapshotParts.push(memberPlan.plan.snapshot);
+      if (memberPlan.pin) pins.set(member.ref, memberPlan.pin);
     }
-    return createDestructiveChangePlan(changes, snapshotParts);
+    return { plan: createDestructiveChangePlan(changes, snapshotParts), pins };
   };
   const destructivePlan = await planBundleDestruction();
   if (
-    !(await confirmDestructiveChanges(destructivePlan, {
+    !(await confirmDestructiveChanges(destructivePlan.plan, {
       operation: "Add",
       json: opts.json === true,
       yes: opts.yes === true,
@@ -858,10 +885,8 @@ async function addBundle(
   ) {
     return;
   }
-  assertDestructivePlanUnchanged(
-    destructivePlan,
-    await planBundleDestruction(),
-  );
+  const revalidated = await planBundleDestruction();
+  assertDestructivePlanUnchanged(destructivePlan.plan, revalidated.plan);
 
   const results = await executeBundleInstall(plan, {
     projectLock: ctx.projectLock,
@@ -870,7 +895,14 @@ async function addBundle(
     installItem: (member: MemberPlan) => {
       const item = masterByRef.get(member.ref);
       if (!item) throw new Error(`expected master item for ${member.ref}`);
-      return installDataItem(ctx, item, { enforceRelations: false });
+      // A bundle's write window is the longest one there is — every member
+      // installs after one shared revalidation — so each fragment member
+      // installs the exact tree its own preflight approved.
+      const approved = revalidated.pins.get(member.ref);
+      return installDataItem(ctx, item, {
+        enforceRelations: false,
+        ...(approved && { pin: approved }),
+      });
     },
   });
 
