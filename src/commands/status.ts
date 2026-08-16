@@ -377,36 +377,6 @@ export function registerStatus(program: Command): void {
             sourceCommitPresent,
             sourceFiltered: filteredPaths.length > 0,
           });
-          const subagentTargets =
-            kind === "subagents" &&
-            entry.source === "data" &&
-            dataRepo &&
-            sourceCommitPresent !== false
-              ? await subagentTargetStatusAtCommit(
-                  project,
-                  dataRepo,
-                  itemName,
-                  entry.sourceCommit,
-                )
-                  .then((details) =>
-                    details.map((detail) => ({
-                      ...detail,
-                      outputPath: relative(project, detail.outputPath),
-                    })),
-                  )
-                  // The locked commit resolves but its tree does not read.
-                  // `subagentSourcesAtCommit` cannot tell that from "this item
-                  // has no sources" and throws, which would exit the whole
-                  // report — `status` degrades instead, the way
-                  // `describeInstallation` already does for the same failure
-                  // (`src/install-identity.ts:107-111`). The key is omitted
-                  // rather than emptied: an empty `targets` array would claim
-                  // the item has no targets, which is the false absence this
-                  // report exists to remove. `targetCoverage` says `unknown`
-                  // beside it.
-                  .catch(() => undefined)
-              : undefined;
-
           // Coverage is read at the locked commit, never at the worktree, so
           // `status` describes what the project actually has. When it cannot
           // be read at all — no data repo, or an unreachable pin — the rows
@@ -435,6 +405,38 @@ export function registerStatus(program: Command): void {
                       entry.sourceCommit,
                     )
               : null;
+
+          const subagentTargets =
+            kind === "subagents" &&
+            entry.source === "data" &&
+            dataRepo &&
+            sourceCommitPresent !== false &&
+            // The locked commit resolves but its tree does not read.
+            // `subagentSourcesAtCommit` cannot tell that from "this item has
+            // no sources" and throws, which would exit the whole report;
+            // `status` degrades instead, the way `describeInstallation`
+            // already does for the same failure
+            // (`src/install-identity.ts:107-111`). This is a gate rather than
+            // a catch on purpose: a blob that fails to read *after* the tree
+            // enumerated is a different state, one in which `apply` cannot run
+            // either, and swallowing it would print an apparently healthy row.
+            // `targets` is omitted rather than emptied, because an empty array
+            // would claim the item has no targets — the false absence this
+            // report exists to remove. `targetCoverage` says `unknown` beside
+            // it.
+            targetCoverage?.state !== "unknown"
+              ? (
+                  await subagentTargetStatusAtCommit(
+                    project,
+                    dataRepo,
+                    itemName,
+                    entry.sourceCommit,
+                  )
+                ).map((detail) => ({
+                  ...detail,
+                  outputPath: relative(project, detail.outputPath),
+                }))
+              : undefined;
 
           rows.push(
             buildStatusRow({

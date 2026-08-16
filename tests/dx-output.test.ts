@@ -475,6 +475,26 @@ describe("runtime target coverage", () => {
     expect(row.targets).toBeUndefined();
   });
 
+  test("an unreadable pinned blob still fails loudly", async () => {
+    const { dataRepo, run } = await fixture("coverage-unreadable-blob");
+    expect((await run(["add", "subagents/reviewer"])).exitCode).toBe(0);
+
+    // The tree enumerates — so coverage reads as known and fully covered —
+    // but the pinned source cannot be read. `apply` cannot run in this state,
+    // so `status` must not quietly drop `targets` and print a healthy row.
+    const blob = (
+      await $`git -C ${dataRepo} rev-parse HEAD:subagents/reviewer/claude.md`.text()
+    ).trim();
+    await rm(
+      join(dataRepo, ".git", "objects", blob.slice(0, 2), blob.slice(2)),
+      { force: true },
+    );
+
+    const status = await run(["status", "subagents/reviewer"]);
+    expect(status.exitCode).not.toBe(0);
+    expect(status.stdout.toString()).not.toContain("up-to-date");
+  });
+
   test("show outside a project prints presence without a path or an update line", async () => {
     const { dataRepo } = await fixture("coverage-browse-only");
     const outside = await tempDir("capshelf-coverage-outside-");
