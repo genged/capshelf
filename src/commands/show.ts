@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { readFile, stat } from "node:fs/promises";
+import { lstatOrNull } from "../fs-utils";
 import { join } from "node:path";
 import {
   isCopyDirectoryItemKind,
@@ -177,23 +178,28 @@ export function registerShow(program: Command): void {
       const coverage = wholeCoverage
         ? restrictCoverage(wholeCoverage, cliTarget)
         : null;
+      // A canonical source reached through a symlink is not a source. The pin
+      // refuses the item outright (`assertRegularBlobEntries`), and coverage
+      // now reports mode-120000 entries as absent — so without this, `show`
+      // would print "Codex absent" and then dump the link's target, which can
+      // be any file the link points at, inside the item or not.
+      for (const relPath of [
+        ...fragmentSources.map((source) => source.relPath),
+        ...subagentSources.map((source) => source.relPath),
+      ]) {
+        const stat = lstatOrNull(join(dataRepo, ...relPath.split("/")));
+        if (stat && (!stat.isFile() || stat.isSymbolicLink())) {
+          throw new PreconditionError(
+            `${relPath} is not a regular file\n` +
+              "  capshelf never reads a canonical source through a symlink or a special file; the pin refuses this item too.",
+          );
+        }
+      }
       if (isFragmentItemKind(item.kind) && fragmentSources.length === 0) {
-        throw missingTargetSource(
-          itemLabel,
-          cliTarget,
-          wholeCoverage,
-          tracked,
-          dataRepo,
-        );
+        throw missingTargetSource(itemLabel, cliTarget, wholeCoverage, tracked);
       }
       if (item.kind === "subagents" && subagentSources.length === 0) {
-        throw missingTargetSource(
-          itemLabel,
-          cliTarget,
-          wholeCoverage,
-          tracked,
-          dataRepo,
-        );
+        throw missingTargetSource(itemLabel, cliTarget, wholeCoverage, tracked);
       }
       const masterSha = isFragmentItemKind(item.kind)
         ? await shaOfFragmentItem(dataRepo, item.kind, item.name)
@@ -411,7 +417,6 @@ function missingTargetSource(
   target: FragmentSourceTarget | null,
   coverage: TargetCoverageReport | null,
   tracked: boolean,
-  dataRepo: string,
 ): PreconditionError {
   if (target === null) {
     return new PreconditionError(`no matching source for ${itemLabel}`);
@@ -420,15 +425,25 @@ function missingTargetSource(
   // `show` dumps the data repo's working tree, but coverage is read at a
   // commit, so the two can disagree — and they say opposite things to the
   // user. Telling someone to author and commit a file that is already
-  // committed, and merely deleted in their working tree, sends them to the
-  // wrong repair: the fix there is to restore it or commit the deletion.
+  // committed, and merely absent from their working tree, sends them to the
+  // wrong repair.
+  //
+  // It states the fact and stops, for the reason this design withdrew every
+  // other computed repair: a printed command has to succeed in the exact state
+  // it is printed in, and this one cannot. `git checkout -- <path>` fixes an
+  // uncommitted deletion and fails on a staged one or on a target a later
+  // upstream commit removed — and `present` here only says the commit this
+  // project reads has the file, never which of those happened.
   if (row?.present === true) {
     return new PreconditionError(
       [
         `${itemLabel} has no ${target} source in the data repo's working tree`,
-        `  ${row.sourcePath} is present at the commit this project reads, so it was deleted without being committed.`,
-        `  Restore it:  git -C ${dataRepo} checkout -- ${row.sourcePath}`,
-        `  Or commit the deletion, then: capshelf update ${itemLabel}`,
+        `  ${row.sourcePath} is present at the commit this project reads.`,
+        ...(tracked
+          ? [
+              `  Restore it in the data repo, or commit the deletion, then: capshelf update ${itemLabel}`,
+            ]
+          : ["  Restore it in the data repo, or commit the deletion."]),
       ].join("\n"),
     );
   }

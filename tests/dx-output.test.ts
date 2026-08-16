@@ -7,6 +7,7 @@ import {
   readFile,
   rename,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { delimiter, join } from "node:path";
@@ -578,10 +579,35 @@ describe("runtime target coverage", () => {
     expect(refused.exitCode).toBe(3);
     const stderr = refused.stderr.toString();
     expect(stderr).toContain("no codex source in the data repo's working tree");
-    expect(stderr).toContain("git -C");
-    expect(stderr).toContain("checkout -- mcp/github/codex.toml");
+    expect(stderr).toContain(
+      "mcp/github/codex.toml is present at the commit this project reads.",
+    );
     // The "author it and commit" repair belongs to a real gap, not this one.
     expect(stderr).not.toContain("Codex reads mcp/github/codex.toml in your");
+    // And no computed shell repair: `git checkout --` fixes an uncommitted
+    // deletion and fails on a staged one, or on one a later commit made.
+    expect(stderr).not.toContain("git -C");
+  });
+
+  test("show refuses a canonical source reached through a symlink", async () => {
+    const { dataRepo, run } = await fixture("coverage-symlink-source");
+    await writeFile(
+      join(dataRepo, "outside.txt"),
+      "content outside the item\n",
+    );
+    await symlink(
+      join("..", "..", "outside.txt"),
+      join(dataRepo, "mcp", "deepwiki", "codex.toml"),
+    );
+    await commitAll(dataRepo, "symlinked canonical source");
+
+    const shown = await run(["show", "mcp/deepwiki", "--target", "codex"]);
+    expect(shown.exitCode).toBe(3);
+    expect(shown.stderr.toString()).toContain(
+      "mcp/deepwiki/codex.toml is not a regular file",
+    );
+    // The link's target is never printed, inside the item or not.
+    expect(shown.stdout.toString()).not.toContain("content outside the item");
   });
 
   test("show outside a project prints presence without a path or an update line", async () => {
