@@ -584,6 +584,14 @@ export async function installDataItem(
       localConfigNamesForKind(localConfig, item.kind).includes(item.name)
     : manifestNamesForKind(manifest, item.kind).includes(item.name);
   const alreadyInLock = lock.items[key] !== undefined;
+  // A worktree read, and safe here, unlike the fragment one it sits next to.
+  // Subagent cleanliness is checked over `allCanonicalItemRelPaths` — the
+  // static pair, not the `existsSync`-filtered list `assertFragmentSourcesClean`
+  // uses — so a dirty-deleted or uncommitted canonical source refuses the whole
+  // `add` above before this runs. The worktree and the pin therefore cannot
+  // disagree at this point. It feeds `dst` alone; the install itself is
+  // `materializeSubagent`, which resolves its targets with
+  // `subagentSourcesAtCommit` at the pinned commit (`src/subagents.ts:350-355`).
   const subagentSources =
     item.kind === "subagents"
       ? await currentSubagentSources(project, dataRepo, item.name)
