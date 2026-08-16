@@ -2,9 +2,10 @@
 
 `capshelf` keeps reusable coding-agent configuration — skills, subagents, Pi
 extensions, and settings/MCP fragments — in a Git-backed **data repo**, and
-materializes selected items into individual projects. Each project pins what it
-installed, so an edit in one project never disturbs another until that project
-asks for it.
+materializes selected items into individual projects. The data repo is a
+separate repository from the projects that read it, and usually serves many of
+them. Each project pins what it installed, so an edit in one project never
+disturbs another until that project asks for it.
 
 ```bash
 brew install genged/tap/capshelf         # install the binary

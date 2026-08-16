@@ -1,9 +1,10 @@
 # Project Brief
 
-This project is a Bun/TypeScript CLI for managing shared agent configuration
-across repositories. It is currently packaged as the `capshelf` binary and
-its root command describes the job as managing shared Claude Code and Codex
-configuration across projects.
+**Shared coding-agent config, pinned per project — a change in one repo never
+disturbs another until that repo asks for it.**
+
+This project is a Bun/TypeScript CLI, packaged as the `capshelf` binary. Its
+root command carries that same sentence.
 
 The CLI lets a user keep reusable agent/project assets in a Git-backed data
 repo, then materialize selected items into individual code repositories. The
@@ -160,6 +161,5 @@ extension.
 
 ## One-Sentence Summary
 
-This is a Git-backed CLI for sharing, scoping, pinning, diffing, updating, and
-promoting reusable agent/project configuration across codebases, with
-per-project lockfiles preventing shared updates from disturbing unrelated work.
+Shared coding-agent config, pinned per project — a change in one repo never
+disturbs another until that repo asks for it.

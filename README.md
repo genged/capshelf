@@ -2,7 +2,7 @@
   <img src="docs/logo.png" alt="Capshelf logo" width="200" />
 </p>
 <h1 align="center">Capshelf</h1>
-<h3 align="center">Shared Agent Configuration between Repositories</h3>
+<h3 align="center">Shared coding-agent config, pinned per project — a change in one repo never disturbs another until that repo asks for it</h3>
 <p align="center">
 <a href="https://github.com/genged/capshelf/actions/workflows/release.yml">
   <img src="https://github.com/genged/capshelf/actions/workflows/release.yml/badge.svg" alt="Release status"/>
@@ -14,26 +14,74 @@
 </p>
 
 A Git-backed CLI for sharing coding-agent configuration — skills, Pi
-extensions, subagents, settings, and MCP fragments — across projects, with
-per-project lockfiles so a change in one repo never disturbs work in another.
+extensions, subagents, settings, and MCP fragments — across projects, with a
+lockfile per project.
 
 As you accumulate projects, you accumulate copies of the same skills, the same
-settings overlays, the same MCP servers. Keeping them in sync by hand, or by
-whole-directory symlinks, is fragile.
+settings overlays, the same MCP servers. Copy them by hand and every project
+drifts out of date. Symlink the whole directory and an edit for one project
+silently changes all of them, with no diff and no way to keep a local variant.
 
-```bash
-# Run from the root of the project that will use the shared skill.
-cd ~/code/my-app
-capshelf init --data https://github.com/acme/agent-config
-capshelf add security-review
-$EDITOR "$(capshelf get-path security-review)/SKILL.md"
-capshelf status security-review --diff
-capshelf promote security-review -m "tighten SQLi check"
+Two projects, `my-app` and `other-app`, both using a shared `security-review`
+skill. `other-app` installs it from the data repo:
+
+```console
+$ cd ~/code/other-app
+$ capshelf add security-review
+✓ added project/data/skills/security-review @ 79402231469b
+  source commit: 0d70263c55801ad4bb06206d9f91f7fbd520ca9a
+  /home/agent/code/other-app/.agents/skills/security-review
 ```
 
-`promote` commits the edited skill to the data repo and updates the current
-project's pin. Other projects keep their existing version until they run
-`capshelf update`.
+`my-app` edits its copy. `status` names the kind of drift and shows it:
+
+```console
+$ cd ~/code/my-app
+$ echo '- parameterized queries assumed; flag every f-string in a query' >> "$(capshelf get-path security-review)/SKILL.md"
+$ capshelf status security-review --diff
+/home/agent/code/my-app  (1 item)
+
+project/
+  ✎   data/skills/security-review             79402231469b  drifted (1 file: content-edit)
+
+diff data/skills/security-review
+--- SKILL.md (locked data/skills/security-review)
++++ SKILL.md (current)
+@@ -8,3 +8,4 @@ Check every changed handler for:
+ - SQL built by string concatenation
+ - endpoints with no authorization check
+ - secrets read from source instead of the environment
++- parameterized queries assumed; flag every f-string in a query
+```
+
+`promote` commits that edit to the data repo. It never pushes:
+
+```console
+$ capshelf promote security-review -m "tighten SQLi check"
+✓ promoted data/skills/security-review @ cf20921dc2d493caa2dc9eab4c73cce4608e17dd8e494faaa2db3b49f0529f5b
+  source commit: 50bebc39ea903ce11ce61958bfed4650f758a99a
+
+committed to local data repo:
+  ~/code/agent-config
+
+to share upstream:
+  cd ~/code/agent-config
+  git push
+```
+
+`other-app` is untouched. It still holds the version it pinned, and is told a
+newer one exists:
+
+```console
+$ cd ~/code/other-app
+$ capshelf status security-review
+/home/agent/code/other-app  (1 item)
+
+project/
+  ⚠   data/skills/security-review             79402231469b  update available → cf20921dc2d493caa2dc9eab4c73cce4608e17dd8e494faaa2db3b49f0529f5b
+```
+
+Its files change only when someone runs `capshelf update` there.
 
 ## Quickstart
 
@@ -71,14 +119,10 @@ capshelf self-update
 
 Source installs update manually with `git pull && make install`.
 
-### 2. Choose a data repo
+### 2. Create the data repo
 
-A data repo is a normal Git repo that stores shared agent config. If your team
-already has one with skills under `skills/<name>/`, use it directly and skip
-to the next step.
-
-If your skills currently live inside project repositories, start with an empty
-data repo. Capshelf can adopt the existing skills after you connect a project.
+The data repo is a second Git repo, separate from every project that uses it.
+Create it once. Every project you connect later reads from it.
 
 ```bash
 mkdir -p ~/code/agent-config
@@ -88,41 +132,104 @@ git remote add origin https://github.com/acme/agent-config
 git commit --allow-empty -m "initialize shared agent config"
 ```
 
+It starts empty. Step 3 fills it.
+
+`init` reads that `origin` and records it as `dataRepoUpstream`, so future
+clones discover the same source. Point it at a repo you can push to. For a
+machine-local sandbox with no remote, add `--no-upstream` to the `init` command
+in the next step.
+
 ### 3. Connect a project
 
-To install a skill that is already in the data repo:
+Bind the project, then look at what is on the shelf:
 
 ```bash
 cd ~/code/my-app
 capshelf init --data ~/code/agent-config
 capshelf ls
-capshelf add security-review
-capshelf status
 ```
 
-If the skill already lives in this project under
-`.agents/skills/security-review/` or `.claude/skills/security-review/`, adopt it
-instead:
+The shelf is empty, so fill it. Move a skill this project already has into the
+data repo; capshelf commits it there and tracks it here:
 
 ```bash
-cd ~/code/my-app
-capshelf init --data ~/code/agent-config
 capshelf share skills/security-review --to project \
   -m "share existing security-review skill"
 capshelf status
 ```
 
-Repeat the `share` command from each repository that contains skills you want
+That works for any skill under `.agents/skills/<name>/` or
+`.claude/skills/<name>/`. Repeat it from each repository holding skills you want
 to centralize.
 
-`init` records the data repo's `origin` as `dataRepoUpstream` so future clones
-can discover the same source. For a machine-local sandbox, use
-`capshelf init --data ~/code/agent-config --no-upstream` instead.
+No skills anywhere yet? Create one, so the loop has something to carry:
+
+```bash
+mkdir -p .agents/skills/hello
+cat > .agents/skills/hello/SKILL.md <<'EOF'
+---
+name: hello
+description: Smoke test. Confirms capshelf is installed and a data repo is bound.
+---
+
+Reply with "capshelf is working".
+EOF
+capshelf share skills/hello --to project -m "add hello skill"
+capshelf status
+```
+
+Either path ends the same way. `status` lists the shared skill next to the
+system skill that `init` installed:
+
+```console
+$ capshelf status
+/home/agent/code/my-app  (2 items)
+
+project/
+  ✓   system/skills/capshelf                  44ca0b29487a  up-to-date
+  ✓   data/skills/security-review             79402231469b  up-to-date
+```
 
 By default, skills are installed under `.agents/skills/<name>/` and exposed to
 Claude through `.claude/skills/<name>` symlinks. Use `capshelf init
 --claude-only --data <repo>` if a project should write real skill directories
 directly under `.claude/skills/`.
+
+### Two repos, side by side
+
+After step 3 you have both. A data repo holds items at the top level; a project
+holds `.capshelf/` pins and the installed copies:
+
+```text
+~/code/agent-config/                 the data repo
+  skills/security-review/SKILL.md
+  mcp/github/claude.json
+
+~/code/my-app/                       a project that uses it
+  .capshelf/                         manifest and lock
+  .agents/skills/security-review/    installed copy
+```
+
+Capshelf accepts a project's own path as `--data` and reports success. That
+makes the project its own shelf, private to itself. Keep the two separate.
+
+One data repo serves many projects. You can keep more than one — a work shelf
+and a personal shelf, say — and bind each project to the one it needs.
+
+### Joining a data repo that already has items
+
+If your team already runs one, skip step 2 and bind to your clone of it:
+
+```bash
+cd ~/code/my-app
+capshelf init --data ~/code/agent-shared
+capshelf ls
+capshelf add security-review
+capshelf status
+```
+
+Use `add` for an item the data repo already holds, and `share` to move one up
+there for the first time.
 
 ## Examples
 
@@ -151,8 +258,8 @@ capshelf status security-review --diff
 capshelf promote security-review -m "tighten security review checklist"
 # or:
 capshelf keep-local security-review --reason "project-specific review rules"
-# or:
-capshelf revert security-review
+# or, discarding the edit:
+capshelf revert security-review --yes         # or answer y at the prompt
 ```
 
 Adopt a project-local skill into the shared data repo:
@@ -164,8 +271,8 @@ capshelf share skills/write-migration --to project -m "add write-migration skill
 ```
 
 Share fragment values that already live in this project's generated outputs —
-no separate source file needed; the output file is unchanged and the picked
-values simply become managed:
+no separate source file needed; the output file stays as it is, and the picked
+values become managed:
 
 ```bash
 capshelf share mcp/github                                    # adopt the unmanaged `github` server from .mcp.json / .codex/config.toml
@@ -225,10 +332,11 @@ capshelf --data ~/code/agent-config marketplace validate --target codex
 The data repo is then a native local Codex marketplace. Claude entries use
 the official `.claude-plugin/marketplace.json`; `plugin pack --target claude`
 builds a standalone `.plugin` file for Cowork upload. Capshelf creates and
-commits catalog state, but never registers, installs, refreshes, or removes a
-runtime plugin. Identities are kebab-case, plugin creation requires a skill,
-and validation reports target configuration, projection drift, structured
-issues, known Cowork limits, and package/file-byte accounting.
+commits catalog state; the runtimes handle the plugin lifecycle. Identities are
+kebab-case, and plugin creation requires a skill. `validate` reports projection
+drift, where a generated Codex catalog no longer matches its source
+definitions, and checks Claude packages against Cowork's known file and byte
+limits. [`docs/marketplaces.md`](docs/marketplaces.md) covers the full report.
 
 Bootstrap a new project straight from a shared data repo URL (capshelf clones
 it once under `~/.local/share/capshelf/data/...`, or to `--data-dir <path>`,
@@ -250,9 +358,9 @@ capshelf apply
 
 That works when the project committed `.capshelf/capshelf.json` with a
 `dataRepoUpstream`. If you already cloned the data repo somewhere custom, use
-`capshelf set-data <path-to-data-repo>` instead of `capshelf init`.
+`capshelf data bind <path-to-data-repo>` instead of `capshelf init`.
 
-## What Capshelf Manages
+## What Capshelf manages
 
 | Kind | Data repo path                       | Project output |
 |---|--------------------------------------|---|
@@ -265,9 +373,7 @@ That works when the project committed `.capshelf/capshelf.json` with a
 
 Pi extensions can use committed project scope or clone-local Capshelf scope;
 both materialize to Pi's project-local `.pi/extensions/<name>/` path and execute
-arbitrary code after Pi project trust. Capshelf reports that warning, but does
-not sandbox extensions, install `package.json` dependencies, edit
-`.pi/settings.json`, or reload Pi.
+arbitrary code after Pi project trust. Capshelf reports that warning.
 
 Codex only loads project `.codex/config.toml` in trusted projects. Capshelf
 writes the project file and reports a non-failing status warning when Codex
@@ -290,7 +396,19 @@ working-tree state, Git configuration, and checkout filters cannot change what
 a pin means. System items bundled inside the CLI are pinned by content hash
 plus CLI version.
 
-## Mental Model
+### What Capshelf leaves alone
+
+Capshelf writes the files it owns and reports on the rest. These stay with you
+or with the runtime:
+
+- Pi extension sandboxing, `package.json` dependencies, `.pi/settings.json`,
+  and reloading Pi.
+- Registering, installing, refreshing, and removing runtime plugins. Capshelf
+  creates and commits the catalog state those runtimes read.
+- Skills managed by `skills.sh`, Claude marketplace plugins, and personal
+  `~/.claude/skills/` entries. Capshelf reports them as external state.
+
+## Mental model
 
 Capshelf is a declarative reconciler, not a package installer:
 
@@ -301,22 +419,18 @@ Capshelf is a declarative reconciler, not a package installer:
 - `capshelf promote` pushes local edits back into the data repo and updates only
   the current project's lock.
 
-That last point is the core safety property: if project A promotes a shared
-skill, project B does not change until someone runs `capshelf update` there.
+That last bullet is why the transcript above works: project B keeps its pin
+until someone runs `capshelf update` there.
 
-Capshelf also stays out of state it does not own. Skills managed by `skills.sh`,
-Claude marketplace plugins, and personal `~/.claude/skills/` entries are
-reported as external state instead of overwritten.
-
-## Command Reference
+## Command reference
 
 | Verb | Purpose |
 |---|---|
 | `init` | scaffold `.capshelf/`, install bundled system items, bind a data repo |
-| `set-data` | bind this machine's clone of the data repo |
-| `set-upstream` | write the committed upstream URL |
-| `data-path` | print the resolved local data repo path |
-| `sync-data` | fetch the data repo's `origin` and fast-forward when safe; the only network command besides the `init` bootstrap clone and `self-update` |
+| `data bind` | bind this machine's clone of the data repo |
+| `data upstream` | write the committed upstream URL |
+| `data path` | print the resolved local data repo path |
+| `data sync` | fetch the data repo's `origin` and fast-forward when safe; the only network command besides the `init` bootstrap clone and `self-update` |
 | `ls` / `show` | inspect data repo items, installed items, and bundles; `ls` also shows user-level runtime skills by default |
 | `search` | find items and bundles by name, tags, description, or content |
 | `add` / `rm` | add or remove an item in this project; `add bundles/<name>` expands a bundle |
@@ -332,6 +446,9 @@ reported as external state instead of overwritten.
 | `lock` | inspect this project's lock files; `lock migrate` converts the project and local locks to version 4 in one transaction — the one-way upgrade every project on lock version 2 or 3 must run once |
 | `self-update` | check for and install a Homebrew update for the capshelf binary |
 | `marketplace ...` | author, validate, sync, and package Claude/Cowork or Codex plugin catalogs in the data repo |
+
+The four `data` subcommands keep their older flat names as aliases: `set-data`,
+`set-upstream`, `data-path`, and `sync-data`.
 
 Commands support `--json` where useful for agent consumption. Exit codes are
 stable: `0` success, `1` generic error, `2` not found, `3` conflict or refused
@@ -390,33 +507,43 @@ There is no implicit default. The `Makefile`'s smoke targets each create their o
 
 A real user creates their own data repos (`~/code/work-skills/`, `~/code/personal-skills/`, etc.) — `capshelf-data` is just the test fixture for this codebase.
 
-## Project Status
+## Project status
 
-Skills, project-local Pi extensions, Claude/Codex subagents, settings
-fragments, MCP fragments, and project-scoped Codex config fragments are
-implemented. Fragment outputs preserve project-local values, fragment
-promotion commits canonical data repo source files rather than generated
-outputs, and `share` can extract unmanaged fragment values directly from a
-project's generated outputs. Item metadata (`.capshelf.yml` sidecars) drives `ls --tag`, `search`,
-and `add`-time `requires`/`conflicts-with` checks. Bundles
-(`capshelf add bundles/<name>`) expand curated item sets all-or-nothing with
-no project-side bundle state. `validate`, `diff`, `doctor`, and `journal`
-remain on the roadmap. Data-repo plugin marketplace management is implemented
-for independent Claude/Cowork and Codex catalogs, including deterministic
-packages and a committed native Codex projection.
+| Capability | State | Reference |
+|---|---|---|
+| Skills, project-local Pi extensions, Claude/Codex subagents | shipped | [item kinds](docs/cli.md#item-kinds) |
+| Settings, MCP, and project-scoped Codex config fragments | shipped | [config fragments](docs/cli.md#config-fragments) |
+| Bundles — curated item sets, expanded all-or-nothing | shipped | [bundles](docs/cli.md#bundles) |
+| Item metadata driving `ls --tag`, `search`, and `requires`/`conflicts-with` | shipped | [item metadata](docs/cli.md#item-metadata) |
+| Claude/Cowork and Codex plugin catalogs in the data repo | shipped | [plugin marketplaces](docs/cli.md#plugin-marketplaces) |
+| `validate`, `diff`, `doctor`, `journal` | roadmap | — |
 
-## Further Reading
+Fragment behavior to know before you adopt them:
 
-- [`docs/whats-new-0.8.md`](docs/whats-new-0.8.md) - what's new: Git-tree source pins, lock version 4 and `lock migrate`, filtered-content refusal, classified drift
-- [`docs/whats-new-0.7.md`](docs/whats-new-0.7.md) - what's new: destructive-change consent, preserved local files, keep-local intent, init recovery
-- [`docs/whats-new-0.6.md`](docs/whats-new-0.6.md) - what's new: subagents, plugin marketplaces, declared needs, stale-promote merges
-- [`docs/whats-new-0.5.1.md`](docs/whats-new-0.5.1.md) - what's new: clone-local reconciliation and recovery fixes
-- [`docs/whats-new-0.5.md`](docs/whats-new-0.5.md) - what's new: Pi extensions, user skill inventory, safer CLI behavior
-- [`docs/whats-new-0.4.md`](docs/whats-new-0.4.md) - what's new: remote bootstrap, metadata + search, team sync, bundles
+- Fragment outputs preserve project-local values.
+- `promote` commits the fragment's canonical source file in the data repo. The
+  generated output is a product of that source.
+- `share --pick` extracts an unmanaged value straight from a project's
+  generated output.
+
+Bundles expand at install time. Members become independent items, and the lock
+records each member on its own.
+
+## Further reading
+
 - [`docs/project-brief.md`](docs/project-brief.md) - one-page overview
-- [`docs/architecture.md`](docs/architecture.md) - data model and rationale
 - [`docs/cli.md`](docs/cli.md) - full command reference, flags, exit codes
-- [`docs/marketplaces.md`](docs/marketplaces.md) - Claude/Cowork and Codex plugin catalogs in the data repo
-- [`docs/team-workflow.md`](docs/team-workflow.md) - team loop: sync-data, propose-upstream recipe, CI drift gate
+- [`docs/architecture.md`](docs/architecture.md) - data model and rationale
+- [`docs/team-workflow.md`](docs/team-workflow.md) - team loop: `data sync`, propose-upstream recipe, CI drift gate
 - [`docs/security.md`](docs/security.md) - trust model, threat model per item kind, guidance for teams
+- [`docs/marketplaces.md`](docs/marketplaces.md) - Claude/Cowork and Codex plugin catalogs in the data repo
 - [`AGENTS.md`](AGENTS.md) - guidance for coding agents working in this repo
+
+### Release history
+
+- [`docs/whats-new-0.8.md`](docs/whats-new-0.8.md) - Git-tree source pins, lock version 4 and `lock migrate`, filtered-content refusal, classified drift
+- [`docs/whats-new-0.7.md`](docs/whats-new-0.7.md) - destructive-change consent, preserved local files, keep-local intent, init recovery
+- [`docs/whats-new-0.6.md`](docs/whats-new-0.6.md) - subagents, plugin marketplaces, declared needs, stale-promote merges
+- [`docs/whats-new-0.5.1.md`](docs/whats-new-0.5.1.md) - clone-local reconciliation and recovery fixes
+- [`docs/whats-new-0.5.md`](docs/whats-new-0.5.md) - Pi extensions, user skill inventory, safer CLI behavior
+- [`docs/whats-new-0.4.md`](docs/whats-new-0.4.md) - remote bootstrap, metadata + search, team sync, bundles

@@ -37,7 +37,9 @@ export function createProgram(): Command {
   program.exitOverride();
   program
     .name(PRODUCT_NAME)
-    .description("manage shared coding-agent config across projects")
+    .description(
+      "shared coding-agent config, pinned per project — a change in one repo never disturbs another until that repo asks for it",
+    )
     .version(CLI_VERSION)
     .option(
       "-d, --data <path>",

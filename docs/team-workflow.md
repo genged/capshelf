@@ -21,14 +21,14 @@ git -C ~/code/agent-shared push
 Bob, in `~/code/checkout`:
 
 ```bash
-capshelf sync-data
+capshelf data sync
 # fetched origin, fast-forwarded main 4f2a9c1 -> 8e7d3b2
 capshelf status
 # data/skills/security-review  update_available
 capshelf update security-review
 ```
 
-`sync-data` is the only capshelf command that touches the network, and only
+`data sync` is the only capshelf command that touches the network, and only
 when you run it. It fetches `origin` and fast-forwards the current branch only
 when that is provably safe; diverged history, dirty worktrees, and detached
 HEADs stop with copy-pasteable git guidance. `promote` never pushes — sharing
@@ -81,7 +81,7 @@ your branch, then push and open a PR with `gh`.
 Locate the bound data repo clone:
 
 ```bash
-DATA=$(capshelf data-path)
+DATA=$(capshelf data path)
 # fallback for older capshelf binaries:
 #   DATA=$(jq -r .dataRepo .capshelf/local.json)
 ```
@@ -94,7 +94,7 @@ prints it).
 1. Start from current upstream and branch in the data repo:
 
    ```bash
-   capshelf sync-data
+   capshelf data sync
    git -C "$DATA" switch -c propose/security-review-sqli origin/main
    ```
 
@@ -120,7 +120,7 @@ prints it).
 
    ```bash
    git -C "$DATA" switch main
-   capshelf sync-data
+   capshelf data sync
    capshelf update security-review
    ```
 
@@ -146,7 +146,7 @@ gh pr create --repo acme/agent-shared --head bob:propose/security-review-sqli
 ```
 
 Capshelf's upstream verification only checks the `origin` remote, so adding
-a `fork` remote is safe, and `sync-data` keeps pulling from `origin`.
+a `fork` remote is safe, and `data sync` keeps pulling from `origin`.
 
 Patch variant (no GitHub account / air-gapped review):
 
@@ -188,7 +188,7 @@ jobs:
         run: |
           UPSTREAM=$(jq -r '.dataRepoUpstream // empty' .capshelf/capshelf.json)
           if [ -z "$UPSTREAM" ]; then
-            echo "::error::no dataRepoUpstream declared in .capshelf/capshelf.json; the drift gate requires a declared upstream (run: capshelf set-upstream <url>)"
+            echo "::error::no dataRepoUpstream declared in .capshelf/capshelf.json; the drift gate requires a declared upstream (run: capshelf data upstream <url>)"
             exit 1
           fi
           git clone "$UPSTREAM" "$RUNNER_TEMP/capshelf-data"
@@ -223,7 +223,7 @@ Notes:
   `dataRepoUpstream`.
 - `CI` is set on runners, so capshelf's self-update startup prompt is
   already suppressed; no extra env needed.
-- The gate never needs `sync-data`: the clone is fresh. CI is a pure
+- The gate never needs `data sync`: the clone is fresh. CI is a pure
   read-only consumer.
 
 ## Fixing `missing_source_commit`
@@ -232,7 +232,7 @@ Notes:
 `sourceCommit` is not present in the data repo clone being checked:
 
 - it was squash- or rebase-merged upstream and the original commit is
-  orphaned — re-pin with `capshelf sync-data && capshelf update <item>`
+  orphaned — re-pin with `capshelf data sync && capshelf update <item>`
   (metadata-only when the merged content is identical);
 - or it only exists in another clone (an unpushed promote) — push that
   clone first, then sync.
