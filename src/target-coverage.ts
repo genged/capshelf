@@ -3,6 +3,7 @@ import {
   commitExists,
   literalPathspec,
   lsTreeEntriesForPathspecs,
+  showAtCommit,
 } from "./git";
 import {
   fragmentOutputPath,
@@ -163,6 +164,12 @@ export function itemTargetCoverageInPaths(
  * `120000`, and `assertRegularBlobEntries` refuses exactly those, so a
  * committed `mcp/<n>/codex.toml` symlink would otherwise be reported as a
  * covered target for an item `pinCurrentSource` cannot pin at all.
+ *
+ * Membership in the tree is then confirmed by reading, because `present: true`
+ * is read by every consumer as "this runtime is covered" — and a listed blob
+ * that cannot be produced covers nothing. Without the read, a corrupt object
+ * left `status` claiming full coverage for an item `apply` could not restore,
+ * and left `targetCoverage` contradicting the `targets` array beside it.
  */
 async function canonicalPathsAtCommit(
   dataRepo: string,
@@ -176,11 +183,13 @@ async function canonicalPathsAtCommit(
       commit,
       allCanonicalItemRelPaths(kind, name).map(literalPathspec),
     );
-    return new Set(
-      entries
-        .filter((entry) => entry.mode === "100644" || entry.mode === "100755")
-        .map((entry) => entry.path),
-    );
+    const listed = entries
+      .filter((entry) => entry.mode === "100644" || entry.mode === "100755")
+      .map((entry) => entry.path);
+    for (const path of listed) {
+      await showAtCommit(dataRepo, commit, path);
+    }
+    return new Set(listed);
   } catch {
     return null;
   }

@@ -506,24 +506,82 @@ describe("runtime target coverage", () => {
     expect(existsSync(join(project, ".codex", "config.toml"))).toBe(false);
   });
 
-  test("an unreadable pinned blob still fails loudly", async () => {
+  test("an unreadable pinned blob is never reported as covered", async () => {
     const { dataRepo, run } = await fixture("coverage-unreadable-blob");
-    expect((await run(["add", "subagents/reviewer"])).exitCode).toBe(0);
+    expect((await run(["add", "mcp/github"])).exitCode).toBe(0);
 
-    // The tree enumerates — so coverage reads as known and fully covered —
-    // but the pinned source cannot be read. `apply` cannot run in this state,
-    // so `status` must not quietly drop `targets` and print a healthy row.
+    // `ls-tree` still lists this path, so tree membership alone would call the
+    // Codex target covered — for a source `apply` cannot read. `present: true`
+    // has to mean the content can be produced.
     const blob = (
-      await $`git -C ${dataRepo} rev-parse HEAD:subagents/reviewer/claude.md`.text()
+      await $`git -C ${dataRepo} rev-parse HEAD:mcp/github/codex.toml`.text()
     ).trim();
     await rm(
       join(dataRepo, ".git", "objects", blob.slice(0, 2), blob.slice(2)),
       { force: true },
     );
 
-    const status = await run(["status", "subagents/reviewer"]);
-    expect(status.exitCode).not.toBe(0);
-    expect(status.stdout.toString()).not.toContain("up-to-date");
+    const status = await run(["status", "mcp/github"]);
+    expect(status.exitCode).toBe(0);
+    expect(status.stdout.toString()).toContain(
+      "targets: unknown (source tree unreadable)",
+    );
+    const row = JSON.parse(
+      (await run(["status", "mcp/github", "--json"])).stdout.toString(),
+    ).items[0];
+    expect(row.coverageState).toBe("unknown");
+    expect(row.targetCoverage.map((r: { present: null }) => r.present)).toEqual(
+      [null, null],
+    );
+  });
+
+  test("a partially unreadable subagent never claims more targets than it lists", async () => {
+    const { dataRepo, run } = await fixture("coverage-partial-subagent");
+    await writeSubagentItem(dataRepo, "pair", { claude: true, codex: true });
+    await commitAll(dataRepo, "two-target subagent");
+    expect((await run(["add", "subagents/pair"])).exitCode).toBe(0);
+
+    // One of two blobs unreadable: `subagentSourcesAtCommit` silently drops it
+    // and returns the survivor, so `targets` would list one entry beside a
+    // `targetCoverage` claiming both — the one-target-for-a-set report this
+    // whole change exists to remove, in its own output.
+    const blob = (
+      await $`git -C ${dataRepo} rev-parse HEAD:subagents/pair/codex.toml`.text()
+    ).trim();
+    await rm(
+      join(dataRepo, ".git", "objects", blob.slice(0, 2), blob.slice(2)),
+      { force: true },
+    );
+
+    const status = await run(["status", "subagents/pair", "--json"]);
+    expect(status.exitCode).toBe(0);
+    const row = JSON.parse(status.stdout.toString()).items[0];
+    expect(row.coverageState).toBe("unknown");
+    expect(row.targetCoverage.map((r: { present: null }) => r.present)).toEqual(
+      [null, null],
+    );
+    expect(row.targets).toBeUndefined();
+  });
+
+  test("show --target distinguishes a worktree deletion from a real gap", async () => {
+    const { dataRepo, run } = await fixture("coverage-show-dirty-delete");
+    expect((await run(["add", "mcp/github"])).exitCode).toBe(0);
+    await rm(join(dataRepo, "mcp", "github", "codex.toml"));
+
+    const refused = await run([
+      "show",
+      "mcp/github",
+      "--target",
+      "codex",
+      "--no-content",
+    ]);
+    expect(refused.exitCode).toBe(3);
+    const stderr = refused.stderr.toString();
+    expect(stderr).toContain("no codex source in the data repo's working tree");
+    expect(stderr).toContain("git -C");
+    expect(stderr).toContain("checkout -- mcp/github/codex.toml");
+    // The "author it and commit" repair belongs to a real gap, not this one.
+    expect(stderr).not.toContain("Codex reads mcp/github/codex.toml in your");
   });
 
   test("show outside a project prints presence without a path or an update line", async () => {

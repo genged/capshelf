@@ -178,10 +178,22 @@ export function registerShow(program: Command): void {
         ? restrictCoverage(wholeCoverage, cliTarget)
         : null;
       if (isFragmentItemKind(item.kind) && fragmentSources.length === 0) {
-        throw missingTargetSource(itemLabel, cliTarget, wholeCoverage, tracked);
+        throw missingTargetSource(
+          itemLabel,
+          cliTarget,
+          wholeCoverage,
+          tracked,
+          dataRepo,
+        );
       }
       if (item.kind === "subagents" && subagentSources.length === 0) {
-        throw missingTargetSource(itemLabel, cliTarget, wholeCoverage, tracked);
+        throw missingTargetSource(
+          itemLabel,
+          cliTarget,
+          wholeCoverage,
+          tracked,
+          dataRepo,
+        );
       }
       const masterSha = isFragmentItemKind(item.kind)
         ? await shaOfFragmentItem(dataRepo, item.kind, item.name)
@@ -399,11 +411,27 @@ function missingTargetSource(
   target: FragmentSourceTarget | null,
   coverage: TargetCoverageReport | null,
   tracked: boolean,
+  dataRepo: string,
 ): PreconditionError {
   if (target === null) {
     return new PreconditionError(`no matching source for ${itemLabel}`);
   }
   const row = coverage?.rows.find((candidate) => candidate.target === target);
+  // `show` dumps the data repo's working tree, but coverage is read at a
+  // commit, so the two can disagree — and they say opposite things to the
+  // user. Telling someone to author and commit a file that is already
+  // committed, and merely deleted in their working tree, sends them to the
+  // wrong repair: the fix there is to restore it or commit the deletion.
+  if (row?.present === true) {
+    return new PreconditionError(
+      [
+        `${itemLabel} has no ${target} source in the data repo's working tree`,
+        `  ${row.sourcePath} is present at the commit this project reads, so it was deleted without being committed.`,
+        `  Restore it:  git -C ${dataRepo} checkout -- ${row.sourcePath}`,
+        `  Or commit the deletion, then: capshelf update ${itemLabel}`,
+      ].join("\n"),
+    );
+  }
   return new PreconditionError(
     [
       `${itemLabel} has no ${target} source`,
