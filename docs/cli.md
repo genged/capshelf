@@ -581,7 +581,7 @@ item covers, which it does not, and where the missing source belongs.
     Claude  written  /Users/mg/code/infraloop/.mcp.json
     Codex   absent   no codex source in this item
   Codex reads mcp/deepwiki/codex.toml in your data repo.
-  Add it there, commit, then: capshelf update mcp/deepwiki
+  Once it is committed there: capshelf update mcp/deepwiki
 ```
 
 The block prints whether or not there is a gap. `status` is a whole-project
@@ -591,7 +591,7 @@ that has a gap:
 ```text
   ✓   data/mcp/deepwiki                       7d4e24e177c5  up-to-date
       targets: Claude ✓  Codex ✗ — no codex source at the locked commit
-        Codex reads mcp/deepwiki/codex.toml; add it, commit, then: capshelf update mcp/deepwiki
+        Codex reads mcp/deepwiki/codex.toml; once it is committed there: capshelf update mcp/deepwiki
 ```
 
 Rules:

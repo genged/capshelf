@@ -454,7 +454,7 @@ function missingTargetSource(
         ? [
             `  ${RUNTIME_TARGET_LABELS[target]} reads ${row.sourcePath} in your data repo.`,
             ...(tracked
-              ? [`  Add it there, commit, then: capshelf update ${itemLabel}`]
+              ? [`  Once it is committed there: capshelf update ${itemLabel}`]
               : []),
           ]
         : []),

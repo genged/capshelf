@@ -317,7 +317,7 @@ export function formatCoverageGap(
   return absentTargets(report).flatMap((row) => [
     `${indent}${RUNTIME_TARGET_LABELS[row.target]} reads ${row.sourcePath} in your data repo.`,
     ...(opts.tracked
-      ? [`${indent}Add it there, commit, then: capshelf update ${itemRef}`]
+      ? [`${indent}Once it is committed there: capshelf update ${itemRef}`]
       : []),
   ]);
 }

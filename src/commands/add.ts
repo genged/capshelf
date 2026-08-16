@@ -535,6 +535,22 @@ async function assertPinnedSourcesReadable(
   pin: PinnedSource,
 ): Promise<void> {
   if (!isFragmentItemKind(item.kind)) return;
+  // A canonical path committed as a *directory* is listed by `ls-tree -r` only
+  // through its descendants, so exact-path matching calls the target absent
+  // and lets the install through. `apply` then probes `git show <commit>:<path>`,
+  // which resolves the tree, hands its listing to the TOML parser, and fails —
+  // after the lock was saved. Refusing here keeps the failure where the
+  // worktree-derived preflight used to put it: before any state is written.
+  for (const relPath of allCanonicalItemRelPaths(item.kind, item.name)) {
+    if (
+      pin.entries.some((entry) => entry.repoRelPath.startsWith(`${relPath}/`))
+    ) {
+      throw new PreconditionError(
+        `${relPath} is a directory at ${pin.sourceCommit}\n` +
+          "  a canonical source must be a regular file; remove or rename the directory in the data repo and commit",
+      );
+    }
+  }
   const sources = presentSources(
     fragmentTargetPresenceInPaths(
       item.kind,

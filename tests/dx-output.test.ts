@@ -231,7 +231,7 @@ describe("runtime target coverage", () => {
       "Codex reads mcp/deepwiki/codex.toml in your data repo.",
     );
     expect(stdout).toContain(
-      "Add it there, commit, then: capshelf update mcp/deepwiki",
+      "Once it is committed there: capshelf update mcp/deepwiki",
     );
   });
 
@@ -354,7 +354,7 @@ describe("runtime target coverage", () => {
       "targets: Claude ✓  Codex ✗ — no codex source at the locked commit",
     );
     expect(stdout).toContain(
-      "Codex reads mcp/deepwiki/codex.toml; add it, commit, then: capshelf update mcp/deepwiki",
+      "Codex reads mcp/deepwiki/codex.toml; once it is committed there: capshelf update mcp/deepwiki",
     );
     expect(stdout).not.toContain("Codex project config may be ignored");
   });
@@ -512,6 +512,35 @@ describe("runtime target coverage", () => {
       ).mcp,
     ).toEqual([]);
     expect(existsSync(join(project, ".mcp.json"))).toBe(false);
+  });
+
+  test("add refuses a canonical path committed as a directory", async () => {
+    const { project, dataRepo, run } = await fixture("coverage-tree-path");
+    await mkdir(join(dataRepo, "mcp", "deepwiki", "codex.toml"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(dataRepo, "mcp", "deepwiki", "codex.toml", "child"),
+      "not a fragment\n",
+    );
+    await commitAll(dataRepo, "codex.toml as a directory");
+
+    // `ls-tree -r` names this only through its descendants, so exact-path
+    // matching calls Codex absent. Without the guard `add` locks the item and
+    // `apply` fails afterwards, parsing a tree listing as TOML.
+    const add = await run(["add", "mcp/deepwiki"]);
+    expect(add.exitCode).toBe(3);
+    expect(add.stderr.toString()).toContain(
+      "mcp/deepwiki/codex.toml is a directory at",
+    );
+    expect(
+      JSON.parse(
+        await readFile(
+          join(project, ".capshelf", "capshelf.lock.json"),
+          "utf-8",
+        ),
+      ).items["data/mcp/deepwiki"],
+    ).toBeUndefined();
   });
 
   test("a bundle refuses before installing any member when a pin cannot be read", async () => {
@@ -718,7 +747,7 @@ describe("runtime target coverage", () => {
       "Codex reads mcp/deepwiki/codex.toml in your data repo.",
     );
     expect(stderr).toContain(
-      "Add it there, commit, then: capshelf update mcp/deepwiki",
+      "Once it is committed there: capshelf update mcp/deepwiki",
     );
 
     const claudeOnly = await run([

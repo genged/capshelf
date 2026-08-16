@@ -294,7 +294,7 @@ function targetCoverageGuidance(r: StatusRow): string[] {
     `      targets: ${summary} — ${reason}`,
     ...absent.map(
       (row) =>
-        `        ${RUNTIME_TARGET_LABELS[row.target]} reads ${row.sourcePath}; add it, commit, then: capshelf update ${r.kind}/${r.name}`,
+        `        ${RUNTIME_TARGET_LABELS[row.target]} reads ${row.sourcePath}; once it is committed there: capshelf update ${r.kind}/${r.name}`,
     ),
   ];
 }
