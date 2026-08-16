@@ -52,7 +52,7 @@ import { NotFoundError, PreconditionError, ResultExitError } from "../errors";
 import { targetDir } from "../sync";
 import { findInstallConflict, installedPath, parseLockKey } from "../installed";
 import { isSystemItemName } from "../bundled";
-import { assertPathClean, showAtCommit } from "../git";
+import { assertPathClean, objectTypeAtCommit, showAtCommit } from "../git";
 import { findMasterItemByRef, lockKeyForRef, parseItemRef } from "../item-ref";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import {
@@ -535,15 +535,17 @@ async function assertPinnedSourcesReadable(
   pin: PinnedSource,
 ): Promise<void> {
   if (!isFragmentItemKind(item.kind)) return;
-  // A canonical path committed as a *directory* is listed by `ls-tree -r` only
-  // through its descendants, so exact-path matching calls the target absent
-  // and lets the install through. `apply` then probes `git show <commit>:<path>`,
-  // which resolves the tree, hands its listing to the TOML parser, and fails —
-  // after the lock was saved. Refusing here keeps the failure where the
-  // worktree-derived preflight used to put it: before any state is written.
+  // A canonical path committed as a *directory* is invisible to exact-path
+  // matching — `ls-tree -r` names it only through its descendants, and an
+  // empty tree has none at all — so the target reads as absent and the install
+  // goes through. `apply` then probes `git show <commit>:<path>`, which
+  // resolves the tree, hands its listing to the JSON or TOML parser, and fails
+  // after the lock was saved. Asking Git the object type answers both shapes
+  // at once, and keeps the failure where the worktree-derived preflight used
+  // to put it: before any state is written.
   for (const relPath of allCanonicalItemRelPaths(item.kind, item.name)) {
     if (
-      pin.entries.some((entry) => entry.repoRelPath.startsWith(`${relPath}/`))
+      (await objectTypeAtCommit(dataRepo, pin.sourceCommit, relPath)) === "tree"
     ) {
       throw new PreconditionError(
         `${relPath} is a directory at ${pin.sourceCommit}\n` +

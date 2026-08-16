@@ -1,4 +1,5 @@
 import { $ } from "bun";
+import { Buffer } from "node:buffer";
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import {
@@ -541,6 +542,32 @@ describe("runtime target coverage", () => {
         ),
       ).items["data/mcp/deepwiki"],
     ).toBeUndefined();
+
+    // An *empty* tree has no descendants at all, so `ls-tree -r` emits nothing
+    // for it. Only asking Git the object type catches this shape.
+    const emptyTreeId = (
+      await $`git -C ${dataRepo} hash-object -t tree /dev/null`.text()
+    ).trim();
+    const codexBlob = (
+      await $`git -C ${dataRepo} rev-parse HEAD:mcp/github/codex.toml`.text()
+    ).trim();
+    const mktree = async (spec: string): Promise<string> =>
+      (await $`git -C ${dataRepo} mktree < ${Buffer.from(spec)}`.text()).trim();
+    const itemTree = await mktree(
+      `100644 blob ${codexBlob}\tcodex.toml\n040000 tree ${emptyTreeId}\tclaude.json\n`,
+    );
+    const mcpTree = await mktree(`040000 tree ${itemTree}\tgithub\n`);
+    const root = await mktree(`040000 tree ${mcpTree}\tmcp\n`);
+    const commit = (
+      await $`git -C ${dataRepo} commit-tree ${root} -m ${"empty tree source"}`.text()
+    ).trim();
+    await $`git -C ${dataRepo} reset -q --hard ${commit}`.quiet();
+
+    const emptyTree = await run(["add", "mcp/github"]);
+    expect(emptyTree.exitCode).toBe(3);
+    expect(emptyTree.stderr.toString()).toContain(
+      "mcp/github/claude.json is a directory at",
+    );
   });
 
   test("a bundle refuses before installing any member when a pin cannot be read", async () => {
