@@ -58,6 +58,13 @@ import {
   type FragmentValue,
 } from "../fragments";
 import {
+  formatCoverageGap,
+  formatTargetCoverageBlock,
+  itemTargetCoverageAtCommit,
+  targetCoverageJson,
+} from "../target-coverage";
+import type { TargetCoverageReport } from "../target-coverage";
+import {
   extractPickedFragment,
   mcpServerContainerKey,
   unmanagedRemainder,
@@ -368,6 +375,16 @@ async function shareSubagent(
   });
   if (!pin) throw new Error(`expected a verified pin for subagents/${name}`);
   const sha = pin.sourcePinDigest;
+  // `share` lists the canonical sources it wrote, so a one-target share
+  // reported no absence at the moment the item was authored — the same
+  // filtered-list blindness `add` had.
+  const coverage = await itemTargetCoverageAtCommit(
+    project,
+    dataRepo,
+    "subagents",
+    name,
+    sourceCommit,
+  );
   const snapshot = await captureCommittedItemNeeds(dataRepo, {
     kind: "subagents",
     name,
@@ -395,6 +412,7 @@ async function shareSubagent(
             sourcePath: source.relPath,
             outputPath: source.outputPath,
           })),
+          ...(coverage && targetCoverageJson(coverage, project)),
         },
         null,
         2,
@@ -405,6 +423,7 @@ async function shareSubagent(
   console.log(`✓ shared project/data/subagents/${name} @ ${sha}`);
   console.log(`  source commit: ${sourceCommit}`);
   for (const { source } of pending) console.log(`  ${source.relPath}`);
+  if (coverage) printSharedCoverage(coverage, `subagents/${name}`);
   await printShareUpstreamGuidance(dataRepo);
 }
 
@@ -536,6 +555,14 @@ async function shareFragment(
   await saveManifest(project, manifest);
   await saveLock(project, writableProjectLock);
 
+  const coverage = await itemTargetCoverageAtCommit(
+    project,
+    dataRepo,
+    kind,
+    name,
+    sourceCommit,
+  );
+
   if (opts.json) {
     console.log(
       JSON.stringify(
@@ -558,6 +585,7 @@ async function shareFragment(
                 (result) => result.target === fragmentSource.target,
               )?.action ?? "already-current",
           })),
+          ...(coverage && targetCoverageJson(coverage, project)),
         },
         null,
         2,
@@ -571,7 +599,22 @@ async function shareFragment(
   for (const fragmentSource of sources) {
     console.log(`  ${fragmentSource.relPath}`);
   }
+  if (coverage) printSharedCoverage(coverage, `${kind}/${name}`);
   await printShareUpstreamGuidance(dataRepo);
+}
+
+/**
+ * The coverage block for a freshly shared item. `share` tracks what it commits,
+ * so the `capshelf update` line always applies here.
+ */
+function printSharedCoverage(
+  coverage: TargetCoverageReport,
+  itemRef: string,
+): void {
+  for (const line of formatTargetCoverageBlock(coverage)) console.log(line);
+  for (const line of formatCoverageGap(coverage, itemRef, { tracked: true })) {
+    console.log(line);
+  }
 }
 
 async function printShareUpstreamGuidance(dataRepo: string): Promise<void> {

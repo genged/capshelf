@@ -496,6 +496,72 @@ describe("runtime target coverage", () => {
     expect(claudeOnly.stdout.toString()).not.toContain("Codex");
   });
 
+  test("rm reports every reconciled output, not the first", async () => {
+    const { project, run } = await fixture("coverage-rm");
+    expect((await run(["add", "mcp/github"])).exitCode).toBe(0);
+
+    const removed = await run(["rm", "mcp/github", "--yes", "--json"]);
+    expect(removed.exitCode).toBe(0);
+    const parsed = JSON.parse(removed.stdout.toString());
+    expect(parsed.removedFiles).toBe(true);
+    expect(parsed.path.split(", ")).toEqual([
+      join(project, ".mcp.json"),
+      join(project, ".codex", "config.toml"),
+    ]);
+  });
+
+  test("share names the target the new item does not cover", async () => {
+    const { project, dataRepo, run } = await fixture("coverage-share");
+    await writeFile(
+      join(project, ".mcp.json"),
+      JSON.stringify({ mcpServers: { linear: { command: "linear-mcp" } } }),
+    );
+    await mkdir(join(project, ".claude", "agents"), { recursive: true });
+    await writeFile(
+      join(project, ".claude", "agents", "auditor.md"),
+      "---\nname: auditor\ndescription: audits changes\n---\nbody\n",
+    );
+
+    const fragment = await run(["share", "mcp/linear"]);
+    expect(fragment.exitCode).toBe(0);
+    const stdout = fragment.stdout.toString();
+    expect(stdout).toContain("Codex   absent   no codex source in this item");
+    expect(stdout).toContain(
+      "Codex reads mcp/linear/codex.toml in your data repo.",
+    );
+
+    const subagent = await run(["share", "subagents/auditor", "--json"]);
+    expect(subagent.exitCode).toBe(0);
+    const subagentJson = JSON.parse(subagent.stdout.toString());
+    expect(subagentJson.sources).toEqual([
+      {
+        target: "claude",
+        sourcePath: "subagents/auditor/claude.md",
+        outputPath: join(project, ".claude", "agents", "auditor.md"),
+      },
+    ]);
+    expect(subagentJson.targetCoverage).toEqual([
+      {
+        target: "claude",
+        present: true,
+        sourcePath: "subagents/auditor/claude.md",
+        outputPath: join(".claude", "agents", "auditor.md"),
+      },
+      {
+        target: "codex",
+        present: false,
+        sourcePath: "subagents/auditor/codex.toml",
+        outputPath: join(".codex", "agents", "auditor.toml"),
+      },
+    ]);
+    expect(
+      await readFile(
+        join(dataRepo, "subagents", "auditor", "claude.md"),
+        "utf-8",
+      ),
+    ).toContain("name: auditor");
+  });
+
   test("single-target fragment kinds are unchanged, human and JSON", async () => {
     const { run } = await fixture("coverage-single-target");
 

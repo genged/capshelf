@@ -334,7 +334,13 @@ export function registerRm(program: Command): void {
           entry,
           oldManifest,
         );
-        path = targets[0] ? fragmentOutputPath(project, targets[0]) : "";
+        // Every reconciled output, not the first. `rm` reconciles each locked
+        // target, so naming one of two was reporting a target in place of a
+        // set — the same defect `add` carried. Matches the subagent branch
+        // below, which already joins its removed paths.
+        path = targets
+          .map((target) => fragmentOutputPath(project, target))
+          .join(", ");
         for (const result of await applyFragmentOutputPlans(
           revalidated.fragmentPlans,
         )) {
