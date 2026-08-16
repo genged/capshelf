@@ -52,7 +52,7 @@ import { NotFoundError, PreconditionError, ResultExitError } from "../errors";
 import { targetDir } from "../sync";
 import { findInstallConflict, installedPath, parseLockKey } from "../installed";
 import { isSystemItemName } from "../bundled";
-import { assertPathClean } from "../git";
+import { assertPathClean, showAtCommit } from "../git";
 import { findMasterItemByRef, lockKeyForRef, parseItemRef } from "../item-ref";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import {
@@ -76,7 +76,6 @@ import {
   fragmentContributionState,
   fragmentOutputPath,
   fragmentTargetPresenceInPaths,
-  lockedFragmentTargetsForItem,
   planFragmentOutput,
   presentSources,
 } from "../fragments";
@@ -450,13 +449,21 @@ async function planStandaloneFragmentAdd(
   // for a target the install then writes from the pin, and a commented
   // `.codex/config.toml` would be rewritten without the consent gate TOML
   // comment loss requires (`src/fragments.ts:112-114`).
-  const targets = await lockedFragmentTargetsForItem(
-    ctx.dataRepo,
-    item.kind,
-    item.name,
-    nextEntry,
-    ctx.manifest,
-  );
+  //
+  // The pin's own listing, not a second read of the same commit: this must be
+  // the exact target set `installDataItem` writes, or the consent gate covers
+  // a different set than the install does.
+  const targets = [
+    ...new Set(
+      presentSources(
+        fragmentTargetPresenceInPaths(
+          item.kind,
+          item.name,
+          pin.entries.map((entry) => entry.repoRelPath),
+        ),
+      ).map((source) => source.target),
+    ),
+  ];
   const plans: FragmentOutputPlan[] = [];
   const contributionStates = new Map<
     FragmentTarget,
@@ -657,6 +664,23 @@ export async function installDataItem(
     throw new PreconditionError(
       `${item.kind}/${item.name} has no canonical source files at ${pin.sourceCommit}`,
     );
+  }
+  // Tree membership is not readability. The pin lists these paths with
+  // `ls-tree`, which never opens their blobs, while the merge that follows
+  // (`fragmentValuesForTarget`) skips any source whose `git show` fails. An
+  // unreadable pinned blob would therefore be planned, written as an empty
+  // contribution, locked, and reported as a covered target. Proving the read
+  // here turns that into a refusal before anything is written.
+  for (const source of sources) {
+    try {
+      await showAtCommit(dataRepo, pin.sourceCommit, source.relPath);
+    } catch (cause) {
+      throw new PreconditionError(
+        `cannot read ${source.relPath} at ${pin.sourceCommit}\n` +
+          "  the pin names this source but the data repo cannot produce its content; no changes were written",
+        { cause },
+      );
+    }
   }
   const dst = isFragmentItemKind(item.kind)
     ? fragmentOutputPath(project, sources[0]!.target)

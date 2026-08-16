@@ -1,5 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import {
   chmod,
   mkdir,
@@ -473,6 +474,36 @@ describe("runtime target coverage", () => {
     expect(row.coverageState).toBe("unknown");
     // Omitted, not emptied: `targets: []` would claim the item has no targets.
     expect(row.targets).toBeUndefined();
+  });
+
+  test("add refuses when a pinned fragment source cannot be read", async () => {
+    const { project, dataRepo, run } = await fixture("coverage-unreadable-mcp");
+
+    // `ls-tree` lists this path without opening it, so the pin names it and
+    // coverage would call the target covered — while the merge that writes the
+    // output skips any source whose `git show` fails. Installing here would
+    // write an empty contribution and report it as written.
+    const blob = (
+      await $`git -C ${dataRepo} rev-parse HEAD:mcp/github/codex.toml`.text()
+    ).trim();
+    await rm(
+      join(dataRepo, ".git", "objects", blob.slice(0, 2), blob.slice(2)),
+      { force: true },
+    );
+
+    const add = await run(["add", "mcp/github"]);
+    expect(add.exitCode).toBe(3);
+    expect(add.stderr.toString()).toContain(
+      "cannot read mcp/github/codex.toml at",
+    );
+    // Refused before anything was written or locked.
+    expect(
+      JSON.parse(
+        await readFile(join(project, ".capshelf", "capshelf.json"), "utf-8"),
+      ).mcp,
+    ).toEqual([]);
+    expect(existsSync(join(project, ".mcp.json"))).toBe(false);
+    expect(existsSync(join(project, ".codex", "config.toml"))).toBe(false);
   });
 
   test("an unreadable pinned blob still fails loudly", async () => {
