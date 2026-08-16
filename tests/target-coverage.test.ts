@@ -12,6 +12,15 @@ import {
 import { commitAll, tempDir, tempRepo } from "./cli-fixtures";
 
 describe("target coverage", () => {
+  /** A claude-only `mcp/deepwiki`, the fixture every commit-reading case uses. */
+  async function writeClaudeOnlyMcp(dataRepo: string): Promise<void> {
+    await mkdir(join(dataRepo, "mcp", "deepwiki"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "mcp", "deepwiki", "claude.json"),
+      JSON.stringify({ mcpServers: { deepwiki: { command: "deepwiki-mcp" } } }),
+    );
+  }
+
   test("the project-less candidate list agrees with the two that need a project", () => {
     // `subagentCandidates` exists so presence can be read without a project.
     // A second definition of the canonical paths is a drift risk, so the three
@@ -55,11 +64,7 @@ describe("target coverage", () => {
     const dataRepo = await tempRepo("capshelf-coverage-unreadable-", {
       origin: null,
     });
-    await mkdir(join(dataRepo, "mcp", "deepwiki"), { recursive: true });
-    await writeFile(
-      join(dataRepo, "mcp", "deepwiki", "claude.json"),
-      JSON.stringify({ mcpServers: { deepwiki: { command: "deepwiki-mcp" } } }),
-    );
+    await writeClaudeOnlyMcp(dataRepo);
     await commitAll(dataRepo, "claude only");
     const head = (await $`git -C ${dataRepo} rev-parse HEAD`.text()).trim();
 
@@ -102,11 +107,7 @@ describe("target coverage", () => {
     const dataRepo = await tempRepo("capshelf-coverage-symlink-", {
       origin: null,
     });
-    await mkdir(join(dataRepo, "mcp", "deepwiki"), { recursive: true });
-    await writeFile(
-      join(dataRepo, "mcp", "deepwiki", "claude.json"),
-      JSON.stringify({ mcpServers: { deepwiki: { command: "deepwiki-mcp" } } }),
-    );
+    await writeClaudeOnlyMcp(dataRepo);
     // Git stores this as a blob with mode 120000, so an object-type filter
     // would count it as a Codex source.
     await symlink(
@@ -135,11 +136,7 @@ describe("target coverage", () => {
     const dataRepo = await tempRepo("capshelf-coverage-unreachable-", {
       origin: null,
     });
-    await mkdir(join(dataRepo, "mcp", "deepwiki"), { recursive: true });
-    await writeFile(
-      join(dataRepo, "mcp", "deepwiki", "claude.json"),
-      JSON.stringify({ mcpServers: { deepwiki: { command: "deepwiki-mcp" } } }),
-    );
+    await writeClaudeOnlyMcp(dataRepo);
     await commitAll(dataRepo, "claude only");
 
     const report = await itemTargetCoverageAtCommit(

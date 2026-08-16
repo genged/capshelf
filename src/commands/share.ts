@@ -58,12 +58,10 @@ import {
   type FragmentValue,
 } from "../fragments";
 import {
-  formatCoverageGap,
-  formatTargetCoverageBlock,
   itemTargetCoverageAtCommit,
+  printTargetCoverage,
   targetCoverageJson,
 } from "../target-coverage";
-import type { TargetCoverageReport } from "../target-coverage";
 import {
   extractPickedFragment,
   mcpServerContainerKey,
@@ -83,6 +81,9 @@ import {
 } from "../subagents";
 
 type ShareScope = "project" | "local";
+
+/** `share` tracks what it commits, so the `capshelf update` line always applies. */
+const SHARED_COVERAGE = { presentWord: "present", tracked: true } as const;
 
 interface ShareOptions {
   to?: string;
@@ -423,7 +424,8 @@ async function shareSubagent(
   console.log(`✓ shared project/data/subagents/${name} @ ${sha}`);
   console.log(`  source commit: ${sourceCommit}`);
   for (const { source } of pending) console.log(`  ${source.relPath}`);
-  if (coverage) printSharedCoverage(coverage, `subagents/${name}`);
+  if (coverage)
+    printTargetCoverage(coverage, `subagents/${name}`, SHARED_COVERAGE);
   await printShareUpstreamGuidance(dataRepo);
 }
 
@@ -599,22 +601,9 @@ async function shareFragment(
   for (const fragmentSource of sources) {
     console.log(`  ${fragmentSource.relPath}`);
   }
-  if (coverage) printSharedCoverage(coverage, `${kind}/${name}`);
+  if (coverage)
+    printTargetCoverage(coverage, `${kind}/${name}`, SHARED_COVERAGE);
   await printShareUpstreamGuidance(dataRepo);
-}
-
-/**
- * The coverage block for a freshly shared item. `share` tracks what it commits,
- * so the `capshelf update` line always applies here.
- */
-function printSharedCoverage(
-  coverage: TargetCoverageReport,
-  itemRef: string,
-): void {
-  for (const line of formatTargetCoverageBlock(coverage)) console.log(line);
-  for (const line of formatCoverageGap(coverage, itemRef, { tracked: true })) {
-    console.log(line);
-  }
 }
 
 async function printShareUpstreamGuidance(dataRepo: string): Promise<void> {

@@ -49,9 +49,8 @@ import {
 import type { FragmentSourceTarget } from "../fragments";
 import {
   RUNTIME_TARGET_LABELS,
-  formatCoverageGap,
-  formatTargetCoverageBlock,
   itemTargetCoverageAtCommit,
+  printTargetCoverage,
   restrictCoverage,
   targetCoverageJson,
   unknownTargetCoverage,
@@ -299,17 +298,11 @@ export function registerShow(program: Command): void {
       }
       console.log(`  path:       ${item.path}`);
       if (coverage) {
-        for (const line of formatTargetCoverageBlock(coverage, {
+        printTargetCoverage(coverage, itemLabel, {
           presentWord: "present",
           absentScope: lockEntry?.source === "data" ? "locked" : "item",
-        })) {
-          console.log(line);
-        }
-        for (const line of formatCoverageGap(coverage, itemLabel, {
           tracked,
-        })) {
-          console.log(line);
-        }
+        });
       }
 
       if (runtimeWarnings.length > 0) {
@@ -450,6 +443,9 @@ function missingTargetSource(
   return new PreconditionError(
     [
       `${itemLabel} has no ${target} source`,
+      // Not `formatCoverageGap`: that one is gap-gated, and this refusal must
+      // still name where the source belongs when coverage is `unknown` — a
+      // state where there is no known gap to report but the path is still true.
       ...(row
         ? [
             `  ${RUNTIME_TARGET_LABELS[target]} reads ${row.sourcePath} in your data repo.`,

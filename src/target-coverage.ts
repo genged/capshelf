@@ -1,9 +1,9 @@
 import { relative } from "node:path";
 import {
+  catFileBlobs,
   commitExists,
   literalPathspec,
   lsTreeEntriesForPathspecs,
-  showAtCommit,
 } from "./git";
 import {
   fragmentOutputPath,
@@ -49,7 +49,7 @@ export interface TargetCoverage {
  * branch on it: the squash-merge re-pin guidance `status` gives belongs to an
  * unreachable commit and is wrong advice for a corrupt object database.
  */
-export type CoverageUnknownReason =
+type CoverageUnknownReason =
   | "data repo unbound"
   | "data repo has no commits"
   | "locked commit unreachable"
@@ -76,6 +76,9 @@ export interface TargetCoverageJson {
   outputPath: string | null;
 }
 
+/** Every surface prints the block at the same depth under its headline. */
+const INDENT = "  ";
+
 export const RUNTIME_TARGET_LABELS: Record<FragmentSourceTarget, string> = {
   claude: "Claude",
   codex: "Codex",
@@ -88,7 +91,7 @@ export const RUNTIME_TARGET_LABELS: Record<FragmentSourceTarget, string> = {
  * lists rather than a hardcoded pair, so a third kind gaining a second target
  * is covered by construction.
  */
-export function hasTargetCoverage(kind: ItemKind, name: string): boolean {
+function hasTargetCoverage(kind: ItemKind, name: string): boolean {
   if (kind === "subagents") return subagentCandidates(name).length > 1;
   if (isFragmentItemKind(kind)) {
     return fragmentSourceCandidates(kind, name).length > 1;
@@ -113,9 +116,19 @@ export async function itemTargetCoverageAtCommit(
   kind: ItemKind,
   name: string,
   commit: string,
+  /**
+   * Set when the caller has already proved the commit is reachable. `status`
+   * probes it for every row before anything commit-dependent runs
+   * (`src/commands/status.ts`), and only calls this when the answer was true —
+   * so re-probing here is a second identical `git cat-file -e` per row.
+   */
+  opts: { commitKnownPresent?: boolean } = {},
 ): Promise<TargetCoverageReport | null> {
   if (!hasTargetCoverage(kind, name)) return null;
-  if (!(await commitExists(dataRepo, commit))) {
+  if (
+    opts.commitKnownPresent !== true &&
+    !(await commitExists(dataRepo, commit))
+  ) {
     return unknownTargetCoverage(
       project,
       kind,
@@ -195,13 +208,18 @@ async function canonicalPathsAtCommit(
       commit,
       allCanonicalItemRelPaths(kind, name).map(literalPathspec),
     );
-    const listed = entries
-      .filter((entry) => entry.mode === "100644" || entry.mode === "100755")
-      .map((entry) => entry.path);
-    for (const path of listed) {
-      await showAtCommit(dataRepo, commit, path);
-    }
-    return new Set(listed);
+    const regular = entries.filter(
+      (entry) => entry.mode === "100644" || entry.mode === "100755",
+    );
+    // One `cat-file --batch` over the ids `ls-tree` already returned, rather
+    // than a `git show` per path: same proof that the content can be produced,
+    // one subprocess instead of one per candidate, and `catFileBlobs` asserts
+    // the object really is a blob rather than inferring it from a exit status.
+    await catFileBlobs(
+      dataRepo,
+      regular.map((entry) => entry.object),
+    );
+    return new Set(regular.map((entry) => entry.path));
   } catch {
     return null;
   }
@@ -215,30 +233,30 @@ export function unknownTargetCoverage(
   reason: CoverageUnknownReason,
 ): TargetCoverageReport | null {
   if (!hasTargetCoverage(kind, name)) return null;
-  const rows =
-    kind === "subagents"
-      ? subagentCoverage(
-          project,
-          name,
-          subagentCandidates(name).map((candidate) => ({
-            candidate,
-            present: null,
-          })),
-        )
-      : isFragmentItemKind(kind)
-        ? fragmentCoverage(
-            project,
-            fragmentSourceCandidates(kind, name).map((source) => ({
-              source,
-              runtimeTarget: source.sourceTarget ?? null,
-              present: null,
-            })),
-          )
-        : [];
+  if (kind === "subagents") {
+    const rows = subagentCoverage(
+      project,
+      name,
+      subagentCandidates(name).map((candidate) => ({
+        candidate,
+        present: null,
+      })),
+    );
+    return { rows, state: "unknown", reason };
+  }
+  if (!isFragmentItemKind(kind)) return null;
+  const rows = fragmentCoverage(
+    project,
+    fragmentSourceCandidates(kind, name).map((source) => ({
+      source,
+      runtimeTarget: source.sourceTarget ?? null,
+      present: null,
+    })),
+  );
   return { rows, state: "unknown", reason };
 }
 
-export function absentTargets(report: TargetCoverageReport): TargetCoverage[] {
+function absentTargets(report: TargetCoverageReport): TargetCoverage[] {
   if (report.state === "unknown") return [];
   return report.rows.filter((row) => row.present === false);
 }
@@ -252,8 +270,7 @@ export function coversTarget(
   );
 }
 
-export interface CoverageBlockOptions {
-  indent?: string;
+interface CoverageBlockOptions {
   /** `add` and `share` wrote the covered outputs; `show` only describes them. */
   presentWord?: "written" | "present";
   /** Where an absent source was looked for. */
@@ -281,18 +298,17 @@ export function formatTargetCoverageBlock(
   report: TargetCoverageReport,
   opts: CoverageBlockOptions = {},
 ): string[] {
-  const indent = opts.indent ?? "  ";
   if (report.state === "unknown") {
-    return [`${indent}targets: unknown (${report.reason ?? "not readable"})`];
+    return [`${INDENT}targets: unknown (${report.reason ?? "not readable"})`];
   }
   if (report.rows.length === 0) return [];
   const presentWord = opts.presentWord ?? "present";
   return [
-    `${indent}targets:`,
+    `${INDENT}targets:`,
     ...report.rows.map((row) => {
       const label = RUNTIME_TARGET_LABELS[row.target].padEnd(8);
       const state = (row.present === true ? presentWord : "absent").padEnd(9);
-      return `${indent}  ${label}${state}${coverageDetail(row, opts.absentScope ?? "item")}`;
+      return `${INDENT}  ${label}${state}${coverageDetail(row, opts.absentScope ?? "item")}`;
     }),
   ];
 }
@@ -311,15 +327,54 @@ export function formatTargetCoverageBlock(
 export function formatCoverageGap(
   report: TargetCoverageReport,
   itemRef: string,
-  opts: { indent?: string; tracked: boolean },
+  opts: { tracked: boolean },
 ): string[] {
-  const indent = opts.indent ?? "  ";
   return absentTargets(report).flatMap((row) => [
-    `${indent}${RUNTIME_TARGET_LABELS[row.target]} reads ${row.sourcePath} in your data repo.`,
+    `${INDENT}${RUNTIME_TARGET_LABELS[row.target]} reads ${row.sourcePath} in your data repo.`,
     ...(opts.tracked
-      ? [`${indent}Once it is committed there: capshelf update ${itemRef}`]
+      ? [`${INDENT}Once it is committed there: capshelf update ${itemRef}`]
       : []),
   ]);
+}
+
+export interface PrintCoverageOptions {
+  /** `add` and `share` wrote the covered outputs; `show` only describes them. */
+  presentWord: "written" | "present";
+  absentScope?: "item" | "locked";
+  /** `capshelf update` needs an item this project tracks. */
+  tracked: boolean;
+  /** What to print instead of the gap when coverage could not be read. */
+  unknownGuidance?: string[];
+}
+
+/**
+ * The block plus, when a target is absent, the sentence naming the canonical
+ * path it reads. Both go to stdout with the rest of the result, matching
+ * `printRuntimeWarnings`.
+ *
+ * This lives beside the formatters so `add`, `show`, and `share` share the
+ * loop as well as the wording — three copies of it is how the wording drifts.
+ */
+export function printTargetCoverage(
+  report: TargetCoverageReport,
+  itemRef: string,
+  opts: PrintCoverageOptions,
+): void {
+  for (const line of formatTargetCoverageBlock(report, {
+    presentWord: opts.presentWord,
+    ...(opts.absentScope && { absentScope: opts.absentScope }),
+  })) {
+    console.log(line);
+  }
+  if (report.state === "unknown") {
+    for (const line of opts.unknownGuidance ?? []) console.log(line);
+    return;
+  }
+  for (const line of formatCoverageGap(report, itemRef, {
+    tracked: opts.tracked,
+  })) {
+    console.log(line);
+  }
 }
 
 export interface TargetCoverageFields {

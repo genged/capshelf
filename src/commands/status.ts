@@ -381,30 +381,36 @@ export function registerStatus(program: Command): void {
           // `status` describes what the project actually has. When it cannot
           // be read at all — no data repo, or an unreachable pin — the rows
           // degrade to `present: null` instead of the command crashing.
-          const targetCoverage =
-            entry.source === "data"
-              ? !dataRepo
-                ? unknownTargetCoverage(
-                    project,
-                    kind,
-                    itemName,
-                    "data repo unbound",
-                  )
-                : sourceCommitPresent === false
-                  ? unknownTargetCoverage(
-                      project,
-                      kind,
-                      itemName,
-                      "locked commit unreachable",
-                    )
-                  : await itemTargetCoverageAtCommit(
-                      project,
-                      dataRepo,
-                      kind,
-                      itemName,
-                      entry.sourceCommit,
-                    )
-              : null;
+          let targetCoverage: TargetCoverageReport | null = null;
+          if (entry.source !== "data") {
+            targetCoverage = null;
+          } else if (!dataRepo) {
+            targetCoverage = unknownTargetCoverage(
+              project,
+              kind,
+              itemName,
+              "data repo unbound",
+            );
+          } else if (sourceCommitPresent === false) {
+            targetCoverage = unknownTargetCoverage(
+              project,
+              kind,
+              itemName,
+              "locked commit unreachable",
+            );
+          } else {
+            // `sourceCommitPresent` is already true here — it was probed at
+            // the top of the row, before anything commit-dependent ran. Saying
+            // so skips a second identical `git cat-file -e` per row.
+            targetCoverage = await itemTargetCoverageAtCommit(
+              project,
+              dataRepo,
+              kind,
+              itemName,
+              entry.sourceCommit,
+              { commitKnownPresent: true },
+            );
+          }
 
           const subagentTargets =
             kind === "subagents" &&

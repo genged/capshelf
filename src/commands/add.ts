@@ -80,10 +80,9 @@ import {
   presentSources,
 } from "../fragments";
 import {
-  formatCoverageGap,
-  formatTargetCoverageBlock,
   itemTargetCoverageAtCommit,
   itemTargetCoverageInPaths,
+  printTargetCoverage,
   targetCoverageJson,
 } from "../target-coverage";
 import type { TargetCoverageReport } from "../target-coverage";
@@ -395,18 +394,19 @@ async function printAlreadyInstalled(
     `= already installed ${scope}/data/${parsed.kind}/${parsed.name} @ ${shortIdentity(entryIdentity(entry))}`,
   );
   if (targetCoverage) {
-    printTargetCoverage(
-      targetCoverage,
-      `${parsed.kind}/${parsed.name}`,
-      { presentWord: "present", absentScope: "locked", tracked: true },
+    printTargetCoverage(targetCoverage, `${parsed.kind}/${parsed.name}`, {
+      presentWord: "present",
+      absentScope: "locked",
+      tracked: true,
       // Only for the state it describes. A squash-merged commit is re-pinned
       // by `sync-data && update`; an object database that does not read is
       // not, and pointing at that repair would send the user somewhere the
       // problem is not.
-      targetCoverage.reason === "locked commit unreachable"
-        ? missingSourceCommitRepinGuidance(parsed.kind, parsed.name, "    ")
-        : [],
-    );
+      unknownGuidance:
+        targetCoverage.reason === "locked commit unreachable"
+          ? missingSourceCommitRepinGuidance(parsed.kind, parsed.name, "    ")
+          : [],
+    });
   }
   for (const line of guidance) console.log(`  ${line}`);
   printRuntimeWarnings(runtimeWarnings);
@@ -728,7 +728,13 @@ export async function installDataItem(
       `${item.kind}/${item.name} has no canonical source files at ${pin.sourceCommit}`,
     );
   }
-  await assertPinnedSourcesReadable(dataRepo, item, pin);
+  // Only when this call produced the pin. A supplied `opts.pin` came from
+  // `planStandaloneFragmentAdd`, which validated it as it built the plan the
+  // user consented to; re-reading the same blobs here proves nothing new and
+  // costs one subprocess per canonical source, per member, on every add.
+  if (opts.pin === undefined) {
+    await assertPinnedSourcesReadable(dataRepo, item, pin);
+  }
   const dst = isFragmentItemKind(item.kind)
     ? fragmentOutputPath(project, sources[0]!.target)
     : item.kind === "subagents"
@@ -1237,38 +1243,6 @@ function printDeclaredNeeds(needs: ItemNeeds, indent = "  "): void {
 
 function itemRefLabel(item: MasterItem): string {
   return `${item.kind}/${item.name}`;
-}
-
-/**
- * The target block plus, when a target is absent, the sentence that names the
- * canonical path it reads. Both go to stdout with the rest of the result,
- * matching `printRuntimeWarnings`.
- */
-function printTargetCoverage(
-  report: TargetCoverageReport,
-  itemRef: string,
-  opts: {
-    presentWord: "written" | "present";
-    absentScope?: "item" | "locked";
-    tracked: boolean;
-  },
-  unknownGuidance: string[] = [],
-): void {
-  for (const line of formatTargetCoverageBlock(report, {
-    presentWord: opts.presentWord,
-    ...(opts.absentScope && { absentScope: opts.absentScope }),
-  })) {
-    console.log(line);
-  }
-  if (report.state === "unknown") {
-    for (const line of unknownGuidance) console.log(line);
-    return;
-  }
-  for (const line of formatCoverageGap(report, itemRef, {
-    tracked: opts.tracked,
-  })) {
-    console.log(line);
-  }
 }
 
 function fragmentSourcesJson(
