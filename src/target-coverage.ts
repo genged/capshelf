@@ -158,6 +158,11 @@ export function itemTargetCoverageInPaths(
  * and would report a gap that does not exist. Unmatched pathspecs are not an
  * error to `ls-tree`, so a genuinely absent file is an empty result, not a
  * failure.
+ *
+ * The filter is on mode, not type: Git stores a symlink as a `blob` with mode
+ * `120000`, and `assertRegularBlobEntries` refuses exactly those, so a
+ * committed `mcp/<n>/codex.toml` symlink would otherwise be reported as a
+ * covered target for an item `pinCurrentSource` cannot pin at all.
  */
 async function canonicalPathsAtCommit(
   dataRepo: string,
@@ -172,7 +177,9 @@ async function canonicalPathsAtCommit(
       allCanonicalItemRelPaths(kind, name).map(literalPathspec),
     );
     return new Set(
-      entries.filter((entry) => entry.type === "blob").map((e) => e.path),
+      entries
+        .filter((entry) => entry.mode === "100644" || entry.mode === "100755")
+        .map((entry) => entry.path),
     );
   } catch {
     return null;

@@ -1,8 +1,9 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { allCanonicalItemRelPaths } from "../src/master";
+import { pinItemAtCommit } from "../src/pin";
 import { subagentCandidates, subagentSourceCandidates } from "../src/subagents";
 import {
   itemTargetCoverageAtCommit,
@@ -95,6 +96,39 @@ describe("target coverage", () => {
     expect(unreadable?.state).toBe("unknown");
     expect(unreadable?.reason).toBe("source tree unreadable");
     expect(unreadable?.rows.map((row) => row.present)).toEqual([null, null]);
+  });
+
+  test("a committed symlink at a canonical path is not a covered target", async () => {
+    const dataRepo = await tempRepo("capshelf-coverage-symlink-", {
+      origin: null,
+    });
+    await mkdir(join(dataRepo, "mcp", "deepwiki"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "mcp", "deepwiki", "claude.json"),
+      JSON.stringify({ mcpServers: { deepwiki: { command: "deepwiki-mcp" } } }),
+    );
+    // Git stores this as a blob with mode 120000, so an object-type filter
+    // would count it as a Codex source.
+    await symlink(
+      "claude.json",
+      join(dataRepo, "mcp", "deepwiki", "codex.toml"),
+    );
+    await commitAll(dataRepo, "codex.toml as a symlink");
+    const head = (await $`git -C ${dataRepo} rev-parse HEAD`.text()).trim();
+
+    const report = await itemTargetCoverageAtCommit(
+      null,
+      dataRepo,
+      "mcp",
+      "deepwiki",
+      head,
+    );
+    expect(report?.state).toBe("known");
+    expect(report?.rows.map((row) => row.present)).toEqual([true, false]);
+    // Coverage must never promise a target the pin refuses to name.
+    expect(pinItemAtCommit(dataRepo, "mcp", "deepwiki", head)).rejects.toThrow(
+      /unsupported Git entry/,
+    );
   });
 
   test("an unreachable commit is unknown before any tree read is attempted", async () => {
