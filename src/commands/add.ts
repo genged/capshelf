@@ -459,6 +459,7 @@ async function planStandaloneFragmentAdd(
   // The pin's own listing, not a second read of the same commit: this must be
   // the exact target set `installDataItem` writes, or the consent gate covers
   // a different set than the install does.
+  await assertPinnedSourcesReadable(ctx.dataRepo, item, pin);
   const targets = [
     ...new Set(
       presentSources(
@@ -514,6 +515,44 @@ async function planStandaloneFragmentAdd(
     ]),
     pin,
   };
+}
+
+/**
+ * Every canonical source the pin lists must read before anything is planned,
+ * consented to, or written.
+ *
+ * `ls-tree` names a path without opening its blob, and the merge that follows
+ * (`fragmentValuesForTarget`) treats a failed `git show` as an absent
+ * contribution. An unreadable pinned blob would therefore be planned as
+ * nothing and consented to as nothing — and if the object became readable in
+ * the window before the write, merged in without ever passing the gate. The
+ * commit and the pin digest are identical throughout, so the plan snapshot
+ * cannot see that transition; refusing the unreadable object up front can.
+ */
+async function assertPinnedSourcesReadable(
+  dataRepo: string,
+  item: MasterItem,
+  pin: PinnedSource,
+): Promise<void> {
+  if (!isFragmentItemKind(item.kind)) return;
+  const sources = presentSources(
+    fragmentTargetPresenceInPaths(
+      item.kind,
+      item.name,
+      pin.entries.map((entry) => entry.repoRelPath),
+    ),
+  );
+  for (const source of sources) {
+    try {
+      await showAtCommit(dataRepo, pin.sourceCommit, source.relPath);
+    } catch (cause) {
+      throw new PreconditionError(
+        `cannot read ${source.relPath} at ${pin.sourceCommit}\n` +
+          "  the pin names this source but the data repo cannot produce its content; no changes were written",
+        { cause },
+      );
+    }
+  }
 }
 
 export interface InstallDataItemOptions {
@@ -671,23 +710,7 @@ export async function installDataItem(
       `${item.kind}/${item.name} has no canonical source files at ${pin.sourceCommit}`,
     );
   }
-  // Tree membership is not readability. The pin lists these paths with
-  // `ls-tree`, which never opens their blobs, while the merge that follows
-  // (`fragmentValuesForTarget`) skips any source whose `git show` fails. An
-  // unreadable pinned blob would therefore be planned, written as an empty
-  // contribution, locked, and reported as a covered target. Proving the read
-  // here turns that into a refusal before anything is written.
-  for (const source of sources) {
-    try {
-      await showAtCommit(dataRepo, pin.sourceCommit, source.relPath);
-    } catch (cause) {
-      throw new PreconditionError(
-        `cannot read ${source.relPath} at ${pin.sourceCommit}\n` +
-          "  the pin names this source but the data repo cannot produce its content; no changes were written",
-        { cause },
-      );
-    }
-  }
+  await assertPinnedSourcesReadable(dataRepo, item, pin);
   const dst = isFragmentItemKind(item.kind)
     ? fragmentOutputPath(project, sources[0]!.target)
     : item.kind === "subagents"

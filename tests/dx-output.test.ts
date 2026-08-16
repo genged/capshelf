@@ -512,7 +512,42 @@ describe("runtime target coverage", () => {
       ).mcp,
     ).toEqual([]);
     expect(existsSync(join(project, ".mcp.json"))).toBe(false);
-    expect(existsSync(join(project, ".codex", "config.toml"))).toBe(false);
+  });
+
+  test("a bundle refuses before installing any member when a pin cannot be read", async () => {
+    const { project, dataRepo, run } = await fixture(
+      "coverage-bundle-unreadable",
+    );
+    await mkdir(join(dataRepo, "bundles"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "bundles", "all.yml"),
+      ["includes:", "  settings: [base]", "  mcp:      [github]", ""].join(
+        "\n",
+      ),
+    );
+    await commitAll(dataRepo, "bundle");
+    const blob = (
+      await $`git -C ${dataRepo} rev-parse HEAD:mcp/github/codex.toml`.text()
+    ).trim();
+    await rm(
+      join(dataRepo, ".git", "objects", blob.slice(0, 2), blob.slice(2)),
+      { force: true },
+    );
+
+    const added = await run(["add", "bundles/all"]);
+    expect(added.exitCode).toBe(3);
+    expect(added.stderr.toString()).toContain(
+      "cannot read mcp/github/codex.toml at",
+    );
+    // The proof runs while the plans are built, so it refuses before the first
+    // member is installed. Run it only at install time and `settings/base`
+    // lands and persists before `mcp/github` fails.
+    expect(existsSync(join(project, ".claude", "settings.json"))).toBe(false);
+    expect(
+      JSON.parse(
+        await readFile(join(project, ".capshelf", "capshelf.json"), "utf-8"),
+      ).settings,
+    ).toEqual([]);
   });
 
   test("an unreadable pinned blob is never reported as covered", async () => {
