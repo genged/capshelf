@@ -423,6 +423,14 @@ describe("runtime target coverage", () => {
     ).toEqual([null, null]);
     expect(unreachableJson.coverageState).toBe("unknown");
 
+    // The re-pin guidance belongs to this state and not to a corrupt object
+    // database, which is unknown for a different reason.
+    const readdHuman = await run(["add", "mcp/deepwiki"], env);
+    expect(readdHuman.stdout.toString()).toContain(
+      "targets: unknown (locked commit unreachable)",
+    );
+    expect(readdHuman.stdout.toString()).toContain("capshelf sync-data");
+
     // `add` on the already-installed branch builds its JSON independently.
     const readd = await run(["add", "mcp/deepwiki", "--json"], env);
     expect(readd.exitCode).toBe(0);
@@ -534,6 +542,28 @@ describe("runtime target coverage", () => {
     expect(row.targetCoverage.map((r: { present: null }) => r.present)).toEqual(
       [null, null],
     );
+  });
+
+  test("re-pin guidance is not offered for an unreadable object database", async () => {
+    const { dataRepo, run } = await fixture("coverage-unknown-reason");
+    expect((await run(["add", "mcp/github"])).exitCode).toBe(0);
+
+    const blob = (
+      await $`git -C ${dataRepo} rev-parse HEAD:mcp/github/codex.toml`.text()
+    ).trim();
+    await rm(
+      join(dataRepo, ".git", "objects", blob.slice(0, 2), blob.slice(2)),
+      { force: true },
+    );
+
+    const readd = await run(["add", "mcp/github"]);
+    expect(readd.exitCode).toBe(0);
+    const stdout = readd.stdout.toString();
+    expect(stdout).toContain("targets: unknown (source tree unreadable)");
+    // `sync-data && update` re-pins a squash-merged commit. It does not repair
+    // an object that will not read, so pointing at it would misdirect.
+    expect(stdout).not.toContain("capshelf sync-data");
+    expect(stdout).not.toContain("squash-merged");
   });
 
   test("a partially unreadable subagent never claims more targets than it lists", async () => {

@@ -44,16 +44,28 @@ export interface TargetCoverage {
   outputPath: string | null;
 }
 
+/**
+ * Why coverage could not be read. A closed set, not free text, because callers
+ * branch on it: the squash-merge re-pin guidance `status` gives belongs to an
+ * unreachable commit and is wrong advice for a corrupt object database.
+ */
+export type CoverageUnknownReason =
+  | "data repo unbound"
+  | "data repo has no commits"
+  | "locked commit unreachable"
+  | "source tree unreadable";
+
 export interface TargetCoverageReport {
   rows: TargetCoverage[];
   /**
    * "unknown" when presence could not be read at a commit — the data repo is
-   * unbound, or the locked sourceCommit is unreachable. Every row then carries
-   * `present: null`, and no gap is reported: an unknown gap is not a gap.
+   * unbound, the locked sourceCommit is unreachable, or its objects do not
+   * read. Every row then carries `present: null`, and no gap is reported: an
+   * unknown gap is not a gap.
    */
   state: "known" | "unknown";
   /** Why coverage is unknown; set only when `state` is "unknown". */
-  reason?: string;
+  reason?: CoverageUnknownReason;
 }
 
 /** The `--json` row shape. `outputPath` is project-relative, as callers emit. */
@@ -200,7 +212,7 @@ export function unknownTargetCoverage(
   project: string | null,
   kind: ItemKind,
   name: string,
-  reason: string,
+  reason: CoverageUnknownReason,
 ): TargetCoverageReport | null {
   if (!hasTargetCoverage(kind, name)) return null;
   const rows =

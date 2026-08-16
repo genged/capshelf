@@ -399,7 +399,13 @@ async function printAlreadyInstalled(
       targetCoverage,
       `${parsed.kind}/${parsed.name}`,
       { presentWord: "present", absentScope: "locked", tracked: true },
-      missingSourceCommitRepinGuidance(parsed.kind, parsed.name, "    "),
+      // Only for the state it describes. A squash-merged commit is re-pinned
+      // by `sync-data && update`; an object database that does not read is
+      // not, and pointing at that repair would send the user somewhere the
+      // problem is not.
+      targetCoverage.reason === "locked commit unreachable"
+        ? missingSourceCommitRepinGuidance(parsed.kind, parsed.name, "    ")
+        : [],
     );
   }
   for (const line of guidance) console.log(`  ${line}`);
