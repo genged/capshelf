@@ -501,6 +501,13 @@ async function planApplyPreflight(
             path: applied.paths.join(", "),
             sha: before,
             currentSha: before,
+            // Deliberately not `entryIdentity(entry)`. `currentSha` is a
+            // legacy content hash of the installed files, and every apply
+            // result keeps the pair in one scheme so a consumer can compare
+            // them; a v4 pin digest here would always look different, even for
+            // `already-current`. Under v4 this is simply absent — a real gap,
+            // recorded in local/TODO.md, whose fix is a hash of the desired
+            // bytes (`shaOfSubagentAtCommit`), not the pin.
             plannedSha: entry.sha,
             dryRun: true,
           }),

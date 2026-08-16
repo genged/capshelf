@@ -13,6 +13,7 @@ import { projectRoot } from "../paths";
 import { resolveDataRepo } from "../data-repo";
 import { loadManifest } from "../manifest";
 import {
+  entryIdentity,
   assertLockV4,
   loadLocalLock,
   loadLock,
@@ -266,7 +267,7 @@ export function registerRevert(program: Command): void {
                   name: parsed.name,
                   action: "already-current",
                   path: accepted.path,
-                  sha: entry.sha,
+                  sha: entryIdentity(entry),
                 },
                 null,
                 2,
@@ -352,7 +353,7 @@ export function registerRevert(program: Command): void {
                   ? ("reconciled" as const)
                   : ("already-current" as const),
                 path: applied.paths.join(", "),
-                sha: nextEntry.sha,
+                sha: entryIdentity(nextEntry),
                 runtimeWarnings: undefined,
               };
             })()

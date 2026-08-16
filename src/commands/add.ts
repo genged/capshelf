@@ -372,7 +372,7 @@ async function printAlreadyInstalled(
           name: parsed.name,
           scope,
           action: "already-installed",
-          sha: entry.sha,
+          sha: entryIdentity(entry),
           ...(entry.source === "data" && {
             sourceCommit: entry.sourceCommit,
             needs: entry.needs ?? { network: [], env: [], bin: [] },
@@ -1069,7 +1069,7 @@ function printBundleJson(
         reason: member.reason ?? "refused",
       }),
       ...(status === "already-installed" && {
-        sha: lock.items[dataKey(member.kind, member.name)]?.sha,
+        sha: memberIdentity(lock, member),
       }),
       ...(status === "added" &&
         result && {
@@ -1357,6 +1357,16 @@ function printMissingRequires(
 
 function addToManifest(m: Manifest, item: MasterItem): void {
   addManifestName(m, item.kind, item.name);
+}
+
+/**
+ * A bundle member's locked identity. Version-4 data entries carry no `sha` —
+ * `createDataLockEntry` writes `sourcePinDigest` — so reading the field
+ * directly dropped the key out of `--json` entirely rather than erroring.
+ */
+function memberIdentity(lock: Lock, member: MemberPlan): string | undefined {
+  const entry = lock.items[dataKey(member.kind, member.name)];
+  return entry ? entryIdentity(entry) : undefined;
 }
 
 function relativeProjectPath(project: string, path: string): string {

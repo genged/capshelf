@@ -16,8 +16,9 @@ import {
 } from "../master";
 import { shaOfCurrentSubagent } from "../subagents";
 import type { ItemKind } from "../master";
-import { loadLocalLock, loadLock } from "../lock";
+import { entryIdentity, loadLocalLock, loadLock } from "../lock";
 import { loadManifest } from "../manifest";
+import { shortIdentity } from "../pin";
 import { parseLockKey } from "../installed";
 import { SYSTEM_ITEMS, findSystemItem, shaOfSystemItem } from "../bundled";
 import { assertIsGitRepo } from "../git";
@@ -251,6 +252,18 @@ async function lsAvailable(
     console.log("");
     console.log(formatUserSkillsHuman(externalUserSkills).join("\n"));
   }
+
+  // An empty data repo is the first thing a new user sees, so name the way out.
+  if (dataRows.length === 0 && bundleRows.length === 0) {
+    console.log("");
+    console.log("next:");
+    console.log(
+      "  capshelf share skills/<name> --to project  # adopt a skill this project already has",
+    );
+    console.log(
+      "  capshelf share mcp/<name>                  # adopt a server from this project's .mcp.json",
+    );
+  }
 }
 
 async function lsUser(
@@ -367,15 +380,32 @@ async function lsHere(
   const localLock = await loadLocalLock(project);
   assertNoScopeCollisions(projectLock, localLock);
 
+  // `lockedSha` rather than the raw `entry.sha`: a version-4 data entry has no
+  // `sha` at all — `createDataLockEntry` writes `sourcePinDigest` — so reading
+  // the field directly printed the literal "undefined" in the human column and
+  // dropped the key entirely from `--json`. `entryIdentity` is the accessor
+  // written for this, and `lockedSha` is what `status --json` already calls it.
   const projectEntries = Object.entries(projectLock.items).map(
     ([key, entry]) => {
       const { kind: k, name } = parseLockKey(key);
-      return { scope: "project" as const, kind: k, name, ...entry };
+      return {
+        scope: "project" as const,
+        kind: k,
+        name,
+        ...entry,
+        lockedSha: entryIdentity(entry),
+      };
     },
   );
   const localEntries = Object.entries(localLock.items).map(([key, entry]) => {
     const { kind: k, name } = parseLockKey(key);
-    return { scope: "local" as const, kind: k, name, ...entry };
+    return {
+      scope: "local" as const,
+      kind: k,
+      name,
+      ...entry,
+      lockedSha: entryIdentity(entry),
+    };
   });
   const entries = [...projectEntries, ...localEntries];
   const kindFiltered = kind ? entries.filter((e) => e.kind === kind) : entries;
@@ -434,7 +464,7 @@ async function lsHere(
     console.log(`system/  (bundled in capshelf ${CLI_VERSION})`);
     for (const { entry, meta } of system) {
       console.log(
-        `  ${entry.kind}/${entry.name.padEnd(26)} ${entry.sha}${meta ? metadataLineSuffix(meta) : ""}`,
+        `  ${entry.kind}/${entry.name.padEnd(26)} ${shortIdentity(entry.lockedSha)}${meta ? metadataLineSuffix(meta) : ""}`,
       );
     }
     printedSection = true;
@@ -456,7 +486,7 @@ async function lsHere(
           ? ` ${entry.label}`
           : "";
       console.log(
-        `  ${entry.kind}/${entry.name.padEnd(26)} ${entry.sha}${label}${meta ? metadataLineSuffix(meta) : ""}`,
+        `  ${entry.kind}/${entry.name.padEnd(26)} ${shortIdentity(entry.lockedSha)}${label}${meta ? metadataLineSuffix(meta) : ""}`,
       );
     }
     printedSection = true;

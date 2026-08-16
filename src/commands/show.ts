@@ -276,9 +276,14 @@ export function registerShow(program: Command): void {
       console.log(`data/${item.kind}/${item.name}`);
       console.log(`  master sha: ${masterSha}`);
       if (lockEntry) {
-        const lockedSha = entryIdentity(lockEntry);
-        const drift = lockedSha !== masterSha ? " (update available)" : "";
-        console.log(`  locked sha: ${shortIdentity(lockedSha)}${drift}`);
+        // No drift claim here. `masterSha` is a content hash of the data repo's
+        // working tree; the lock holds a digest over a committed Git tree. They
+        // answer different questions and can never be equal, so comparing them
+        // printed "(update available)" for every item, forever — the exact
+        // mixing the contract on `entryIdentity` (`src/lock.ts`) forbids.
+        // `status` owns update detection and gets it right; `show` describes
+        // one item.
+        console.log(`  locked sha: ${shortIdentity(entryIdentity(lockEntry))}`);
         if (lockEntry.source === "data") {
           console.log(`  source commit: ${lockEntry.sourceCommit}`);
           if (lockEntry.label) console.log(`  label:      ${lockEntry.label}`);
