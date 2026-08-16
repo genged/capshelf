@@ -13,6 +13,10 @@ import type { ItemNeeds } from "./metadata";
 import type { InstallationAxis } from "./install-identity";
 import type { InstallDifference } from "./install-diff";
 import type { FilteredPath } from "./pin";
+import type {
+  TargetCoverageFields,
+  TargetCoverageJson,
+} from "./target-coverage";
 
 /*
  * PIN-6 axes. `status` reports pin, source, and installation separately and
@@ -88,6 +92,16 @@ export interface StatusRow {
   /** Present for every data row; null means a migrated v2 snapshot. */
   lockedNeeds?: ItemNeeds | null;
   targets?: StatusTargetDetail[];
+  /**
+   * Runtime target coverage at the locked commit, for kinds with more than one
+   * candidate target (`mcp`, `subagents`). Distinct from `targets`, which is
+   * the subagent install state of the sources that exist at that commit.
+   */
+  targetCoverage?: TargetCoverageJson[];
+  /** Set only when coverage could not be read; every row is then `null`. */
+  coverageState?: "unknown";
+  /** Why coverage could not be read; set only alongside `coverageState`. */
+  coverageReason?: string;
 }
 
 export interface StatusTargetDetail {
@@ -207,6 +221,7 @@ export interface BuildStatusRowInput {
   runtimeWarnings: RuntimeWarning[];
   needsState?: NeedsState;
   targets?: StatusTargetDetail[];
+  coverage?: TargetCoverageFields;
   axes?: StatusAxes;
 }
 
@@ -238,6 +253,7 @@ export function buildStatusRow(input: BuildStatusRowInput): StatusRow {
       cliVersion: entry.cliVersion,
     }),
     ...(input.targets !== undefined && { targets: input.targets }),
+    ...(input.coverage !== undefined && input.coverage),
     ...(input.axes !== undefined && {
       pin: input.axes.pin,
       sourceState: input.axes.sourceState,

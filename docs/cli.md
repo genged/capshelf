@@ -243,10 +243,10 @@ registered.
 | `data path` | print the resolved local data repo path; `--json` includes the path and the normalized upstream (`null` when absent) (alias: `data-path`) | implemented |
 | `data sync` | explicitly fetch the bound data repo's `origin` and fast-forward the current branch when provably safe; the only capshelf command that performs network I/O besides the `init --data <url>` bootstrap clone and `self-update` (alias: `sync-data`) | implemented |
 | `ls` | list items in master plus user-level runtime skills by default, in this project (`--here`), or user-level runtime skills only (`--user`); master/project listings show descriptions and `#tags` from item metadata; `--tag` filters master/project listings; appends a `bundles/` section for data-repo bundles | implemented |
-| `show <item>` | print metadata + content for one item, including relations and current/locked declared needs; `--target` narrows MCP or subagent runtime content | implemented |
+| `show <item>` | print metadata + content for one item, including relations and current/locked declared needs, plus runtime target coverage for MCP and subagents; `--target` narrows to one runtime | implemented |
 | `search <query...>` | search available items (data repo + system) and bundles by name, tags, description, and content; supports `--kind` and `--json`; zero matches exit 0 | implemented |
-| `status [<item>]` | drift / update report plus orthogonal `needsState` freshness and locked needs; subagent JSON includes deterministic per-target state; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` explains local drift | implemented |
-| `add <item>` | install a new item from the bound data repo; an already-installed standalone item is a byte- and lock-stable no-op; `--local` installs a clone-local copy item; `--yes` authorizes collateral fragment-output loss for a new fragment, standalone or expanded from a bundle | implemented |
+| `status [<item>]` | drift / update report plus orthogonal `needsState` freshness and locked needs; subagent JSON includes deterministic per-target state; a sub-line names any runtime target an MCP or subagent item does not cover; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` explains local drift | implemented |
+| `add <item>` | install a new item from the bound data repo, materializing exactly what the pin contains; MCP and subagent installs report per-runtime target coverage; an already-installed standalone item is a byte- and lock-stable no-op; `--local` installs a clone-local copy item; `--yes` authorizes collateral fragment-output loss for a new fragment, standalone or expanded from a bundle | implemented |
 | `rm <item>` | remove a locked data item; clean reproducible content is prompt-free, while local edits, modes, extra paths, subagent drift, and fragment comment loss require consent or `--yes` | implemented |
 | `get-path <item>` | print the editable path; subagents and MCP support `--target`, while `--output` returns the corresponding runtime output | implemented |
 | `apply [<item>]` | reconcile project and local files with lockfiles after a full-set destructive preflight; a failing fragment target aborts every write, while an unresolvable copy or subagent item is reported and the rest still converge (exit 1); supports `--local`, `--dry-run`, and `--yes` | implemented |
@@ -399,6 +399,9 @@ Fragments are data repo source files merged into project-owned config outputs:
 or both. If both source files exist, `get-path mcp/<name>` requires
 `--target claude|codex`; `get-path --output` returns the generated output path.
 
+Because an item can carry one target or two, `add`, `show`, and `status` report
+its **target coverage** — see below.
+
 Examples:
 
 ```bash
@@ -538,7 +541,11 @@ target, its formerly managed runtime file is removed too.
 Use `show --target` and `get-path --target` to select a runtime. If only one
 canonical target exists, `get-path` can infer it; when both exist, it requires
 `--target`. `get-path --output` returns the runtime file instead of the data
-repo source.
+repo source. `show --target <t>` on an item with no `<t>` source still refuses
+with exit 3; the message names the canonical path a `<t>` source belongs at.
+
+`add`, `show`, and `status` report which of the two runtimes a subagent covers
+— see Target coverage above.
 
 `share subagents/<name> --to project` adopts every matching unmanaged runtime
 output it finds. The explicit `--from <file>` form requires `--target`.
@@ -556,6 +563,78 @@ Claude sources require YAML frontmatter with non-empty `name` and
 `description`, plus a non-empty Markdown prompt body. Codex sources require
 non-empty TOML `name`, `description`, and `developer_instructions`. A runtime
 name that differs from the Capshelf item name warns but does not fail.
+
+### Target coverage
+
+`mcp/<name>` and `subagents/<name>` each have two candidate runtime targets,
+and an item may carry one source or both. `.mcp.json` is not a neutral fact —
+it is Claude Code's project MCP file — so naming it alone said nothing about
+Codex. `add`, `show`, and `status` therefore state which runtime targets an
+item covers, which it does not, and where the missing source belongs.
+
+`add` and `show` print a block in place of a single output path:
+
+```text
+✓ added project/data/mcp/deepwiki @ c2130d02a163
+  source commit: 59d6b1bdc5e1cd2975e81f95e8ed9d594a0f55be
+  targets:
+    Claude  written  /Users/mg/code/infraloop/.mcp.json
+    Codex   absent   no codex source in this item
+  Codex reads mcp/deepwiki/codex.toml in your data repo.
+  Add it there, commit, then: capshelf update mcp/deepwiki
+```
+
+The block prints whether or not there is a gap. `status` is a whole-project
+overview, so it stays quiet on full coverage and prints one sub-line per item
+that has a gap:
+
+```text
+  ✓   data/mcp/deepwiki                       7d4e24e177c5  up-to-date
+      targets: Claude ✓  Codex ✗ — no codex source at the locked commit
+        Codex reads mcp/deepwiki/codex.toml; add it, commit, then: capshelf update mcp/deepwiki
+```
+
+Rules:
+
+- **A gap is a fact, not a fault.** capshelf has no project-level declaration
+  of which harnesses you use, so a one-target item is a valid install: exit
+  stays 0, there is no `⚠` glyph, and `--strict` is unaffected.
+- **The gap line names a canonical path, never a computed repair command.** The
+  path a target reads is fixed, so the sentence is true whether the source is
+  missing everywhere, present at `HEAD` but not at the locked commit, or
+  present only in the data repo's working tree. `capshelf share <ref> --target
+  <t> --from <file>` remains the convenient route when the file is already on
+  disk, but it refuses in several of the states this report covers, so it is
+  documented rather than printed.
+- **Coverage is read at a commit, never at the worktree.** `add` reads the
+  commit it just pinned; `show` and `status` read an installed item's locked
+  `sourceCommit`, and `HEAD` for an item nothing has pinned.
+- **Coverage can be unknown.** With the data repo unbound or the locked commit
+  unreachable, capshelf cannot say which sources existed, so it prints
+  `targets: unknown (<reason>)`, reports no gap, and emits `"present": null`
+  with `"coverageState": "unknown"` in `--json`.
+- **The Codex project-trust warning follows locked coverage.** An `mcp` item
+  warns about Codex only when its locked commit has a Codex source.
+  `codex-config` items keep the unconditional warning. When coverage is
+  unknown the warning still prints — the gate removes a warning only on
+  evidence.
+- `settings/<name>` and `codex-config/<name>` have one candidate target each
+  and are unchanged: no block, and no `targetCoverage` key in `--json`.
+- `add bundles/<name>` reports no per-member coverage; its members' gaps show
+  up in `status`, which is why that sub-line repeats the whole sentence.
+
+In `--json`, `add`, `show`, and each `status` row gain `targetCoverage`:
+
+```json
+"targetCoverage": [
+  { "target": "claude", "present": true,  "sourcePath": "mcp/deepwiki/claude.json", "outputPath": ".mcp.json" },
+  { "target": "codex",  "present": false, "sourcePath": "mcp/deepwiki/codex.toml",  "outputPath": ".codex/config.toml" }
+]
+```
+
+The key is additive. `sources` keeps its present-only shape, `dst` keeps its
+value, and the subagent `targets` array in `status --json` is untouched —
+consumers filter `targetCoverage` on `present` instead.
 
 ### Pi extensions
 

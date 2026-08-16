@@ -20,9 +20,19 @@ import { installedTreeIdentity } from "./install-identity";
 export const SUBAGENT_TARGETS = ["claude", "codex"] as const;
 export type SubagentTarget = (typeof SUBAGENT_TARGETS)[number];
 
-export interface SubagentSource {
+/** The canonical file each runtime target reads, inside `subagents/<name>/`. */
+const SUBAGENT_SOURCE_FILES: Record<SubagentTarget, string> = {
+  claude: "claude.md",
+  codex: "codex.toml",
+};
+
+/** A candidate target and its canonical source path; no project needed. */
+export interface SubagentCandidate {
   target: SubagentTarget;
   relPath: string;
+}
+
+export interface SubagentSource extends SubagentCandidate {
   outputPath: string;
 }
 
@@ -34,15 +44,85 @@ export function isSubagentTarget(value: string): value is SubagentTarget {
   return (SUBAGENT_TARGETS as readonly string[]).includes(value);
 }
 
+/**
+ * The candidate list without a project. Presence is a fact about the data
+ * repo, and `show` runs outside a project entirely, so it cannot come from
+ * `subagentSourceCandidates` — that one needs a project root to build an
+ * output path at all.
+ */
+export function subagentCandidates(name: string): SubagentCandidate[] {
+  return SUBAGENT_TARGETS.map((target) => ({
+    target,
+    relPath: `subagents/${name}/${SUBAGENT_SOURCE_FILES[target]}`,
+  }));
+}
+
 export function subagentSourceCandidates(
   project: string,
   name: string,
 ): SubagentSource[] {
-  return itemOutputTargets(project, "subagents", name).map((target) => ({
-    target: target.id as SubagentTarget,
-    relPath: target.canonicalRelPath,
-    outputPath: target.outputPath,
+  const outputs = new Map(
+    itemOutputTargets(project, "subagents", name).map(
+      (target) => [target.id, target.outputPath] as const,
+    ),
+  );
+  return subagentCandidates(name).map((candidate) => {
+    const outputPath = outputs.get(candidate.target);
+    if (outputPath === undefined) {
+      throw new Error(
+        `subagents/${name} has no ${candidate.target} output target`,
+      );
+    }
+    return { ...candidate, outputPath };
+  });
+}
+
+/** One candidate target of a subagent, marked present or absent. */
+export interface SubagentTargetPresence {
+  candidate: SubagentCandidate;
+  present: boolean | null;
+}
+
+export function subagentTargetPresence(
+  dataRepo: string,
+  name: string,
+): SubagentTargetPresence[] {
+  return subagentCandidates(name).map((candidate) => ({
+    candidate,
+    present: existsSync(join(dataRepo, ...candidate.relPath.split("/"))),
   }));
+}
+
+export async function subagentTargetPresenceAtCommit(
+  dataRepo: string,
+  name: string,
+  commit: string,
+): Promise<SubagentTargetPresence[]> {
+  const presence: SubagentTargetPresence[] = [];
+  for (const candidate of subagentCandidates(name)) {
+    presence.push({
+      candidate,
+      present:
+        (await objectTypeAtCommit(dataRepo, commit, candidate.relPath)) ===
+        "blob",
+    });
+  }
+  return presence;
+}
+
+function sourcesForPresentTargets(
+  project: string,
+  name: string,
+  presence: SubagentTargetPresence[],
+): SubagentSource[] {
+  const present = new Set(
+    presence
+      .filter((row) => row.present === true)
+      .map((row) => row.candidate.target),
+  );
+  return subagentSourceCandidates(project, name).filter((source) =>
+    present.has(source.target),
+  );
 }
 
 export async function currentSubagentSources(
@@ -50,8 +130,10 @@ export async function currentSubagentSources(
   dataRepo: string,
   name: string,
 ): Promise<SubagentSource[]> {
-  const sources = subagentSourceCandidates(project, name).filter((source) =>
-    existsSync(join(dataRepo, ...source.relPath.split("/"))),
+  const sources = sourcesForPresentTargets(
+    project,
+    name,
+    subagentTargetPresence(dataRepo, name),
   );
   if (sources.length === 0) {
     throw new PreconditionError(
@@ -67,14 +149,11 @@ export async function subagentSourcesAtCommit(
   name: string,
   commit: string,
 ): Promise<SubagentSource[]> {
-  const sources: SubagentSource[] = [];
-  for (const source of subagentSourceCandidates(project, name)) {
-    if (
-      (await objectTypeAtCommit(dataRepo, commit, source.relPath)) === "blob"
-    ) {
-      sources.push(source);
-    }
-  }
+  const sources = sourcesForPresentTargets(
+    project,
+    name,
+    await subagentTargetPresenceAtCommit(dataRepo, name, commit),
+  );
   if (sources.length === 0) {
     throw new Error(
       `subagents/${name} has no canonical target sources at ${commit}`,

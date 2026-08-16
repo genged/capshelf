@@ -525,7 +525,11 @@ ignores.
 | codex-config | merge `codex/config/<name>/config.toml` fragments | `.codex/config.toml` |
 
 Claude and Codex are the same model with different output paths. One project
-manifest can mix them, and one `apply` keeps both toolchains in sync.
+manifest can mix them, and one `apply` keeps both toolchains in sync. An `mcp`
+or `subagents` item may carry one of its two candidate sources or both, so
+`add`, `show`, and `status` report its **target coverage** — every candidate
+runtime target, marked present or absent, with the output path it feeds — read
+at the commit the project pinned, never at the data repo's working tree.
 
 Apply and revert build a complete replacement copy-item tree in a temporary
 sibling directory, verify its bytes and modes, then publish it with renames.

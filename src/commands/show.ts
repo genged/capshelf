@@ -20,7 +20,8 @@ import {
   dataKey,
   systemKey,
 } from "../lock";
-import type { Lock } from "../lock";
+import type { Lock, LockEntry } from "../lock";
+import type { MasterItem } from "../master";
 import { shortIdentity } from "../pin";
 import { loadManifest } from "../manifest";
 import {
@@ -32,7 +33,7 @@ import {
 } from "../metadata";
 import type { ItemMetadata, ItemNeeds } from "../metadata";
 import { findSystemItem, shaOfSystemItem } from "../bundled";
-import { assertIsGitRepo, sourceVisibleFilesUnderPath } from "../git";
+import { assertIsGitRepo, headSha, sourceVisibleFilesUnderPath } from "../git";
 import { globalOpts } from "../global-options";
 import { NotFoundError, PreconditionError } from "../errors";
 import { findMasterItemByRef, parseItemRef } from "../item-ref";
@@ -44,6 +45,17 @@ import {
   sourceMatchesCliTarget,
   sourceTargetForCli,
 } from "../fragments";
+import type { FragmentSourceTarget } from "../fragments";
+import {
+  RUNTIME_TARGET_LABELS,
+  formatCoverageGap,
+  formatTargetCoverageBlock,
+  itemTargetCoverageAtCommit,
+  restrictCoverage,
+  targetCoverageJson,
+  unknownTargetCoverage,
+} from "../target-coverage";
+import type { TargetCoverageReport } from "../target-coverage";
 import {
   printRuntimeWarnings,
   runtimeWarningsForItem,
@@ -149,24 +161,33 @@ export function registerShow(program: Command): void {
                 opts.target === undefined || source.target === opts.target,
             )
           : [];
+      const projectEntry = lock.items[dataKey(item.kind, item.name)];
+      const lockEntry =
+        projectEntry ?? localLock.items[dataKey(item.kind, item.name)] ?? null;
+      // `update` needs an item this project tracks; the canonical-path
+      // sentence needs nothing, so browse-only show prints it alone.
+      const tracked = project !== null && lockEntry !== null;
+      const itemLabel = `${item.kind}/${item.name}`;
+      const wholeCoverage = await showTargetCoverage(
+        project,
+        dataRepo,
+        item,
+        lockEntry,
+      );
+      const coverage = wholeCoverage
+        ? restrictCoverage(wholeCoverage, cliTarget)
+        : null;
       if (isFragmentItemKind(item.kind) && fragmentSources.length === 0) {
-        throw new PreconditionError(
-          `no matching fragment source for ${itemRef}`,
-        );
+        throw missingTargetSource(itemLabel, cliTarget, wholeCoverage, tracked);
       }
       if (item.kind === "subagents" && subagentSources.length === 0) {
-        throw new PreconditionError(
-          `no ${opts.target ?? "matching"} target source for ${itemRef}`,
-        );
+        throw missingTargetSource(itemLabel, cliTarget, wholeCoverage, tracked);
       }
       const masterSha = isFragmentItemKind(item.kind)
         ? await shaOfFragmentItem(dataRepo, item.kind, item.name)
         : item.kind === "subagents"
           ? await shaOfCurrentSubagent(project ?? "", dataRepo, item.name)
           : await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
-      const projectEntry = lock.items[dataKey(item.kind, item.name)];
-      const lockEntry =
-        projectEntry ?? localLock.items[dataKey(item.kind, item.name)] ?? null;
       const meta = await loadDataItemMetadata(item);
       printMetadataWarnings(meta);
       const committedNeeds = await captureCommittedItemNeeds(dataRepo, item);
@@ -217,6 +238,7 @@ export function registerShow(program: Command): void {
                     : null,
                 })),
               }),
+              ...(coverage && targetCoverageJson(coverage, project)),
               sourceCommit:
                 lockEntry?.source === "data" ? lockEntry.sourceCommit : null,
               label:
@@ -258,6 +280,19 @@ export function registerShow(program: Command): void {
         );
       }
       console.log(`  path:       ${item.path}`);
+      if (coverage) {
+        for (const line of formatTargetCoverageBlock(coverage, {
+          presentWord: "present",
+          absentScope: lockEntry?.source === "data" ? "locked" : "item",
+        })) {
+          console.log(line);
+        }
+        for (const line of formatCoverageGap(coverage, itemLabel, {
+          tracked,
+        })) {
+          console.log(line);
+        }
+      }
 
       if (runtimeWarnings.length > 0) {
         console.log("");
@@ -314,6 +349,74 @@ export function registerShow(program: Command): void {
 
 function relativeProjectPath(project: string, path: string): string {
   return path.startsWith(`${project}/`) ? path.slice(project.length + 1) : path;
+}
+
+/**
+ * Coverage is read at a commit, never at the worktree. An installed item is
+ * described by what the project actually has — its locked `sourceCommit`. For
+ * an item nothing has pinned, `HEAD` is what a later `add` would pin.
+ */
+async function showTargetCoverage(
+  project: string | null,
+  dataRepo: string,
+  item: MasterItem,
+  lockEntry: LockEntry | null,
+): Promise<TargetCoverageReport | null> {
+  if (lockEntry?.source === "data") {
+    return await itemTargetCoverageAtCommit(
+      project,
+      dataRepo,
+      item.kind,
+      item.name,
+      lockEntry.sourceCommit,
+    );
+  }
+  const head = await headSha(dataRepo).catch(() => null);
+  if (head === null) {
+    return unknownTargetCoverage(
+      project,
+      item.kind,
+      item.name,
+      "data repo has no commits",
+    );
+  }
+  return await itemTargetCoverageAtCommit(
+    project,
+    dataRepo,
+    item.kind,
+    item.name,
+    head,
+  );
+}
+
+/**
+ * `--target <t>` on an item with no `<t>` source keeps refusing with exit 3:
+ * turning a documented failure into a success would break scripts. Only the
+ * message improves — it names the canonical path a `<t>` source belongs at.
+ */
+function missingTargetSource(
+  itemLabel: string,
+  target: FragmentSourceTarget | null,
+  coverage: TargetCoverageReport | null,
+  tracked: boolean,
+): PreconditionError {
+  if (target === null) {
+    return new PreconditionError(`no matching source for ${itemLabel}`);
+  }
+  const row = coverage?.rows.find((candidate) => candidate.target === target);
+  return new PreconditionError(
+    [
+      `${itemLabel} has no ${target} source`,
+      ...(row
+        ? [
+            `  ${RUNTIME_TARGET_LABELS[target]} reads ${row.sourcePath} in your data repo.`,
+            ...(tracked
+              ? [`  Add it there, commit, then: capshelf update ${itemLabel}`]
+              : []),
+          ]
+        : []),
+    ].join("\n"),
+  );
 }
 
 /**

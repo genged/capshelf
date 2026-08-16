@@ -2,6 +2,7 @@ import { homeRelative } from "./paths";
 import { assertNever } from "./assert";
 import { formatRuntimeWarnings } from "./runtime-warnings";
 import { shortIdentity } from "./pin";
+import { RUNTIME_TARGET_LABELS } from "./target-coverage";
 import type {
   ExternalClaudePlugin,
   ExternalSkill,
@@ -258,9 +259,43 @@ function formatRow(r: StatusRow): string[] {
   const label = r.label ? ` ${r.label}` : "";
   return [
     `  ${g} ${id} ${shortIdentity(r.lockedSha)}${label}  ${describe(r)}`,
+    ...targetCoverageGuidance(r),
     ...missingSourceCommitGuidance(r),
     ...needsStateGuidance(r),
     ...formatRuntimeWarnings(r.runtimeWarnings, "    "),
+  ];
+}
+
+/**
+ * A gap in the item's runtime target coverage, and where the missing source
+ * belongs. Full coverage prints nothing extra: `status` is a whole-project
+ * overview, and a line per healthy item would bury the rows that need
+ * attention. Unknown coverage prints nothing either — an unknown gap is not a
+ * gap. A bundle install reports no per-member coverage, so this is the only
+ * surface a bundle user sees, which is why it repeats `add`'s sentence.
+ */
+function targetCoverageGuidance(r: StatusRow): string[] {
+  if (r.coverageState === "unknown") {
+    return [`      targets: unknown (${r.coverageReason ?? "not readable"})`];
+  }
+  const rows = r.targetCoverage ?? [];
+  const absent = rows.filter((row) => row.present === false);
+  if (absent.length === 0) return [];
+  const summary = rows
+    .map(
+      (row) =>
+        `${RUNTIME_TARGET_LABELS[row.target]} ${row.present === true ? "✓" : "✗"}`,
+    )
+    .join("  ");
+  const reason = absent
+    .map((row) => `no ${row.target} source at the locked commit`)
+    .join("; ");
+  return [
+    `      targets: ${summary} — ${reason}`,
+    ...absent.map(
+      (row) =>
+        `        ${RUNTIME_TARGET_LABELS[row.target]} reads ${row.sourcePath}; add it, commit, then: capshelf update ${r.kind}/${r.name}`,
+    ),
   ];
 }
 
@@ -284,10 +319,23 @@ function needsStateGuidance(r: StatusRow): string[] {
 
 function missingSourceCommitGuidance(r: StatusRow): string[] {
   if (r.state !== "missing_source_commit") return [];
+  return missingSourceCommitRepinGuidance(r.kind, r.name);
+}
+
+/**
+ * What to do about a locked `sourceCommit` the data repo cannot reach. Shared
+ * with `add`'s already-installed branch, which reports the same unreachable
+ * commit as unknown target coverage.
+ */
+export function missingSourceCommitRepinGuidance(
+  kind: string,
+  name: string,
+  indent = "      ",
+): string[] {
   return [
-    "      if it was merged upstream (e.g. squash-merged), re-pin the lock:",
-    `        capshelf sync-data && capshelf update ${r.kind}/${r.name}`,
-    "      if it only exists in another clone, fetch or push that clone first.",
+    `${indent}if it was merged upstream (e.g. squash-merged), re-pin the lock:`,
+    `${indent}  capshelf sync-data && capshelf update ${kind}/${name}`,
+    `${indent}if it only exists in another clone, fetch or push that clone first.`,
   ];
 }
 

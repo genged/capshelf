@@ -247,14 +247,73 @@ export function fragmentSourceCandidates(
   }
 }
 
+/**
+ * One candidate runtime target of an item, marked present or absent.
+ *
+ * The whole candidate record is carried, not a flattened tuple:
+ * `FragmentSource.target` is an *output* target, not a runtime one, and
+ * callers pass `kind`, `name`, `format`, and `relPath` into output planning,
+ * validation, JSON rendering, and content reads.
+ *
+ * `present` is `boolean | null`. `null` means coverage was not readable at
+ * all — a caller that could not reach a commit builds the rows itself.
+ */
+export interface TargetPresence {
+  source: FragmentSource;
+  /** "claude" | "codex" for multi-target kinds; null for single-target kinds. */
+  runtimeTarget: FragmentSourceTarget | null;
+  present: boolean | null;
+}
+
+export function fragmentTargetPresence(
+  dataRepo: string,
+  kind: FragmentItemKind,
+  name: string,
+): TargetPresence[] {
+  return fragmentSourceCandidates(kind, name).map((source) => ({
+    source,
+    runtimeTarget: source.sourceTarget ?? null,
+    present: existsSync(join(dataRepo, ...source.relPath.split("/"))),
+  }));
+}
+
+export async function fragmentTargetPresenceAtCommit(
+  dataRepo: string,
+  kind: FragmentItemKind,
+  name: string,
+  commit: string,
+  manifest?: Manifest,
+): Promise<TargetPresence[]> {
+  await assertSourceCommitExists(dataRepo, commit, manifest);
+  const presence: TargetPresence[] = [];
+  for (const source of fragmentSourceCandidates(kind, name)) {
+    presence.push({
+      source,
+      runtimeTarget: source.sourceTarget ?? null,
+      present: await sourceExistsAtCommit(dataRepo, commit, source.relPath),
+    });
+  }
+  return presence;
+}
+
+/**
+ * The present half of a presence list. `fragmentSources` and
+ * `fragmentSourcesAtCommit` are expressed through this so the records they
+ * return are the same objects the coverage report describes, and the two
+ * cannot drift.
+ */
+export function presentSources(presence: TargetPresence[]): FragmentSource[] {
+  return presence
+    .filter((row) => row.present === true)
+    .map((row) => row.source);
+}
+
 export async function fragmentSources(
   dataRepo: string,
   kind: FragmentItemKind,
   name: string,
 ): Promise<FragmentSource[]> {
-  const sources = fragmentSourceCandidates(kind, name).filter((source) =>
-    existsSync(join(dataRepo, ...source.relPath.split("/"))),
-  );
+  const sources = presentSources(fragmentTargetPresence(dataRepo, kind, name));
   if (sources.length === 0) {
     throw new PreconditionError(
       `data repo does not have canonical source files for ${kind}/${name}`,
@@ -270,14 +329,15 @@ export async function fragmentSourcesAtCommit(
   commit: string,
   manifest?: Manifest,
 ): Promise<FragmentSource[]> {
-  await assertSourceCommitExists(dataRepo, commit, manifest);
-  const sources: FragmentSource[] = [];
-  for (const source of fragmentSourceCandidates(kind, name)) {
-    if (await sourceExistsAtCommit(dataRepo, commit, source.relPath)) {
-      sources.push(source);
-    }
-  }
-  return sources;
+  return presentSources(
+    await fragmentTargetPresenceAtCommit(
+      dataRepo,
+      kind,
+      name,
+      commit,
+      manifest,
+    ),
+  );
 }
 
 export async function shaOfFragmentItem(

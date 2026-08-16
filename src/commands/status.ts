@@ -68,6 +68,13 @@ import {
   shaOfInstalledSubagent,
   subagentTargetStatusAtCommit,
 } from "../subagents";
+import {
+  coversTarget,
+  itemTargetCoverageAtCommit,
+  targetCoverageJson,
+  unknownTargetCoverage,
+} from "../target-coverage";
+import type { TargetCoverageReport } from "../target-coverage";
 
 interface StatusOptions {
   json?: boolean;
@@ -388,6 +395,35 @@ export function registerStatus(program: Command): void {
                 }))
               : undefined;
 
+          // Coverage is read at the locked commit, never at the worktree, so
+          // `status` describes what the project actually has. When it cannot
+          // be read at all — no data repo, or an unreachable pin — the rows
+          // degrade to `present: null` instead of the command crashing.
+          const targetCoverage =
+            entry.source === "data"
+              ? !dataRepo
+                ? unknownTargetCoverage(
+                    project,
+                    kind,
+                    itemName,
+                    "data repo unbound",
+                  )
+                : sourceCommitPresent === false
+                  ? unknownTargetCoverage(
+                      project,
+                      kind,
+                      itemName,
+                      "locked commit unreachable",
+                    )
+                  : await itemTargetCoverageAtCommit(
+                      project,
+                      dataRepo,
+                      kind,
+                      itemName,
+                      entry.sourceCommit,
+                    )
+              : null;
+
           rows.push(
             buildStatusRow({
               scope,
@@ -405,10 +441,18 @@ export function registerStatus(program: Command): void {
                   ? deriveNeedsState(entry.needs ?? null, currentNeeds)
                   : undefined,
               targets: subagentTargets,
+              ...(targetCoverage !== null && {
+                coverage: targetCoverageJson(targetCoverage, project),
+              }),
               ...(axes !== undefined && { axes }),
               runtimeWarnings: [
                 ...runtimeWarningsForItem(project, kind, itemName),
-                ...codexWarningsForItem(project, kind, itemName),
+                ...codexWarningsForItem(
+                  project,
+                  kind,
+                  itemName,
+                  targetCoverage,
+                ),
               ],
             }),
           );
@@ -579,10 +623,20 @@ function printDiffs(diffs: StatusDiff[]): void {
   }
 }
 
+/**
+ * The Codex project-trust warning used to be emitted for every `mcp` item,
+ * whatever its sources: a claude-only item warned about the harness it does
+ * not reach, and said nothing about the one it does not cover.
+ *
+ * The gate may only *remove* a warning on evidence that the locked commit has
+ * no Codex source. Unknown coverage falls back to today's behavior and emits,
+ * so a degraded project never silently loses a warning.
+ */
 function codexWarningsForItem(
   project: string,
   kind: ItemKind,
   name: string,
+  coverage: TargetCoverageReport | null,
 ): RuntimeWarning[] {
   if (kind === "subagents") {
     const hasCodexTarget = itemOutputTargets(project, kind, name).some(
@@ -591,6 +645,14 @@ function codexWarningsForItem(
     return hasCodexTarget ? codexProjectTrustWarnings(project) : [];
   }
   if (kind !== "mcp" && kind !== "codex-config") {
+    return [];
+  }
+  if (
+    kind === "mcp" &&
+    coverage !== null &&
+    coverage.state === "known" &&
+    !coversTarget(coverage, "codex")
+  ) {
     return [];
   }
   return codexProjectTrustWarnings(project);

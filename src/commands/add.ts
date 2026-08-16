@@ -75,10 +75,19 @@ import {
   assertFragmentSourcesClean,
   fragmentContributionState,
   fragmentOutputPath,
-  fragmentSourcesAtCommit,
+  fragmentTargetPresenceAtCommit,
   lockedFragmentTargetsForItem,
   planFragmentOutput,
+  presentSources,
 } from "../fragments";
+import {
+  formatCoverageGap,
+  formatTargetCoverageBlock,
+  itemTargetCoverageAtCommit,
+  targetCoverageJson,
+} from "../target-coverage";
+import type { TargetCoverageReport } from "../target-coverage";
+import { missingSourceCommitRepinGuidance } from "../status-format";
 import type {
   FragmentApplyResult,
   FragmentOutputPlan,
@@ -126,6 +135,8 @@ export interface InstallDataItemResult {
   dst: string;
   wasAlreadyInstalled: boolean;
   sources: FragmentSource[];
+  /** Runtime target coverage for `mcp` and `subagents`; null for other kinds. */
+  targetCoverage: TargetCoverageReport | null;
   outputResults: FragmentApplyResult[];
   runtimeWarnings: RuntimeWarning[];
   missingRequires: string[];
@@ -231,6 +242,8 @@ export function registerAdd(program: Command): void {
               ...(result.sources.length > 0 && {
                 sources: fragmentSourcesJson(ctx.project, result),
               }),
+              ...(result.targetCoverage &&
+                targetCoverageJson(result.targetCoverage, ctx.project)),
               ...(result.runtimeWarnings.length > 0 && {
                 runtimeWarnings: result.runtimeWarnings,
               }),
@@ -253,7 +266,14 @@ export function registerAdd(program: Command): void {
         `✓ added ${scope}/data/${item.kind}/${item.name} @ ${shortIdentity(result.sha)}`,
       );
       console.log(`  source commit: ${result.sourceCommit}`);
-      console.log(`  ${result.dst}`);
+      if (result.targetCoverage) {
+        printTargetCoverage(result.targetCoverage, itemRefLabel(item), {
+          presentWord: "written",
+          tracked: true,
+        });
+      } else {
+        console.log(`  ${result.dst}`);
+      }
       printDeclaredNeeds(result.needs);
       printRuntimeWarnings(result.runtimeWarnings);
       printMissingRequires(`${item.kind}/${item.name}`, result.missingRequires);
@@ -312,6 +332,21 @@ async function printAlreadyInstalled(
     parsed.kind,
     parsed.name,
   );
+  // This branch returns from the lock entry before any master item is
+  // resolved, and a locked sourceCommit can be unreachable — history
+  // rewritten upstream, or a clone that never fetched it. Coverage then
+  // degrades to `unknown` rather than crashing the most likely way a user
+  // checks what an item covers: re-running `add`.
+  const targetCoverage =
+    entry.source === "data"
+      ? await itemTargetCoverageAtCommit(
+          ctx.project,
+          ctx.dataRepo,
+          parsed.kind,
+          parsed.name,
+          entry.sourceCommit,
+        )
+      : null;
   const missingRequires =
     entry.source === "data"
       ? (
@@ -343,6 +378,8 @@ async function printAlreadyInstalled(
           }),
           wasAlreadyInstalled: true,
           guidance,
+          ...(targetCoverage &&
+            targetCoverageJson(targetCoverage, ctx.project)),
           ...(runtimeWarnings.length > 0 && { runtimeWarnings }),
           ...(missingRequires.length > 0 && { missingRequires }),
         },
@@ -355,6 +392,14 @@ async function printAlreadyInstalled(
   console.log(
     `= already installed ${scope}/data/${parsed.kind}/${parsed.name} @ ${shortIdentity(entryIdentity(entry))}`,
   );
+  if (targetCoverage) {
+    printTargetCoverage(
+      targetCoverage,
+      `${parsed.kind}/${parsed.name}`,
+      { presentWord: "present", absentScope: "locked", tracked: true },
+      missingSourceCommitRepinGuidance(parsed.kind, parsed.name, "    "),
+    );
+  }
   for (const line of guidance) console.log(`  ${line}`);
   printRuntimeWarnings(runtimeWarnings);
   printMissingRequires(`${parsed.kind}/${parsed.name}`, missingRequires);
@@ -559,8 +604,8 @@ export async function installDataItem(
   // `add` and `apply` disagree about one lock entry — a dirty-deleted
   // `mcp/<n>/codex.toml` left `.codex/config.toml` unwritten until an
   // unrelated `apply` ran.
-  const sources = isFragmentItemKind(item.kind)
-    ? await fragmentSourcesAtCommit(
+  const presence = isFragmentItemKind(item.kind)
+    ? await fragmentTargetPresenceAtCommit(
         dataRepo,
         item.kind,
         item.name,
@@ -568,6 +613,16 @@ export async function installDataItem(
         manifest,
       )
     : [];
+  const sources = presentSources(presence);
+  // The install branch always resolves the item and pins a fresh commit, so
+  // coverage is never unknown here.
+  const targetCoverage = await itemTargetCoverageAtCommit(
+    project,
+    dataRepo,
+    item.kind,
+    item.name,
+    pin.sourceCommit,
+  );
   if (isFragmentItemKind(item.kind) && sources.length === 0) {
     throw new PreconditionError(
       `${item.kind}/${item.name} has no canonical source files at ${pin.sourceCommit}`,
@@ -683,6 +738,7 @@ export async function installDataItem(
     dst,
     wasAlreadyInstalled: alreadyInManifest && alreadyInLock,
     sources,
+    targetCoverage,
     outputResults,
     runtimeWarnings,
     missingRequires,
@@ -1066,6 +1122,42 @@ function collectRuntimeWarnings(
 function printDeclaredNeeds(needs: ItemNeeds, indent = "  "): void {
   const line = formatDeclaredNeeds(needs);
   if (line) console.log(`${indent}${line}`);
+}
+
+function itemRefLabel(item: MasterItem): string {
+  return `${item.kind}/${item.name}`;
+}
+
+/**
+ * The target block plus, when a target is absent, the sentence that names the
+ * canonical path it reads. Both go to stdout with the rest of the result,
+ * matching `printRuntimeWarnings`.
+ */
+function printTargetCoverage(
+  report: TargetCoverageReport,
+  itemRef: string,
+  opts: {
+    presentWord: "written" | "present";
+    absentScope?: "item" | "locked";
+    tracked: boolean;
+  },
+  unknownGuidance: string[] = [],
+): void {
+  for (const line of formatTargetCoverageBlock(report, {
+    presentWord: opts.presentWord,
+    ...(opts.absentScope && { absentScope: opts.absentScope }),
+  })) {
+    console.log(line);
+  }
+  if (report.state === "unknown") {
+    for (const line of unknownGuidance) console.log(line);
+    return;
+  }
+  for (const line of formatCoverageGap(report, itemRef, {
+    tracked: opts.tracked,
+  })) {
+    console.log(line);
+  }
 }
 
 function fragmentSourcesJson(

@@ -9,9 +9,13 @@ export HOME="$TMP/home"
 DATA="$TMP/data"
 A="$TMP/project-a"
 
-mkdir -p "$HOME" "$DATA/mcp/github" "$A/sub"
+mkdir -p "$HOME" "$DATA/mcp/github" "$DATA/mcp/deepwiki" "$A/sub"
 cat > "$DATA/mcp/github/claude.json" <<'JSON'
 {"mcpServers":{"github":{"command":"github-mcp","args":["stdio"]}}}
+JSON
+# Claude-only: the reported gap and the canonical path a Codex source needs.
+cat > "$DATA/mcp/deepwiki/claude.json" <<'JSON'
+{"mcpServers":{"deepwiki":{"command":"deepwiki-mcp"}}}
 JSON
 cat > "$DATA/mcp/github/codex.toml" <<'TOML'
 [mcp_servers.github]
@@ -34,6 +38,20 @@ if [[ -e "$A/.agents/mcp/github" ]]; then
   echo "unexpected old MCP install directory"
   exit 1
 fi
+assert_contains '"targetCoverage"' "$TMP/mcp-add.json"
+
+# A claude-only item: `add` names the target it does not cover and where the
+# missing source belongs; `status` repeats it as a gap sub-line.
+(cd "$A" && "${CLI[@]}" add mcp/deepwiki > "$TMP/deepwiki-add.txt")
+assert_fixed_contains 'Codex   absent   no codex source in this item' "$TMP/deepwiki-add.txt"
+assert_fixed_contains 'Codex reads mcp/deepwiki/codex.toml in your data repo.' "$TMP/deepwiki-add.txt"
+assert_fixed_contains 'capshelf update mcp/deepwiki' "$TMP/deepwiki-add.txt"
+assert_fixed_not_contains 'deepwiki' "$A/.codex/config.toml"
+(cd "$A" && "${CLI[@]}" status mcp/deepwiki > "$TMP/deepwiki-status.txt")
+assert_fixed_contains 'targets: Claude ✓  Codex ✗' "$TMP/deepwiki-status.txt"
+(cd "$A" && "${CLI[@]}" status mcp/github > "$TMP/github-status.txt")
+assert_fixed_not_contains 'targets:' "$TMP/github-status.txt"
+(cd "$A" && "${CLI[@]}" rm mcp/deepwiki --yes >/dev/null)
 
 cat > "$A/.mcp.json" <<'JSON'
 {"localOnly":true,"mcpServers":{"local":{"command":"local-mcp"},"github":{"command":"github-mcp","args":["stdio"]}}}
