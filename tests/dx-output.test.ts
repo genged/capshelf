@@ -1,5 +1,13 @@
+import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import { commitAll, runInProcess, tempDir, tempRepo } from "./cli-fixtures";
 
@@ -436,6 +444,35 @@ describe("runtime target coverage", () => {
     } finally {
       await rename(moved, dataRepo);
     }
+  });
+
+  test("an unreadable subagent tree degrades the row instead of exiting", async () => {
+    const { dataRepo, run } = await fixture("coverage-unreadable-tree");
+    expect((await run(["add", "subagents/reviewer"])).exitCode).toBe(0);
+
+    // The locked commit still resolves, so the unreachable-commit gate passes,
+    // but its tree does not read. `subagentSourcesAtCommit` cannot tell that
+    // from "this item has no sources" and throws.
+    const tree = (
+      await $`git -C ${dataRepo} rev-parse HEAD:subagents/reviewer`.text()
+    ).trim();
+    await rm(
+      join(dataRepo, ".git", "objects", tree.slice(0, 2), tree.slice(2)),
+      { force: true },
+    );
+
+    const status = await run(["status", "subagents/reviewer"]);
+    expect(status.exitCode).toBe(0);
+    expect(status.stdout.toString()).toContain(
+      "targets: unknown (source tree unreadable)",
+    );
+
+    const row = JSON.parse(
+      (await run(["status", "subagents/reviewer", "--json"])).stdout.toString(),
+    ).items[0];
+    expect(row.coverageState).toBe("unknown");
+    // Omitted, not emptied: `targets: []` would claim the item has no targets.
+    expect(row.targets).toBeUndefined();
   });
 
   test("show outside a project prints presence without a path or an update line", async () => {

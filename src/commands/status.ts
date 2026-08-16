@@ -382,17 +382,29 @@ export function registerStatus(program: Command): void {
             entry.source === "data" &&
             dataRepo &&
             sourceCommitPresent !== false
-              ? (
-                  await subagentTargetStatusAtCommit(
-                    project,
-                    dataRepo,
-                    itemName,
-                    entry.sourceCommit,
+              ? await subagentTargetStatusAtCommit(
+                  project,
+                  dataRepo,
+                  itemName,
+                  entry.sourceCommit,
+                )
+                  .then((details) =>
+                    details.map((detail) => ({
+                      ...detail,
+                      outputPath: relative(project, detail.outputPath),
+                    })),
                   )
-                ).map((detail) => ({
-                  ...detail,
-                  outputPath: relative(project, detail.outputPath),
-                }))
+                  // The locked commit resolves but its tree does not read.
+                  // `subagentSourcesAtCommit` cannot tell that from "this item
+                  // has no sources" and throws, which would exit the whole
+                  // report — `status` degrades instead, the way
+                  // `describeInstallation` already does for the same failure
+                  // (`src/install-identity.ts:107-111`). The key is omitted
+                  // rather than emptied: an empty `targets` array would claim
+                  // the item has no targets, which is the false absence this
+                  // report exists to remove. `targetCoverage` says `unknown`
+                  // beside it.
+                  .catch(() => undefined)
               : undefined;
 
           // Coverage is read at the locked commit, never at the worktree, so
