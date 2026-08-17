@@ -6,7 +6,8 @@ living docs and source over copying long procedures here.
 
 ## Conversational Style
 
-- Keep answers short and concise 
+- Write technical text with the rules of ASD-STE100 Simplified Technical English. STE is the controlled language that aerospace and defense manufacturers use for maintenance documentation. The rules exist so that a tired reader who is not a native English speaker cannot misread an instruction. They remove the usual signs of AI-generated text as a side effect: long sentences, synonym rotation, hedges, filler, and decorative clauses.
+- Write for that tired reader. Each sentence must survive one read.
 - Technical prose only, be direct
 - When the user asks a question, answer it first before making edits or running implementation commands.
 
@@ -56,8 +57,8 @@ enough.
 
 ## Git
 
-Multiple sessions may be running in this cwd at the same time, each modifying different files. 
-Git operations that touch unstaged, staged, or untracked files outside your own changes will stomp 
+Multiple sessions may be running in this cwd at the same time, each modifying different files.
+Git operations that touch unstaged, staged, or untracked files outside your own changes will stomp
 on other sessions' work. Follow these rules:
 
 Committing:
@@ -85,8 +86,9 @@ If rebase conflicts occur:
 - Preserve opt-in update safety. A promote from one project must not mutate
   another project; other projects only change when they run `capshelf update`.
 - Settings fragments merge into `.claude/settings.json` while preserving
-  project-local settings. `promote settings/<name>` is intentionally rejected
-  until fragment promotion exists.
+  project-local settings. `promote settings/<name>` commits the fragment's
+  canonical source file, `settings/<name>/settings.json`, in the data repo; the
+  merged output is a product of that source, never the thing promoted.
 - Treat skills managed by `skills.sh`, Claude marketplace plugins, and
   personal Claude skills as external state. Report or warn; do not co-manage.
 - Keep command output scriptable. Preserve `--json`, dry-run behavior, and
@@ -101,6 +103,54 @@ If rebase conflicts occur:
   this; `./scripts/check-release-docs-frozen.sh --audit` lists past breaches.
   What's New pages before 0.6 predate the policy and are grandfathered.
 
+## Claims and Verification
+
+These rules exist because a design document in this repository asserted four
+things about the code that were false, each stated as confidently as the claims
+that were true. A reader cannot tell the two apart, so the rules make the
+difference visible instead of relying on care.
+
+- **A claim about code carries a citation.** Any statement that the code does X
+  — in a spec, a plan, a review, a commit message, or a comment — cites
+  `file:line`. Anything uncited is a hypothesis and says so ("expected",
+  "probably", "unverified"). This applies hardest to claims that *nothing*
+  breaks: "deleting this loses nothing" needs the enumeration that shows it.
+- **Verify before you depend on it.** Read the file before asserting what it
+  does. A grep hit is evidence a string exists, not evidence of behavior; an
+  anchored regex that finds nothing is evidence of nothing at all. When a claim
+  decides a design, reproduce it — run the command, read the schema, check the
+  flag in the right help text.
+- **Verify claims about external tools the same way.** Versions change. Confirm
+  a CLI's behavior against the installed binary, not from memory, and quote what
+  it printed.
+- **State the reversal.** When a verified fact overturns an earlier decision,
+  record what changed and why in the document itself. Silent correction hides
+  the fact that the reasoning was once wrong, which is the part a later reader
+  needs most.
+
+## Review of Design Changes
+
+- **An adversarial review of a design needs code access.** A reviewer working
+  only from a written summary produces sound abstract reasoning and misses the
+  defects that live in the source. Give the reviewer the repository, or treat
+  its findings as hypotheses to be checked here.
+- **Check every finding against this repository before accepting it.** A
+  reviewer can be wrong about the code too, and a confidently wrong finding
+  applied without checking is worse than no review.
+- **Preserve disagreement.** Record what was accepted, what was rejected, and
+  the evidence for each. Do not manufacture consensus.
+
+## Wide Edits
+
+- **After a wide-ranging edit, run mechanical structure checks**, not just a
+  read-through. Count section headers for duplicates, verify every relative link
+  resolves, confirm code fences balance, and grep for claims the edit was
+  supposed to remove. A careful read misses a duplicated section; a header count
+  does not.
+- **Prefer a rewrite to many overlapping edits** when a change touches most of a
+  document. Sequential edits with overlapping boundaries silently leave stale
+  fragments behind.
+
 ## Local-only docs
 
 - If `local/` exists, treat it as separate, local-only context.
@@ -112,5 +162,5 @@ If rebase conflicts occur:
 
 ## User Override
 
-If the user's instructions conflict with any rule in this document, 
+If the user's instructions conflict with any rule in this document,
 ask for explicit confirmation before overriding. Only then execute their instructions.
