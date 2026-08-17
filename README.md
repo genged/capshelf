@@ -22,6 +22,14 @@ settings overlays, the same MCP servers. Copy them by hand and every project
 drifts out of date. Symlink the whole directory and an edit for one project
 silently changes all of them, with no diff and no way to keep a local variant.
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/diagram-flow-dark.svg">
+    <img src="docs/diagram-flow-light.svg" width="900"
+      alt="One Git data repo holds shared skills, Pi extensions, subagents, and config fragments. The project my-app adds an item, edits it, and promotes the edit back to the data repo, which commits locally and never pushes. The project other-app still holds the version it pinned; capshelf status reports that a newer version exists, and no file there changes until someone runs capshelf update." />
+  </picture>
+</p>
+
 Two projects, `my-app` and `other-app`, both using a shared `security-review`
 skill. `other-app` installs it from the data repo:
 
@@ -91,7 +99,7 @@ Its files change only when someone runs `capshelf update` there.
 brew install genged/tap/capshelf
 ```
 
-Capshelf also needs `git` on your `PATH`.
+Capshelf also needs `git` 2.40 or newer on your `PATH`.
 
 Without Homebrew, use the install script. It downloads the latest GitHub
 release for your platform, verifies its SHA-256 checksum, and installs to
@@ -395,6 +403,7 @@ Each project gets a `.capshelf/` directory:
   capshelf.lock.json   committed lock: committed-tree digest and source commit
   local.json           gitignored: data repo path plus clone-local copy-item intent
   local.lock.json      gitignored: clone-local item pins
+  .gitignore           written by capshelf: the rule that ignores those two files
 ```
 
 The lockfile is the safety boundary. A data item's identity is the committed
@@ -451,7 +460,7 @@ until someone runs `capshelf update` there.
 | `keep-local` | mark drift as intentional |
 | `revert` | restore one item to its locked version |
 | `get-path` | print the editable path; subagents and multi-target fragments use `--target`, and `--output` returns runtime outputs |
-| `lock` | inspect this project's lock files; `lock migrate` converts the project and local locks to version 4 in one transaction — the one-way upgrade every project on lock version 2 or 3 must run once |
+| `lock migrate` | convert the project and local locks to version 4 in one transaction — the one-way upgrade every project on lock version 2 or 3 must run once |
 | `self-update` | check for and install a Homebrew update for the capshelf binary |
 | `marketplace ...` | author, validate, sync, and package Claude/Cowork or Codex plugin catalogs in the data repo |
 
@@ -461,8 +470,8 @@ The four `data` subcommands keep their older flat names as aliases: `set-data`,
 Commands support `--json` where useful for agent consumption. Exit codes are
 stable: `0` success, `1` generic error, `2` not found, `3` conflict or refused
 precondition, `4` drift or upstream mismatch, `5` reserved for future
-unmet-requires checks, `6` no data repo configured, `7` missing or too-old
-`git`. Full reference: [`docs/cli.md`](docs/cli.md).
+unmet-requires checks, `6` no data repo configured, `7` `git` missing or older
+than 2.40. Full reference: [`docs/cli.md`](docs/cli.md).
 
 Startup self-update prompts are best-effort, cached, and only shown for
 interactive Homebrew installs. Set `CAPSHELF_NO_SELF_UPDATE=1` to disable them.
@@ -472,10 +481,10 @@ interactive Homebrew installs. Set `CAPSHELF_NO_SELF_UPDATE=1` to disable them.
 ```bash
 bun install
 bun run src/cli.ts <verb> [args]   # run from source
-bun run test                        # unit tests (4 workers)
-make smoke                          # smoke suites (4 workers)
-make check                          # tests plus smoke suites
-make build                          # compile dist/capshelf
+bun run test                       # unit tests (4 workers)
+make smoke                         # smoke suites (4 workers)
+make check                         # typecheck, lint, docs freeze, tests, smoke
+make build                         # compile dist/capshelf
 ```
 
 ### CLI source repo
@@ -493,7 +502,7 @@ The capshelf source repository contains:
 ├── dist/                           built binary (gitignored)
 ├── package.json
 ├── Makefile
-├── docs/                           this folder
+├── docs/                           living docs
 └── .git/
 ```
 
