@@ -558,6 +558,7 @@ records each member on its own.
 
 ### Release history
 
+- [`docs/whats-new-0.9.md`](docs/whats-new-0.9.md) - runtime target coverage for mcp and subagents, pin-sourced fragment installs, gated Codex trust warning
 - [`docs/whats-new-0.8.md`](docs/whats-new-0.8.md) - Git-tree source pins, lock version 4 and `lock migrate`, filtered-content refusal, classified drift
 - [`docs/whats-new-0.7.md`](docs/whats-new-0.7.md) - destructive-change consent, preserved local files, keep-local intent, init recovery
 - [`docs/whats-new-0.6.md`](docs/whats-new-0.6.md) - subagents, plugin marketplaces, declared needs, stale-promote merges
