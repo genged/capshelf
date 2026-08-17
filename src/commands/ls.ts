@@ -62,7 +62,8 @@ export function registerLs(program: Command): void {
     .option("--json", "output JSON")
     .option(
       "-k, --kind <kind>",
-      "filter by kind (skills|pi-extensions|settings|mcp|codex-config)",
+      // Derived, not hand-copied: the copied list silently omitted `subagents`.
+      `filter by kind (${ITEM_KINDS.join("|")})`,
     )
     .option(
       "--tag <tag>",

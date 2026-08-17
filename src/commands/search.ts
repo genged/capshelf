@@ -71,7 +71,8 @@ export function registerSearch(program: Command): void {
     )
     .option(
       "-k, --kind <kind>",
-      "filter by kind (skills|pi-extensions|settings|mcp|codex-config)",
+      // Derived, not hand-copied: the copied list silently omitted `subagents`.
+      `filter by kind (${ITEM_KINDS.join("|")})`,
     )
     .option("--json", "output JSON")
     .action(async (queryParts: string[], opts: SearchOptions, cmd: Command) => {
