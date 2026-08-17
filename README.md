@@ -194,7 +194,7 @@ $ capshelf status
 /home/agent/code/my-app  (2 items)
 
 project/
-  ✓   system/skills/capshelf                  44ca0b29487a  up-to-date
+  ✓   system/skills/capshelf                  aeb97bf2b397  up-to-date
   ✓   data/skills/security-review             79402231469b  up-to-date
 ```
 
