@@ -8,7 +8,7 @@ import {
   projectVisibleFilesUnderPath,
   sourceVisibleFilesUnderPath,
 } from "./git";
-import { METADATA_SIDECAR } from "./identity";
+import { HOME_ENV, METADATA_SIDECAR, PRODUCT_NAME } from "./identity";
 import { PreconditionError } from "./errors";
 
 export const ITEM_KINDS = [
@@ -100,7 +100,11 @@ export interface MasterItem {
 export function assertDataRepoExists(dataRepo: string): string {
   if (!existsSync(dataRepo)) {
     throw new Error(
-      `data repo not found at ${dataRepo}\n  pass --data <path>, set $CAPSHELF_HOME, or place a data repo at ~/code/capshelf-data`,
+      // No path is suggested as a fallback: there is no implicit default
+      // (ADR-009, see `resolveDataRepo`), and naming one here told users to
+      // create a repo capshelf would never look at.
+      `data repo not found at ${dataRepo}\n` +
+        `  pass --data <path>, bind one with \`${PRODUCT_NAME} data bind <path>\`, or set $${HOME_ENV}`,
     );
   }
   return dataRepo;
