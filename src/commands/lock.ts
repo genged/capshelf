@@ -86,7 +86,7 @@ interface MigrationPlan {
 export function registerLock(program: Command): void {
   const lock = program
     .command("lock")
-    .description("inspect and migrate this project's lock files");
+    .description("migrate this project's lock files");
 
   lock
     .command("migrate")
