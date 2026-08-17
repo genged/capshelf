@@ -362,6 +362,14 @@ That works when the project committed `.capshelf/capshelf.json` with a
 
 ## What Capshelf manages
 
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/diagram-kinds-dark.svg">
+    <img src="docs/diagram-kinds-light.svg" width="900"
+      alt="Skills, Pi extensions, and subagents are copied from the data repo into project files. Settings, MCP, and Codex config fragments are merged into .claude/settings.json, .mcp.json, and .codex/config.toml, which keep their project-local entries." />
+  </picture>
+</p>
+
 | Kind | Data repo path                       | Project output |
 |---|--------------------------------------|---|
 | `skills` | `skills/<name>/SKILL.md` plus assets | `.agents/skills/<name>/` and `.claude/skills/<name>` symlink |
