@@ -48,8 +48,8 @@ More info: `docs/project-brief.md`,  `docs/architecture.md`, `docs/cli.md`,
   against that compiled file; `make e2e` is the same. `bun run e2e:run`
   requires `CAPSHELF_E2E_BIN` and never builds, so a release lane can point it
   at an extracted archive.
-- `make check` runs typecheck, lint, the release-docs freeze check, the Bun
-  pin check, unit tests, all smoke tests, plus the end-to-end suite.
+- `make check` runs typecheck, lint, the release-docs freeze check, unit
+  tests, all smoke tests, plus the end-to-end suite.
 - `bun run src/cli.ts <verb> [args]` runs the CLI from source.
 - `bun run build` or `make build` compiles `dist/capshelf`.
 - `make install` builds and copies the binary to `~/.local/bin/capshelf`

@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "license": "MIT",
-  "//packageManager": "One exact Bun version for local builds and both workflows. scripts/check-bun-pin.sh fails if a workflow disagrees.",
+  "//packageManager": "The one Bun version. Workflows read it with setup-bun's bun-version-file, then assert the version they actually got.",
   "packageManager": "bun@1.3.14",
   "bin": {
     "capshelf": "./dist/capshelf"
@@ -13,7 +13,7 @@
     "dev": "bun run src/cli.ts",
     "test": "bun test --parallel=4",
     "e2e": "./scripts/e2e.sh",
-    "e2e:run": "bun run scripts/check-e2e-bin.ts && bun test ./e2e",
+    "e2e:run": "./scripts/e2e.sh --no-build",
     "coverage": "bun test --coverage",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",

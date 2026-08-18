@@ -141,6 +141,9 @@ against the extracted file. Only the archives that passed are published, and
 only the publish job can write releases.
 
 One Bun version is declared in `package.json#packageManager`. Every workflow
-pins that version, and `scripts/check-bun-pin.sh` fails if any of them
-disagrees. A scheduled canary runs the same checks against the newest Bun so an
+reads it through setup-bun's `bun-version-file`, so no workflow names a version
+of its own. That action warns and falls back to the newest Bun when it cannot
+read the file, and a warning does not fail a job, so the two jobs that build a
+binary assert that the Bun they got is the Bun that was declared. A scheduled
+canary runs the same checks against the newest Bun on purpose, so an
 incompatibility appears on a schedule instead of during a release.
