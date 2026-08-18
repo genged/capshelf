@@ -168,8 +168,16 @@ describe("rm destructive-change consent", () => {
 
       for (const ref of ["settings/theme", "subagents/reviewer"]) {
         const refused = await run(["rm", ref, "--yes"]);
-        expect({ ref, code: refused.exitCode }).toEqual({ ref, code: 3 });
-        expect(refused.stderr.toString()).toContain("not a git repository");
+        // A recorded binding that names no clone is the same state as no
+        // binding, so the refusal is the documented exit 6 and its message
+        // says how to bind one. The split is recorded binding against `--data`,
+        // not absent path against present one: a `--data` path that holds no
+        // repository still gets "not a git repository" at exit 3, because the
+        // user named it in this command and the caller can point at it.
+        expect({ ref, code: refused.exitCode }).toEqual({ ref, code: 6 });
+        expect(refused.stderr.toString()).toContain(
+          "no data repo configured for this project",
+        );
       }
       expect(await file(lockPath).text()).toBe(lockBefore);
       expect(await file(settingsOutput).exists()).toBe(true);

@@ -1,3 +1,4 @@
+import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -37,6 +38,18 @@ async function tempDir(): Promise<string> {
   return await mkdtemp(join(tmpdir(), "capshelf-paths-"));
 }
 
+/**
+ * A recorded binding only resolves when a Git repository is there, so the
+ * candidates a precedence test names have to be real clones. An empty `init` is
+ * enough: resolution asks whether the path holds a repository, not what is in
+ * it.
+ */
+async function gitRepoAt(path: string): Promise<string> {
+  await mkdir(path, { recursive: true });
+  await $`git -C ${path} init -q`.quiet();
+  return path;
+}
+
 describe("path normalization", () => {
   test("expands and compacts home-relative paths", () => {
     const home = homedir();
@@ -46,8 +59,10 @@ describe("path normalization", () => {
   });
 
   test("resolves relative local config dataRepo from the project root", async () => {
-    const project = await tempDir();
+    const root = await tempDir();
+    const project = join(root, "project");
     await mkdir(join(project, ".capshelf"), { recursive: true });
+    await gitRepoAt(join(root, "data"));
     await writeFile(
       localConfigPath(project),
       JSON.stringify({ dataRepo: "../data" }),
@@ -62,7 +77,10 @@ describe("path normalization", () => {
 
   test("uses data repo precedence override > local config > CAPSHELF_HOME", async () => {
     const oldCapshelfHome = process.env.CAPSHELF_HOME;
-    const project = await tempDir();
+    const root = await tempDir();
+    const project = join(root, "project");
+    await gitRepoAt(join(root, "local"));
+    const fromEnv = await gitRepoAt(join(root, "from-env"));
     await saveLocalConfig(project, {
       dataRepo: "../local",
       skills: [],
@@ -70,8 +88,10 @@ describe("path normalization", () => {
       settings: [],
       mcp: [],
     });
-    process.env.CAPSHELF_HOME = "/tmp/from-capshelf-env";
+    process.env.CAPSHELF_HOME = fromEnv;
     try {
+      // The override is the path the user typed for this command, so it is
+      // taken as given — resolution never requires it to exist.
       expect(
         await resolveDataRepo({
           override: "../override",
@@ -87,9 +107,7 @@ describe("path normalization", () => {
         }),
       ).toBe(normalizePath("../local", project));
 
-      expect(await resolveDataRepo({ manifest: null })).toBe(
-        "/tmp/from-capshelf-env",
-      );
+      expect(await resolveDataRepo({ manifest: null })).toBe(fromEnv);
     } finally {
       if (oldCapshelfHome === undefined) delete process.env.CAPSHELF_HOME;
       else process.env.CAPSHELF_HOME = oldCapshelfHome;
@@ -108,6 +126,38 @@ describe("path normalization", () => {
       if (oldCapshelfHome === undefined) delete process.env.CAPSHELF_HOME;
       else process.env.CAPSHELF_HOME = oldCapshelfHome;
     }
+  });
+
+  test("a recorded binding whose clone is gone resolves as no binding", async () => {
+    const project = await tempDir();
+    const gone = join(project, "gone-clone");
+    await saveLocalConfig(project, {
+      dataRepo: gone,
+      skills: [],
+      piExtensions: [],
+      settings: [],
+      mcp: [],
+    });
+
+    // Nothing is there to answer a question about a clone, so `status` gets
+    // null to degrade on and every other command gets the exit-6 message that
+    // names the way back.
+    expect(
+      await resolveDataRepoOptional({ manifest: emptyManifest(), project }),
+    ).toBeNull();
+    await expect(
+      resolveDataRepo({ manifest: emptyManifest(), project }),
+    ).rejects.toThrow(/no data repo configured/);
+
+    // --data is not a recorded binding. The user supplied it in this command,
+    // so it comes back and the caller's own precondition check names the path.
+    expect(
+      await resolveDataRepo({
+        override: gone,
+        manifest: emptyManifest(),
+        project,
+      }),
+    ).toBe(gone);
   });
 
   test("projectRoot accepts only the current capshelf project root", async () => {

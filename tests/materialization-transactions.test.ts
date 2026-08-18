@@ -1,7 +1,14 @@
 import { file } from "bun";
 import { describe, expect, test } from "bun:test";
 import { currentPinDigest } from "./pin-fixtures";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   applyFragmentOutputPlans,
@@ -139,6 +146,105 @@ describe("materialization transactions", () => {
       expect(
         await Promise.all(guardedPaths.map((path) => readFile(path))),
       ).toEqual(before);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "apply rolls the first fragment output back when a later target cannot be written",
+    async () => {
+      const dataRepo = await baselineRepo("capshelf-fragment-apply-data-");
+      const claudeSource = join(dataRepo, "mcp", "tool", "claude.json");
+      const codexSource = join(dataRepo, "mcp", "tool", "codex.toml");
+      await mkdir(dirname(claudeSource), { recursive: true });
+      await writeFile(
+        claudeSource,
+        JSON.stringify({ mcpServers: { tool: { command: "tool-mcp" } } }),
+      );
+      await writeFile(
+        codexSource,
+        '[mcp_servers.tool]\ncommand = "tool-mcp"\n',
+      );
+      await commitAll(dataRepo, "mcp fragments");
+
+      const project = await tempRepo("capshelf-fragment-apply-project-", {
+        origin: null,
+      });
+      const run = runIn(project);
+      expect(run(["init", "--data", dataRepo, "--no-upstream"]).exitCode).toBe(
+        0,
+      );
+      expect(run(["add", "mcp/tool"]).exitCode).toBe(0);
+
+      // Both managed contributions are removed by hand, so each output has
+      // real work to do. Without that the failing target is skipped as
+      // already-current and the test proves nothing.
+      const mcpOutput = join(project, ".mcp.json");
+      const codexOutput = join(project, ".codex", "config.toml");
+      const localMcp = `${JSON.stringify(
+        { mcpServers: { local: { command: "local-mcp" } } },
+        null,
+        2,
+      )}\n`;
+      await writeFile(mcpOutput, localMcp);
+      await writeFile(codexOutput, 'model = "gpt-5"\n');
+
+      const guardedPaths = [
+        mcpOutput,
+        codexOutput,
+        join(project, ".capshelf", "capshelf.json"),
+        join(project, ".capshelf", "capshelf.lock.json"),
+      ];
+      const before = await Promise.all(
+        guardedPaths.map((path) => readFile(path)),
+      );
+
+      const codexDir = join(project, ".codex");
+      await chmod(codexDir, 0o500);
+      try {
+        // A mode-500 directory refuses the temporary file the atomic swap
+        // writes. An effective user that ignores the mode — root — cannot
+        // produce the failure this test is about.
+        const probe = join(codexDir, "probe.tmp");
+        const writable = await writeFile(probe, "x").then(
+          () => true,
+          () => false,
+        );
+        if (writable) {
+          await rm(probe, { force: true });
+          throw new Error(
+            "this test needs an effective user that cannot write a mode-500 directory; the run is probably root",
+          );
+        }
+
+        // claude-mcp is planned and written first, so its output is the swap
+        // that must be undone when codex-config fails (docs/cli.md:449-457).
+        const result = run(["apply", "--yes", "--json"]);
+        expect(result.exitCode).toBe(1);
+        const payload = JSON.parse(result.stdout.toString()) as {
+          items: { key: string; action: string; error?: string }[];
+        };
+        const errored = payload.items.filter((row) => row.action === "error");
+        expect(errored.map((row) => row.key)).toEqual([
+          "data/codex-config/(merged)",
+        ]);
+        expect(errored[0]?.error ?? "").toContain("config.toml");
+        // No target reports an outcome, because none of them kept one.
+        expect(
+          payload.items.filter((row) => row.key === "data/mcp/(merged)"),
+        ).toEqual([]);
+        expect(
+          await Promise.all(guardedPaths.map((path) => readFile(path))),
+        ).toEqual(before);
+      } finally {
+        await chmod(codexDir, 0o755);
+      }
+
+      // With the target writable the same command converges both outputs.
+      expect(run(["apply", "--yes"]).exitCode).toBe(0);
+      const mcp = await file(mcpOutput).json();
+      expect(Object.keys(mcp.mcpServers).sort()).toEqual(["local", "tool"]);
+      expect(await file(codexOutput).text()).toContain("tool-mcp");
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );
