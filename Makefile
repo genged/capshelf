@@ -3,7 +3,7 @@ BIN_DIR ?= $(HOME)/.local/bin
 SMOKE_JOBS ?= 4
 SMOKE_TARGETS := smoke-modes smoke-skills smoke-settings smoke-mcp smoke-codex-config smoke-bootstrap smoke-metadata smoke-needs smoke-team-sync smoke-bundles smoke-pi-extensions smoke-subagents smoke-marketplace smoke-pins
 
-.PHONY: install dev build test typecheck lint check check-release-docs smoke $(SMOKE_TARGETS) clean deps
+.PHONY: install dev build test typecheck lint check check-release-docs check-bun-pin smoke e2e $(SMOKE_TARGETS) clean deps
 
 deps:
 	bun install
@@ -29,12 +29,22 @@ typecheck: deps
 lint:
 	bun run lint
 
-check: typecheck lint check-release-docs test smoke
+check: typecheck lint check-release-docs check-bun-pin test smoke e2e
+
+# End-to-end scenarios against the compiled binary. Runs after the
+# source-level suites: a packaging fault is cheaper to read once unit, smoke,
+# and type checks are green.
+e2e: deps
+	@bun run e2e
 
 # Release notes describe a version that has shipped; once a note is committed
 # it must not change. Run with --audit for a full-history inventory.
 check-release-docs:
 	@./scripts/check-release-docs-frozen.sh
+
+# One exact Bun version builds the artifact every lane tests.
+check-bun-pin:
+	@./scripts/check-bun-pin.sh
 
 dev:
 	bun run src/cli.ts

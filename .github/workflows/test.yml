@@ -39,13 +39,18 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      # Pinned to package.json#packageManager. A moving compiler changes the
+      # artifact this job builds and the E2E step then tests.
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.14
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      - name: Check the Bun pin agrees with package.json
+        run: ./scripts/check-bun-pin.sh
 
       - name: Type-check
         run: bun run typecheck
@@ -56,5 +61,20 @@ jobs:
       - name: Run smoke tests
         run: make smoke
 
+      # The build moves ahead of the end-to-end suite: every E2E workflow runs
+      # the compiled program, never the source entry point.
       - name: Build binary
         run: bun run build
+
+      - name: Record the Git version used by the E2E lane
+        run: git --version
+
+      # The lane uses local bare remotes and carries no credentials. It names
+      # its own network condition: the harness calls it "offline" only when the
+      # canary cannot reach a public host, and "no-credential local-remote"
+      # otherwise. Set CAPSHELF_E2E_REQUIRE_OFFLINE=1 on a runner that can deny
+      # non-local egress to make the denial mandatory.
+      - name: Run end-to-end scenarios against the compiled binary
+        env:
+          CAPSHELF_E2E_BIN: ${{ github.workspace }}/dist/capshelf
+        run: bun run e2e:run

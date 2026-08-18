@@ -44,8 +44,12 @@ More info: `docs/project-brief.md`,  `docs/architecture.md`, `docs/cli.md`,
 - `make smoke` runs all smoke tests with four worker processes.
 - `make smoke-modes`, `make smoke-skills`, and `make smoke-settings` run
   focused smoke suites.
-- `make check` runs typecheck, lint, the release-docs freeze check, unit
-  tests, plus all smoke tests.
+- `bun run e2e` builds `dist/capshelf` and runs the end-to-end scenarios
+  against that compiled file; `make e2e` is the same. `bun run e2e:run`
+  requires `CAPSHELF_E2E_BIN` and never builds, so a release lane can point it
+  at an extracted archive.
+- `make check` runs typecheck, lint, the release-docs freeze check, the Bun
+  pin check, unit tests, all smoke tests, plus the end-to-end suite.
 - `bun run src/cli.ts <verb> [args]` runs the CLI from source.
 - `bun run build` or `make build` compiles `dist/capshelf`.
 - `make install` builds and copies the binary to `~/.local/bin/capshelf`
@@ -54,6 +58,10 @@ For broad CLI behavior changes, run `bun run typecheck`, `bun run test`, and
 the relevant smoke suite at minimum. Run `make check` before treating
 cross-command or layout work as done. For a docs-only change, `git diff --check` is usually
 enough.
+
+The four test layers, what each one proves, and the rules the end-to-end
+harness follows are in `docs/testing.md`. Read it before you add a test under
+`e2e/`.
 
 ## Git
 
