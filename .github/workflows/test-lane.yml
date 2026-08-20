@@ -1,0 +1,63 @@
+name: Test lane
+
+# The one definition of "does this commit work". Called by the pull-request
+# and main lane, by the scheduled canary with a different Bun, and by the
+# release before it packages anything — so those three cannot drift apart.
+
+on:
+  workflow_call:
+    inputs:
+      bun-version:
+        description: >-
+          Bun to test with. Empty means the version package.json declares,
+          which is what every lane except the canary wants.
+        required: false
+        type: string
+        default: ""
+      ref:
+        description: Commit to check out. Empty means the caller's default.
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  checks:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up Bun
+        uses: ./.github/actions/bun-toolchain
+        with:
+          bun-version: ${{ inputs.bun-version }}
+
+      - name: Type-check
+        run: bun run typecheck
+
+      - name: Run unit tests
+        run: bun run test
+
+      - name: Run smoke tests
+        run: make smoke
+
+      # The build moves ahead of the end-to-end suite: every E2E workflow runs
+      # the compiled program, never the source entry point.
+      - name: Build binary
+        run: bun run build
+
+      # The lane uses local bare remotes and carries no credentials. It names
+      # its own network condition: the harness calls it "offline" only when the
+      # canary cannot reach a public host, and "no-credential local-remote"
+      # otherwise. Set CAPSHELF_E2E_REQUIRE_OFFLINE=1 on a runner that can deny
+      # non-local egress to make the denial mandatory.
+      - name: Run end-to-end scenarios against the compiled binary
+        env:
+          CAPSHELF_E2E_BIN: ${{ github.workspace }}/dist/capshelf
+        run: |
+          git --version
+          bun run e2e:run

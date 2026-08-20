@@ -44,6 +44,8 @@ export interface RunOptions {
 export const DEFAULT_TIMEOUT_MS = 60_000;
 export const DEFAULT_GRACE_MS = 2_000;
 export const DEFAULT_DRAIN_MS = 2_000;
+/** Time for a group SIGKILL to take effect before the result is reported. */
+const ESCALATION_SETTLE_MS = 100;
 
 /**
  * Values that must never reach a diagnostic. The required lane carries no
@@ -124,13 +126,17 @@ export async function runCommand(
     };
 
     const signalGroup = (signal: NodeJS.Signals): void => {
-      finalSignal = signal;
       const pid = child.pid;
       if (pid === undefined) return;
       try {
         process.kill(-pid, signal);
+        // Recorded only once the signal is delivered. An escalation that finds
+        // the group already gone must not claim it sent SIGKILL: whether the
+        // escalation was needed is the fact a timeout diagnostic exists to
+        // report.
+        finalSignal = signal;
       } catch {
-        // The group is already gone; nothing to bound.
+        // The group is already gone; nothing left to bound.
       }
     };
 
@@ -146,8 +152,12 @@ export async function runCommand(
     });
 
     child.on("exit", (code, signal) => {
-      if (killer) clearTimeout(killer);
       if (deadline) clearTimeout(deadline);
+      // Once a timeout is escalating, the escalation owns the result. The
+      // direct child exiting says nothing about a grandchild that ignored
+      // SIGTERM, and cancelling the escalation here would leave that
+      // grandchild running after the runner reported a bounded process tree.
+      if (timedOut) return;
       // Prefer "close" so late output is not lost, but never block on it: a
       // grandchild holding the inherited pipe would otherwise hang the run.
       let closed = false;
@@ -160,14 +170,12 @@ export async function runCommand(
       }, drainMs);
     });
 
+    // Only the non-timeout paths reach this. A timeout finishes after its
+    // escalation, so the reported `finalSignal` is the last one actually sent.
     const settleExit = (
       code: number | null,
       signal: NodeJS.Signals | null,
     ): void => {
-      if (timedOut) {
-        finish({ kind: "timeout", timeoutMs, finalSignal });
-        return;
-      }
       if (signal !== null) {
         finish({ kind: "signal", signal });
         return;
@@ -183,7 +191,15 @@ export async function runCommand(
       timedOut = true;
       signalGroup("SIGTERM");
       killer = setTimeout(() => {
+        // Escalate unconditionally. Whether the direct child is still alive
+        // is not the question — a grandchild that ignores SIGTERM is, and it
+        // is invisible from here. Sending SIGKILL to a group that is already
+        // gone raises ESRCH, which signalGroup swallows.
         signalGroup("SIGKILL");
+        setTimeout(
+          () => finish({ kind: "timeout", timeoutMs, finalSignal }),
+          ESCALATION_SETTLE_MS,
+        );
       }, graceMs);
     }, timeoutMs);
   });

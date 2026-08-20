@@ -49,11 +49,14 @@ test(
     await withWorld("outcome-timeout", async (world) => {
       const outer = join(world.stage, "outer.log");
       const inner = join(world.stage, "inner.log");
+      // The grandchild ignores SIGTERM. With a grandchild that honors it, this
+      // test passes even when the SIGKILL escalation never fires, which is how
+      // a surviving process tree went unnoticed.
       const result = await runCommand(
         [
           "/bin/sh",
           "-c",
-          `( while true; do printf . >> "${inner}"; sleep 0.1; done ) & while true; do printf . >> "${outer}"; sleep 0.1; done`,
+          `( trap '' TERM; while true; do printf . >> "${inner}"; sleep 0.1; done ) & while true; do printf . >> "${outer}"; sleep 0.1; done`,
         ],
         {
           cwd: world.stage,
@@ -64,7 +67,11 @@ test(
         },
       );
 
-      expect(result.outcome.kind).toBe("timeout");
+      expect(result.outcome).toEqual({
+        kind: "timeout",
+        timeoutMs: 700,
+        finalSignal: "SIGKILL",
+      });
       expect(describeCommand(result)).toContain("timed out after 700 ms");
 
       // A dead process writes nothing. Comparing sizes across a pause proves
@@ -78,6 +85,43 @@ test(
       expect(await sizes()).toEqual(first);
       expect(first.outer).toBeGreaterThan(0);
       expect(first.inner).toBeGreaterThan(0);
+    });
+  },
+  E2E_TEST_TIMEOUT_MS,
+);
+
+test(
+  "a tree that honors SIGTERM needs no escalation, and none is reported",
+  async () => {
+    await withWorld("outcome-timeout-clean", async (world) => {
+      const beat = join(world.stage, "beat.log");
+      const result = await runCommand(
+        [
+          "/bin/sh",
+          "-c",
+          `( while true; do printf . >> "${beat}"; sleep 0.1; done ) & while true; do sleep 0.1; done`,
+        ],
+        {
+          cwd: world.stage,
+          env: world.env,
+          timeoutMs: 500,
+          graceMs: 300,
+          drainMs: 300,
+        },
+      );
+
+      // SIGTERM ended the group, so the SIGKILL found nothing to signal. The
+      // pair of timeout tests reads the difference: this one must not claim an
+      // escalation the other one genuinely needed.
+      expect(result.outcome).toEqual({
+        kind: "timeout",
+        timeoutMs: 500,
+        finalSignal: "SIGTERM",
+      });
+
+      const first = (await stat(beat)).size;
+      await Bun.sleep(400);
+      expect((await stat(beat)).size).toBe(first);
     });
   },
   E2E_TEST_TIMEOUT_MS,

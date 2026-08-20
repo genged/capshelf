@@ -16,12 +16,26 @@ build_dir="$ROOT/dist/homebrew-build"
 rm -rf "$out_dir" "$build_dir"
 mkdir -p "$out_dir" "$build_dir"
 
-targets=(
-  "darwin-arm64:bun-darwin-arm64"
-  "darwin-x64:bun-darwin-x64"
-  "linux-arm64:bun-linux-arm64"
-  "linux-x64:bun-linux-x64"
-)
+# The one list of release platforms. The release workflow builds its
+# validation matrix from the same file, so an archive cannot be produced
+# without a native runner to prove it works.
+platforms_file="$ROOT/scripts/release-platforms.json"
+
+targets=()
+while IFS= read -r target; do
+  [ -n "$target" ] && targets+=("$target")
+done < <(bun -e '
+  const file = process.argv[1];
+  const platforms = await Bun.file(file).json();
+  process.stdout.write(
+    platforms.map((p) => `${p.platform}:${p.bunTarget}`).join("\n"),
+  );
+' "$platforms_file")
+
+if [ "${#targets[@]}" -eq 0 ]; then
+  printf 'no release platforms declared in %s\n' "$platforms_file" >&2
+  exit 1
+fi
 
 for target in "${targets[@]}"; do
   platform="${target%%:*}"

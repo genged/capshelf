@@ -22,14 +22,21 @@ concurrency:
 # files on a matching native runner, and publishes the same bytes. No
 # validation job may rebuild its candidate: a rebuilt binary is a different
 # artifact from the one that was tested.
+#
+# Every job checks out the commit `resolve` pinned, never the tag, because a
+# tag can be moved after the gate approved what it pointed at.
 
 jobs:
   resolve:
     name: Resolve release tag
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
+      sha: ${{ steps.commit.outputs.sha }}
 
     steps:
       - name: Resolve tag
@@ -51,72 +58,47 @@ jobs:
           printf 'tag=%s\n' "${tag}" >> "${GITHUB_OUTPUT}"
           printf 'version=%s\n' "${tag#v}" >> "${GITHUB_OUTPUT}"
 
-  test:
-    name: Verify tests
-    needs: resolve
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
+      - name: Check out the gate scripts
         uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.resolve.outputs.tag }}
 
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Check the installed Bun is the declared one
+      - name: Resolve the tagged commit
+        id: commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
         run: |
-          declared="$(bun -e 'const pkg = await Bun.file("package.json").json(); process.stdout.write(pkg.packageManager.replace(/^bun@/, ""));')"
-          installed="$(bun --version)"
-          if [ "${installed}" != "${declared}" ]; then
-            printf 'bun %s is installed, package.json declares %s\n' "${installed}" "${declared}" >&2
-            exit 1
-          fi
+          sha="$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TAG}" --jq .sha)"
+          printf 'tagged commit: %s\n' "${sha}"
+          printf 'sha=%s\n' "${sha}" >> "${GITHUB_OUTPUT}"
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+      - name: Require a green Test run on the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.commit.outputs.sha }}
+        run: scripts/require-green-test-run.sh "${GITHUB_REPOSITORY}" "${SHA}"
 
-      - name: Type-check
-        run: bun run typecheck
-
-      - name: Run unit tests
-        run: bun run test
-
-      - name: Run smoke tests
-        run: make smoke
+  test:
+    name: Verify
+    needs: resolve
+    uses: ./.github/workflows/test-lane.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
 
   package:
     name: Build release candidates
     needs: [resolve, test]
     runs-on: ubuntu-latest
+    outputs:
+      platforms: ${{ steps.platforms.outputs.json }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.resolve.outputs.tag }}
+          ref: ${{ needs.resolve.outputs.sha }}
 
       - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      # This job compiles the bytes that ship, so the compiler it uses is part
-      # of the release.
-      - name: Check the installed Bun is the declared one
-        run: |
-          declared="$(bun -e 'const pkg = await Bun.file("package.json").json(); process.stdout.write(pkg.packageManager.replace(/^bun@/, ""));')"
-          installed="$(bun --version)"
-          if [ "${installed}" != "${declared}" ]; then
-            printf 'bun %s is installed, package.json declares %s\n' "${installed}" "${declared}" >&2
-            exit 1
-          fi
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+        uses: ./.github/actions/bun-toolchain
 
       - name: Check package version matches tag
         env:
@@ -128,18 +110,23 @@ jobs:
       - name: Resolve release notes
         env:
           VERSION: ${{ needs.resolve.outputs.version }}
-        run: |
-          notes_file="docs/release-notes/release-notes-${VERSION}.md"
-
-          if [ ! -f "${notes_file}" ]; then
-            printf 'missing release notes: %s\n' "${notes_file}" >&2
-            exit 1
-          fi
+        run: test -f "docs/release-notes/release-notes-${VERSION}.md"
 
       - name: Build every candidate archive and its checksum manifest
         run: scripts/package-homebrew-artifacts.sh
         env:
           VERSION: ${{ needs.resolve.outputs.version }}
+
+      # The matrix comes from the same file the packaging script just built
+      # from, so every archive produced has a native runner to prove it works.
+      # Publishing an unvalidated archive is not guarded against here — it
+      # cannot be expressed.
+      - name: Derive the validation matrix from the platform list
+        id: platforms
+        run: |
+          printf 'json=%s\n' \
+            "$(jq -c '[.[] | {os: .runner, platform}]' scripts/release-platforms.json)" \
+            >> "${GITHUB_OUTPUT}"
 
       - name: Upload the candidates
         uses: actions/upload-artifact@v4
@@ -158,34 +145,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-24.04
-            platform: linux-x64
-          - os: macos-15
-            platform: darwin-arm64
-          # linux-arm64 and darwin-x64 need `ubuntu-24.04-arm` and
-          # `macos-15-intel`. Both labels exist in GitHub's standard-runner
-          # table, but this repository's eligibility for them has not been
-          # confirmed, so enabling them here would fail the release rather
-          # than validate it. Confirm eligibility, then add:
-          #   - os: ubuntu-24.04-arm
-          #     platform: linux-arm64
-          #   - os: macos-15-intel
-          #     platform: darwin-x64
+        include: ${{ fromJSON(needs.package.outputs.platforms) }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.resolve.outputs.tag }}
+          ref: ${{ needs.resolve.outputs.sha }}
 
       - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+        uses: ./.github/actions/bun-toolchain
 
       - name: Download the candidates
         uses: actions/download-artifact@v4
@@ -210,15 +179,12 @@ jobs:
           tar -xzf "${archive}"
           chmod +x capshelf
 
-      - name: Report the versions this validation ran against
-        run: |
-          git --version
-          ./candidates/capshelf --version
-
       - name: Check the candidate reports the release version
         env:
           VERSION: ${{ needs.resolve.outputs.version }}
-        run: test "$(./candidates/capshelf --version)" = "${VERSION}"
+        run: |
+          git --version
+          test "$(./candidates/capshelf --version)" = "${VERSION}"
 
       # The extracted candidate is the executable under test. `e2e:run` never
       # builds, so this job cannot substitute a different binary.
@@ -238,13 +204,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ needs.resolve.outputs.tag }}
+          ref: ${{ needs.resolve.outputs.sha }}
 
       - name: Download the validated candidates
         uses: actions/download-artifact@v4
         with:
           name: release-candidates
           path: candidates
+
+      - name: Check the tag still points at the validated commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          SHA: ${{ needs.resolve.outputs.sha }}
+        run: scripts/require-unmoved-tag.sh "${GITHUB_REPOSITORY}" "${TAG}" "${SHA}"
 
       - name: Publish GitHub release assets
         env:
@@ -253,7 +226,6 @@ jobs:
           VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           notes_file="docs/release-notes/release-notes-${VERSION}.md"
-          test -f "${notes_file}"
 
           if gh release view "${TAG}" >/dev/null 2>&1; then
             gh release edit "${TAG}" --notes-file "${notes_file}"

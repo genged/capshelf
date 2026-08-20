@@ -68,9 +68,16 @@ export async function probeEgress(timeoutMs = 4_000): Promise<EgressProbe> {
  * Name the lane from what the canary measured. A runner that cannot enforce
  * egress denial gets the weaker, accurate name; only `CAPSHELF_E2E_REQUIRE_OFFLINE=1`
  * turns a reachable network into a harness failure.
+ *
+ * Pass an observation to classify it. Without one this measures its own, which
+ * is what a lane does at startup — but a caller comparing two calls would be
+ * comparing two different measurements of a network that can change between
+ * them.
  */
-export async function resolveLaneNetwork(): Promise<LaneNetwork> {
-  const probe = await probeEgress();
+export async function resolveLaneNetwork(
+  observed?: EgressProbe,
+): Promise<LaneNetwork> {
+  const probe = observed ?? (await probeEgress());
   if (!probe.reachable) return "offline";
   if (process.env[REQUIRE_OFFLINE_ENV] === "1") {
     throw new Error(

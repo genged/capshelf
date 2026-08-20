@@ -10,9 +10,18 @@ on:
 permissions:
   contents: read
 
+# A pull request groups by ref, so a new push supersedes the run still going:
+# only the newest state matters there.
+#
+# A push groups by commit, which means it shares a group with nothing and is
+# never superseded. Grouping pushes by ref would not be enough — a queued run
+# is cancelled when a newer one joins its group, so rapid pushes to `main`
+# would keep the first and the last and discard every commit between them.
+# Work lands on `main` directly, and a commit with no verdict is a commit a
+# release tag can point at.
 concurrency:
-  group: test-${{ github.ref }}
-  cancel-in-progress: true
+  group: test-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:
@@ -33,57 +42,4 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      # One declaration, in package.json#packageManager. A moving compiler
-      # changes the artifact this job builds and the E2E step then tests.
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version-file: package.json
-
-      # setup-bun warns and falls back to the newest Bun when it cannot read
-      # the version, and a warning does not fail a job. This turns that silent
-      # un-pin into a red build.
-      - name: Check the installed Bun is the declared one
-        run: |
-          declared="$(bun -e 'const pkg = await Bun.file("package.json").json(); process.stdout.write(pkg.packageManager.replace(/^bun@/, ""));')"
-          installed="$(bun --version)"
-          if [ "${installed}" != "${declared}" ]; then
-            printf 'bun %s is installed, package.json declares %s\n' "${installed}" "${declared}" >&2
-            exit 1
-          fi
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Type-check
-        run: bun run typecheck
-
-      - name: Run unit tests
-        run: bun run test
-
-      - name: Run smoke tests
-        run: make smoke
-
-      # The build moves ahead of the end-to-end suite: every E2E workflow runs
-      # the compiled program, never the source entry point.
-      - name: Build binary
-        run: bun run build
-
-      - name: Record the Git version used by the E2E lane
-        run: git --version
-
-      # The lane uses local bare remotes and carries no credentials. It names
-      # its own network condition: the harness calls it "offline" only when the
-      # canary cannot reach a public host, and "no-credential local-remote"
-      # otherwise. Set CAPSHELF_E2E_REQUIRE_OFFLINE=1 on a runner that can deny
-      # non-local egress to make the denial mandatory.
-      - name: Run end-to-end scenarios against the compiled binary
-        env:
-          CAPSHELF_E2E_BIN: ${{ github.workspace }}/dist/capshelf
-        run: bun run e2e:run
+    uses: ./.github/workflows/test-lane.yml

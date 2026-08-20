@@ -134,16 +134,45 @@ rather than exact bytes.
 The pull-request lane type-checks, runs the unit and smoke suites, builds
 `dist/capshelf`, and then runs the E2E suite against that exact file.
 
-The release lane builds every candidate archive once, uploads them, and
-validates each archive on a matching native runner: it verifies the checksum,
-extracts the executable, checks `capshelf --version`, and runs the E2E suite
-against the extracted file. Only the archives that passed are published, and
-only the publish job can write releases.
+The release lane first requires that the tagged commit already has a green
+Test run from a `push` or `workflow_dispatch` event — work lands on `main`
+directly, so a commit can be tagged before anyone knows whether it passed. A
+pull-request run does not count: it carries the head SHA but checks out the
+commit merged into its base, so it says nothing about the commit a tag points
+at. Every job then checks out that resolved
+commit rather than the tag, which can be moved after the check.
 
-One Bun version is declared in `package.json#packageManager`. Every workflow
-reads it through setup-bun's `bun-version-file`, so no workflow names a version
-of its own. That action warns and falls back to the newest Bun when it cannot
-read the file, and a warning does not fail a job, so the two jobs that build a
-binary assert that the Bun they got is the Bun that was declared. A scheduled
-canary runs the same checks against the newest Bun on purpose, so an
-incompatibility appears on a schedule instead of during a release.
+It builds every candidate archive once, uploads them, and validates each
+archive on a matching native runner: verify the checksum, extract the
+executable, check `capshelf --version`, and run the E2E suite against the
+extracted file. Each validation records that it happened, and the publish job
+requires one record per archive it is about to upload — so removing a platform
+from the matrix stops the release instead of quietly shipping an unvalidated
+binary. Publishing also re-checks that the tag still points at the validated
+commit. Only that job can write releases.
+
+A run on `main` is never cancelled by a later push: pushes group by commit,
+so each one is independent. Grouping them by branch would not be enough,
+because a *queued* run is cancelled when a newer run joins its group — rapid
+pushes would keep the first and the last and discard everything between. Note
+that one push carrying several commits is still one run, on the tip: the
+commits under it are never tested, and a tag pointing at one of them is
+refused by the release gate.
+
+One lane defines "does this commit work": `.github/workflows/test-lane.yml`.
+The pull-request lane calls it, the release calls it before packaging, and a
+scheduled canary calls it with the newest Bun — so those three cannot drift
+apart.
+
+One Bun version is declared in `package.json#packageManager`, and
+`.github/actions/bun-toolchain` installs it and then asserts which version
+arrived: setup-bun warns and falls back to the newest Bun when it cannot read
+the declared version, and a warning does not fail a job.
+
+One file declares the release platforms: `scripts/release-platforms.json`. The
+packaging script builds from it and the validation matrix is derived from it,
+so an archive cannot exist without a native runner to prove it works.
+
+The two release gates are shell scripts with their own tests
+(`tests/release-gate-scripts.test.ts`), not logic embedded in YAML:
+`require-green-test-run.sh` and `require-unmoved-tag.sh`.

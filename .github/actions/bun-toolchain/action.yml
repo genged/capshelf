@@ -1,0 +1,49 @@
+name: Bun toolchain
+description: >-
+  Install Bun and prove which version arrived, then install dependencies.
+
+inputs:
+  bun-version:
+    description: >-
+      Bun version to install. Empty means the version declared in
+      package.json#packageManager, which is the normal case; the scheduled
+      canary passes "latest" on purpose.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    # An empty bun-version falls through to bun-version-file
+    # (oven-sh/setup-bun src/index.ts:27-29).
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: ${{ inputs.bun-version }}
+        bun-version-file: package.json
+
+    # setup-bun warns and falls back to the newest Bun when it cannot read the
+    # declared version, and a warning does not fail a job. This turns that
+    # silent un-pin into a red build. A caller that asked for a version by name
+    # gets what it asked for instead.
+    - name: Check the installed Bun is the expected one
+      shell: bash
+      env:
+        REQUESTED: ${{ inputs.bun-version }}
+      run: |
+        installed="$(bun --version)"
+
+        if [ -n "${REQUESTED}" ]; then
+          printf 'bun %s installed (requested %s)\n' "${installed}" "${REQUESTED}"
+          exit 0
+        fi
+
+        declared="$(bun -e 'const pkg = await Bun.file("package.json").json(); process.stdout.write(pkg.packageManager.replace(/^bun@/, ""));')"
+        if [ "${installed}" != "${declared}" ]; then
+          printf 'bun %s is installed, package.json declares %s\n' "${installed}" "${declared}" >&2
+          exit 1
+        fi
+        printf 'bun %s, as declared\n' "${installed}"
+
+    - name: Install dependencies
+      shell: bash
+      run: bun install --frozen-lockfile
