@@ -39,10 +39,10 @@ import {
 } from "../master";
 import { materializeSubagent, shaOfInstalledSubagent } from "../subagents";
 import {
-  applyFragmentOutput,
   applyFragmentOutputPlans,
   fragmentContributionState,
   fragmentKindForTarget,
+  fragmentTargetKey,
   lockedFragmentTargetsForItem,
   isFragmentKind,
   planFragmentOutput,
@@ -356,37 +356,18 @@ export function registerApply(program: Command): void {
           }
         }
 
-        for (const target of fragmentTargets) {
-          try {
-            if (!dataRepo) throw new Error("data repo is required");
-            results.push(
-              addScope(
-                "project",
-                fragmentApplyResult(
-                  await applyFragmentOutput({
-                    project,
-                    dataRepo,
-                    manifest,
-                    oldLock: projectLock,
-                    nextLock: projectLock,
-                    target,
-                  }),
-                ),
-              ),
-            );
-          } catch (err) {
-            const kind = fragmentKindForTarget(target);
-            results.push({
-              scope: "project",
-              key: `data/${target}/(merged)`,
-              source: "data",
-              kind,
-              name: "(merged)",
-              action: "error",
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
-        }
+        const fragmentResults =
+          fragmentTargets.size > 0
+            ? await reconcileFragmentTargets({
+                project,
+                dataRepo,
+                manifest,
+                projectLock,
+                // Sorted, so the write order is the order preflight planned.
+                targets: [...fragmentTargets].sort(),
+              })
+            : [];
+        results.push(...fragmentResults);
 
         printApplyOutput({
           project,
@@ -396,12 +377,86 @@ export function registerApply(program: Command): void {
           destructivePlan: preflight.destructivePlan,
           json: opts.json === true,
         });
+        if (
+          !opts.json &&
+          fragmentResults.some((result) => result.action === "error")
+        ) {
+          console.log(
+            "  no fragment output changed; fragment outputs are reconciled together",
+          );
+        }
 
         if (results.some((r) => r.action === "error")) {
           throw new ResultExitError(1);
         }
       },
     );
+}
+
+/**
+ * Write every fragment output as one transaction.
+ *
+ * Fragment outputs share files, so a write that fails after an earlier write
+ * succeeded leaves one runtime disagreeing with the lock. One
+ * `applyFragmentOutputPlans` call over all the plans rolls the earlier writes
+ * back (docs/cli.md:449-457); a call per target cannot, because each call is
+ * its own transaction.
+ *
+ * The failure is returned as a result row, not raised, so `apply --json` keeps
+ * its `items` array and the command keeps exit 1 (docs/cli.md:253).
+ */
+async function reconcileFragmentTargets(input: {
+  project: string;
+  dataRepo: string | undefined;
+  manifest: Manifest;
+  projectLock: Lock;
+  targets: FragmentTarget[];
+}): Promise<ApplyResult[]> {
+  const results: ApplyResult[] = [];
+  const plans: FragmentOutputPlan[] = [];
+  let planFailed = false;
+  for (const target of input.targets) {
+    try {
+      if (!input.dataRepo) throw new Error("data repo is required");
+      plans.push(
+        await planFragmentOutput({
+          project: input.project,
+          dataRepo: input.dataRepo,
+          manifest: input.manifest,
+          oldLock: input.projectLock,
+          nextLock: input.projectLock,
+          target,
+        }),
+      );
+    } catch (error) {
+      planFailed = true;
+      results.push(fragmentApplyError(target, error));
+    }
+  }
+  // A target that cannot be planned stops the batch. The outputs are
+  // reconciled together, so writing the rest would leave the set half applied.
+  if (planFailed) return results;
+
+  // The plan whose write is in flight, so the failure names the target that
+  // produced it. The preflight read inside `applyFragmentOutputPlans` runs
+  // before the first write, so it can fail with no plan in flight; report that
+  // one under the first target, as `update` does.
+  let attempted: FragmentTarget | undefined;
+  try {
+    const applied = await applyFragmentOutputPlans(plans, {
+      beforeWrite: async (plan) => {
+        attempted = plan.target;
+      },
+    });
+    for (const result of applied) {
+      results.push(addScope("project", fragmentApplyResult(result)));
+    }
+  } catch (error) {
+    // Every attempted write was rolled back, so no target reports an outcome:
+    // a `reconciled` row for a plan that was undone would be false.
+    results.push(fragmentApplyError(attempted ?? plans[0]!.target, error));
+  }
+  return results;
 }
 
 async function planApplyPreflight(
@@ -579,18 +634,7 @@ async function planApplyPreflight(
           }),
         );
       } catch (error) {
-        results.push(
-          applyError(
-            "project",
-            `data/${target}/(merged)`,
-            {
-              source: "data",
-              kind: fragmentKindForTarget(target),
-              name: "(merged)",
-            },
-            error,
-          ),
-        );
+        results.push(fragmentApplyError(target, error));
       }
     }
     for (const result of await applyFragmentOutputPlans(fragmentPlans, {
@@ -653,6 +697,22 @@ function applyError(
     action: "error",
     error: error instanceof Error ? error.message : String(error),
   };
+}
+
+function fragmentApplyError(
+  target: FragmentTarget,
+  error: unknown,
+): ApplyError {
+  return applyError(
+    "project",
+    fragmentTargetKey(target),
+    {
+      source: "data",
+      kind: fragmentKindForTarget(target),
+      name: "(merged)",
+    },
+    error,
+  );
 }
 
 function itemReviewCommand(

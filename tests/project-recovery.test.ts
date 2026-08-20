@@ -1,7 +1,14 @@
 import { $, file } from "bun";
 import { describe, expect, test } from "bun:test";
 import { existsSync, lstatSync } from "node:fs";
-import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import {
   gitInfoExcludePath,
@@ -50,6 +57,61 @@ describe("project recovery", () => {
       expect(manifest.dataRepo).toBeUndefined();
       const local = await file(join(project, ".capshelf", "local.json")).json();
       expect(local.dataRepo).toBe(newData);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "a binding whose clone is gone degrades status and refuses apply with a runnable repair",
+    async () => {
+      const dataRepo = await tempRepo("capshelf-gone-clone-data-");
+      await addSkill(dataRepo, "csv-report", "csv report\n");
+      await commitAll(dataRepo, "csv report");
+      const project = await tempRepo("capshelf-gone-clone-project-", {
+        origin: null,
+      });
+      const run = runIn(project);
+      expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
+      expect(run(["add", "skills/csv-report"]).exitCode).toBe(0);
+      const manifest = await file(
+        join(project, ".capshelf", "capshelf.json"),
+      ).json();
+      const upstream = manifest.dataRepoUpstream as string;
+
+      // The machine came back without the clone the binding names.
+      const moved = `${dataRepo}-moved`;
+      await rename(dataRepo, moved);
+
+      // A read-only command still produces its report: the data rows say the
+      // source is unavailable and the exit stays 0.
+      const status = run(["status", "--json"]);
+      expect(status.exitCode).toBe(0);
+      const report = JSON.parse(status.stdout.toString()) as {
+        dataRepo: string | null;
+        items: { kind: string; name: string; state: string }[];
+      };
+      expect(report.dataRepo).toBeNull();
+      expect(
+        report.items.find(
+          (row) => row.kind === "skills" && row.name === "csv-report",
+        )?.state,
+      ).toBe("missing_upstream");
+
+      // A command that needs data repo bytes refuses with exit 6 and names a
+      // repair the user can run. The bound directory is gone, so a git command
+      // inside it cannot be the way out.
+      const refused = run(["apply", "--json"]);
+      expect(refused.exitCode).toBe(6);
+      const message = refused.stderr.toString();
+      expect(message).toContain("no data repo configured for this project");
+      expect(message).toContain(upstream);
+      expect(message).toContain("capshelf set-data <path>");
+      expect(message).not.toContain(`git -C ${dataRepo}`);
+
+      // Binding the clone where it now lives restores materialization.
+      expect(run(["set-data", moved]).exitCode).toBe(0);
+      expect(run(["apply"]).exitCode).toBe(0);
+      expect(run(["status", "--strict"]).exitCode).toBe(0);
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );

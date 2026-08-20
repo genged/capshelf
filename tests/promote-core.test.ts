@@ -1468,6 +1468,9 @@ describe("stale-promote guard (copy items)", () => {
     expect((error as Error).message).toContain("--stale-ok");
     expect((error as Error).message).toContain("capshelf update skills/hello");
     expect((error as Error).message).toContain("status skills/hello --diff");
+    expect((error as Error).message).toContain(
+      'capshelf promote skills/hello --merge -m "..."',
+    );
     // Nothing was written or committed.
     expect(
       await file(join(f.dataRepo, "skills", "hello", "SKILL.md")).text(),
@@ -1505,9 +1508,125 @@ describe("stale-promote guard (copy items)", () => {
       'capshelf promote skills/hello --local --stale-ok -m "..."',
     );
     expect(message).toContain(
+      'capshelf promote skills/hello --local --merge -m "..."',
+    );
+    expect(message).toContain(
       "local-scope files are excluded from this project's Git",
     );
     expect(message).not.toContain("stay recoverable");
+  });
+
+  test("the refusal names merge first, then update, then --stale-ok", async () => {
+    const f = await disjointMergeFixture("capshelf-stale-merge-offer");
+    let error: unknown;
+    try {
+      await syncTrackedIntoDataRepo(
+        f.project,
+        f.dataRepo,
+        "skills",
+        "hello",
+        f.lock,
+        {},
+      );
+    } catch (err) {
+      error = err;
+    }
+
+    expect(error).toBeInstanceOf(PreconditionError);
+    const message = (error as Error).message;
+    expect(message).toContain('capshelf promote skills/hello --merge -m "..."');
+    // Merge keeps both sides, so it is the first choice (docs/cli.md:969-977).
+    expect(message.indexOf("--merge")).toBeLessThan(
+      message.indexOf("capshelf update skills/hello"),
+    );
+    expect(message.indexOf("capshelf update skills/hello")).toBeLessThan(
+      message.indexOf("--stale-ok"),
+    );
+
+    // The offered command runs: it merges rather than refusing.
+    const merged = await syncTrackedIntoDataRepo(
+      f.project,
+      f.dataRepo,
+      "skills",
+      "hello",
+      f.lock,
+      { merge: true },
+    );
+    expect(merged.merged).toBe(true);
+    expect(merged.committed).toBe(true);
+  });
+
+  test("a local-scope Pi refusal omits merge, which cannot run in that scope", async () => {
+    const dataRepo = await tempRepo("capshelf-stale-local-pi-data-");
+    const project = await tempRepo("capshelf-stale-local-pi-project-");
+    const dataItem = join(dataRepo, "pi", "extensions", "guard");
+    await mkdir(dataItem, { recursive: true });
+    await writeFile(join(dataItem, "index.ts"), "export const base = true;\n");
+    await commitAll(dataRepo, "guard base");
+    const lockedSha = await currentPinDigest(
+      dataRepo,
+      "pi-extensions",
+      "guard",
+    );
+    const lockedCommit = await lastTouchingContentCommit(
+      dataRepo,
+      "pi/extensions/guard",
+    );
+    await writeFile(
+      join(dataItem, "index.ts"),
+      "export const upstream = true;\n",
+    );
+    await commitAll(dataRepo, "guard upstream");
+    const installed = join(project, ".pi", "extensions", "guard");
+    await mkdir(installed, { recursive: true });
+    await writeFile(
+      join(installed, "index.ts"),
+      "export const local = true;\n",
+    );
+    const lock: LockV4 = {
+      version: 4,
+      items: {
+        [dataKey("pi-extensions", "guard")]: {
+          source: "data",
+          sourcePinDigest: lockedSha,
+          sourceCommit: lockedCommit,
+          appliedAt: "2026-06-01T00:00:00.000Z",
+        },
+      },
+    };
+
+    let error: unknown;
+    try {
+      await syncTrackedIntoDataRepo(
+        project,
+        dataRepo,
+        "pi-extensions",
+        "guard",
+        lock,
+        { scope: "local" },
+      );
+    } catch (err) {
+      error = err;
+    }
+
+    expect(error).toBeInstanceOf(PreconditionError);
+    const message = (error as Error).message;
+    expect(message).toContain(
+      "changed in the data repo since this project last updated",
+    );
+    expect(message).toContain("capshelf update pi-extensions/guard --local");
+    // The reason the choice is absent: it would refuse.
+    expect(message).not.toContain("--merge");
+    await expect(
+      syncTrackedIntoDataRepo(
+        project,
+        dataRepo,
+        "pi-extensions",
+        "guard",
+        lock,
+        { scope: "local", merge: true },
+      ),
+    ).rejects.toThrow(/supported only in project scope/);
   });
 
   test("--stale-ok bypasses the committed-advance case and records the override", async () => {
@@ -1724,6 +1843,37 @@ describe("stale-promote guard (fragments)", () => {
     expect(result.action).toBe("promoted");
     expect(result.committed).toBe(true);
     expect(result.staleOverride).toBe(true);
+  });
+
+  test("the refusal omits merge, which fragments cannot use", async () => {
+    const f = await fragmentStaleFixture();
+    const source = join(f.dataRepo, "settings", "theme", "settings.json");
+    await writeFile(source, JSON.stringify({ theme: "v2-upstream" }));
+    await commitAll(f.dataRepo, "theme v2 upstream");
+    await writeFile(source, JSON.stringify({ theme: "v3-dirty" }));
+
+    let error: unknown;
+    try {
+      await promoteFragmentSource(
+        f.project,
+        f.dataRepo,
+        { ...emptyManifest(), settings: ["theme"] },
+        f.lock,
+        "settings",
+        "theme",
+        {},
+      );
+    } catch (err) {
+      error = err;
+    }
+
+    expect(error).toBeInstanceOf(PreconditionError);
+    const message = (error as Error).message;
+    expect(message).toContain("capshelf update settings/theme");
+    expect(message).toContain("--stale-ok");
+    // promote --merge refuses a fragment, so the refusal must not offer it;
+    // that refusal is covered in tests/promote-merge-cli.test.ts.
+    expect(message).not.toContain("--merge");
   });
 
   test("a dirty promote with HEAD still at the lock stays clean of overrides", async () => {

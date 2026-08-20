@@ -287,12 +287,10 @@ async function promoteProjectTracked(
   }
 
   const parsed = parseLockKey(key);
+  if (opts.merge && !supportsPromoteMerge(parsed.kind, "project")) {
+    throw mergeUnsupportedError(parsed.kind, parsed.name);
+  }
   if (isFragmentKind(parsed.kind)) {
-    if (opts.merge) {
-      throw new PreconditionError(
-        `promote --merge requires a copy-directory item; ${parsed.kind}/${parsed.name} is a fragment`,
-      );
-    }
     const result = await promoteFragmentSource(
       project,
       dataRepo,
@@ -306,11 +304,6 @@ async function promoteProjectTracked(
     return result;
   }
   if (isCopyTargetFileItemKind(parsed.kind)) {
-    if (opts.merge) {
-      throw new PreconditionError(
-        `promote --merge is not supported for subagents/${parsed.name}; copy-target-file items support --stale-ok only`,
-      );
-    }
     const result = await promoteSubagent(
       project,
       dataRepo,
@@ -586,10 +579,8 @@ async function promoteLocalTracked(
 
   const parsed = parseLockKey(key);
   assertLocalScopeSupported(parsed.kind, parsed.name, "promote");
-  if (opts.merge && parsed.kind === "pi-extensions") {
-    throw new PreconditionError(
-      "promote --merge for pi-extensions is supported only in project scope",
-    );
+  if (opts.merge && !supportsPromoteMerge(parsed.kind, "local")) {
+    throw mergeUnsupportedError(parsed.kind, parsed.name);
   }
   if (!isCopyDirectoryItemKind(parsed.kind)) {
     throw new PreconditionError(
@@ -1100,10 +1091,8 @@ async function mergeStalePromote(input: {
     opts,
   } = input;
   const scope = opts.scope ?? "project";
-  if (kind === "pi-extensions" && scope === "local") {
-    throw new PreconditionError(
-      "promote --merge for pi-extensions is supported only in project scope",
-    );
+  if (!supportsPromoteMerge(kind, scope)) {
+    throw mergeUnsupportedError(kind, name);
   }
 
   const repoRelPath = itemRepoRelPath(kind, name);
@@ -1358,6 +1347,37 @@ function buffersEqual(a: Buffer | null, b: Buffer | null): boolean {
   return a === null ? b === null : b !== null && a.equals(b);
 }
 
+/**
+ * Whether `promote --merge` can run for this item. A three-way merge needs a
+ * copy-directory tree, and Pi extensions merge in project scope only
+ * (docs/cli.md:986-988). Every `--merge` gate and the stale refusal read this
+ * one answer, so the refusal never offers a command that then refuses.
+ */
+function supportsPromoteMerge(kind: ItemKind, scope: Scope): boolean {
+  if (!isCopyDirectoryItemKind(kind)) return false;
+  return !(kind === "pi-extensions" && scope === "local");
+}
+
+function mergeUnsupportedError(
+  kind: ItemKind,
+  name: string,
+): PreconditionError {
+  if (isFragmentKind(kind)) {
+    return new PreconditionError(
+      `promote --merge requires a copy-directory item; ${kind}/${name} is a fragment`,
+    );
+  }
+  if (isCopyTargetFileItemKind(kind)) {
+    return new PreconditionError(
+      `promote --merge is not supported for ${kind}/${name}; copy-target-file items support --stale-ok only`,
+    );
+  }
+  // The one remaining case: a copy-directory kind that this scope excludes.
+  return new PreconditionError(
+    `promote --merge for ${kind} is supported only in project scope`,
+  );
+}
+
 function mergeProvenanceError(
   kind: ItemKind,
   name: string,
@@ -1390,6 +1410,13 @@ function stalePromoteError(input: {
     input.scope === "local"
       ? "  (preserve your current edits first; local-scope files are excluded from this project's Git):\n"
       : "  (preserve your current edits first; update replaces the installed copy):\n";
+  // The merge choice is the only one that keeps both sides, so it comes first
+  // — but only where it can run. Offering it for a fragment, a subagent, or a
+  // local Pi extension would print a command that then refuses.
+  const mergeChoice = supportsPromoteMerge(input.kind, input.scope)
+    ? "  to merge the newer upstream version with this installed version:\n" +
+      `    capshelf promote ${item}${scopeFlag} --merge -m "..."\n\n`
+    : "";
   return new PreconditionError(
     `${item} changed in the data repo since this project last updated; promoting would overwrite the newer upstream version.\n\n` +
       `  locked:   ${input.lockedSha}  (sourceCommit ${shortCommit})\n` +
@@ -1397,6 +1424,7 @@ function stalePromoteError(input: {
       "  inspect before deciding:\n" +
       `    capshelf status ${item} --diff${scopeFlag}\n` +
       `    git -C ${repo} log --oneline ${shortCommit}..HEAD -- ${input.logPathspec}\n\n` +
+      mergeChoice +
       "  to take the upstream version and redo your edit on top of it\n" +
       preserveHint +
       `    capshelf update ${item}${scopeFlag}\n\n` +

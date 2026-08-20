@@ -2,4 +2,9 @@
 # Preload isolates git from the machine global/system config so the suite is
 # hermetic. See tests/setup.ts.
 preload = ["./tests/setup.ts"]
+# Discovery root for a bare `bun test`. The E2E suite under ./e2e drives one
+# compiled binary selected by CAPSHELF_E2E_BIN and is run explicitly with
+# `bun run e2e` (or `bun test ./e2e`), so it must not join the source-level
+# suite that `bun run test` and `make check` run first.
+root = "tests"
 coverageThreshold = { line = 0.85, function = 0.90 }
