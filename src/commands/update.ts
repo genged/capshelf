@@ -52,8 +52,16 @@ import { assertLocalScopeSupported } from "../local-config";
 import { findMasterItemByRef, parseItemRef } from "../item-ref";
 import { resolveTrackedTarget } from "../targets";
 import type { ScopedTarget } from "../targets";
-import { materializeLockEntry } from "../materialize";
-import { listSkillsShSkills, skillsShConflictMessage } from "../external";
+import {
+  assertNoPreservedPathCollisions,
+  copyDirectoryReconciliationFiles,
+  materializeLockEntry,
+} from "../materialize";
+import {
+  findSkillsShSkill,
+  listSkillsShSkills,
+  skillsShConflictMessage,
+} from "../external";
 import type { ExternalSkill } from "../external";
 import {
   printRuntimeWarnings,
@@ -461,6 +469,7 @@ async function updateMergeTarget(input: {
       "update --merge requires a version 4 data lock entry",
     );
   }
+  await assertUpdateMergeNotSkillsShOwned(project, parsed.kind, parsed.name);
   if (entry.local === true) {
     throw new PreconditionError(
       `not updating ${parsed.kind}/${parsed.name} --merge — marked as intentional project-local divergence\n` +
@@ -603,6 +612,31 @@ async function updateMergeTarget(input: {
         : "updated"
       : "already-current";
 
+  if (filesChanged) {
+    await assertNoDestinationCollisions(
+      `${parsed.kind}/${parsed.name}`,
+      snapshot.localPath,
+      resultFiles.map((file) => file.path),
+    );
+    const reconciliation = await copyDirectoryReconciliationFiles({
+      project,
+      dataRepo,
+      manifest: input.manifest,
+      kind,
+      name: parsed.name,
+      entry: newEntry,
+      previousEntry: entry,
+      scope: target.scope,
+    });
+    await assertNoPreservedPathCollisions({
+      destination: snapshot.localPath,
+      preserved: reconciliation.preserved,
+      expected: resultFiles,
+      kind,
+      name: parsed.name,
+    });
+  }
+
   if (!dryRun && (lockChanged || filesChanged)) {
     await revalidateUpdateMergeInputs({
       ...input,
@@ -674,6 +708,11 @@ async function revalidateUpdateMergeInputs(input: {
   localFiles: Awaited<ReturnType<typeof namedFilesFromInstalledSnapshot>>;
   localSidecar: Buffer | null;
 }): Promise<void> {
+  await assertUpdateMergeNotSkillsShOwned(
+    input.project,
+    input.parsed.kind,
+    input.parsed.name,
+  );
   await assertRepoClean(input.dataRepo);
   const persistedLock =
     input.target.scope === "local"
@@ -718,6 +757,19 @@ async function revalidateUpdateMergeInputs(input: {
       `${input.parsed.kind}/${input.parsed.name} changed while preparing the merge; nothing was written. Rerun update --merge.`,
     );
   }
+}
+
+async function assertUpdateMergeNotSkillsShOwned(
+  project: string,
+  kind: string,
+  name: string,
+): Promise<void> {
+  if (kind !== "skills") return;
+  const external = await findSkillsShSkill(project, name);
+  if (!external) return;
+  throw new PreconditionError(
+    `not updating skills/${name} — ${skillsShConflictMessage(external)}`,
+  );
 }
 
 function bufferOrNullEqual(a: Buffer | null, b: Buffer | null): boolean {

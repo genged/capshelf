@@ -53,6 +53,7 @@ import { beginDirectoryReplacement } from "./promote-transaction";
 import { shaOfNamedFiles } from "./item-snapshot";
 import { PRODUCT_NAME } from "./identity";
 import { PreconditionError } from "./errors";
+import { findDestinationPathCollision } from "./path-collision";
 
 export type MaterializeAction =
   | "reconciled"
@@ -509,19 +510,13 @@ export async function copyDirectoryReconciliationFiles(opts: {
     });
   }
 
-  for (const localFile of preserved) {
-    const collision = expected.find((sourceFile) =>
-      pathsCollide(localFile.path, sourceFile.path),
-    );
-    if (collision) {
-      throw new PreconditionError(
-        `ignored local path ${localFile.path} collides with selected managed path ${collision.path} in ${opts.kind}/${opts.name}`,
-        {
-          hint: "Move or rename the local-only path, then review the item and rerun the command.",
-        },
-      );
-    }
-  }
+  await assertNoPreservedPathCollisions({
+    destination: dst,
+    preserved,
+    expected,
+    kind: opts.kind,
+    name: opts.name,
+  });
 
   return {
     expected,
@@ -530,6 +525,27 @@ export async function copyDirectoryReconciliationFiles(opts: {
       left.path.localeCompare(right.path),
     ),
   };
+}
+
+export async function assertNoPreservedPathCollisions(opts: {
+  destination: string;
+  preserved: readonly PreservedEntry[];
+  expected: readonly NamedFile[];
+  kind: CopyDirectoryItemKind;
+  name: string;
+}): Promise<void> {
+  const collision = await findDestinationPathCollision(
+    opts.destination,
+    opts.preserved.map((entry) => entry.path),
+    opts.expected.map((file) => file.path),
+  );
+  if (!collision) return;
+  throw new PreconditionError(
+    `ignored local path ${collision.left} collides with selected managed path ${collision.right} in ${opts.kind}/${opts.name}`,
+    {
+      hint: "Move or rename the local-only path, then review the item and rerun the command.",
+    },
+  );
 }
 
 /**
@@ -883,12 +899,4 @@ async function lstatOrNullAsync(path: string): Promise<Stats | null> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
-}
-
-function pathsCollide(left: string, right: string): boolean {
-  return (
-    left === right ||
-    left.startsWith(`${right}/`) ||
-    right.startsWith(`${left}/`)
-  );
 }

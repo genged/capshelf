@@ -6,6 +6,7 @@ import {
   mkdtemp,
   mkdir,
   readlink,
+  rm,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -429,6 +430,12 @@ describe("materializeLockEntry", () => {
         reviewCommand: "capshelf status skills/hello --diff",
       },
     ]);
+
+    await rm(join(installed, "cache", "state.db"));
+    await symlink(
+      join(project, "outside-state.db"),
+      join(installed, "cache", "state.db"),
+    );
 
     await materializeLockEntry({
       project,

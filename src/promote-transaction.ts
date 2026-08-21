@@ -10,6 +10,9 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { NamedFile } from "./merge-tree";
+import { inventoryLocalTree } from "./gitignore";
+import { findDestinationPathCollision } from "./path-collision";
+import { PreconditionError } from "./errors";
 
 export interface PromoteTransactionHooks {
   afterPrepared?: () => Promise<void>;
@@ -83,10 +86,19 @@ export async function beginInstalledReconciliation(
   const backup = join(backupDir, "original");
   await rename(installedDir, backup);
   try {
+    const replaceableIrregularPaths =
+      await assertFrozenPreservedPathsDoNotCollide(
+        backup,
+        localFiles,
+        mergedFiles,
+      );
     await cp(backup, installedDir, {
       recursive: true,
       preserveTimestamps: true,
     });
+    for (const path of replaceableIrregularPaths) {
+      await rm(join(installedDir, ...path.split("/")), { force: true });
+    }
     for (const file of [...localFiles].sort(
       (a, b) => b.path.length - a.path.length,
     )) {
@@ -122,6 +134,36 @@ export async function beginInstalledReconciliation(
       await rm(backupDir, { recursive: true, force: true });
     },
   };
+}
+
+async function assertFrozenPreservedPathsDoNotCollide(
+  backup: string,
+  localFiles: readonly NamedFile[],
+  mergedFiles: readonly NamedFile[],
+): Promise<string[]> {
+  const managedPaths = new Set(
+    [...localFiles, ...mergedFiles].map((file) => file.path),
+  );
+  const inventory = await inventoryLocalTree(backup);
+  const replaceableIrregularPaths = inventory.irregular
+    .map((entry) => entry.path)
+    .filter((path) => managedPaths.has(path));
+  const preservedPaths = [
+    ...inventory.files.filter((path) => !managedPaths.has(path)),
+    ...inventory.irregular
+      .map((entry) => entry.path)
+      .filter((path) => !managedPaths.has(path)),
+  ];
+  const reconciledPaths = [...managedPaths];
+  const collision = await findDestinationPathCollision(
+    backup,
+    preservedPaths,
+    reconciledPaths,
+  );
+  if (!collision) return replaceableIrregularPaths;
+  throw new PreconditionError(
+    `preserved local path ${collision.left} collides with reconciled managed path ${collision.right}`,
+  );
 }
 
 async function pruneEmptyParents(path: string, root: string): Promise<void> {
