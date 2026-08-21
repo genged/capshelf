@@ -106,7 +106,12 @@ export interface DiffEndpoint {
   sourceCommit: string | null;
 }
 
-type FileMap = Map<string, Buffer>;
+interface FileSide {
+  content: Buffer;
+  executable: boolean;
+}
+
+type FileMap = Map<string, FileSide>;
 
 /** The path git prints, and accepts, for a side that does not exist. */
 const DEV_NULL = "/dev/null";
@@ -607,7 +612,10 @@ async function expectedFilesForCopyItem(
     return new Map(
       item.files.map((file) => [
         file.relPath,
-        Buffer.from(file.content, "utf-8"),
+        {
+          content: Buffer.from(file.content, "utf-8"),
+          executable: false,
+        },
       ]),
     );
   }
@@ -615,19 +623,19 @@ async function expectedFilesForCopyItem(
   if (!opts.dataRepo) return null;
   if (!opts.sourceCommit) return null;
 
-  const paths = await expectedFilePathsForCopyItem(opts);
-  if (!paths) return null;
+  const files = await expectedFileEntriesForCopyItem(opts);
+  if (!files) return null;
   const repoRelPath = itemRepoRelPath(opts.kind, opts.name);
   const out: FileMap = new Map();
-  for (const rel of paths) {
-    out.set(
-      rel,
-      await showExpectedFile(
+  for (const expected of files) {
+    out.set(expected.rel, {
+      content: await showExpectedFile(
         opts,
         opts.sourceCommit,
-        posix.join(repoRelPath, rel),
+        posix.join(repoRelPath, expected.rel),
       ),
-    );
+      executable: expected.executable,
+    });
   }
   return out;
 }
@@ -635,10 +643,22 @@ async function expectedFilesForCopyItem(
 async function expectedFilePathsForCopyItem(
   opts: CopyDirectoryFilesOptions,
 ): Promise<string[] | null> {
+  return (
+    (await expectedFileEntriesForCopyItem(opts))?.map((entry) => entry.rel) ??
+    null
+  );
+}
+
+async function expectedFileEntriesForCopyItem(
+  opts: CopyDirectoryFilesOptions,
+): Promise<Array<{ rel: string; executable: boolean }> | null> {
   if (opts.source === "system") {
     const item = findSystemItem(opts.name);
     if (!item || item.kind !== opts.kind) return null;
-    return item.files.map((file) => file.relPath);
+    return item.files.map((file) => ({
+      rel: file.relPath,
+      executable: false,
+    }));
   }
 
   if (!opts.dataRepo) return null;
@@ -663,9 +683,12 @@ async function expectedFilePathsForCopyItem(
   }
   assertRegularBlobEntries(entries, repoRelPath);
   return entries
-    .map((entry) => posix.relative(repoRelPath, entry.path))
+    .map((entry) => ({
+      rel: posix.relative(repoRelPath, entry.path),
+      executable: entry.mode === "100755",
+    }))
     .filter(
-      (rel) =>
+      ({ rel }) =>
         rel.length > 0 &&
         !rel.startsWith("..") &&
         !hasIgnoredDotSegment(rel) &&
@@ -678,46 +701,10 @@ async function expectedFilePathsForCopyItem(
 async function expectedModesForCopyItem(
   opts: CopyDirectoryFilesOptions,
 ): Promise<Map<string, boolean> | null> {
-  if (opts.source === "system") {
-    const item = findSystemItem(opts.name);
-    if (!item || item.kind !== opts.kind) return null;
-    return new Map(item.files.map((file) => [file.relPath, false]));
-  }
-  if (!opts.dataRepo || !opts.sourceCommit) return null;
-
-  const repoRelPath = itemRepoRelPath(opts.kind, opts.name);
-  let entries: Awaited<ReturnType<typeof lsTreeEntriesAtCommit>>;
-  try {
-    entries = await lsTreeEntriesAtCommit(
-      opts.dataRepo,
-      opts.sourceCommit,
-      repoRelPath,
-    );
-  } catch {
-    throw new Error(
-      missingSourceCommitMessage(
-        opts.dataRepo,
-        opts.sourceCommit,
-        opts.manifest,
-      ),
-    );
-  }
-  assertRegularBlobEntries(entries, repoRelPath);
-  return new Map(
-    entries
-      .map((entry) => ({
-        rel: posix.relative(repoRelPath, entry.path),
-        executable: entry.mode === "100755",
-      }))
-      .filter(
-        ({ rel }) =>
-          rel.length > 0 &&
-          !rel.startsWith("..") &&
-          !hasIgnoredDotSegment(rel) &&
-          !isMetadataSidecarPath(rel),
-      )
-      .map(({ rel, executable }) => [rel, executable]),
-  );
+  const files = await expectedFileEntriesForCopyItem(opts);
+  return files === null
+    ? null
+    : new Map(files.map(({ rel, executable }) => [rel, executable]));
 }
 
 async function showExpectedFile(
@@ -751,9 +738,14 @@ async function readInstalledFiles(
   );
   for (const rel of expectedPaths) files.add(rel);
   for (const rel of [...files].sort()) {
-    const file = join(root, ...rel.split("/"));
-    if (existsSync(file) && (await lstat(file)).isFile()) {
-      out.set(rel, await readFile(file));
+    const path = join(root, ...rel.split("/"));
+    if (existsSync(path)) {
+      const info = await lstat(path);
+      if (!info.isFile()) continue;
+      out.set(rel, {
+        content: await readFile(path),
+        executable: (info.mode & 0o111) !== 0,
+      });
     }
   }
   return out;
@@ -770,14 +762,22 @@ async function diffFileMaps(
   const files = [...new Set([...current.keys(), ...expected.keys()])].sort();
   const parts: string[] = [];
   for (const file of files) {
-    const currentText = current.get(file)?.toString("utf-8") ?? "";
-    const expectedText = expected.get(file)?.toString("utf-8") ?? "";
+    const currentFile = current.get(file) ?? null;
+    const expectedFile = expected.get(file) ?? null;
     // locked is the baseline (---), current the new side (+++) — see above.
     const text = await unifiedDiff(
       `${file} (locked${lockedCommit ? ` ${lockedCommit.slice(0, 7)}` : ` ${item}`})`,
       `${file} (${view}${targetCommit ? ` ${targetCommit.slice(0, 7)}` : ""})`,
-      expectedText,
-      currentText,
+      expectedFile?.content.toString("utf-8") ?? null,
+      currentFile?.content.toString("utf-8") ?? null,
+      {
+        ...(expectedFile !== null && {
+          fromExecutable: expectedFile.executable,
+        }),
+        ...(currentFile !== null && {
+          toExecutable: currentFile.executable,
+        }),
+      },
     );
     if (text) parts.push(text);
   }
@@ -789,7 +789,7 @@ function shaOfFileMap(files: FileMap): string {
   for (const rel of [...files.keys()].sort()) {
     hasher.update(rel);
     hasher.update("\0");
-    hasher.update(files.get(rel)!);
+    hasher.update(files.get(rel)!.content);
     hasher.update("\0");
   }
   return hasher.digest("hex").slice(0, 12);

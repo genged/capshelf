@@ -171,6 +171,117 @@ describe("status diff helpers", () => {
     expect(await file(join(installed, "extra.md")).text()).toBe("local add\n");
   });
 
+  test("buildStatusDiff explains an installed mode-only change", async () => {
+    const dataRepo = await tempRepo("capshelf-status-installed-mode-data-");
+    const project = await tempRepo("capshelf-status-installed-mode-project-");
+    const dataItem = join(dataRepo, "skills", "hello");
+    const installed = join(project, ".agents", "skills", "hello");
+
+    await mkdir(dataItem, { recursive: true });
+    await writeFile(join(dataItem, "SKILL.md"), "locked\n");
+    await commitAll(dataRepo, "hello");
+    const sourceCommit = await lastTouchingCommit(dataRepo, "skills/hello");
+    const lockedSha = await currentPinDigest(dataRepo, "skills", "hello");
+
+    await mkdir(installed, { recursive: true });
+    await writeFile(join(installed, "SKILL.md"), "locked\n");
+    await chmod(join(installed, "SKILL.md"), 0o755);
+
+    const diff = await buildStatusDiff({
+      project,
+      dataRepo,
+      manifest: {
+        installMode: "codex-compatible",
+        skills: ["hello"],
+        settings: [],
+        mcp: [],
+        codexConfig: [],
+      },
+      lock: {
+        version: 4,
+        items: {
+          [dataKey("skills", "hello")]: {
+            source: "data",
+            sourcePinDigest: lockedSha,
+            sourceCommit,
+            appliedAt: "2026-08-21T00:00:00.000Z",
+          },
+        },
+      },
+      row: {
+        source: "data",
+        kind: "skills",
+        name: "hello",
+        state: "drifted_local",
+        sourceCommit,
+      },
+    });
+
+    expect(diff?.text).toContain("--- SKILL.md (locked data/skills/hello)");
+    expect(diff?.text).toContain("old mode 100644");
+    expect(diff?.text).toContain("new mode 100755");
+  });
+
+  test("upstream diff explains modes and empty-file existence", async () => {
+    const dataRepo = await tempRepo("capshelf-status-upstream-tree-data-");
+    const project = await tempRepo("capshelf-status-upstream-tree-project-");
+    const dataItem = join(dataRepo, "skills", "hello");
+
+    await mkdir(dataItem, { recursive: true });
+    await writeFile(join(dataItem, "SKILL.md"), "locked\n");
+    await writeFile(join(dataItem, "removed-empty.md"), "");
+    await commitAll(dataRepo, "locked tree");
+    const sourceCommit = await lastTouchingCommit(dataRepo, "skills/hello");
+    const lockedSha = await currentPinDigest(dataRepo, "skills", "hello");
+
+    await chmod(join(dataItem, "SKILL.md"), 0o755);
+    await rm(join(dataItem, "removed-empty.md"));
+    await writeFile(join(dataItem, "added-empty.md"), "");
+    await commitAll(dataRepo, "upstream tree changes");
+    const upstreamSha = await currentPinDigest(dataRepo, "skills", "hello");
+
+    const diff = await buildStatusDiff({
+      project,
+      dataRepo,
+      manifest: {
+        installMode: "codex-compatible",
+        skills: ["hello"],
+        settings: [],
+        mcp: [],
+        codexConfig: [],
+      },
+      lock: {
+        version: 4,
+        items: {
+          [dataKey("skills", "hello")]: {
+            source: "data",
+            sourcePinDigest: lockedSha,
+            sourceCommit,
+            appliedAt: "2026-08-21T00:00:00.000Z",
+          },
+        },
+      },
+      row: {
+        source: "data",
+        kind: "skills",
+        name: "hello",
+        state: "update_available",
+        sourceCommit,
+        upstreamSha,
+      },
+      view: "upstream",
+    });
+
+    expect(diff?.text).toContain("--- SKILL.md (locked");
+    expect(diff?.text).toContain("+++ SKILL.md (upstream");
+    expect(diff?.text).toContain("old mode 100644");
+    expect(diff?.text).toContain("new mode 100755");
+    expect(diff?.text).toContain("new file mode 100644");
+    expect(diff?.text).toContain("deleted file mode 100644");
+    expect(diff?.text).toContain("added-empty.md");
+    expect(diff?.text).toContain("removed-empty.md");
+  });
+
   test("readInstalledFiles paths exclude the root sidecar from drift and diff", async () => {
     const dataRepo = await tempRepo("capshelf-status-sidecar-data-");
     const project = await tempRepo("capshelf-status-sidecar-project-");
