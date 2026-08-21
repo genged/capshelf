@@ -42,17 +42,16 @@ version of it, `promote` refuses instead of silently clobbering:
   updated; promoting would overwrite the newer upstream version.
 ```
 
-Bob inspects the upstream diff, then either merges his edits with the newer
-committed item using `capshelf promote security-review --merge -m "..."`,
-preserves his current edit and takes upstream first (`capshelf update
-security-review` replaces the installed copy), or overwrites on purpose with
-`capshelf promote security-review --stale-ok -m "..."`. Merge conflicts list
-the item-relative paths and leave both repositories and locks untouched.
-`--merge` is available for skills in either scope and project-scope Pi
-extensions; it does not apply to fragments or local Pi extensions. For a
-local-scope copy item, Bob keeps `--local` on each command. If the clean merge
-already equals upstream, promote reconciles the installed copy, re-pins the
-lock without a data commit, and reports `already-upstream`.
+Bob runs `capshelf status security-review --diff` to inspect the installed and
+committed upstream branches from their locked base. He then runs `capshelf
+update security-review --merge`. This command merges into the installed copy
+and pins the selected lock to upstream. It does not change the data repo. Bob
+reviews the installed result with `--diff-view installed`. He then uses a
+normal `promote` command to publish it. A conflict lists sorted item-relative
+paths and changes no installed file or lock. Skills and Pi extensions support
+this flow in project and local scope. Keep `--local` on each command for local
+scope. A clean Git merge still requires human review
+(`src/commands/update.ts:445-658`).
 
 Taking upstream is the option that discards work, so `update` gates it behind
 the destructive-change prompt: the installed copy is drifted by definition
@@ -63,7 +62,7 @@ exit 3 instead of prompting. So Bob reviews the drift, preserves the edit
 outside the item, then authorizes the overwrite:
 
 ```bash
-capshelf status security-review --diff        # what update would destroy
+capshelf status security-review --diff-view installed # what update would destroy
 capshelf update security-review --yes         # or answer y at the prompt
 ```
 

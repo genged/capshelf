@@ -121,7 +121,7 @@ describe("update moves a system item off superseded bundled content", () => {
         path: ".agents/skills/capshelf/SKILL.md",
         reason: "managed_content",
         detail: "content edit",
-        reviewCommand: "capshelf status skills/capshelf --diff",
+        reviewCommand: "capshelf status skills/capshelf --diff-view installed",
       });
 
       const refused = await run(["update", "skills/capshelf", "--json"]);

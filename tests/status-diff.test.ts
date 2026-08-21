@@ -724,38 +724,38 @@ describe("status diff helpers", () => {
     const dataRepo = await tempRepo("capshelf-status-missing-commit-data-");
     const project = await tempRepo("capshelf-status-missing-commit-project-");
 
-    await expect(
-      buildStatusDiff({
-        project,
-        dataRepo,
-        manifest: {
-          installMode: "codex-compatible",
-          dataRepoUpstream: "git@github.com:mg/agent-shared.git",
-          skills: ["hello"],
-          settings: [],
-          mcp: [],
-          codexConfig: [],
-        },
-        lock: {
-          version: 4,
-          items: {
-            [dataKey("skills", "hello")]: {
-              source: "data",
-              sourcePinDigest: "missing",
-              sourceCommit: "abc123",
-              appliedAt: "2026-05-08T00:00:00.000Z",
-            },
+    const diff = await buildStatusDiff({
+      project,
+      dataRepo,
+      manifest: {
+        installMode: "codex-compatible",
+        dataRepoUpstream: "git@github.com:mg/agent-shared.git",
+        skills: ["hello"],
+        settings: [],
+        mcp: [],
+        codexConfig: [],
+      },
+      lock: {
+        version: 4,
+        items: {
+          [dataKey("skills", "hello")]: {
+            source: "data",
+            sourcePinDigest: "missing",
+            sourceCommit: "abc123",
+            appliedAt: "2026-05-08T00:00:00.000Z",
           },
         },
-        row: {
-          source: "data",
-          kind: "skills",
-          name: "hello",
-          state: "drifted_local",
-          sourceCommit: "abc123",
-        },
-      }),
-    ).rejects.toThrow(
+      },
+      row: {
+        source: "data",
+        kind: "skills",
+        name: "hello",
+        state: "drifted_local",
+        sourceCommit: "abc123",
+      },
+    });
+    expect(diff?.text).toBeNull();
+    expect(diff?.unavailableReason).toMatch(
       /current dataRepoUpstream: https:\/\/github.com\/mg\/agent-shared/,
     );
   });

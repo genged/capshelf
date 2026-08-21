@@ -183,12 +183,12 @@ test(
 );
 
 test(
-  "a stale promote refuses, and --merge reconciles both sides in one commit",
+  "update merge reconciles locally before a separate promote",
   async () => {
     declareEvidence({
       scenario: SCENARIO,
       property:
-        "promote refuses when upstream moved past the lock, and --merge performs a three-way merge from the locked commit, writing one data-repo commit and re-pinning",
+        "promote refuses when upstream moved past the lock, update --merge reconciles and pins without changing the shelf, and a later normal promote publishes the reviewed result",
       labels: ["reproduced-user-workflow"],
     });
 
@@ -230,22 +230,61 @@ test(
       expectOutputContains(stale, "--stale-ok");
       expectOutputContains(stale, "--merge");
 
+      const bothDiffs = await world.capshelf(project, [
+        "status",
+        "skills/security-review",
+        "--diff",
+      ]);
+      expectExit(bothDiffs, 0);
+      expectOutputContains(bothDiffs, "[locked -> installed]");
+      expectOutputContains(bothDiffs, "[locked -> upstream]");
+
       const commitsBefore = (
         await world.git.ok(shelf, ["rev-list", "--count", "HEAD"])
       ).stdout.trim();
       const merged = await world.capshelf(project, [
-        "promote",
+        "update",
         "skills/security-review",
         "--merge",
-        "-m",
-        "merge PCI rules with upstream",
         "--json",
       ]);
       expectExit(merged, 0);
-      const commitsAfter = (
+      const commitsAfterUpdate = (
         await world.git.ok(shelf, ["rev-list", "--count", "HEAD"])
       ).stdout.trim();
-      expect(Number(commitsAfter) - Number(commitsBefore)).toBe(1);
+      expect(commitsAfterUpdate).toBe(commitsBefore);
+      expect(
+        await readFile(
+          join(shelf, "skills", "security-review", "SKILL.md"),
+          "utf-8",
+        ),
+      ).toBe("base upstream\nmiddle\ntail\n");
+      expect(await readFile(join(project, INSTALLED), "utf-8")).toBe(
+        "base upstream\nmiddle\ntail plus PCI rules\n",
+      );
+
+      const review = await world.capshelf(project, [
+        "status",
+        "skills/security-review",
+        "--diff-view",
+        "installed",
+      ]);
+      expectExit(review, 0);
+      expectOutputContains(review, "[locked -> installed]");
+
+      expectExit(
+        await world.capshelf(project, [
+          "promote",
+          "skills/security-review",
+          "-m",
+          "merge PCI rules with upstream",
+        ]),
+        0,
+      );
+      const commitsAfterPromote = (
+        await world.git.ok(shelf, ["rev-list", "--count", "HEAD"])
+      ).stdout.trim();
+      expect(Number(commitsAfterPromote) - Number(commitsBefore)).toBe(1);
       // One ordinary single-parent commit, not a merge commit.
       expect(
         (

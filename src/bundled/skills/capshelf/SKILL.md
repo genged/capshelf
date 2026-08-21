@@ -58,11 +58,11 @@ When the user asks you to improve a shared (data) item:
 4. Decide with the user:
    - `capshelf promote <item> -m "why"` — push to the data repo. Other projects see `update available` next time they check; nothing auto-changes.
    - `capshelf keep-local <item> --reason "why"` — intentional project-specific divergence for a copy item (skill or Pi extension).
-   - `capshelf revert <item>` — discard the edit, restore from the recorded `sourceCommit`; first show `capshelf status <item> --diff` and get permission before using `--yes` in a non-interactive run.
+   - `capshelf revert <item>` — discard the edit, restore from the recorded `sourceCommit`; first show `capshelf status <item> --diff-view installed` and get permission before using `--yes` in a non-interactive run.
 
 For Pi extensions, inspect the changed source before promoting and tell the user to run `/reload` or restart Pi after materialization. Never imply that capshelf reviewed, trusted, sandboxed, or dependency-installed the extension.
 
-If `promote` fails with "changed in the data repo since this project last updated" (exit 3), a teammate's newer version is upstream. Show the user the upstream diff (`capshelf status <item> --diff` plus the scoped `git log` from the error message). For a skill in either scope or a project-scope Pi extension, offer `capshelf promote <item> --merge -m "why"` to three-way merge the locked base, installed edits, and current upstream. A merge conflict lists paths and writes nothing. Other choices are preserving the edit and running `capshelf update <item>` before redoing it, or an intentional overwrite. **Do not retry with `--stale-ok` on your own**; `--merge` and `--stale-ok` are mutually exclusive. `update` preflights local drift and asks before replacing installed content; non-interactive and JSON calls refuse unless `--yes` is passed. Review `capshelf status <item> --diff` and get the user's permission before using `update --yes`. For a local-scope item, preserve `--local` on recovery and merge commands. A merged or ordinary promote that reports `already-upstream` means the lock was re-pinned without a data-repo commit.
+If `promote` fails with "changed in the data repo since this project last updated" (exit 3), run `capshelf status <item> --diff` to inspect both the installed and committed upstream branches. Use `--diff-view installed` to review local state that a command can replace. Use `--diff-view upstream` to review incoming committed content. For a skill or Pi extension in either scope, offer `capshelf update <item> --merge`. It changes only the installed copy and selected lock. A normal `promote <item> -m "why"` is the separate publication step. Review a clean Git merge before publication; Git does not prove semantic correctness. A merge conflict lists paths and writes nothing. **Do not choose `--yes` or `--stale-ok` without user permission.** For a local-scope item, preserve `--local` on review, update, and promote commands.
 
 To change **metadata** (tags, description, `requires`/`conflicts-with`, or declared `needs`), edit the item's canonical data-repo sidecar (`skills/<name>/.capshelf.yml`, `pi/extensions/<name>/.capshelf.yml`, or the fragment path shown by `capshelf show`) and commit it in the data repo. Metadata is never hashed into item content. Tags, descriptions, and relations are live catalog data and need no project update; needs are lock-pinned, so consuming projects run `capshelf update <item>` to select a changed declaration without reinstalling unchanged content. **Commit the sidecar before returning to project work**: an uncommitted sidecar edit blocks `capshelf update` entirely (dirty data repo) and blocks `add` of that item.
 
@@ -153,7 +153,7 @@ yours:
   cannot be told apart from a project-local value in the merged output. Add the
   item again after the migration.
 - `--yes` authorizes the installed-state loss a repair causes. Show
-  `capshelf status <item> --diff` and get permission before you pass it.
+  `capshelf status <item> --diff-view installed` and get permission before you pass it.
 
 Refs accept a bare kind ref (`skills/hello`) or a scope-qualified one
 (`local/skills/hello`, `project/skills/hello`).
@@ -334,7 +334,7 @@ Codex only loads `.codex/config.toml` in trusted projects; `status` warns non-fa
 - **Do not work around an already-initialized `init` refusal.** Use the named
   `data` or `update` command; install-mode changes need a dedicated migration.
 - **Never pass `promote --stale-ok` without explicit user direction** — it intentionally overwrites a teammate's newer upstream version.
-- **Never pass `--yes` merely to route around a destructive-change refusal.** Show every affected path, use `capshelf status <item> --diff` for managed item drift (or marketplace sync dry-run for projections), explain what will be lost, and get the user's permission first. `--yes` does not bypass hard safety refusals.
+- **Never pass `--yes` merely to route around a destructive-change refusal.** Show every affected path, use `capshelf status <item> --diff-view installed` for managed item drift (or marketplace sync dry-run for projections), explain what will be lost, and get the user's permission first. `--yes` does not bypass hard safety refusals.
 - **Never clear a `lock migrate` blocker with `--repin` or `--remove-item` on
   your own.** One changes installed content, the other drops an item. Restore
   the missing source commit first; take the repair flags to the user.

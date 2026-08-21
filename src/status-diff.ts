@@ -43,6 +43,7 @@ import {
 } from "./fragments";
 import { subagentSourcesAtCommit } from "./subagents";
 import { lstatOrNull } from "./fs-utils";
+import { currentSourceCommit } from "./pin";
 
 type LocalDiffState =
   | "drifted_local"
@@ -52,14 +53,19 @@ type LocalDiffState =
   | "drifted_and_upstream_dirty"
   | "output_drift"
   | "source_dirty"
-  | "source_dirty_and_output_drift";
+  | "source_dirty_and_output_drift"
+  | "missing_source_commit";
 
 interface DiffableStatusRow {
+  scope?: "project" | "local";
   source: ItemSource;
   kind: ItemKind;
   name: string;
   state: string;
   sourceCommit?: string;
+  currentSha?: string | null;
+  upstreamSha?: string | null;
+  upstreamDirty?: boolean;
 }
 
 interface StatusDiffOptions {
@@ -68,6 +74,7 @@ interface StatusDiffOptions {
   manifest: Manifest;
   lock: Lock;
   row: DiffableStatusRow;
+  view?: StatusDiffView;
 }
 
 interface CopyDirectoryFilesOptions {
@@ -83,7 +90,20 @@ interface CopyDirectoryFilesOptions {
 export interface StatusDiff {
   item: string;
   path: string;
-  text: string;
+  view: Exclude<StatusDiffView, "all">;
+  from: DiffEndpoint;
+  to: DiffEndpoint;
+  text: string | null;
+  unavailableReason?: string;
+  note?: string;
+}
+
+export type StatusDiffView = "installed" | "upstream" | "all";
+
+export interface DiffEndpoint {
+  role: "locked" | "installed" | "upstream";
+  sha: string | null;
+  sourceCommit: string | null;
 }
 
 type FileMap = Map<string, Buffer>;
@@ -100,7 +120,8 @@ export function shouldShowLocalDiff(state: string): state is LocalDiffState {
     state === "drifted_and_upstream_dirty" ||
     state === "output_drift" ||
     state === "source_dirty" ||
-    state === "source_dirty_and_output_drift"
+    state === "source_dirty_and_output_drift" ||
+    state === "missing_source_commit"
   );
 }
 
@@ -108,7 +129,110 @@ export async function buildStatusDiff(
   opts: StatusDiffOptions,
 ): Promise<StatusDiff | null> {
   const { row } = opts;
-  if (!shouldShowLocalDiff(row.state)) return null;
+  const view: "installed" | "upstream" =
+    opts.view === "upstream" ? "upstream" : "installed";
+  if (view === "installed" && !shouldShowLocalDiff(row.state)) return null;
+  if (
+    view === "upstream" &&
+    row.state !== "update_available" &&
+    row.state !== "drifted_and_update" &&
+    row.state !== "missing_upstream" &&
+    row.state !== "missing_source_commit" &&
+    row.state !== "drifted_and_upstream_dirty" &&
+    row.state !== "upstream_dirty"
+  ) {
+    return null;
+  }
+
+  const entry = opts.lock.items[`${row.source}/${row.kind}/${row.name}`];
+  const lockedSha = entry
+    ? (("sourcePinDigest" in entry ? entry.sourcePinDigest : entry.sha) ?? null)
+    : null;
+  const lockedCommit = row.sourceCommit ?? null;
+  const base = {
+    item: `${row.scope ? `${row.scope}/` : ""}${row.source}/${row.kind}/${row.name}`,
+    view,
+    from: {
+      role: "locked" as const,
+      sha: lockedSha,
+      sourceCommit: lockedCommit,
+    },
+  };
+
+  if (view === "upstream") {
+    if (row.source !== "data" || !isCopyDirectoryItemKind(row.kind)) {
+      return {
+        ...base,
+        path: installedPath(opts.project, row.kind, row.name),
+        to: { role: "upstream", sha: null, sourceCommit: null },
+        text: null,
+        unavailableReason:
+          "upstream diff is not available for this item strategy",
+      };
+    }
+    if (!opts.dataRepo || !row.sourceCommit) {
+      return {
+        ...base,
+        path: installedPath(opts.project, row.kind, row.name),
+        to: { role: "upstream", sha: null, sourceCommit: null },
+        text: null,
+        unavailableReason: !opts.dataRepo
+          ? "data repo is unavailable"
+          : "locked source commit is missing",
+      };
+    }
+    let upstreamCommit: string;
+    let lockedFiles: FileMap;
+    let upstreamFiles: FileMap;
+    try {
+      upstreamCommit = await currentSourceCommit(
+        opts.dataRepo,
+        row.kind,
+        row.name,
+      );
+      lockedFiles = (await expectedFilesForRow(opts)) ?? new Map();
+      upstreamFiles =
+        (await expectedFilesForCopyItem({
+          project: opts.project,
+          dataRepo: opts.dataRepo,
+          manifest: opts.manifest,
+          source: row.source,
+          kind: row.kind,
+          name: row.name,
+          sourceCommit: upstreamCommit,
+        })) ?? new Map();
+    } catch (error) {
+      return {
+        ...base,
+        path: installedPath(opts.project, row.kind, row.name),
+        to: { role: "upstream", sha: null, sourceCommit: null },
+        text: null,
+        unavailableReason:
+          error instanceof Error ? error.message : String(error),
+      };
+    }
+    const text = await diffFileMaps(
+      upstreamFiles,
+      lockedFiles,
+      base.item,
+      "upstream",
+      lockedCommit,
+      upstreamCommit,
+    );
+    return {
+      ...base,
+      path: installedPath(opts.project, row.kind, row.name),
+      to: {
+        role: "upstream",
+        sha: row.upstreamSha ?? null,
+        sourceCommit: upstreamCommit,
+      },
+      text,
+      ...(row.upstreamDirty === true && {
+        note: "upstream diff uses committed HEAD; uncommitted data-repo changes are excluded",
+      }),
+    };
+  }
 
   if (isFragmentKind(row.kind)) {
     if (!opts.dataRepo) return null;
@@ -162,7 +286,16 @@ export async function buildStatusDiff(
     }
     const text = parts.join("\n");
     return text
-      ? { item: `${row.source}/${row.kind}/${row.name}`, path: firstPath, text }
+      ? {
+          ...base,
+          path: firstPath,
+          to: {
+            role: "installed",
+            sha: row.currentSha ?? null,
+            sourceCommit: null,
+          },
+          text,
+        }
       : null;
   }
   if (isCopyTargetFileItemKind(row.kind)) {
@@ -196,8 +329,13 @@ export async function buildStatusDiff(
     const text = parts.join("\n");
     return text
       ? {
-          item: `${row.source}/${row.kind}/${row.name}`,
+          ...base,
           path: sources[0]!.outputPath,
+          to: {
+            role: "installed",
+            sha: row.currentSha ?? null,
+            sourceCommit: null,
+          },
           text,
         }
       : null;
@@ -207,17 +345,44 @@ export async function buildStatusDiff(
   }
 
   const item = `${row.source}/${row.kind}/${row.name}`;
-  const expectedFiles = await expectedFilesForRow(opts);
+  let expectedFiles: FileMap | null;
+  try {
+    expectedFiles = await expectedFilesForRow(opts);
+  } catch (error) {
+    return {
+      ...base,
+      path: installedPath(opts.project, row.kind, row.name),
+      to: {
+        role: "installed",
+        sha: row.currentSha ?? null,
+        sourceCommit: null,
+      },
+      text: null,
+      unavailableReason: error instanceof Error ? error.message : String(error),
+    };
+  }
   if (!expectedFiles) return null;
   const currentFiles = await readInstalledFiles(
     installedPath(opts.project, row.kind, row.name),
     expectedFiles.keys(),
   );
-  const text = await diffFileMaps(currentFiles, expectedFiles, item);
+  const text = await diffFileMaps(
+    currentFiles,
+    expectedFiles,
+    item,
+    opts.view === undefined ? "current" : "installed",
+    opts.view === undefined ? null : lockedCommit,
+    null,
+  );
   return text
     ? {
-        item,
+        ...base,
         path: installedPath(opts.project, row.kind, row.name),
+        to: {
+          role: "installed",
+          sha: row.currentSha ?? null,
+          sourceCommit: null,
+        },
         text,
       }
     : null;
@@ -598,6 +763,9 @@ async function diffFileMaps(
   current: FileMap,
   expected: FileMap,
   item: string,
+  view: "installed" | "upstream" | "current" = "installed",
+  lockedCommit: string | null = null,
+  targetCommit: string | null = null,
 ): Promise<string> {
   const files = [...new Set([...current.keys(), ...expected.keys()])].sort();
   const parts: string[] = [];
@@ -606,8 +774,8 @@ async function diffFileMaps(
     const expectedText = expected.get(file)?.toString("utf-8") ?? "";
     // locked is the baseline (---), current the new side (+++) — see above.
     const text = await unifiedDiff(
-      `${file} (locked ${item})`,
-      `${file} (current)`,
+      `${file} (locked${lockedCommit ? ` ${lockedCommit.slice(0, 7)}` : ` ${item}`})`,
+      `${file} (${view}${targetCommit ? ` ${targetCommit.slice(0, 7)}` : ""})`,
       expectedText,
       currentText,
     );

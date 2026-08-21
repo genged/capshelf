@@ -17,6 +17,8 @@ import type { Manifest } from "../manifest";
 import {
   assertLockV4,
   entryIdentity,
+  loadLocalLock,
+  loadLock,
   needsEqual,
   refreshDataLockEntry,
   saveLocalLock,
@@ -42,6 +44,7 @@ import {
   isFragmentKindName,
 } from "../master";
 import { assertRepoClean } from "../git";
+import { headSha, isAncestor, objectTypeAtCommit, resolveCommit } from "../git";
 import { PRODUCT_NAME } from "../identity";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
 import { PreconditionError, ResultExitError } from "../errors";
@@ -70,12 +73,28 @@ import {
 } from "../fragments";
 import { captureCommittedItemNeeds } from "../metadata";
 import { materializeSubagent, shaOfInstalledSubagent } from "../subagents";
+import {
+  installedSnapshot,
+  namedFilesAtCommit,
+  namedFilesFromInstalledSnapshot,
+  sidecarFromInstalledSnapshot,
+} from "../item-snapshot";
+import { mergeNamedTrees, namedFilesEqual } from "../merge-tree";
+import { beginInstalledReconciliation } from "../promote-transaction";
+import { itemRepoRelPath } from "../master";
+import {
+  blobIdOf,
+  hashWidthOf,
+  itemTreeEntriesAtCommit,
+  sourcePinDigest,
+} from "../pin";
 
 interface UpdateOptions {
   json?: boolean;
   dryRun?: boolean;
   local?: boolean;
   yes?: boolean;
+  merge?: boolean;
 }
 
 type UpdateAction =
@@ -86,7 +105,9 @@ type UpdateAction =
   | "would-reconcile"
   | "kept-local"
   | "skipped-external"
-  | "error";
+  | "error"
+  | "merged"
+  | "would-merge";
 
 interface UpdateResult {
   key: string;
@@ -105,6 +126,10 @@ interface UpdateResult {
   error?: string;
   runtimeWarnings?: RuntimeWarning[];
   scope?: "project" | "local";
+  merged?: true;
+  mergeResultSha?: string;
+  mergeBase?: string;
+  mergedUpstreamCommit?: string;
 }
 
 export function registerUpdate(program: Command): void {
@@ -117,6 +142,10 @@ export function registerUpdate(program: Command): void {
     )
     .option("--local", "update local-scope items")
     .option("--yes", "overwrite local changes without prompting")
+    .option(
+      "--merge",
+      "merge local and newer upstream content into the installed copy",
+    )
     .option("--json", "output JSON")
     .action(
       async (
@@ -125,6 +154,16 @@ export function registerUpdate(program: Command): void {
         cmd: Command,
       ) => {
         const refs = itemRefs ?? [];
+        if (opts.merge && opts.yes) {
+          throw new PreconditionError(
+            "--merge and --yes cannot be used together",
+          );
+        }
+        if (opts.merge && refs.length !== 1) {
+          throw new PreconditionError(
+            "update --merge requires exactly one explicit item",
+          );
+        }
         if (opts.local) {
           for (const itemRef of refs) {
             const ref = parseItemRef(itemRef);
@@ -179,6 +218,28 @@ export function registerUpdate(program: Command): void {
           : undefined;
         if (dataRepo) {
           await assertRepoClean(dataRepo);
+        }
+
+        if (opts.merge) {
+          if (!dataRepo) throw new PreconditionError("data repo is required");
+          const result = await updateMergeTarget({
+            project,
+            manifest,
+            dataRepo,
+            target: targets[0]!,
+            projectLock: writableProjectLock,
+            localLock: writableLocalLock,
+            dryRun: opts.dryRun === true,
+          });
+          printUpdateOutput({
+            project,
+            dataRepo,
+            dryRun: opts.dryRun === true,
+            results: [result],
+            destructivePlan: createDestructiveChangePlan([], []),
+            json: opts.json === true,
+          });
+          return;
         }
 
         const results: UpdateResult[] = [];
@@ -381,6 +442,312 @@ export function registerUpdate(program: Command): void {
     );
 }
 
+async function updateMergeTarget(input: {
+  project: string;
+  manifest: Manifest;
+  dataRepo: string;
+  target: ScopedTarget;
+  projectLock: LockV4;
+  localLock: LockV4;
+  dryRun: boolean;
+}): Promise<UpdateResult> {
+  const { project, dataRepo, target, dryRun } = input;
+  const lock = target.scope === "local" ? input.localLock : input.projectLock;
+  const entry = lock.items[target.key];
+  const parsed = parseLockKey(target.key);
+  const scopeFlag = target.scope === "local" ? " --local" : "";
+  if (entry?.source !== "data") {
+    throw new PreconditionError(
+      "update --merge requires a version 4 data lock entry",
+    );
+  }
+  if (entry.local === true) {
+    throw new PreconditionError(
+      `not updating ${parsed.kind}/${parsed.name} --merge — marked as intentional project-local divergence\n` +
+        `  clear the marker first:\n    ${PRODUCT_NAME} keep-local ${parsed.kind}/${parsed.name}${scopeFlag} --unset`,
+    );
+  }
+  if (!isCopyDirectoryItemKind(parsed.kind)) {
+    throw new PreconditionError(
+      `update --merge supports only skills and pi-extensions; ${parsed.kind}/${parsed.name} is not supported`,
+    );
+  }
+  const kind = parsed.kind;
+  if (target.scope === "local") {
+    assertLocalScopeSupported(
+      parsed.kind,
+      parsed.name,
+      "update --merge --local",
+    );
+  }
+
+  await assertRepoClean(dataRepo);
+  const repoRelPath = itemRepoRelPath(parsed.kind, parsed.name);
+  const plannedHead = await headSha(dataRepo);
+  const upstreamPin = await pinCurrentSource(
+    dataRepo,
+    parsed.kind,
+    parsed.name,
+  );
+  const item = await findMasterItemByRef(dataRepo, {
+    kind: parsed.kind,
+    name: parsed.name,
+  });
+  if (!item) {
+    throw new PreconditionError(
+      `missing upstream item: ${parsed.kind}/${parsed.name}`,
+    );
+  }
+  const needsSnapshot = await captureCommittedItemNeeds(dataRepo, item);
+  const snapshot = await installedSnapshot(
+    project,
+    parsed.kind,
+    parsed.name,
+    target.scope,
+  );
+  if (snapshot === null) {
+    throw new PreconditionError(
+      `installed item is missing: ${installedPath(project, parsed.kind, parsed.name)}`,
+    );
+  }
+  const [localFiles, localSidecar, upstreamFiles] = await Promise.all([
+    namedFilesFromInstalledSnapshot(snapshot),
+    sidecarFromInstalledSnapshot(snapshot),
+    namedFilesAtCommit(dataRepo, repoRelPath, plannedHead),
+  ]);
+  const upstreamEntries = await itemTreeEntriesAtCommit(
+    dataRepo,
+    parsed.kind,
+    parsed.name,
+    plannedHead,
+  );
+  const hashWidth = hashWidthOf(upstreamEntries);
+  const upstreamChanged = upstreamPin.sourcePinDigest !== entry.sourcePinDigest;
+  const localSha = namedFilesPinDigest(localFiles, hashWidth);
+  const localChanged = localSha !== entry.sourcePinDigest;
+
+  let mergeBase = entry.sourceCommit;
+  let resultFiles = upstreamFiles;
+  let performedMerge = false;
+  if (localChanged && upstreamChanged) {
+    const resolvedBase = await resolveCommit(dataRepo, entry.sourceCommit);
+    if (resolvedBase === null) {
+      throw mergeUpdateProvenanceError(
+        parsed.kind,
+        parsed.name,
+        "the locked source commit is not available in the data repo",
+      );
+    }
+    mergeBase = resolvedBase;
+    if (!(await isAncestor(dataRepo, mergeBase, plannedHead))) {
+      throw mergeUpdateProvenanceError(
+        parsed.kind,
+        parsed.name,
+        "the locked source commit is not an ancestor of data-repo HEAD",
+      );
+    }
+    if (
+      (await objectTypeAtCommit(dataRepo, mergeBase, repoRelPath)) !== "tree"
+    ) {
+      throw mergeUpdateProvenanceError(
+        parsed.kind,
+        parsed.name,
+        "the locked source commit does not contain the item directory",
+      );
+    }
+    const baseFiles = await namedFilesAtCommit(
+      dataRepo,
+      repoRelPath,
+      mergeBase,
+    );
+    const baseEntries = await itemTreeEntriesAtCommit(
+      dataRepo,
+      parsed.kind,
+      parsed.name,
+      mergeBase,
+    );
+    if (sourcePinDigest(baseEntries) !== entry.sourcePinDigest) {
+      throw mergeUpdateProvenanceError(
+        parsed.kind,
+        parsed.name,
+        "the locked source commit does not reproduce the locked item content",
+      );
+    }
+    const merged = await mergeNamedTrees(baseFiles, localFiles, upstreamFiles);
+    if (!merged.ok) {
+      throw new PreconditionError(
+        `automatic merge conflicts in ${parsed.kind}/${parsed.name}; nothing changed.\n\n` +
+          `  conflicting paths:\n${merged.conflicts.map((path) => `    ${path}`).join("\n")}`,
+      );
+    }
+    resultFiles = merged.files;
+    performedMerge = !namedFilesEqual(resultFiles, upstreamFiles);
+  } else if (localChanged && !upstreamChanged) {
+    resultFiles = localFiles;
+  }
+
+  const newEntry = refreshDataLockEntry(entry, {
+    pin: upstreamPin,
+    ...needsSnapshot,
+  });
+  const lockChanged = JSON.stringify(entry) !== JSON.stringify(newEntry);
+  const filesChanged = !namedFilesEqual(localFiles, resultFiles);
+  const mergeResultSha = namedFilesPinDigest(resultFiles, hashWidth);
+  const action: UpdateAction = performedMerge
+    ? dryRun
+      ? "would-merge"
+      : "merged"
+    : lockChanged || filesChanged
+      ? dryRun
+        ? "would-update"
+        : "updated"
+      : "already-current";
+
+  if (!dryRun && (lockChanged || filesChanged)) {
+    await revalidateUpdateMergeInputs({
+      ...input,
+      entry,
+      parsed: { ...parsed, kind },
+      plannedHead,
+      upstreamPin,
+      needsSnapshot,
+      localFiles,
+      localSidecar,
+    });
+    const transaction = filesChanged
+      ? await beginInstalledReconciliation(
+          snapshot.localPath,
+          localFiles,
+          resultFiles,
+        )
+      : null;
+    const previous = lock.items[target.key];
+    lock.items[target.key] = newEntry;
+    try {
+      if (target.scope === "local")
+        await saveLocalLock(project, input.localLock);
+      else await saveLock(project, input.projectLock);
+      await transaction?.commit();
+    } catch (error) {
+      if (previous) lock.items[target.key] = previous;
+      await transaction?.rollback();
+      throw error;
+    }
+  }
+
+  return {
+    key: target.key,
+    scope: target.scope,
+    source: parsed.source,
+    kind: parsed.kind,
+    name: parsed.name,
+    action,
+    sha: upstreamPin.sourcePinDigest,
+    currentSha: localSha,
+    lockedSha: entry.sourcePinDigest,
+    plannedSha: upstreamPin.sourcePinDigest,
+    sourceCommit: upstreamPin.sourceCommit,
+    ...(dryRun && { dryRun: true as const }),
+    ...(performedMerge && {
+      merged: true as const,
+      mergeResultSha,
+      mergeBase,
+      mergedUpstreamCommit: plannedHead,
+    }),
+    runtimeWarnings: runtimeWarningsForItem(project, parsed.kind, parsed.name),
+  };
+}
+
+async function revalidateUpdateMergeInputs(input: {
+  project: string;
+  dataRepo: string;
+  target: ScopedTarget;
+  projectLock: LockV4;
+  localLock: LockV4;
+  entry: DataLockEntryV4;
+  parsed: ReturnType<typeof parseLockKey> & {
+    kind: "skills" | "pi-extensions";
+  };
+  plannedHead: string;
+  upstreamPin: Awaited<ReturnType<typeof pinCurrentSource>>;
+  needsSnapshot: Awaited<ReturnType<typeof captureCommittedItemNeeds>>;
+  localFiles: Awaited<ReturnType<typeof namedFilesFromInstalledSnapshot>>;
+  localSidecar: Buffer | null;
+}): Promise<void> {
+  await assertRepoClean(input.dataRepo);
+  const persistedLock =
+    input.target.scope === "local"
+      ? await loadLocalLock(input.project)
+      : await loadLock(input.project);
+  const currentLock = persistedLock.items[input.target.key];
+  const currentSnapshot = await installedSnapshot(
+    input.project,
+    input.parsed.kind,
+    input.parsed.name,
+    input.target.scope,
+  );
+  const currentPin = await pinCurrentSource(
+    input.dataRepo,
+    input.parsed.kind,
+    input.parsed.name,
+  );
+  const currentItem = await findMasterItemByRef(input.dataRepo, {
+    kind: input.parsed.kind,
+    name: input.parsed.name,
+  });
+  const currentNeeds = currentItem
+    ? await captureCommittedItemNeeds(input.dataRepo, currentItem)
+    : null;
+  if (
+    (await headSha(input.dataRepo)) !== input.plannedHead ||
+    JSON.stringify(currentLock) !== JSON.stringify(input.entry) ||
+    currentSnapshot === null ||
+    !namedFilesEqual(
+      await namedFilesFromInstalledSnapshot(currentSnapshot),
+      input.localFiles,
+    ) ||
+    !bufferOrNullEqual(
+      await sidecarFromInstalledSnapshot(currentSnapshot),
+      input.localSidecar,
+    ) ||
+    currentPin.sourcePinDigest !== input.upstreamPin.sourcePinDigest ||
+    currentPin.sourceCommit !== input.upstreamPin.sourceCommit ||
+    JSON.stringify(currentNeeds) !== JSON.stringify(input.needsSnapshot)
+  ) {
+    throw new PreconditionError(
+      `${input.parsed.kind}/${input.parsed.name} changed while preparing the merge; nothing was written. Rerun update --merge.`,
+    );
+  }
+}
+
+function bufferOrNullEqual(a: Buffer | null, b: Buffer | null): boolean {
+  return a === null ? b === null : b !== null && a.equals(b);
+}
+
+function namedFilesPinDigest(
+  files: Awaited<ReturnType<typeof namedFilesFromInstalledSnapshot>>,
+  width: 40 | 64,
+): string {
+  return sourcePinDigest(
+    files.map((file) => ({
+      path: file.path,
+      mode: file.mode,
+      blobId: blobIdOf(file.content, width),
+      repoRelPath: file.path,
+    })),
+  );
+}
+
+function mergeUpdateProvenanceError(
+  kind: string,
+  name: string,
+  reason: string,
+): PreconditionError {
+  return new PreconditionError(
+    `cannot merge ${kind}/${name}: ${reason}; nothing changed`,
+  );
+}
+
 interface UpdateContext {
   project: string;
   manifest: Manifest;
@@ -555,7 +922,10 @@ async function planUpdatePreflight(
       );
       const refs = [...(fragmentItems.get(target) ?? [])].sort();
       if (refs.length > 0) {
-        reviewCommands.set(target, `capshelf status ${refs.join(" ")} --diff`);
+        reviewCommands.set(
+          target,
+          `capshelf status ${refs.join(" ")} --diff-view installed`,
+        );
       }
     }
     const fragmentDestruction = planFragmentDestruction({
@@ -584,7 +954,7 @@ function itemReviewCommand(
   name: string,
   scope: "project" | "local",
 ): string {
-  return `capshelf status ${kind}/${name}${scope === "local" ? " --local" : ""} --diff`;
+  return `capshelf status ${kind}/${name}${scope === "local" ? " --local" : ""} --diff-view installed`;
 }
 
 function updateRerunCommand(refs: string[], local: boolean): string {
@@ -1005,6 +1375,25 @@ function printUpdateResults(results: UpdateResult[]): void {
     } else if (r.action === "would-reconcile") {
       console.log(`• ${id} would reconcile`);
       printUpdateDetails(r);
+    } else if (r.action === "merged" || r.action === "would-merge") {
+      console.log(
+        `${r.action === "merged" ? "✓" : "•"} ${id} ${
+          r.action === "merged"
+            ? "merged upstream into installed copy"
+            : "would merge upstream into installed copy"
+        }`,
+      );
+      console.log(`  base: ${r.mergeBase}`);
+      console.log(`  upstream pin: ${r.mergedUpstreamCommit}`);
+      console.log(`  installed result: ${r.mergeResultSha}`);
+      const scopeFlag = r.scope === "local" ? " --local" : "";
+      console.log(
+        `  review: ${PRODUCT_NAME} status ${r.kind}/${r.name}${scopeFlag} --diff-view installed`,
+      );
+      console.log(
+        `  publish: ${PRODUCT_NAME} promote ${r.kind}/${r.name}${scopeFlag} -m "..."`,
+      );
+      printRuntimeWarnings(r.runtimeWarnings);
     } else {
       console.log(`✓ ${id} ${r.action}`);
       if (r.action === "kept-local" && r.localReason) {

@@ -32,7 +32,7 @@ assert_fixed_contains 'PROJECT_MODE' "$A/.claude/settings.json"
 # --- status: three-way diff against drifted project settings ---
 printf '%s\n' '{"permissions":{"allow":["Bash(git status *)"],"deny":["Read(./.env)"]},"env":{"PROJECT_MODE":"dev"}}' > "$A/.claude/settings.json"
 (cd "$A" && "${CLI[@]}" status settings/security --diff > "$TMP/settings-drift-diff.txt")
-assert_contains 'diff data/settings/security' "$TMP/settings-drift-diff.txt"
+assert_contains 'diff project/data/settings/security \[locked -> installed\]' "$TMP/settings-drift-diff.txt"
 assert_fixed_contains 'Bash(curl *)' "$TMP/settings-drift-diff.txt"
 
 # --- apply: re-merges fragment into project settings after explicit consent ---

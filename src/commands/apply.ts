@@ -660,7 +660,10 @@ async function planApplyPreflight(
       );
       const refs = [...(fragmentItems.get(target) ?? [])].sort();
       if (refs.length > 0) {
-        reviewCommands.set(target, `capshelf status ${refs.join(" ")} --diff`);
+        reviewCommands.set(
+          target,
+          `capshelf status ${refs.join(" ")} --diff-view installed`,
+        );
       }
     }
     const planned = planFragmentDestruction({
@@ -720,7 +723,7 @@ function itemReviewCommand(
   name: string,
   scope: "project" | "local",
 ): string {
-  return `capshelf status ${kind}/${name}${scope === "local" ? " --local" : ""} --diff`;
+  return `capshelf status ${kind}/${name}${scope === "local" ? " --local" : ""} --diff-view installed`;
 }
 
 function applyRerunCommand(

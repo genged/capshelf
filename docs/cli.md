@@ -11,7 +11,7 @@ disturbs another until that project asks for it.
 brew install genged/tap/capshelf         # install the binary
 capshelf init --data ../capshelf-data    # bind a project to a data repo
 capshelf add skills/security-review      # install a shared item
-capshelf status --diff                   # what drifted, and how
+capshelf status --diff                   # installed and upstream changes
 capshelf promote security-review -m "…"  # send an edit back to the data repo
 ```
 
@@ -246,15 +246,15 @@ registered.
 | `ls` | list items in master plus user-level runtime skills by default, in this project (`--here`), or user-level runtime skills only (`--user`); master/project listings show descriptions and `#tags` from item metadata; `--tag` filters master/project listings; appends a `bundles/` section for data-repo bundles | implemented |
 | `show <item>` | print metadata + content for one item, including relations and current/locked declared needs, plus runtime target coverage for MCP and subagents; `--target` narrows to one runtime | implemented |
 | `search <query...>` | search available items (data repo + system) and bundles by name, tags, description, and content; supports `--kind` and `--json`; zero matches exit 0 | implemented |
-| `status [<item>]` | drift / update report plus orthogonal `needsState` freshness and locked needs; subagent JSON includes deterministic per-target state; a sub-line names any runtime target an MCP or subagent item does not cover; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` explains local drift | implemented |
+| `status [<item>]` | drift / update report plus orthogonal `needsState` freshness and locked needs; subagent JSON includes deterministic per-target state; a sub-line names any runtime target an MCP or subagent item does not cover; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` shows locked-to-installed and locked-to-upstream comparisons; `--diff-view installed\|upstream\|all` selects a comparison | implemented |
 | `add <item>` | install a new item from the bound data repo, materializing exactly what the pin contains; MCP and subagent installs report per-runtime target coverage; an already-installed standalone item is a byte- and lock-stable no-op; `--local` installs a clone-local copy item; `--yes` authorizes collateral fragment-output loss for a new fragment, standalone or expanded from a bundle | implemented |
 | `rm <item>` | remove a locked data item and report every output it reconciled; clean reproducible content is prompt-free, while local edits, modes, extra paths, subagent drift, and fragment comment loss require consent or `--yes` | implemented |
 | `get-path <item>` | print the editable path; subagents and MCP support `--target`, while `--output` returns the corresponding runtime output | implemented |
 | `apply [<item>]` | reconcile project and local files with lockfiles after a full-set destructive preflight; a failing fragment target aborts every write, while an unresolvable copy or subagent item is reported and the rest still converge (exit 1); supports `--local`, `--dry-run`, and `--yes` | implemented |
-| `update [<item>...]` | bump content and declared-needs pins; needs-only changes do not reinstall unchanged content; `--local` updates clone-local copy-item pins; supports `--dry-run` and explicit drift overwrite consent with `--yes` | implemented |
+| `update [<item>...]` | bump content and declared-needs pins; needs-only changes do not reinstall unchanged content; `--merge` reconciles one explicit skill or Pi extension and pins upstream without publishing; `--local` selects clone-local scope; supports `--dry-run` and explicit drift overwrite consent with `--yes` | implemented |
 | `share <item>` | adopt a not-yet-shared on-disk item into the data repo and report the new item's runtime target coverage; subagents scan both runtime outputs by default and require `--target` with `--from` | implemented |
 | `move <item> --to <scope>` | move an already-tracked data item between local and project scope without changing data-repo content | implemented |
-| `promote <item>` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects clone-local copy items; stale copy items can use `--merge` or intentional overwrite with `--stale-ok` | implemented |
+| `promote <item>` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects clone-local copy items; `--stale-ok` is the intentional overwrite option; `--merge` is deprecated compatibility behavior | implemented |
 | `keep-local <item>` | mark drifted copy-item content as intentional divergence; supports project and clone-local skills/Pi extensions, and rejects fragments; `--unset` is the only thing that clears the marker, and `promote` refuses a marked item | implemented |
 | `revert <item>` | restore one locked version; the lock is never rewritten, so a keep-local marker survives; discarding local state requires consent or `--yes`; supports `--local` | implemented |
 | `lock migrate` | convert this project's lock files to version 4 in one transaction; supports `--dry-run`, `--repin`, `--remove-item`, `--yes`, and `--json` | implemented |
@@ -949,6 +949,15 @@ Standalone `add` of an already-installed item does not reapply, repin, clear
 `apply` or `revert` to restore the lock, and `status <item> --diff` before any
 destructive choice.
 
+Bare `status --diff` shows two independent comparisons when both exist:
+locked to installed, then locked to committed upstream. Use `--diff-view
+installed` or `--diff-view upstream` to select one comparison. `--diff-view`
+implies `--diff`. JSON diff entries retain `item`, `path`, and `text`, and add
+`view`, `from`, and `to`. A path can now produce two entries. Consumers must
+not assume that each path occurs once. An unavailable comparison has `text:
+null` and an `unavailableReason` (`src/commands/status.ts:492-530`,
+`src/status-diff.ts:90-107`).
+
 ### The keep-local marker
 
 The marker records *intent*, not a fact about current content. Exactly one
@@ -971,31 +980,30 @@ pinned content reports `= already current` and says the marker is still set.
 `promote` refuses to overwrite data-repo content that is newer than this
 project's lock (exit 3): if the item changed upstream since the project last
 updated, the error shows the locked vs upstream shas, a scoped `git log` of
-the upstream advance, and the safe choices: merge the two committed lines of
-work with `capshelf promote <item> --merge`, take upstream with
-`capshelf update <item>`, or overwrite on purpose with
-`capshelf promote <item> --stale-ok`. `--merge` and `--stale-ok` are mutually
-exclusive. The suggested commands preserve `--local` when the refusal came
+the upstream advance, and the safe choices: reconcile the installed and
+upstream branches with `capshelf update <item> --merge`, take upstream with a
+plain `capshelf update <item>`, or overwrite on purpose with `capshelf promote
+<item> --stale-ok`. The suggested commands preserve `--local` when the refusal came
 from a local-scope promote. `update` warns and asks before replacing a drifted
 installed copy; preserve the edit before consenting. Local-scope copy items
 are excluded from the project's Git repository and cannot be recovered from
 its diff.
 
-`--merge` performs a standard Git three-way content merge from the locked
+`update --merge` performs a standard Git three-way content merge from the locked
 `sourceCommit`: base = locked content, local = the installed managed snapshot,
 and upstream = the item at current data-repo HEAD. It is supported for
-project- and local-scope skills and for project-scope Pi extensions. Local Pi
-extensions, fragments, system items, missing or non-ancestral base history,
+project- and local-scope skills and Pi extensions. Fragments, system items,
+subagents, missing or non-ancestral base history,
 and a base tree that does not reproduce the lock are refused. A conflict lists
 sorted item-relative paths and changes no data-repo, installed, manifest, or
-lock state. On a clean result, capshelf makes at most one ordinary
-single-parent data-repo commit and reconciles the calling project's installed
-copy while preserving ignored/generated files outside its managed snapshot.
-That commit runs the data repo's own hooks: a hook that rejects it stops the
-promote (exit 3) and leaves `HEAD`, the item path, the index, the installed
-copy, and the lock as they were. The root `.capshelf.yml` remains outside
-content identity; an installed sidecar wins over upstream when the merged item
-is committed.
+lock state. On a clean result, capshelf changes only the installed copy and the
+selected lock. It preserves ignored/generated files outside its managed
+snapshot. The lock records the exact upstream pin. The installed copy can hold
+the merged result and report local drift until a later normal `promote`
+publishes it. The root `.capshelf.yml` remains outside content identity and is
+preserved byte-for-byte. `promote --merge` remains as a deprecated compatibility
+option for this release (`src/commands/update.ts:445-658`,
+`src/promote-transaction.ts:76-124`).
 
 Two related behaviors:
 

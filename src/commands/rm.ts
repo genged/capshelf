@@ -212,7 +212,7 @@ export function registerRm(program: Command): void {
       const scope = opts.local ? "local" : "project";
       const reviewCommand = `${PRODUCT_NAME} status ${kind}/${name}${
         opts.local ? " --local" : ""
-      } --diff`;
+      } --diff-view installed`;
       const planRemoval = async (): Promise<{
         destructivePlan: ReturnType<typeof createDestructiveChangePlan>;
         fragmentPlans: FragmentOutputPlan[];

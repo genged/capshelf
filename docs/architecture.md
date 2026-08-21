@@ -632,8 +632,9 @@ Network sync is equally explicit: only `sync-data` fetches the data repo's
 fast-forward (diverged, dirty, and detached states stop with git guidance).
 In the other direction, `promote` refuses to overwrite data-repo content
 newer than the calling project's lock — a stale promote is a conflict (exit
-3) resolved by an explicit three-way `--merge` for supported copy items or
-bypassed by an intentional `--stale-ok`; the flags are mutually exclusive.
+3) reconciled by an explicit `update --merge` for supported copy items or
+bypassed by an intentional `promote --stale-ok`
+(`src/commands/promote.ts:1395-1440`).
 Uncommitted data-repo edits under the item's path always block.
 
 The merge engine reconstructs raw-byte trees and executable modes for the
@@ -641,14 +642,13 @@ locked base, installed local snapshot, and current upstream commit, then runs
 standard Git merge behavior in a disposable synthetic repository. That
 process receives no inherited system/global Git configuration, templates,
 hooks, filters, merge drivers, fsmonitor, or signing commands. Before writing,
-promote revalidates data-repo HEAD and cleanliness plus the local snapshot and
-sidecar. Conflicts are read-only. A clean content result is committed like
-every other data-repo commit — one ordinary single-parent commit that runs the
-repository's own hooks and is proved against the merge candidate inside the
-transaction — and the calling project's installed copy is reconciled after it
-succeeds. A refusal at any of those points restores the item path, the index,
-and `HEAD`. Other projects' files and locks remain pinned until their own
-`update`.
+update revalidates data-repo HEAD and cleanliness, the upstream pin and needs,
+the selected lock entry, and the installed snapshot and sidecar. Conflicts are
+read-only. A clean result is written to the installed copy before the selected
+lock is saved. A lock-save failure restores the installed copy. The lock pins
+the exact upstream tree, not the merged result. A later normal promote is the
+separate publication transaction. Other projects remain unchanged
+(`src/commands/update.ts:606-635`).
 
 ### Two commit operations, one hook policy
 

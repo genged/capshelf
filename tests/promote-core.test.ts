@@ -1469,7 +1469,7 @@ describe("stale-promote guard (copy items)", () => {
     expect((error as Error).message).toContain("capshelf update skills/hello");
     expect((error as Error).message).toContain("status skills/hello --diff");
     expect((error as Error).message).toContain(
-      'capshelf promote skills/hello --merge -m "..."',
+      "capshelf update skills/hello --merge",
     );
     // Nothing was written or committed.
     expect(
@@ -1502,14 +1502,12 @@ describe("stale-promote guard (copy items)", () => {
 
     expect(error).toBeInstanceOf(PreconditionError);
     const message = (error as Error).message;
-    expect(message).toContain("capshelf status skills/hello --diff --local");
+    expect(message).toContain("capshelf status skills/hello --local --diff");
     expect(message).toContain("capshelf update skills/hello --local");
     expect(message).toContain(
       'capshelf promote skills/hello --local --stale-ok -m "..."',
     );
-    expect(message).toContain(
-      'capshelf promote skills/hello --local --merge -m "..."',
-    );
+    expect(message).toContain("capshelf update skills/hello --local --merge");
     expect(message).toContain(
       "local-scope files are excluded from this project's Git",
     );
@@ -1534,12 +1532,12 @@ describe("stale-promote guard (copy items)", () => {
 
     expect(error).toBeInstanceOf(PreconditionError);
     const message = (error as Error).message;
-    expect(message).toContain('capshelf promote skills/hello --merge -m "..."');
+    expect(message).toContain("capshelf update skills/hello --merge");
     // Merge keeps both sides, so it is the first choice (docs/cli.md:969-977).
     expect(message.indexOf("--merge")).toBeLessThan(
-      message.indexOf("capshelf update skills/hello"),
+      message.indexOf("to take the upstream version"),
     );
-    expect(message.indexOf("capshelf update skills/hello")).toBeLessThan(
+    expect(message.indexOf("to take the upstream version")).toBeLessThan(
       message.indexOf("--stale-ok"),
     );
 
@@ -1556,7 +1554,7 @@ describe("stale-promote guard (copy items)", () => {
     expect(merged.committed).toBe(true);
   });
 
-  test("a local-scope Pi refusal omits merge, which cannot run in that scope", async () => {
+  test("a local-scope Pi refusal offers update merge", async () => {
     const dataRepo = await tempRepo("capshelf-stale-local-pi-data-");
     const project = await tempRepo("capshelf-stale-local-pi-project-");
     const dataItem = join(dataRepo, "pi", "extensions", "guard");
@@ -1615,8 +1613,9 @@ describe("stale-promote guard (copy items)", () => {
       "changed in the data repo since this project last updated",
     );
     expect(message).toContain("capshelf update pi-extensions/guard --local");
-    // The reason the choice is absent: it would refuse.
-    expect(message).not.toContain("--merge");
+    expect(message).toContain(
+      "capshelf update pi-extensions/guard --local --merge",
+    );
     await expect(
       syncTrackedIntoDataRepo(
         project,

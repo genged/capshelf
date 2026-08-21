@@ -152,6 +152,11 @@ export function registerPromote(program: Command): void {
     .option("-m, --message <msg>", "git commit message")
     .option("--json", "output JSON")
     .action(async (itemRef: string, opts: PromoteOptions, cmd: Command) => {
+      if (opts.merge && !opts.json) {
+        console.error(
+          `promote --merge is deprecated; use update ${itemRef} --merge, review the result, then run promote ${itemRef}`,
+        );
+      }
       if (opts.merge && opts.staleOk) {
         throw new PreconditionError(
           "--merge and --stale-ok cannot be combined; choose merge or overwrite",
@@ -1413,16 +1418,21 @@ function stalePromoteError(input: {
   // The merge choice is the only one that keeps both sides, so it comes first
   // — but only where it can run. Offering it for a fragment, a subagent, or a
   // local Pi extension would print a command that then refuses.
-  const mergeChoice = supportsPromoteMerge(input.kind, input.scope)
-    ? "  to merge the newer upstream version with this installed version:\n" +
-      `    capshelf promote ${item}${scopeFlag} --merge -m "..."\n\n`
+  const mergeChoice = isCopyDirectoryItemKind(input.kind)
+    ? "  inspect both lines of work:\n" +
+      `    capshelf status ${item}${scopeFlag} --diff\n\n` +
+      "  merge upstream into this installed copy:\n" +
+      `    capshelf update ${item}${scopeFlag} --merge\n\n` +
+      "  review the merged installed copy:\n" +
+      `    capshelf status ${item}${scopeFlag} --diff-view installed\n\n` +
+      "  publish after review:\n" +
+      `    capshelf promote ${item}${scopeFlag} -m "..."\n\n`
     : "";
   return new PreconditionError(
     `${item} changed in the data repo since this project last updated; promoting would overwrite the newer upstream version.\n\n` +
       `  locked:   ${input.lockedSha}  (sourceCommit ${shortCommit})\n` +
       `  upstream: ${input.upstreamSha}  (data repo HEAD)\n\n` +
-      "  inspect before deciding:\n" +
-      `    capshelf status ${item} --diff${scopeFlag}\n` +
+      "  optional history context:\n" +
       `    git -C ${repo} log --oneline ${shortCommit}..HEAD -- ${input.logPathspec}\n\n` +
       mergeChoice +
       "  to take the upstream version and redo your edit on top of it\n" +

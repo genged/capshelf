@@ -35,6 +35,7 @@ import {
   currentCopyDirectoryItemSha,
 } from "../status-diff";
 import type { StatusDiff } from "../status-diff";
+import type { StatusDiffView } from "../status-diff";
 import {
   codexProjectTrustWarnings,
   isStrictRuntimeWarning,
@@ -80,6 +81,7 @@ interface StatusOptions {
   json?: boolean;
   strict?: boolean;
   diff?: boolean;
+  diffView?: string;
   project?: boolean;
   local?: boolean;
   user?: boolean;
@@ -94,7 +96,14 @@ export function registerStatus(program: Command): void {
       "--strict",
       "exit 4 if any item is neither up-to-date nor kept-local",
     )
-    .option("--diff", "show local drift diff against the locked content")
+    .option(
+      "--diff",
+      "show installed and committed upstream diffs against the locked content",
+    )
+    .option(
+      "--diff-view <view>",
+      "select installed, upstream, or all (implies --diff)",
+    )
     .option("--project", "show committed project-scope items only")
     .option("--local", "show clone-local items only")
     .option("--user", "show user-level runtime skills only")
@@ -104,6 +113,8 @@ export function registerStatus(program: Command): void {
         opts: StatusOptions,
         cmd: CmdType,
       ) => {
+        const diffView = parseDiffView(opts.diffView);
+        if (opts.diffView !== undefined) opts.diff = true;
         if (opts.user) {
           await statusUser(itemRef, opts);
           return;
@@ -484,16 +495,26 @@ export function registerStatus(program: Command): void {
           const seenPaths = new Set<string>();
           for (const row of rows) {
             const rowLock = row.scope === "local" ? localLock : projectLock;
-            const diff = await buildStatusDiff({
-              project,
-              dataRepo,
-              manifest,
-              lock: rowLock,
-              row,
-            });
-            if (!diff || seenPaths.has(diff.path)) continue;
-            seenPaths.add(diff.path);
-            diffs.push(diff);
+            const views =
+              diffView === "all"
+                ? (["installed", "upstream"] as const)
+                : [diffView];
+            for (const view of views) {
+              const diff = await buildStatusDiff({
+                project,
+                dataRepo,
+                manifest,
+                lock: rowLock,
+                row,
+                view,
+              });
+              const identity = diff
+                ? `${row.scope}:${diff.item}:${diff.path}:${diff.view}`
+                : "";
+              if (!diff || seenPaths.has(identity)) continue;
+              seenPaths.add(identity);
+              diffs.push(diff);
+            }
           }
         }
 
@@ -528,7 +549,12 @@ export function registerStatus(program: Command): void {
               personalClaudeExternal,
             }).join("\n"),
           );
-          if (opts.diff) printDiffs(diffs);
+          if (opts.diff) {
+            printDiffs(
+              diffs,
+              rows.some((row) => row.needsState === "update_available"),
+            );
+          }
         }
 
         if (
@@ -629,18 +655,37 @@ function filterUserSkillsForRef(
   return skills.filter((skill) => skill.name === ref.name);
 }
 
-function printDiffs(diffs: StatusDiff[]): void {
+function printDiffs(diffs: StatusDiff[], needsChanged: boolean): void {
   console.log("");
   if (diffs.length === 0) {
-    console.log("(no local drift diff)");
+    console.log(
+      needsChanged
+        ? "(no content differences; declared needs changed)"
+        : "(no content differences)",
+    );
     return;
   }
 
   for (const [index, diff] of diffs.entries()) {
     if (index > 0) console.log("");
-    console.log(`diff ${diff.item}`);
-    process.stdout.write(diff.text);
+    console.log(`diff ${diff.item} [locked -> ${diff.view}]`);
+    if (diff.text === null) {
+      console.log(`${diff.view} diff unavailable: ${diff.unavailableReason}`);
+    } else {
+      process.stdout.write(diff.text);
+    }
+    if (diff.note) console.log(`note: ${diff.note}`);
   }
+}
+
+function parseDiffView(value: string | undefined): StatusDiffView {
+  if (value === undefined) return "all";
+  if (value === "installed" || value === "upstream" || value === "all") {
+    return value;
+  }
+  throw new PreconditionError(
+    `invalid --diff-view ${value}; expected installed, upstream, or all`,
+  );
 }
 
 /**

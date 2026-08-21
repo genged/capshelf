@@ -910,7 +910,7 @@ describe("cli integration", () => {
     expect(status.stdout.toString()).not.toContain(".venv");
     expect(status.stdout.toString()).not.toContain("_virtualenv.py");
     expect(status.stdout.toString()).toContain("data/skills/keyword-research");
-    expect(status.stdout.toString()).toContain("(no local drift diff)");
+    expect(status.stdout.toString()).toContain("(no content differences)");
   });
 
   test("migration commands are absent and legacy dataRepo fails manually", async () => {

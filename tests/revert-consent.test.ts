@@ -71,7 +71,7 @@ describe("revert destructive-change consent", () => {
       const refused = await run(["revert", "skills/drift", "--json"]);
       expect(refused.exitCode).toBe(3);
       expect(refused.stderr.toString()).toContain(
-        "capshelf status skills/drift --diff",
+        "capshelf status skills/drift --diff-view installed",
       );
       expect(await file(installed).text()).toBe("local edit\n");
       expect(await file(lockPath).text()).toBe(before);

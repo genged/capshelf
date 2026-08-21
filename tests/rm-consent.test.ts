@@ -60,7 +60,7 @@ describe("rm destructive-change consent", () => {
       "replace an executable-mode change",
     );
     expect(refused.stderr.toString()).toContain(
-      "capshelf status skills/stateful --diff",
+      "capshelf status skills/stateful --diff-view installed",
     );
     expect(await file(ignored).text()).toBe("unique local state\n");
     expect(

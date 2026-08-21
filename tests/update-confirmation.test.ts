@@ -76,7 +76,9 @@ describe("interactive destructive-change consent", () => {
         expect(prompts).toHaveLength(1);
         expect(prompts[0]).toContain("Update would destroy local state");
         expect(prompts[0]).toContain(".agents/skills/hello/SKILL.md");
-        expect(prompts[0]).toContain("capshelf status skills/hello --diff");
+        expect(prompts[0]).toContain(
+          "capshelf status skills/hello --diff-view installed",
+        );
         expect(prompts[0]).toContain("Continue? [y/N]");
         expect(stderr).toEqual([]);
       });
@@ -275,7 +277,7 @@ describe("interactive destructive-change consent", () => {
       path: ".agents/skills/extra/notes.txt",
       reason: "extra_local_path",
       detail: "not part of the item — reconciliation removes it",
-      reviewCommand: "capshelf status skills/extra --diff",
+      reviewCommand: "capshelf status skills/extra --diff-view installed",
     });
 
     const refused = await run(["update", "skills/extra", "--json"]);
@@ -341,7 +343,8 @@ describe("interactive destructive-change consent", () => {
         scope: "project",
         path: ".codex/config.toml",
         reason: "config_comments",
-        reviewCommand: "capshelf status codex-config/defaults --diff",
+        reviewCommand:
+          "capshelf status codex-config/defaults --diff-view installed",
       });
       // Claude Code will not load a settings.json with comments, so removing
       // them repairs the file rather than destroying anything.
