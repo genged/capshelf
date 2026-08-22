@@ -52,9 +52,9 @@ $ capshelf status security-review --diff
 project/
   ✎   data/skills/security-review             79402231469b  drifted (1 file: content-edit)
 
-diff data/skills/security-review
---- SKILL.md (locked data/skills/security-review)
-+++ SKILL.md (current)
+diff project/data/skills/security-review [locked -> installed]
+--- SKILL.md (locked 0d70263)
++++ SKILL.md (installed)
 @@ -8,3 +8,4 @@ Check every changed handler for:
  - SQL built by string concatenation
  - endpoints with no authorization check
