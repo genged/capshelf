@@ -171,7 +171,14 @@ the declared version, and a warning does not fail a job.
 
 One file declares the release platforms: `scripts/release-platforms.json`. The
 packaging script builds from it and the validation matrix is derived from it,
-so an archive cannot exist without a native runner to prove it works.
+so an archive cannot exist without a native runner to prove it works. The
+packaging script also counts what it built against what the file declares
+(`scripts/package-homebrew-artifacts.sh:24-27,48-52`), so a runner cannot exist
+without its archive either. The v0.10.0 release failed in that direction: a
+shell read loop dropped the last platform in the file, and the gap surfaced
+only as a validation job that could not find its candidate.
+`tests/release-packaging-script.test.ts` runs the real script with only
+`bun build --compile` stubbed, so the platform list stays under test.
 
 The two release gates are shell scripts with their own tests
 (`tests/release-gate-scripts.test.ts`), not logic embedded in YAML:

@@ -21,8 +21,16 @@ mkdir -p "$out_dir" "$build_dir"
 # without a native runner to prove it works.
 platforms_file="$ROOT/scripts/release-platforms.json"
 
+declared_count="$(bun -e '
+  const platforms = await Bun.file(process.argv[1]).json();
+  process.stdout.write(String(platforms.length));
+' "$platforms_file")"
+
+# `read` returns non-zero on a final line with no newline, so the `|| [ -n ... ]`
+# keeps the last platform. Without it the loop drops it and the release ships a
+# short manifest while the validation matrix still expects the archive.
 targets=()
-while IFS= read -r target; do
+while IFS= read -r target || [ -n "$target" ]; do
   [ -n "$target" ] && targets+=("$target")
 done < <(bun -e '
   const file = process.argv[1];
@@ -34,6 +42,12 @@ done < <(bun -e '
 
 if [ "${#targets[@]}" -eq 0 ]; then
   printf 'no release platforms declared in %s\n' "$platforms_file" >&2
+  exit 1
+fi
+
+if [ "${#targets[@]}" -ne "$declared_count" ]; then
+  printf 'read %s of the %s platforms declared in %s\n' \
+    "${#targets[@]}" "$declared_count" "$platforms_file" >&2
   exit 1
 fi
 
@@ -59,3 +73,13 @@ done
     sha256sum "capshelf-$version-"*.tar.gz > "capshelf-$version.sha256"
   fi
 )
+
+# The release workflow greps this manifest for one line per platform in its
+# matrix. A short manifest only surfaces there, as a validation job that cannot
+# find its candidate, so prove the count here instead.
+manifest_count="$(grep -c . "$out_dir/capshelf-$version.sha256")"
+if [ "$manifest_count" -ne "$declared_count" ]; then
+  printf 'checksum manifest lists %s of the %s declared platforms\n' \
+    "$manifest_count" "$declared_count" >&2
+  exit 1
+fi
