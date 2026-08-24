@@ -22,7 +22,7 @@
 import { AutocompletePrompt, isCancel } from "@clack/core";
 import { createPickFinder } from "./pick-core";
 import type { PickRow, RankedPickRow } from "./pick-core";
-import { renderPickBody } from "./pick-frame";
+import { GUTTER, bodyBudget, renderPickBody } from "./pick-frame";
 import type { PickPalette } from "./pick-frame";
 import { pickTabs, rowsForTab, stepTab } from "./pick-tabs";
 import type { PickTab } from "./pick-tabs";
@@ -350,15 +350,20 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
       cursor: this.cursorFromFocus(),
       marked: new Set(this.selectedValues),
       height: LIST_HEIGHT,
-      // The stream the frame is drawn on decides how wide a row may be.
-      ...(process.stderr.columns !== undefined && {
-        columns: process.stderr.columns,
-      }),
+      // The stream the frame is drawn on decides how wide a line may be. A
+      // stream that is not a terminal has no width, and `bodyBudget` reads
+      // that as unlimited.
+      columns: process.stderr.columns,
       palette: TERMINAL_PALETTE,
     });
+    // The header sits above lines the frame already fitted, so it answers to
+    // the same budget. `init` supplies a message long enough to wrap a
+    // 40-column terminal on its own.
+    const budget = bodyBudget(process.stderr.columns);
+    const header = [...message].slice(0, budget).join("");
     return [
-      `${TERMINAL_PALETTE.accent("◆")}  ${message}`,
-      ...body.map((line) => `${TERMINAL_PALETTE.dim("│")}  ${line}`),
+      `${TERMINAL_PALETTE.accent("◆")}  ${header}`,
+      ...body.map((line) => `${TERMINAL_PALETTE.dim(GUTTER)}${line}`),
       TERMINAL_PALETTE.dim("└"),
     ].join("\n");
   }

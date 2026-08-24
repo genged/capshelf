@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   GUTTER_WIDTH,
   MARKED,
+  bodyBudget,
   PLAIN_PALETTE,
   POINTER,
   UNMARKED,
@@ -190,7 +191,6 @@ describe("renderRows", () => {
     // The checkboxes are round. Unicode's right-pointing triangles come in a
     // small size and a full size, and neither is drawn to the same vertical
     // metrics as the checkbox, so neither sits level beside it.
-    expect(POINTER.trimEnd()).not.toMatch(/[▸▶►]/u);
     expect(POINTER.trimEnd()).toBe("❯");
   });
 
@@ -363,7 +363,7 @@ describe("renderPickBody", () => {
 
   test("the legend drops words rather than wrapping", () => {
     for (const columns of [80, 60, 44, 30]) {
-      const legend = renderLegend(PLAIN_PALETTE, columns);
+      const legend = renderLegend(PLAIN_PALETTE, bodyBudget(columns));
       expect(legend.length + GUTTER_WIDTH).toBeLessThanOrEqual(columns);
       expect(legend).toContain("enter");
     }
@@ -371,7 +371,7 @@ describe("renderPickBody", () => {
 
   test("the tab bar compacts rather than wrapping", () => {
     const tabs = pickTabs(SHELF);
-    const lines = renderTabBar(tabs, 2, PLAIN_PALETTE, 24);
+    const lines = renderTabBar(tabs, 2, PLAIN_PALETTE, bodyBudget(24));
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("skills");
     // Which of how many, since the other names no longer fit.
@@ -380,7 +380,12 @@ describe("renderPickBody", () => {
   });
 
   test("a bar that fits keeps every name and its underline", () => {
-    const lines = renderTabBar(pickTabs(SHELF), 2, PLAIN_PALETTE, 100);
+    const lines = renderTabBar(
+      pickTabs(SHELF),
+      2,
+      PLAIN_PALETTE,
+      bodyBudget(100),
+    );
     expect(lines).toHaveLength(2);
     expect(lines[0]).toContain("bundles");
   });
@@ -391,5 +396,24 @@ describe("renderPickBody", () => {
         expect(line.length + GUTTER_WIDTH).toBeLessThanOrEqual(columns);
       }
     }
+  });
+
+  test("a query the user keeps typing does not widen the frame", () => {
+    // The query is the one string in the frame that grows without limit, so
+    // the search line is the one that overflows if nothing bounds it.
+    for (const columns of [100, 80, 60, 44, 34]) {
+      const long = frame({ columns, query: "a".repeat(120) });
+      for (const line of renderPickBody(long)) {
+        expect(line.length + GUTTER_WIDTH).toBeLessThanOrEqual(columns);
+      }
+    }
+  });
+
+  test("a truncated query keeps its tail, where the caret is", () => {
+    const line = renderSearchLine("start-middle-end", 1, 1, PLAIN_PALETTE, 20);
+    expect(line).toContain("█");
+    expect(line).toContain("end");
+    expect(line).not.toContain("start");
+    expect(line.length).toBeLessThanOrEqual(20);
   });
 });

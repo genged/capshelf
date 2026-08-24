@@ -43,12 +43,14 @@ export const UNMARKED = "◯";
  *
  * A chevron, not a triangle. `◯` and `◉` are round, and the right-pointing
  * triangles Unicode offers are a small one (`▸`) and a full-size one (`▶`),
- * neither drawn to the same vertical metrics as the checkbox — the small one
+ * neither drawn to the same vertical metrics as the checkbox. The small one
  * reads as sitting low beside it. The chevron is a text-weight glyph that sits
  * on the same optical line.
  */
 export const POINTER = "❯ ";
 const NO_POINTER = "  ";
+
+const SEARCH_PROMPT = "Search: ";
 
 export interface PickFrame {
   tabs: PickTab[];
@@ -62,18 +64,36 @@ export interface PickFrame {
   /** Maximum row lines to draw, headings included. */
   height: number;
   /**
-   * Terminal width, so a row can be kept to one line. Absent means unlimited,
+   * Terminal width, so a line can be kept to one row. Absent means unlimited,
    * which is what the unit tests use.
    */
   columns?: number;
   palette?: PickPalette;
 }
 
-/** Cells the caller's gutter takes before every body line. */
-export const GUTTER_WIDTH = 3;
+/** The gutter `pick.ts` draws before every body line, and the cells it takes. */
+export const GUTTER = "│  ";
+export const GUTTER_WIDTH = GUTTER.length;
 
 /** Below this, a hint is dropped rather than shown as a stub. */
 const MIN_HINT_WIDTH = 12;
+
+/**
+ * Cells one body line may fill on a terminal `columns` wide.
+ *
+ * Every renderer is handed this number rather than the width, so the two
+ * subtractions are written once. The gutter is the caller's decoration, and
+ * the extra cell is the auto-wrap rule: a line that fills the last column
+ * wraps on terminals that wrap there, and a wrapped line breaks the redraw for
+ * the whole frame, because the rewind then counts one line where two were
+ * drawn.
+ *
+ * An absent width is unlimited, which the arithmetic below carries on its own.
+ */
+export function bodyBudget(columns: number | undefined): number {
+  if (columns === undefined) return Number.POSITIVE_INFINITY;
+  return columns - 1 - GUTTER_WIDTH;
+}
 
 /**
  * The tab bar: `All │ bundles │ skills`, with the active one accented and
@@ -87,19 +107,20 @@ export function renderTabBar(
   tabs: readonly PickTab[],
   active: number,
   palette: PickPalette = PLAIN_PALETTE,
-  columns?: number,
+  budget = Number.POSITIVE_INFINITY,
 ): string[] {
   if (tabs.length === 0) return [];
   const labels = tabs.map((tab) => tab.label);
+  const activeLabel = labels[active] as string;
 
   // Too narrow for every name: name the active one and say where it sits.
-  // Wrapping the bar would cost more than the other names are worth, because
-  // a wrapped line breaks the redraw for the whole frame.
-  const plainWidth = labels.join(" │ ").length + GUTTER_WIDTH;
-  if (columns !== undefined && plainWidth > columns - 1) {
-    const position = palette.dim(`(${active + 1}/${tabs.length})`);
+  // Wrapping the bar would cost more than the other names are worth.
+  if (labels.join(" │ ").length > budget) {
+    const position = `(${active + 1}/${tabs.length})`;
+    // `‹ ` and ` › ` around the name, and the space before the position.
+    const name = truncateEnd(activeLabel, budget - 5 - position.length);
     return [
-      `${palette.dim("‹")} ${palette.accent(labels[active] as string)} ${palette.dim("›")} ${position}`,
+      `${palette.dim("‹")} ${palette.accent(name)} ${palette.dim("›")} ${palette.dim(position)}`,
     ];
   }
 
@@ -115,19 +136,32 @@ export function renderTabBar(
   for (let index = 0; index < active; index++) {
     offset += (labels[index] as string).length + 3; // label + " │ "
   }
-  const rule = `${" ".repeat(offset)}${"━".repeat((labels[active] as string).length)}`;
+  const rule = `${" ".repeat(offset)}${"━".repeat(activeLabel.length)}`;
   return [bar, rule];
 }
 
-/** `Search: rev█` on the left, `2 of 7` on the right. */
+/**
+ * `Search: rev█` on the left, `2 of 7` on the right.
+ *
+ * A query the user keeps typing is the one string in the frame that grows
+ * without limit, so it is the one the line gives up first. The count goes
+ * before it, and the query then loses its head rather than its tail: the caret
+ * and the characters just typed are what the user is watching.
+ */
 export function renderSearchLine(
   query: string,
   shown: number,
   total: number,
   palette: PickPalette = PLAIN_PALETTE,
+  budget = Number.POSITIVE_INFINITY,
 ): string {
-  const count = palette.dim(`${shown} of ${total}`);
-  return `Search: ${query}█   ${count}`;
+  const count = `${shown} of ${total}`;
+  const full = SEARCH_PROMPT.length + [...query].length + 1 + 3 + count.length;
+  if (full <= budget) {
+    return `${SEARCH_PROMPT}${query}█   ${palette.dim(count)}`;
+  }
+  const room = budget - SEARCH_PROMPT.length - 1;
+  return `${SEARCH_PROMPT}${truncateStart(query, room)}█`;
 }
 
 /**
@@ -137,6 +171,7 @@ export function renderSearchLine(
  */
 export function renderRows(frame: PickFrame): string[] {
   const palette = frame.palette ?? PLAIN_PALETTE;
+  const budget = bodyBudget(frame.columns);
   const grouped = showsGroupHeadings(
     frame.tabs[frame.activeTab]?.key ?? "all",
     frame.query,
@@ -149,7 +184,7 @@ export function renderRows(frame: PickFrame): string[] {
   // kind, turning a budget of 10 into as many as 17 lines and pushing the
   // frame past a 24-row terminal. `height` has to bound what is drawn, so it
   // is applied to the drawn sequence.
-  const display: Array<{ heading: string } | { entry: RankedPickRow }> = [];
+  const display: DisplayItem[] = [];
   let cursorLine = -1;
   let previousKind: string | null = null;
   for (const [index, entry] of frame.rows.entries()) {
@@ -167,7 +202,7 @@ export function renderRows(frame: PickFrame): string[] {
     const item = display[index];
     if (item === undefined) continue;
     if ("heading" in item) {
-      lines.push(palette.dim(item.heading));
+      lines.push(palette.dim(truncateEnd(item.heading, budget)));
       continue;
     }
     lines.push(
@@ -176,24 +211,19 @@ export function renderRows(frame: PickFrame): string[] {
         focused: item.entry === frame.rows[frame.cursor],
         marked: frame.marked.has(item.entry.row.ref),
         palette,
-        ...(frame.columns !== undefined && { columns: frame.columns }),
+        budget,
       }),
     );
   }
   // A heading is the label for the rows under it, so one at the bottom edge
   // labels nothing. Dropping it costs a line of the budget and removes a
   // group name that appears to have no members.
-  if (lines.length > 0 && isHeadingLine(display, window.end - 1)) lines.pop();
+  const last = display[window.end - 1];
+  if (lines.length > 0 && last && "heading" in last) lines.pop();
   return lines;
 }
 
-function isHeadingLine(
-  display: ReadonlyArray<{ heading: string } | { entry: RankedPickRow }>,
-  index: number,
-): boolean {
-  const item = display[index];
-  return item !== undefined && "heading" in item;
-}
+type DisplayItem = { heading: string } | { entry: RankedPickRow };
 
 function renderRow(
   entry: RankedPickRow,
@@ -202,19 +232,14 @@ function renderRow(
     focused: boolean;
     marked: boolean;
     palette: PickPalette;
-    columns?: number;
+    budget: number;
   },
 ): string {
   const { palette } = opts;
-  // Everything before the ref: the caller's gutter, the pointer column, the
-  // heading indent, the checkbox, and the space after it.
-  const prefixCells = GUTTER_WIDTH + POINTER.length + opts.indent.length + 2;
-  const usable =
-    opts.columns === undefined
-      ? Number.POSITIVE_INFINITY
-      : // One cell short of the width: a line that fills the last column
-        // wraps on terminals that auto-wrap there.
-        opts.columns - 1 - prefixCells;
+  // Everything before the ref: the pointer column, the heading indent, the
+  // checkbox, and the space after it. The gutter is already out of the budget.
+  const prefixCells = POINTER.length + opts.indent.length + 2;
+  const usable = opts.budget - prefixCells;
 
   const clamped = clampRef(entry.row.ref, entry.positions, usable);
   const box = entry.row.installed
@@ -225,13 +250,40 @@ function renderRow(
   const label = entry.row.installed
     ? palette.disabled(clamped.text)
     : highlightRef(clamped.text, clamped.positions, palette.accent);
+  // The hint is drawn only for the focused row. Every row carrying its own
+  // description would push the refs apart and turn the list into prose, and
+  // building one costs a collapse and a truncation of the whole description.
   const tail = hintTail(
-    pickRowHint(entry.row),
-    prefixCells + clamped.cells,
-    opts,
+    opts.focused ? pickRowHint(entry.row) : undefined,
+    usable - clamped.cells - 2,
+    palette,
   );
   const pointer = opts.focused ? palette.accent(POINTER) : NO_POINTER;
   return `${pointer}${opts.indent}${box} ${label}${tail}`;
+}
+
+/**
+ * `text`, cut to `limit` code points with an ellipsis when it does not fit.
+ *
+ * Code points, to match what `fuzzy.ts` counts and what `highlightRef` walks.
+ * Slicing the string directly could cut a surrogate pair in half.
+ *
+ * A limit under two cannot hold a character and the ellipsis that says one was
+ * dropped, and a negative slice would take from the end, so it yields nothing.
+ */
+function truncateEnd(text: string, limit: number): string {
+  const chars = [...text];
+  if (chars.length <= limit) return text;
+  if (limit < 2) return "";
+  return `${chars.slice(0, limit - 1).join("")}…`;
+}
+
+/** `text`, cut to `limit` code points, keeping the tail rather than the head. */
+function truncateStart(text: string, limit: number): string {
+  const chars = [...text];
+  if (chars.length <= limit) return text;
+  if (limit < 2) return "";
+  return `…${chars.slice(chars.length - limit + 1).join("")}`;
 }
 
 /**
@@ -247,42 +299,32 @@ function clampRef(
   positions: readonly number[],
   limit: number,
 ): { text: string; cells: number; positions: number[] } {
-  // Code points, to match what `fuzzy.ts` counts and what `highlightRef`
-  // walks. Slicing the string directly could cut a surrogate pair in half.
-  const chars = [...ref];
-  if (chars.length <= limit) {
-    return { text: ref, cells: chars.length, positions: [...positions] };
-  }
-  if (limit < 2) return { text: "", cells: 0, positions: [] };
+  const text = truncateEnd(ref, limit);
   return {
-    text: `${chars.slice(0, limit - 1).join("")}…`,
-    cells: limit,
-    positions: positions.filter((position) => position < limit - 1),
+    text,
+    cells: [...text].length,
+    positions:
+      text === ref
+        ? [...positions]
+        : positions.filter((position) => position < limit - 1),
   };
 }
 
 /**
  * The dim text after the focused row's ref, cut to what the line has left.
  *
- * Only the focused row gets one. Padding every row to the longest ref aligned
- * a single hint against nothing and stranded it far from the item it
- * describes, and left every other row carrying trailing blanks.
+ * Padding every row to the longest ref aligned a single hint against nothing
+ * and stranded it far from the item it describes, and left every other row
+ * carrying trailing blanks. A hint with almost no room is dropped rather than
+ * shown as a stub.
  */
 function hintTail(
   hint: string | undefined,
-  usedCells: number,
-  opts: { focused: boolean; columns?: number; palette: PickPalette },
+  available: number,
+  palette: PickPalette,
 ): string {
-  if (!opts.focused || !hint) return "";
-  if (opts.columns === undefined) return `  ${opts.palette.dim(hint)}`;
-  const available = opts.columns - 1 - usedCells - 2;
-  if (available < MIN_HINT_WIDTH) return "";
-  const chars = [...hint];
-  const shown =
-    chars.length <= available
-      ? hint
-      : `${chars.slice(0, available - 1).join("")}…`;
-  return `  ${opts.palette.dim(shown)}`;
+  if (!hint || available < MIN_HINT_WIDTH) return "";
+  return `  ${palette.dim(truncateEnd(hint, available))}`;
 }
 
 /**
@@ -312,33 +354,31 @@ export function visibleWindow(
  * A legend that wraps breaks the redraw for the whole frame, so a narrow
  * terminal gets fewer words rather than a second line.
  */
+const SHORTEST_LEGEND = "tab · enter";
 const LEGENDS = [
   "←/→ type · ↑/↓ move · tab mark · enter install · esc skip",
   "←/→ type · ↑/↓ move · tab mark · enter",
   "tab mark · enter install",
-  "tab · enter",
+  SHORTEST_LEGEND,
 ] as const;
 
 export function renderLegend(
   palette: PickPalette = PLAIN_PALETTE,
-  columns?: number,
+  budget = Number.POSITIVE_INFINITY,
 ): string {
-  const budget =
-    columns === undefined
-      ? Number.POSITIVE_INFINITY
-      : columns - 1 - GUTTER_WIDTH;
   const text =
-    LEGENDS.find((legend) => legend.length <= budget) ?? LEGENDS.at(-1) ?? "";
+    LEGENDS.find((legend) => legend.length <= budget) ?? SHORTEST_LEGEND;
   return palette.dim(text);
 }
 
 /** Assemble every part into the lines the prompt draws. */
 export function renderPickBody(frame: PickFrame): string[] {
   const palette = frame.palette ?? PLAIN_PALETTE;
+  const budget = bodyBudget(frame.columns);
   const total = frame.tabs[frame.activeTab]?.count ?? 0;
   const lines = [
-    ...renderTabBar(frame.tabs, frame.activeTab, palette, frame.columns),
-    renderSearchLine(frame.query, frame.rows.length, total, palette),
+    ...renderTabBar(frame.tabs, frame.activeTab, palette, budget),
+    renderSearchLine(frame.query, frame.rows.length, total, palette, budget),
     "",
   ];
   if (frame.rows.length === 0) {
@@ -346,6 +386,6 @@ export function renderPickBody(frame: PickFrame): string[] {
   } else {
     lines.push(...renderRows(frame));
   }
-  lines.push("", renderLegend(palette, frame.columns));
+  lines.push("", renderLegend(palette, budget));
   return lines;
 }
