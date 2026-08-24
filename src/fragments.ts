@@ -906,13 +906,13 @@ function assertNoFragmentConflicts(
   fragments: FragmentValue[],
 ): void {
   let mergedSoFar: ConfigObject = {};
-  // Dotted leaf path -> the fragment that set it, so a conflict names both.
+  // Leaf path -> the fragment that set it, so a conflict names both.
   const provenance = new Map<string, string>();
   for (const fragment of fragments) {
     const collision = findUnmanagedCollision(mergedSoFar, fragment.value);
     if (collision) {
       const earlier =
-        provenance.get(collision.path.join("\0")) ?? "an earlier fragment";
+        provenance.get(provenanceKey(collision.path)) ?? "an earlier fragment";
       throw new Error(
         `cannot reconcile ${outputPath}: ${fragment.source.relPath} and ${earlier} set a conflicting value at ${configPathLabel(collision.path)} (${collision.managedKind} vs ${collision.localKind}). Two fragments set the same key to different values — reconcile or remove one.`,
       );
@@ -941,9 +941,22 @@ function recordLeafProvenance(
     if (isPlainConfigObject(child)) {
       recordLeafProvenance(child, source, path, out);
     } else {
-      out.set(path.join("\0"), source);
+      out.set(provenanceKey(path), source);
     }
   }
+}
+
+/**
+ * The map key for a leaf path.
+ *
+ * One writer and one reader must agree on this, and nothing else in the file
+ * enforces that, so it is a function rather than a separator repeated twice. A
+ * joined string needs a character no key contains, and both JSON and YAML let
+ * a key hold any character at all. `JSON.stringify` escapes instead of
+ * guessing, so distinct paths cannot collide.
+ */
+function provenanceKey(path: readonly string[]): string {
+  return JSON.stringify(path);
 }
 
 function containsManagedOutput(
