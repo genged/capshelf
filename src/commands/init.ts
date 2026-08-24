@@ -29,6 +29,9 @@ import {
   runtimeWarningsForItem,
 } from "../runtime-warnings";
 import type { RuntimeWarning } from "../runtime-warnings";
+import { runInteractiveAdd } from "./add";
+import type { InteractiveAddSummary } from "./add";
+import { pickUnavailableMessage } from "../pick";
 
 interface InitOptions {
   data?: string;
@@ -36,6 +39,7 @@ interface InitOptions {
   claudeOnly?: boolean;
   json?: boolean;
   upstream?: string | false;
+  pick?: boolean;
 }
 
 interface BootstrapInfo {
@@ -64,6 +68,10 @@ export function registerInit(program: Command): void {
     .option(
       "--claude-only",
       "install directly under .claude without .agents symlinks",
+    )
+    .option(
+      "--no-pick",
+      "skip the interactive picker and install no data items",
     )
     .option("--json", "output JSON")
     .action(async (opts: InitOptions, cmd: Command) => {
@@ -300,14 +308,70 @@ export function registerInit(program: Command): void {
           console.log(`  ${manifest.dataRepoUpstream}`);
         }
       }
+      // The offer runs HERE, after `local.json` — the completion marker this
+      // command's own guard keys on — is already on disk. Everything below is
+      // an ordinary `add` against a project that is fully initialized, so a
+      // cancelled picker, a refused item, or a Ctrl-C at the prompt leaves a
+      // working project whose recovery is `capshelf add`. Running it before
+      // the writes would put an interactive prompt inside the window where an
+      // interruption strands the project, which is the failure mode the write
+      // order was designed to remove.
+      console.log("");
+      const picked =
+        opts.pick === false ? null : await offerShelf(cmd, dataRepo);
+      // An absent terminal is not an error here. `init` still succeeded, and
+      // the hints below are the non-interactive path to the same place.
+      if (picked?.outcome === "unavailable") {
+        console.log(
+          `(skipping the picker — ${pickUnavailableMessage(picked.reason)})`,
+        );
+      }
+
+      const installedAny =
+        picked?.outcome === "installed" && picked.added.length > 0;
       console.log("");
       console.log("next:");
+      console.log(
+        `  capshelf add                 # pick ${installedAny ? "more items" : "items"} from the shelf`,
+      );
       console.log(
         "  capshelf search <task>       # find matching items and bundles",
       );
       console.log("  capshelf ls                  # browse the shelf");
       console.log("  capshelf add bundles/<name>  # install a curated bundle");
     });
+}
+
+/**
+ * Offer the shelf, and never fail the init for it.
+ *
+ * Everything above this point has already been written and reported as
+ * successful, so a throw here would print `✗` under a `✓` and exit non-zero
+ * for a project that is correctly initialized. The offer is also the one part
+ * of `init` that reads the *data repo's* catalog, which has its own refusals —
+ * an unsafe item name, an unreadable sidecar — that belong to `ls` and `add`,
+ * where the user asked for the shelf. Report and carry on; `capshelf add`
+ * afterwards surfaces the same failure with the right exit code.
+ */
+async function offerShelf(
+  cmd: Command,
+  dataRepo: string,
+): Promise<InteractiveAddSummary | null> {
+  try {
+    return await runInteractiveAdd({
+      add: {},
+      cmd,
+      message: "Select items to install from the shelf",
+      // The path init just resolved, cloned, and checked. Never the raw
+      // `--data` value, which may be a remote URL.
+      dataRepo,
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(`⚠ could not offer the shelf: ${detail.split("\n")[0]}`);
+    console.error("  the project is initialized; run capshelf ls to see why");
+    return null;
+  }
 }
 
 function assertUpstreamFlagMatchesBootstrap(

@@ -7,6 +7,8 @@ import { tmpdir } from "node:os";
 import { main } from "../src/cli";
 import { setDestructiveConfirmationContext } from "../src/destructive-change";
 import type { DestructiveConfirmationContext } from "../src/destructive-change";
+import { setPickContext } from "../src/pick";
+import type { PickContext } from "../src/pick";
 
 // Multi-command lifecycle tests use real Git repositories and can exceed
 // Bun's 5-second default on macOS filesystems. Apply this only to those broad
@@ -98,6 +100,26 @@ const NON_INTERACTIVE_CONFIRMATION: DestructiveConfirmationContext = {
   stderr: { write: () => true },
 };
 
+/**
+ * The same hazard as `NON_INTERACTIVE_CONFIRMATION`, for the item picker.
+ *
+ * `capshelf init` and a bare `capshelf add` offer the shelf when stdin and
+ * stderr are terminals. Without this, `bun test` launched from an interactive
+ * shell would take that branch, draw a picker over the test output, and block
+ * on a keypress that never comes. Pinned off so every existing init test keeps
+ * asserting the non-interactive path; tests that mean to exercise the picker
+ * install their own context and get it back.
+ */
+const NON_INTERACTIVE_PICK: PickContext = {
+  stdinIsTTY: false,
+  stderrIsTTY: false,
+  prompt: async () => {
+    throw new Error(
+      "runInProcess is non-interactive; install a context with setPickContext to test the picker",
+    );
+  },
+};
+
 export function runInProcess(project: string) {
   return async (
     args: string[],
@@ -110,6 +132,8 @@ export function runInProcess(project: string) {
     setDestructiveConfirmationContext(
       outerConfirmation ?? NON_INTERACTIVE_CONFIRMATION,
     );
+    const outerPick = setPickContext(null);
+    setPickContext(outerPick ?? NON_INTERACTIVE_PICK);
     const previousEnv = new Map(
       Object.keys(env).map((name) => [name, process.env[name]] as const),
     );
@@ -153,6 +177,7 @@ export function runInProcess(project: string) {
     } finally {
       process.chdir(previousCwd);
       setDestructiveConfirmationContext(outerConfirmation);
+      setPickContext(outerPick);
       for (const [name, value] of previousEnv) {
         if (value === undefined) delete process.env[name];
         else process.env[name] = value;

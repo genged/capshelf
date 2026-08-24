@@ -115,6 +115,12 @@ determine a portable upstream, `init` fails before writing project state and
 asks you to configure the data repo's `origin` or pass `--no-upstream`
 explicitly.
 
+When `init` finishes, it offers the shelf in the interactive picker described
+under The picker. The offer runs after every file is written, so cancelling it
+leaves a fully initialized project and installs nothing. `--no-pick` skips it,
+and so does any run without a terminal, which then names the reason and
+continues. `init --json` never prompts.
+
 A project is initialized on the current machine once `.capshelf/local.json`
 exists. Re-running `init` in that state is refused with exit 3 before Capshelf
 processes a replacement data repo, clones anything, reinstalls system items, or
@@ -238,7 +244,7 @@ registered.
 
 | verb | purpose | availability |
 |---|---|---|
-| `init` | scaffold a new project or onboard a fresh clone without a local binding (manifest + lock, bundled system items, data repo); refuses an already initialized machine | implemented |
+| `init` | scaffold a new project or onboard a fresh clone without a local binding (manifest + lock, bundled system items, data repo), then offer the shelf in the interactive picker; refuses an already initialized machine; `--no-pick` skips the offer | implemented |
 | `data bind <path>` | bind this machine to the project's data repo clone via `.capshelf/local.json` (alias: `set-data`) | implemented |
 | `data upstream <url>` | write the committed `dataRepoUpstream` URL in `.capshelf/capshelf.json` (alias: `set-upstream`) | implemented |
 | `data path` | print the resolved local data repo path; `--json` includes the path and the normalized upstream (`null` when absent) (alias: `data-path`) | implemented |
@@ -247,7 +253,7 @@ registered.
 | `show <item>` | print metadata + content for one item, including relations and current/locked declared needs, plus runtime target coverage for MCP and subagents; `--target` narrows to one runtime | implemented |
 | `search <query...>` | search available items (data repo + system) and bundles by name, tags, description, and content; supports `--kind` and `--json`; zero matches exit 0 | implemented |
 | `status [<item>]` | drift / update report plus orthogonal `needsState` freshness and locked needs; subagent JSON includes deterministic per-target state; a sub-line names any runtime target an MCP or subagent item does not cover; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` shows locked-to-installed and locked-to-upstream comparisons; `--diff-view installed\|upstream\|all` selects a comparison | implemented |
-| `add <item>` | install a new item from the bound data repo, materializing exactly what the pin contains; MCP and subagent installs report per-runtime target coverage; an already-installed standalone item is a byte- and lock-stable no-op; `--local` installs a clone-local copy item; `--yes` authorizes collateral fragment-output loss for a new fragment, standalone or expanded from a bundle | implemented |
+| `add [item]` | install a new item from the bound data repo, materializing exactly what the pin contains; with no item, opens the interactive picker (see The picker); MCP and subagent installs report per-runtime target coverage; an already-installed standalone item is a byte- and lock-stable no-op; `--local` installs a clone-local copy item; `--yes` authorizes collateral fragment-output loss for a new fragment, standalone or expanded from a bundle | implemented |
 | `rm <item>` | remove a locked data item and report every output it reconciled; clean reproducible content is prompt-free, while local edits, modes, extra paths, subagent drift, and fragment comment loss require consent or `--yes` | implemented |
 | `get-path <item>` | print the editable path; subagents and MCP support `--target`, while `--output` returns the corresponding runtime output | implemented |
 | `apply [<item>]` | reconcile project and local files with lockfiles after a full-set destructive preflight; a failing fragment target aborts every write, while an unresolvable copy or subagent item is reported and the rest still converge (exit 1); supports `--local`, `--dry-run`, and `--yes` | implemented |
@@ -758,6 +764,82 @@ Bundle exit codes:
 
 ## Discovery
 
+### The picker
+
+`capshelf add` with no item opens an interactive list of everything on the
+shelf: every data item and every bundle. `capshelf init` opens the same list
+once, after it finishes.
+
+| key | action |
+|---|---|
+| any character | filter the list |
+| left / right | switch item type |
+| up / down | move |
+| tab | mark or unmark the row |
+| enter | install every marked row |
+| esc | cancel and install nothing |
+
+A menu across the top selects the item type: `All`, then every kind the data
+repo holds. A kind with no items gets no tab. `left` and `right` move between
+them and wrap at both ends. The list then shows that type only, so a query can
+match nothing outside it.
+
+`left` and `right` do not move a text cursor inside the query. Correct a typo
+with backspace.
+
+The `All` tab groups the list under one heading per kind while the search box
+is empty. Once you type, the headings go and the list is ranked. A heading
+between two results would put the best match in the middle of the list.
+
+Typing filters by fuzzy subsequence, not by substring. The characters must
+appear in order, and gaps between them are allowed, so `secrev` finds
+`skills/security-review` and `pgh` finds `skills/postgres-helper`. The matcher
+is fzf's FuzzyMatchV1, ported from the published description in
+`src/algo/algo.go` of junegunn/fzf. It keeps that algorithm's scoring. A match
+at the start of a word scores higher. Consecutive characters score higher than
+scattered ones. A wide gap cancels the word-start bonus. Equal scores prefer
+the shorter ref, which is fzf's own default tiebreak. Smart case follows fzf
+too. A lowercase query ignores case, and one capital letter makes the query
+case-sensitive.
+
+A query matches against the ref, the tags, and the description, so `vulnerab`
+finds an item through its description. Whitespace splits the query into terms,
+and every term must match, exactly as `capshelf search` defines a query. Space
+is always query text. Only `tab` marks a row.
+
+Each field is scored on its own and then weighted: ref 8, tags 4, description
+2. These are the `capshelf search` weights, without `content`, which the picker
+does not read. A term takes the best weighted field it hits, and the term
+scores add. A name match therefore beats a description match unless the name
+match is far sloppier. Do not match the fields as one joined string. fzf scores
+a match after a space above one after a delimiter. Every word of a description
+would then outrank the item name, which follows the `/` in its ref.
+`capshelf search` is unchanged and still matches exact substrings. It is a
+scriptable command whose results a user cites and reruns. The picker is a live
+filter that one more keystroke corrects.
+
+An item the project already has stays in the list, struck through and grey. It
+cannot be marked. A bundle is always offered, because a bundle is a manifest
+macro and is never locked. Members that are already present are skipped when
+the bundle expands.
+
+The picker installs each selection independently. This is the one way it
+differs from `add bundles/<name>`. A bundle is a curated set, so one member
+that fails preflight refuses the whole bundle. A picker selection is a pile of
+separate choices. A failure there reports its reason and names the command that
+retries that one item. The other selections stay installed. `capshelf add` with
+no item exits 3 if any selection failed. `capshelf init` still exits 0, because
+its exit code answers whether the project is initialized.
+
+The picker needs a terminal on both stdin and stderr, and that terminal must
+declare capabilities. `TERM=dumb` is refused, because a terminal with no
+capabilities cannot run a full-screen prompt. The picker draws on stderr, so
+stdout stays free for command output and `capshelf add > out.txt` keeps
+working. Without a usable terminal, `capshelf add` with no item exits 3 and
+asks for an item ref. `capshelf init` prints the reason and continues.
+`capshelf add --json` and `capshelf add --target` with no item are refused for
+the same reason. A script cannot answer a prompt.
+
 ### search
 
 `capshelf search <query...> [--kind <kind>] [--json]` searches data items in
@@ -1262,7 +1344,7 @@ writes capshelf metadata and never adopts the user skill.
 | 0 | success |
 | 1 | generic error (missing args, bad config, I/O) |
 | 2 | item or bundle not found in data repo |
-| 3 | conflict or refused precondition (project is already initialized, a destructive `add`/`apply`/`update`/`rm`/`revert`/marketplace sync lacks consent, promote would clobber, a system or externally managed item was selected, an untracked target would be overwritten, a bundle failed preflight, or data sync cannot run safely) |
+| 3 | conflict or refused precondition (project is already initialized, a destructive `add`/`apply`/`update`/`rm`/`revert`/marketplace sync lacks consent, promote would clobber, a system or externally managed item was selected, an untracked target would be overwritten, a bundle failed preflight, an interactive `add` had a selection fail or had no terminal, or data sync cannot run safely) |
 | 4 | drift detected (for `status --strict`), upstream verification failed, or `sync-data` needs human action (diverged history, or upstream commits blocked by a dirty worktree) |
 | 5 | reserved for future unmet-requires checks (`add` with unmet `requires` warns and exits 0) |
 | 6 | no data repo configured for this project (pass `--data`, set `.capshelf/local.json`, or `$CAPSHELF_HOME`) |

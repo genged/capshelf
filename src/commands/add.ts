@@ -94,6 +94,13 @@ import type {
   FragmentTarget,
 } from "../fragments";
 import { isBundleRef, loadBundleStrict, memberRef } from "../bundles";
+import { loadPickCatalog } from "../pick-catalog";
+import {
+  pickItems,
+  pickTerminalUnavailable,
+  pickUnavailableMessage,
+} from "../pick";
+import type { PickUnavailableReason } from "../pick";
 import type { Bundle } from "../bundles";
 import {
   executeBundleInstall,
@@ -144,9 +151,9 @@ export interface InstallDataItemResult {
 
 export function registerAdd(program: Command): void {
   program
-    .command("add <item>")
+    .command("add [item]")
     .description(
-      "install an item (or expand a bundles/<name> bundle) from the data repo into the current project",
+      "install an item (or expand a bundles/<name> bundle) from the data repo into the current project; with no item, pick from the shelf interactively",
     )
     .option("--local", "install as clone-local project state")
     .option("--yes", "authorize destructive collateral config changes")
@@ -155,142 +162,205 @@ export function registerAdd(program: Command): void {
       "target selection is not supported for add; subagents install all targets",
     )
     .option("--json", "output JSON")
-    .action(async (itemRef: string, opts: AddOptions, cmd: Command) => {
-      // Bundle refs branch BEFORE parseItemRef: the parser rejects "bundles"
-      // as an item kind, so testing afterwards would be dead code behind an
-      // exit-1 throw.
-      const bundleName = isBundleRef(itemRef);
-      if (bundleName !== null) {
-        if (opts.target) {
-          throw new PreconditionError(
-            "add --target is not supported; subagents and bundles install all available targets",
-          );
-        }
-        await addBundle(bundleName, opts, cmd);
-        return;
-      }
-
-      const ref = parseItemRef(itemRef);
-      if (opts.target) {
-        throw new PreconditionError(
-          "add --target is not supported; subagents install all available targets",
-        );
-      }
-      if (isSystemItemName(ref.name)) {
-        throw new PreconditionError(
-          `"${ref.name}" is a system item — managed by the CLI, not addable from a data repo. It is installed automatically by 'capshelf init'.`,
-        );
-      }
-
-      const ctx = await loadAddContext(opts, cmd);
-      const selectedLock = ctx.local ? ctx.localLock : ctx.projectLock;
-      const otherLock = ctx.local ? ctx.projectLock : ctx.localLock;
-      const selectedKey = lockKeyForRef(selectedLock, ref, "data");
-      const otherKey = lockKeyForRef(otherLock, ref, "data");
-      if (otherKey) {
-        const parsed = parseLockKey(otherKey);
-        const otherScope = ctx.local ? "project" : "local";
-        throw new PreconditionError(
-          `${parsed.kind}/${parsed.name} is already owned by ${otherScope} scope; remove one owner before adding another`,
-        );
-      }
-      if (selectedKey && trackedInSelectedManifest(ctx, selectedKey)) {
-        await printAlreadyInstalled(ctx, selectedKey, opts.json === true);
-        return;
-      }
-      const item = await findMasterItemByRef(ctx.dataRepo, ref);
-      if (!item) {
-        throw new NotFoundError(
-          `not found in data repo (${ctx.dataRepo}): ${itemRef}`,
-        );
-      }
-
-      let approvedPin: PinnedSource | null = null;
-      if (isFragmentItemKind(item.kind)) {
-        const preflight = await planStandaloneFragmentAdd(ctx, item);
-        if (
-          !(await confirmDestructiveChanges(preflight.plan, {
-            operation: "Add",
-            json: opts.json === true,
-            yes: opts.yes === true,
-            dryRun: false,
-            rerunCommand: `capshelf add ${item.kind}/${item.name}${ctx.local ? " --local" : ""} --yes`,
-          }))
-        ) {
+    .action(
+      async (itemRef: string | undefined, opts: AddOptions, cmd: Command) => {
+        if (itemRef === undefined) {
+          // The same refusal `addOne` makes. Without it here, the no-argument
+          // branch returns before either of those checks, so
+          // `capshelf add --target codex` opened the picker and installed
+          // every available runtime target while silently ignoring the flag.
+          if (opts.target) {
+            throw new PreconditionError(
+              "add --target is not supported; subagents and bundles install all available targets",
+            );
+          }
+          // `--json` names a scripted caller, and a script cannot answer a
+          // prompt. Refusing beats printing a picker to stderr and an empty
+          // result to stdout, which reads as "the shelf is empty".
+          if (opts.json) {
+            throw new PreconditionError(
+              "add --json requires an item; the interactive picker needs a terminal",
+              {
+                hint: "pass an item ref (capshelf add skills/<name>), or run capshelf add without --json to pick interactively",
+              },
+            );
+          }
+          const summary = await runInteractiveAdd({
+            add: opts,
+            cmd,
+            message: "Select items to install",
+          });
+          if (summary.outcome === "unavailable") {
+            throw new PreconditionError(
+              `cannot pick interactively — ${pickUnavailableMessage(summary.reason)}`,
+              {
+                hint: "name the item instead: capshelf add <kind>/<name>. Run capshelf ls to see the shelf.",
+              },
+            );
+          }
+          // Any failed item is a refusal the user needs a non-zero code for;
+          // each one already printed its reason and its retry command.
+          if (summary.outcome === "installed" && summary.failed.length > 0) {
+            throw new ResultExitError(3);
+          }
           return;
         }
-        const revalidated = await planStandaloneFragmentAdd(ctx, item);
-        assertDestructivePlanUnchanged(preflight.plan, revalidated.plan);
-        approvedPin = revalidated.pin;
-      }
-
-      const result = await installDataItem(ctx, item, {
-        ...(approvedPin && { pin: approvedPin }),
-      });
-
-      if (opts.json) {
-        console.log(
-          JSON.stringify(
-            {
-              kind: item.kind,
-              name: item.name,
-              scope: ctx.local ? "local" : "project",
-              sha: result.sha,
-              sourceCommit: result.sourceCommit,
-              needs: result.needs,
-              dst: result.dst,
-              wasAlreadyInstalled: result.wasAlreadyInstalled,
-              ...(result.sources.length > 0 && {
-                sources: fragmentSourcesJson(ctx.project, result),
-              }),
-              ...(result.targetCoverage &&
-                targetCoverageJson(result.targetCoverage, ctx.project)),
-              ...(result.runtimeWarnings.length > 0 && {
-                runtimeWarnings: result.runtimeWarnings,
-              }),
-              ...(result.missingRequires.length > 0 && {
-                missingRequires: result.missingRequires,
-              }),
-            },
-            null,
-            2,
-          ),
-        );
-        printMissingRequires(
-          `${item.kind}/${item.name}`,
-          result.missingRequires,
-        );
-        return;
-      }
-      const scope = ctx.local ? "local" : "project";
-      console.log(
-        `✓ added ${scope}/data/${item.kind}/${item.name} @ ${shortIdentity(result.sha)}`,
-      );
-      console.log(`  source commit: ${result.sourceCommit}`);
-      if (result.targetCoverage) {
-        printTargetCoverage(result.targetCoverage, itemRefLabel(item), {
-          presentWord: "written",
-          tracked: true,
-        });
-      } else {
-        console.log(`  ${result.dst}`);
-      }
-      printDeclaredNeeds(result.needs);
-      printRuntimeWarnings(result.runtimeWarnings);
-      printMissingRequires(`${item.kind}/${item.name}`, result.missingRequires);
-    });
+        await addOne(itemRef, opts, cmd);
+      },
+    );
 }
 
+/** Install one explicitly named item ref, or expand one named bundle. */
+async function addOne(
+  itemRef: string,
+  opts: AddOptions,
+  cmd: Command,
+): Promise<void> {
+  // Bundle refs branch BEFORE parseItemRef: the parser rejects "bundles"
+  // as an item kind, so testing afterwards would be dead code behind an
+  // exit-1 throw.
+  const bundleName = isBundleRef(itemRef);
+  if (bundleName !== null) {
+    if (opts.target) {
+      throw new PreconditionError(
+        "add --target is not supported; subagents and bundles install all available targets",
+      );
+    }
+    await addBundle(bundleName, opts, cmd);
+    return;
+  }
+
+  const ref = parseItemRef(itemRef);
+  if (opts.target) {
+    throw new PreconditionError(
+      "add --target is not supported; subagents install all available targets",
+    );
+  }
+  if (isSystemItemName(ref.name)) {
+    throw new PreconditionError(
+      `"${ref.name}" is a system item — managed by the CLI, not addable from a data repo. It is installed automatically by 'capshelf init'.`,
+    );
+  }
+
+  const ctx = await loadAddContext(opts, cmd);
+  const selectedLock = ctx.local ? ctx.localLock : ctx.projectLock;
+  const otherLock = ctx.local ? ctx.projectLock : ctx.localLock;
+  const selectedKey = lockKeyForRef(selectedLock, ref, "data");
+  const otherKey = lockKeyForRef(otherLock, ref, "data");
+  if (otherKey) {
+    const parsed = parseLockKey(otherKey);
+    const otherScope = ctx.local ? "project" : "local";
+    throw new PreconditionError(
+      `${parsed.kind}/${parsed.name} is already owned by ${otherScope} scope; remove one owner before adding another`,
+    );
+  }
+  if (selectedKey && trackedInSelectedManifest(ctx, selectedKey)) {
+    await printAlreadyInstalled(ctx, selectedKey, opts.json === true);
+    return;
+  }
+  const item = await findMasterItemByRef(ctx.dataRepo, ref);
+  if (!item) {
+    throw new NotFoundError(
+      `not found in data repo (${ctx.dataRepo}): ${itemRef}`,
+    );
+  }
+
+  let approvedPin: PinnedSource | null = null;
+  if (isFragmentItemKind(item.kind)) {
+    const preflight = await planStandaloneFragmentAdd(ctx, item);
+    if (
+      !(await confirmDestructiveChanges(preflight.plan, {
+        operation: "Add",
+        json: opts.json === true,
+        yes: opts.yes === true,
+        dryRun: false,
+        rerunCommand: `capshelf add ${item.kind}/${item.name}${ctx.local ? " --local" : ""} --yes`,
+      }))
+    ) {
+      return;
+    }
+    const revalidated = await planStandaloneFragmentAdd(ctx, item);
+    assertDestructivePlanUnchanged(preflight.plan, revalidated.plan);
+    approvedPin = revalidated.pin;
+  }
+
+  const result = await installDataItem(ctx, item, {
+    ...(approvedPin && { pin: approvedPin }),
+  });
+
+  if (opts.json) {
+    console.log(
+      JSON.stringify(
+        {
+          kind: item.kind,
+          name: item.name,
+          scope: ctx.local ? "local" : "project",
+          sha: result.sha,
+          sourceCommit: result.sourceCommit,
+          needs: result.needs,
+          dst: result.dst,
+          wasAlreadyInstalled: result.wasAlreadyInstalled,
+          ...(result.sources.length > 0 && {
+            sources: fragmentSourcesJson(ctx.project, result),
+          }),
+          ...(result.targetCoverage &&
+            targetCoverageJson(result.targetCoverage, ctx.project)),
+          ...(result.runtimeWarnings.length > 0 && {
+            runtimeWarnings: result.runtimeWarnings,
+          }),
+          ...(result.missingRequires.length > 0 && {
+            missingRequires: result.missingRequires,
+          }),
+        },
+        null,
+        2,
+      ),
+    );
+    printMissingRequires(`${item.kind}/${item.name}`, result.missingRequires);
+    return;
+  }
+  const scope = ctx.local ? "local" : "project";
+  console.log(
+    `✓ added ${scope}/data/${item.kind}/${item.name} @ ${shortIdentity(result.sha)}`,
+  );
+  console.log(`  source commit: ${result.sourceCommit}`);
+  if (result.targetCoverage) {
+    printTargetCoverage(result.targetCoverage, itemRefLabel(item), {
+      presentWord: "written",
+      tracked: true,
+    });
+  } else {
+    console.log(`  ${result.dst}`);
+  }
+  printDeclaredNeeds(result.needs);
+  printRuntimeWarnings(result.runtimeWarnings);
+  printMissingRequires(`${item.kind}/${item.name}`, result.missingRequires);
+}
+
+/**
+ * `dataRepo` lets a caller supply a path it has already resolved and checked.
+ *
+ * `init` must: commander binds a `--data` written before the subcommand — and
+ * a bare `capshelf init --data <url>` is parsed that way — to the *root*
+ * command, so `globalOpts(cmd).data` can hold a remote URL. Resolving that
+ * again here treats the URL as a filesystem path and fails on a directory
+ * named `file:/...` under the project. `init` has already turned it into a
+ * local clone path and asserted it is a git repo, so it passes that instead.
+ */
 async function loadAddContext(
   opts: AddOptions,
   cmd: Command,
+  dataRepo?: string,
 ): Promise<AddContext> {
-  const base = await loadProjectContext({ cmd, dataRepo: true });
+  const base = await loadProjectContext({
+    cmd,
+    dataRepo: dataRepo === undefined,
+  });
   const localConfig = await loadLocalConfig(base.project);
   return {
     ...base,
-    // dataRepo: true guarantees it is resolved.
-    dataRepo: base.dataRepo!,
+    // Resolved above, or supplied by a caller that already resolved it.
+    dataRepo: dataRepo ?? base.dataRepo!,
     localConfig,
     local: opts.local ?? false,
   };
@@ -885,8 +955,9 @@ async function addBundle(
   name: string,
   opts: AddOptions,
   cmd: Command,
+  dataRepo?: string,
 ): Promise<void> {
-  const ctx = await loadAddContext(opts, cmd);
+  const ctx = await loadAddContext(opts, cmd, dataRepo);
   const bundle = await loadBundleStrict(ctx.dataRepo, name);
   for (const warning of new Set(bundle.warnings)) {
     console.error(`⚠ ${warning}`);
@@ -998,6 +1069,225 @@ async function addBundle(
   }
   for (const [ref, missing] of plan.missingRequiresByMember) {
     printMissingRequires(ref, missing);
+  }
+}
+
+/**
+ * A discriminated union rather than one shape with optional fields: only the
+ * `installed` outcome has per-item results, and only `unavailable` has a
+ * reason. Callers then read the fields that exist instead of asserting.
+ */
+export type InteractiveAddSummary =
+  | { outcome: "unavailable"; reason: PickUnavailableReason }
+  | { outcome: "cancelled" }
+  | { outcome: "nothing-selected" }
+  | {
+      outcome: "installed";
+      added: string[];
+      alreadyInstalled: string[];
+      failed: string[];
+    };
+
+/**
+ * The interactive install path, shared by `capshelf add` with no argument and
+ * the offer at the end of `capshelf init`.
+ *
+ * Best effort by design, unlike `add bundles/<name>`. A bundle is a curated
+ * set whose author asserted the members belong together, so a member that
+ * fails preflight refuses the whole thing. A picker selection is a pile of
+ * independent choices a user made one Tab at a time, and throwing away nine
+ * good ones because the tenth has an occupied target would be hostile. Every
+ * failure is named at the end with the command that retries just that item.
+ *
+ * Returns the summary rather than setting an exit code: `add` treats any
+ * failure as exit 3, while `init` reports and exits 0, because init's exit
+ * code answers "is this project initialized" and it is.
+ */
+export async function runInteractiveAdd(request: {
+  add: AddOptions;
+  cmd: Command;
+  message: string;
+  /** An already-resolved data repo path; see `loadAddContext`. */
+  dataRepo?: string;
+}): Promise<InteractiveAddSummary> {
+  const { add: opts, cmd, message, dataRepo } = request;
+  // Before any filesystem work: with no terminal there is nothing to offer,
+  // and reading the shelf could refuse for reasons that belong to `ls`.
+  const blocked = pickTerminalUnavailable();
+  if (blocked) return { outcome: "unavailable", reason: blocked };
+
+  let ctx = await loadAddContext(opts, cmd, dataRepo);
+  const catalog = await loadPickCatalog({
+    dataRepo: ctx.dataRepo,
+    projectLock: ctx.projectLock,
+    localLock: ctx.localLock,
+  });
+  for (const warning of catalog.warnings) console.error(`⚠ ${warning}`);
+
+  const picked = await pickItems({ rows: catalog.rows, message });
+  if (picked.kind === "unavailable") {
+    return { outcome: "unavailable", reason: picked.reason };
+  }
+  if (picked.kind === "cancelled") return { outcome: "cancelled" };
+  if (picked.refs.length === 0) return { outcome: "nothing-selected" };
+
+  // Reload before any write. The context above was read before the prompt, and
+  // the prompt then held the terminal for as long as the user looked at it —
+  // an unbounded wait no other capshelf command has. `installDataItem` saves
+  // the manifest and lock from whatever snapshot it is handed, so writing from
+  // that one would silently drop every entry another capshelf run made while
+  // the picker was open. It is the same failure the post-bundle reload below
+  // exists for, with a much wider window.
+  //
+  // This narrows the window to the one every other command already has,
+  // between its own read and its own write. It does not make the write atomic;
+  // serializing capshelf against itself would need a lock file and belongs to
+  // every command at once, not to this one.
+  ctx = await loadAddContext(opts, cmd, dataRepo);
+
+  const added: string[] = [];
+  const alreadyInstalled: string[] = [];
+  const failed: string[] = [];
+
+  // Bundles first, and each through the ordinary all-or-nothing bundle path:
+  // a bundle keeps its own semantics even when a picker chose it. Its members
+  // may satisfy an individually picked item's `requires`, which is the other
+  // reason this order is not arbitrary.
+  const bundleNames = picked.refs
+    .map((ref) => isBundleRef(ref))
+    .filter((name): name is string => name !== null);
+  for (const name of bundleNames) {
+    try {
+      await addBundle(name, opts, cmd, dataRepo);
+      added.push(`bundles/${name}`);
+    } catch (error) {
+      // `addBundle` prints its own refusal before throwing ResultExitError, so
+      // a code-only error needs no second message here.
+      failed.push(`bundles/${name}`);
+      const detail = errorDetail(error);
+      if (detail) console.error(`✗ bundles/${name} — ${detail}`);
+    }
+  }
+
+  // Reload: every `addBundle` above resolved its own context and saved its own
+  // lock. Reusing the context loaded before them would write a lock built from
+  // a snapshot that predates their entries, silently dropping every member
+  // they just installed.
+  if (bundleNames.length > 0) ctx = await loadAddContext(opts, cmd, dataRepo);
+
+  const itemRefs = picked.refs.filter((ref) => isBundleRef(ref) === null);
+  for (const itemRef of itemRefs) {
+    try {
+      const ref = parseItemRef(itemRef);
+      // A bundle installed above may already have covered this item. The
+      // single-item installer has no skip guard by design, so the check
+      // belongs here.
+      if (
+        lockKeyForRef(ctx.projectLock, ref, "data") ??
+        lockKeyForRef(ctx.localLock, ref, "data")
+      ) {
+        alreadyInstalled.push(itemRef);
+        console.log(`= ${itemRef.padEnd(33)} already installed`);
+        continue;
+      }
+      // The same refusal a named `add` makes. The catalog already leaves these
+      // rows out, so this is the boundary check rather than the only one: both
+      // entry points into `installDataItem` have to enforce it. A data repo
+      // holding `skills/capshelf` would otherwise install `data/skills/capshelf`
+      // next to `system/skills/capshelf`, giving two lock entries ownership of
+      // one destination.
+      if (isSystemItemName(ref.name)) {
+        throw new PreconditionError(
+          `"${ref.name}" is a system item — managed by the CLI, not addable from a data repo. It is installed automatically by 'capshelf init'.`,
+        );
+      }
+      const item = await findMasterItemByRef(ctx.dataRepo, ref);
+      if (!item) {
+        throw new NotFoundError(
+          `not found in data repo (${homeRelative(ctx.dataRepo)}): ${itemRef}`,
+        );
+      }
+
+      let approvedPin: PinnedSource | null = null;
+      if (isFragmentItemKind(item.kind)) {
+        // The same consent gate a named `add` reaches. A fragment picked from
+        // a list can destroy a config comment exactly as one typed by hand.
+        const preflight = await planStandaloneFragmentAdd(ctx, item);
+        if (
+          !(await confirmDestructiveChanges(preflight.plan, {
+            operation: "Add",
+            json: false,
+            yes: opts.yes === true,
+            dryRun: false,
+            rerunCommand: `capshelf add ${item.kind}/${item.name}${ctx.local ? " --local" : ""} --yes`,
+          }))
+        ) {
+          failed.push(itemRef);
+          continue;
+        }
+        const revalidated = await planStandaloneFragmentAdd(ctx, item);
+        assertDestructivePlanUnchanged(preflight.plan, revalidated.plan);
+        approvedPin = revalidated.pin;
+      }
+
+      const result = await installDataItem(ctx, item, {
+        ...(approvedPin && { pin: approvedPin }),
+      });
+      added.push(itemRef);
+      console.log(`+ ${itemRef.padEnd(33)} @ ${shortIdentity(result.sha)}`);
+      // Same block a named `add` prints. `mcp` and `subagents` items write a
+      // per-runtime set of targets, and the documented contract is that `add`
+      // says which runtimes it covered. A coverage gap is not a runtime
+      // warning, so the call below cannot stand in for this one.
+      if (result.targetCoverage) {
+        printTargetCoverage(result.targetCoverage, itemRef, {
+          presentWord: "written",
+          tracked: true,
+        });
+      }
+      printDeclaredNeeds(result.needs, "    ");
+      printRuntimeWarnings(result.runtimeWarnings, "    ");
+      printMissingRequires(itemRef, result.missingRequires);
+    } catch (error) {
+      failed.push(itemRef);
+      console.error(`✗ ${itemRef.padEnd(33)} ${errorDetail(error)}`);
+      // Reload before continuing. `installDataItem` adds the item to the
+      // manifest and the lock *before* it materializes, so a failure between
+      // those two steps leaves this context holding an entry for an item that
+      // was never written. The next item that succeeds calls `saveManifest`
+      // and `saveLock` on these same objects, which would persist the failed
+      // item's entry and claim an install that is absent or half-written.
+      ctx = await loadAddContext(opts, cmd, dataRepo);
+    }
+  }
+
+  printInteractiveSummary({ added, alreadyInstalled, failed }, ctx.local);
+  return { outcome: "installed", added, alreadyInstalled, failed };
+}
+
+/**
+ * A one-line reason for a per-item failure. `ResultExitError` carries no
+ * message because the command that threw it already reported the detail.
+ */
+function errorDetail(error: unknown): string {
+  if (error instanceof ResultExitError) return "";
+  if (error instanceof Error) return error.message.split("\n")[0] ?? "failed";
+  return String(error);
+}
+
+function printInteractiveSummary(
+  result: { added: string[]; alreadyInstalled: string[]; failed: string[] },
+  local: boolean,
+): void {
+  const parts = [`${result.added.length} added`];
+  if (result.alreadyInstalled.length > 0) {
+    parts.push(`${result.alreadyInstalled.length} already installed`);
+  }
+  if (result.failed.length > 0) parts.push(`${result.failed.length} failed`);
+  console.log("");
+  console.log(`${result.failed.length > 0 ? "!" : "✓"} ${parts.join(", ")}`);
+  for (const ref of result.failed) {
+    console.log(`  retry: capshelf add ${ref}${local ? " --local" : ""}`);
   }
 }
 

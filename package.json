@@ -23,6 +23,7 @@
     "smoke": "make smoke"
   },
   "dependencies": {
+    "@clack/core": "^1.4.3",
     "commander": "^12.1.0",
     "ignore": "^7.0.5",
     "smol-toml": "^1.6.1",

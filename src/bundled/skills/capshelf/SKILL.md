@@ -40,9 +40,12 @@ Results with a `bundles/` prefix are **bundles** — curated item sets. Prefer t
 
 ### 4. Install
 
-`capshelf add <item>`. For `mcp/*` and `subagents/*`, read the `targets:` block
-add prints and tell the user which runtimes the item covers — see Target
-coverage. Repeating add for an installed item is a stable no-op; use the printed `status --diff`, `update`, and `apply` guidance instead of trying to make add reapply it. If the output lists missing required items, install them with the exact `capshelf add <ref>` commands it prints. If `add` refuses with exit 3 because of a `conflicts-with` declaration, that is a curated incompatibility — surface the decision to the user (remove the conflicting item, or fix a stale declaration in the data repo); never work around it. A bundle preflight refusal (exit 3) is the same kind of decision: nothing was installed and the per-member report says why — surface it, don't install members one by one to route around it.
+`capshelf add <item>`. Always name the item. `capshelf add` with no argument
+opens an interactive picker for a human at a terminal, and it exits 3 in your
+session because there is none; `capshelf add --json` with no item is refused
+for the same reason. Use `search` and `ls` to choose, then add by ref. For
+`mcp/*` and `subagents/*`, read the `targets:` block add prints and tell the
+user which runtimes the item covers — see Target coverage. Repeating add for an installed item is a stable no-op; use the printed `status --diff`, `update`, and `apply` guidance instead of trying to make add reapply it. If the output lists missing required items, install them with the exact `capshelf add <ref>` commands it prints. If `add` refuses with exit 3 because of a `conflicts-with` declaration, that is a curated incompatibility — surface the decision to the user (remove the conflicting item, or fix a stale declaration in the data repo); never work around it. A bundle preflight refusal (exit 3) is the same kind of decision: nothing was installed and the per-member report says why — surface it, don't install members one by one to route around it.
 
 ### 5. Verify
 

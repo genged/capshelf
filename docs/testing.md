@@ -123,11 +123,37 @@ Every command has a generous safety deadline. At the deadline the runner sends
 grandchild cannot outlive the test. The deadline is not a performance
 assertion.
 
-One cell needs a terminal, because a consent prompt behaves differently on one.
-That cell opens a pseudo-terminal through `e2e/support/pty-driver.py` and needs
-`python3` on `PATH`; it fails with that message when it is absent. Its captured
-output carries terminal echo and CR line endings, so it asserts substrings
-rather than exact bytes.
+Some cells need a terminal, because a consent prompt and the item picker both
+behave differently on one. Those cells open a pseudo-terminal through
+`e2e/support/pty-driver.py`. They need `python3` on `PATH`, and they fail with
+that message when it is absent. The captured output carries terminal echo and
+CR line endings, so they assert substrings, not exact bytes.
+
+The driver gives that terminal a window size and turns off carriage-return
+translation. A bare pseudo-terminal has neither. Its defaults are not what a
+real terminal gives a program.
+
+Without a window size, the terminal reports zero columns. A full-screen prompt
+then lays out inside zero columns. It draws one character per line and never
+finishes.
+
+With `ICRNL` on, a carriage return arrives as a newline. Node reports those two
+as different keys. `Enter` therefore stops being `Enter` for a prompt that
+reads raw keys. With the driver's settings, `\r` in an answer means `Enter` for
+either kind of prompt. A `\n` still ends a line for a canonical one.
+
+A line-oriented prompt noticed neither default. Both stayed invisible until an
+interactive list was tested here.
+
+Each world sets `TERM=dumb`, which keeps line-oriented output deterministic. A
+full-screen prompt cannot run on a terminal that declares no capabilities.
+capshelf refuses one. A cell that drives such a prompt therefore asks for a
+real `TERM` through the command's `env`. One cell keeps the default on purpose,
+to hold the refusal.
+
+The answer goes into the terminal before the program can configure it. These
+cells prove that the keys reach the program, and what it does with them. They
+do not prove behavior under per-keystroke timing.
 
 ## Continuous integration
 

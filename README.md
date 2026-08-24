@@ -231,10 +231,13 @@ If your team already runs one, skip step 2 and bind to your clone of it:
 ```bash
 cd ~/code/my-app
 capshelf init --data ~/code/agent-shared
-capshelf ls
-capshelf add security-review
 capshelf status
 ```
+
+`init` ends by showing you the shelf. Type to filter it, press `tab` to mark
+each item you want, and press `enter` to install them. Press `esc` to skip. The
+project is already initialized either way. Run `capshelf add` with no arguments
+to open the same list again later.
 
 Use `add` for an item the data repo already holds, and `share` to move one up
 there for the first time.
@@ -244,10 +247,16 @@ there for the first time.
 Add a shared skill:
 
 ```bash
-capshelf ls
+capshelf add                 # pick from the shelf interactively
+capshelf ls                  # or browse it
 capshelf show security-review --no-content
-capshelf add security-review
+capshelf add security-review # or name the item
 ```
+
+The picker filters as you type, and it matches loose subsequences rather than
+substrings: `secrev` finds `security-review`. `tab` marks a row, and `enter`
+installs every marked row. A menu across the top selects the item type, and
+`left` and `right` move between types.
 
 Update a project when the data repo changes:
 
