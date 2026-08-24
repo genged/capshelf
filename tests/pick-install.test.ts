@@ -488,6 +488,34 @@ describe("capshelf add with no item", () => {
   );
 
   test(
+    "a control sequence in a catalog warning never reaches the terminal",
+    async () => {
+      // Warnings quote data-repo text back, and an unrecognised `includes` key
+      // goes in verbatim. The picker prints them to a live terminal, and init
+      // does it unprompted, so a shelf could paint over the frame or drive the
+      // terminal.
+      const project = await tempRepo("capshelf-pick-project-");
+      const dataRepo = await shelf();
+      const esc = String.fromCharCode(27);
+      await writeFile(
+        join(dataRepo, "bundles", "evil.yml"),
+        `includes:\n  "${esc}[31mFAKE": []\n  skills:\n    - code-review\n`,
+      );
+      await commitAll(dataRepo, "a shelf with a hostile bundle key");
+
+      const { seen } = answerWith([]);
+      const result = await runInProcess(project)(["init", "--data", dataRepo]);
+
+      expect(result.exitCode).toBe(0);
+      expect(seen.length).toBe(1);
+      const printed = result.stderr.toString() + result.stdout.toString();
+      expect(printed).toContain("FAKE");
+      expect(printed).not.toContain(esc);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "--target with no item refuses rather than prompting",
     async () => {
       // `--target` is never supported by add. The refusal lived only in the

@@ -14,6 +14,7 @@ import { dataKey } from "./lock";
 import type { Lock } from "./lock";
 import { listMasterItems } from "./master";
 import { loadDataItemMetadata } from "./metadata";
+import { sanitizeDisplayText } from "./pick-core";
 import type { PickRow } from "./pick-core";
 
 export interface PickCatalog {
@@ -77,7 +78,15 @@ export async function loadPickCatalog(
     });
   }
 
-  return { rows, warnings: [...new Set(warnings)] };
+  // Warnings quote data-repo text back to the user, and some of it verbatim:
+  // an unrecognised `includes` key goes straight into the message. The picker
+  // prints these to a live terminal, and `capshelf init` does it without being
+  // asked, so a shelf could paint over the frame or drive the terminal. Row
+  // descriptions are filtered for the same reason.
+  return {
+    rows,
+    warnings: [...new Set(warnings)].map(sanitizeDisplayText),
+  };
 }
 
 /**
