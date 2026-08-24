@@ -912,7 +912,7 @@ function assertNoFragmentConflicts(
     const collision = findUnmanagedCollision(mergedSoFar, fragment.value);
     if (collision) {
       const earlier =
-        provenance.get(collision.path.join(" ")) ?? "an earlier fragment";
+        provenance.get(collision.path.join("\0")) ?? "an earlier fragment";
       throw new Error(
         `cannot reconcile ${outputPath}: ${fragment.source.relPath} and ${earlier} set a conflicting value at ${configPathLabel(collision.path)} (${collision.managedKind} vs ${collision.localKind}). Two fragments set the same key to different values — reconcile or remove one.`,
       );
@@ -941,7 +941,7 @@ function recordLeafProvenance(
     if (isPlainConfigObject(child)) {
       recordLeafProvenance(child, source, path, out);
     } else {
-      out.set(path.join(" "), source);
+      out.set(path.join("\0"), source);
     }
   }
 }
