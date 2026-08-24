@@ -208,6 +208,17 @@ describe("highlightRef", () => {
   test("every character matched wraps the whole ref", () => {
     expect(highlightRef("abc", [0, 1, 2], mark)).toBe("[abc]");
   });
+
+  test("positions are code points, so an astral character stays whole", () => {
+    // Walking UTF-16 units would paint one half of the surrogate pair.
+    expect(highlightRef("skills/🎨-design", [7], mark)).toBe(
+      "skills/[🎨]-design",
+    );
+  });
+
+  test("a match after an astral character lands on the right one", () => {
+    expect(highlightRef("a🎨bc", [2, 3], mark)).toBe("a🎨[bc]");
+  });
 });
 
 describe("pickRowHint", () => {

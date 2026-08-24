@@ -41,7 +41,14 @@ const CHAR_NON_WORD = 1;
 const CHAR_DELIMITER = 2;
 const CHAR_LOWER = 3;
 const CHAR_UPPER = 4;
+const CHAR_LETTER = 5;
 const CHAR_NUMBER = 6;
+
+const LOWER = /\p{Ll}/u;
+const UPPER = /\p{Lu}/u;
+const NUMBER = /\p{N}/u;
+const LETTER = /\p{L}/u;
+const WHITE_SPACE = /\p{White_Space}/u;
 
 const DELIMITER_CHARS = "/,:;|";
 const WHITE_CHARS = " \t\n\v\f\r\x85\xA0";
@@ -71,7 +78,16 @@ const BONUS_BOUNDARY_DELIMITER = BONUS_BOUNDARY + 1;
 export interface FuzzyMatch {
   /** Higher is better. Only comparable between matches of the same query. */
   score: number;
-  /** Indices in the haystack the pattern matched, ascending. */
+  /**
+   * Indices in the haystack the pattern matched, ascending, counted in code
+   * points rather than UTF-16 units.
+   *
+   * The whole module counts that way. Indexing a JavaScript string directly
+   * splits any character outside the basic plane into two halves, which made
+   * one emoji report two match positions and let a highlighter paint half a
+   * character. A caller that renders these positions must walk the string by
+   * code point too.
+   */
   positions: number[];
 }
 
@@ -98,7 +114,9 @@ export function fuzzyMatchV1(
   text: string,
   caseSensitive = isCaseSensitive(pattern),
 ): FuzzyMatch | null {
-  if (pattern.length === 0) return { score: 0, positions: [] };
+  const needle = [...pattern];
+  const hay = [...text];
+  if (needle.length === 0) return { score: 0, positions: [] };
 
   const fold = (char: string): string =>
     caseSensitive ? char : char.toLowerCase();
@@ -107,13 +125,13 @@ export function fuzzyMatchV1(
   let patternIndex = 0;
   let start = -1;
   let end = -1;
-  for (let index = 0; index < text.length; index++) {
-    if (fold(text[index] as string) !== fold(pattern[patternIndex] as string)) {
+  for (let index = 0; index < hay.length; index++) {
+    if (fold(hay[index] as string) !== fold(needle[patternIndex] as string)) {
       continue;
     }
     if (start < 0) start = index;
     patternIndex++;
-    if (patternIndex === pattern.length) {
+    if (patternIndex === needle.length) {
       end = index + 1;
       break;
     }
@@ -125,7 +143,7 @@ export function fuzzyMatchV1(
   // `c`urity into the tight `sec` inside "security".
   patternIndex--;
   for (let index = end - 1; index >= start; index--) {
-    if (fold(text[index] as string) !== fold(pattern[patternIndex] as string)) {
+    if (fold(hay[index] as string) !== fold(needle[patternIndex] as string)) {
       continue;
     }
     patternIndex--;
@@ -135,7 +153,7 @@ export function fuzzyMatchV1(
     }
   }
 
-  return calculateScore(pattern, text, start, end, caseSensitive);
+  return calculateScore(needle, hay, start, end, caseSensitive);
 }
 
 /**
@@ -146,8 +164,8 @@ export function fuzzyMatchV1(
  * penalty, the same shape Smith-Waterman alignment uses.
  */
 function calculateScore(
-  pattern: string,
-  text: string,
+  pattern: readonly string[],
+  text: readonly string[],
   start: number,
   end: number,
   caseSensitive: boolean,
@@ -199,12 +217,27 @@ function calculateScore(
   return { score, positions };
 }
 
+/**
+ * Classify one character, in the order the spec's own `charClassOfNonAscii`
+ * uses.
+ *
+ * The classes earn the boundary bonuses, so an ASCII-only test does not merely
+ * ignore other scripts, it misreads them. Every Cyrillic or CJK character
+ * counted as a non-word character, so each one looked like a word boundary and
+ * inflated the score of any text that used them.
+ */
 function charClassOf(char: string): number {
   if (char >= "a" && char <= "z") return CHAR_LOWER;
   if (char >= "A" && char <= "Z") return CHAR_UPPER;
   if (char >= "0" && char <= "9") return CHAR_NUMBER;
   if (WHITE_CHARS.includes(char)) return CHAR_WHITE;
   if (DELIMITER_CHARS.includes(char)) return CHAR_DELIMITER;
+  if ((char.codePointAt(0) ?? 0) < 0x80) return CHAR_NON_WORD;
+  if (LOWER.test(char)) return CHAR_LOWER;
+  if (UPPER.test(char)) return CHAR_UPPER;
+  if (NUMBER.test(char)) return CHAR_NUMBER;
+  if (LETTER.test(char)) return CHAR_LETTER;
+  if (WHITE_SPACE.test(char)) return CHAR_WHITE;
   return CHAR_NON_WORD;
 }
 

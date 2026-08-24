@@ -206,10 +206,14 @@ export function highlightRef(
 ): string {
   if (positions.length === 0) return ref;
   const marked = new Set(positions);
+  // Walk code points, because that is what `fuzzy.ts` counts. Indexing the
+  // string directly would step through UTF-16 halves and let a paint land
+  // inside a surrogate pair.
+  const chars = [...ref];
   let out = "";
   let run = "";
-  for (let index = 0; index < ref.length; index++) {
-    const char = ref[index] as string;
+  for (let index = 0; index < chars.length; index++) {
+    const char = chars[index] as string;
     if (marked.has(index)) {
       run += char;
       continue;

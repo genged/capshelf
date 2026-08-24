@@ -114,3 +114,50 @@ describe("fuzzyTerms", () => {
     expect(fuzzyTerms("   ")).toEqual([]);
   });
 });
+
+describe("Unicode", () => {
+  /**
+   * Positions are counted in code points. Indexing a JavaScript string walks
+   * UTF-16 halves instead, which made one emoji report two match positions and
+   * let a highlighter paint half a character.
+   */
+  test("a character outside the basic plane is one position, not two", () => {
+    const match = fuzzyMatchV1("🎨", "skills/🎨-design");
+    expect(match?.positions).toHaveLength(1);
+  });
+
+  test("positions index code points, so they address whole characters", () => {
+    const text = "skills/🎨-design";
+    const match = fuzzyMatchV1("design", text);
+    const chars = [...text];
+    expect(match?.positions.map((index) => chars[index]).join("")).toBe(
+      "design",
+    );
+  });
+
+  test("a letter is not a word boundary, whatever its script", () => {
+    // The classes earn the boundary bonuses. Treating every non-ASCII
+    // character as a non-word character made each one look like a separator
+    // and inflated the score of any text that used them.
+    const midWord = fuzzyMatchV1("б", "Аб")?.score ?? -1;
+    const afterDelimiter = fuzzyMatchV1("б", "-б")?.score ?? -1;
+    expect(afterDelimiter).toBeGreaterThan(midWord);
+  });
+
+  test("case folding works beyond ASCII", () => {
+    expect(fuzzyMatchV1("ä", "Ärger")).not.toBeNull();
+    expect(fuzzyMatchV1("жук", "ЖУК")).not.toBeNull();
+  });
+
+  test("smart case applies to non-ASCII, so a capital still narrows", () => {
+    expect(isCaseSensitive("жук")).toBe(false);
+    expect(isCaseSensitive("Жук")).toBe(true);
+    // All caps means case-sensitive, so this must not match lowercase text.
+    expect(fuzzyMatchV1("ЖУК", "жук")).toBeNull();
+  });
+
+  test("a CJK query matches CJK text", () => {
+    const match = fuzzyMatchV1("設定", "設定ファイル");
+    expect(match?.positions).toEqual([0, 1]);
+  });
+});
