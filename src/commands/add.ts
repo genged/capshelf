@@ -1124,9 +1124,15 @@ export async function runInteractiveAdd(request: {
   // another terminal while the picker is open would then move the binding
   // under it, and refs the user chose from one shelf would be installed from
   // another. Reloading is for the locks, not for the binding.
+  //
+  // Every reload goes through `reload`, so the pin is structural rather than
+  // remembered. A reload added later cannot re-resolve the binding by
+  // forgetting to pass it.
   const boundRepo = ctx.dataRepo;
+  const reload = (): Promise<AddContext> =>
+    loadAddContext(opts, cmd, boundRepo);
   const catalog = await loadPickCatalog({
-    dataRepo: ctx.dataRepo,
+    dataRepo: boundRepo,
     projectLock: ctx.projectLock,
     localLock: ctx.localLock,
   });
@@ -1151,7 +1157,7 @@ export async function runInteractiveAdd(request: {
   // between its own read and its own write. It does not make the write atomic;
   // serializing capshelf against itself would need a lock file and belongs to
   // every command at once, not to this one.
-  ctx = await loadAddContext(opts, cmd, boundRepo);
+  ctx = await reload();
 
   const added: string[] = [];
   const alreadyInstalled: string[] = [];
@@ -1181,7 +1187,7 @@ export async function runInteractiveAdd(request: {
   // lock. Reusing the context loaded before them would write a lock built from
   // a snapshot that predates their entries, silently dropping every member
   // they just installed.
-  if (bundleNames.length > 0) ctx = await loadAddContext(opts, cmd, boundRepo);
+  if (bundleNames.length > 0) ctx = await reload();
 
   const itemRefs = picked.refs.filter((ref) => isBundleRef(ref) === null);
   for (const itemRef of itemRefs) {
@@ -1209,10 +1215,10 @@ export async function runInteractiveAdd(request: {
           `"${ref.name}" is a system item — managed by the CLI, not addable from a data repo. It is installed automatically by 'capshelf init'.`,
         );
       }
-      const item = await findMasterItemByRef(ctx.dataRepo, ref);
+      const item = await findMasterItemByRef(boundRepo, ref);
       if (!item) {
         throw new NotFoundError(
-          `not found in data repo (${homeRelative(ctx.dataRepo)}): ${itemRef}`,
+          `not found in data repo (${homeRelative(boundRepo)}): ${itemRef}`,
         );
       }
 
@@ -1265,7 +1271,7 @@ export async function runInteractiveAdd(request: {
       // was never written. The next item that succeeds calls `saveManifest`
       // and `saveLock` on these same objects, which would persist the failed
       // item's entry and claim an install that is absent or half-written.
-      ctx = await loadAddContext(opts, cmd, boundRepo);
+      ctx = await reload();
     }
   }
 
