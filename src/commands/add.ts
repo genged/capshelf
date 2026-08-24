@@ -1117,6 +1117,14 @@ export async function runInteractiveAdd(request: {
   if (blocked) return { outcome: "unavailable", reason: blocked };
 
   let ctx = await loadAddContext(opts, cmd, dataRepo);
+  // Pin the repository the catalog is read from, and install from that one.
+  //
+  // A plain `capshelf add` resolves the binding from `.capshelf/local.json`,
+  // and every reload below would resolve it again. `capshelf data bind` in
+  // another terminal while the picker is open would then move the binding
+  // under it, and refs the user chose from one shelf would be installed from
+  // another. Reloading is for the locks, not for the binding.
+  const boundRepo = ctx.dataRepo;
   const catalog = await loadPickCatalog({
     dataRepo: ctx.dataRepo,
     projectLock: ctx.projectLock,
@@ -1143,7 +1151,7 @@ export async function runInteractiveAdd(request: {
   // between its own read and its own write. It does not make the write atomic;
   // serializing capshelf against itself would need a lock file and belongs to
   // every command at once, not to this one.
-  ctx = await loadAddContext(opts, cmd, dataRepo);
+  ctx = await loadAddContext(opts, cmd, boundRepo);
 
   const added: string[] = [];
   const alreadyInstalled: string[] = [];
@@ -1158,7 +1166,7 @@ export async function runInteractiveAdd(request: {
     .filter((name): name is string => name !== null);
   for (const name of bundleNames) {
     try {
-      await addBundle(name, opts, cmd, dataRepo);
+      await addBundle(name, opts, cmd, boundRepo);
       added.push(`bundles/${name}`);
     } catch (error) {
       // `addBundle` prints its own refusal before throwing ResultExitError, so
@@ -1173,7 +1181,7 @@ export async function runInteractiveAdd(request: {
   // lock. Reusing the context loaded before them would write a lock built from
   // a snapshot that predates their entries, silently dropping every member
   // they just installed.
-  if (bundleNames.length > 0) ctx = await loadAddContext(opts, cmd, dataRepo);
+  if (bundleNames.length > 0) ctx = await loadAddContext(opts, cmd, boundRepo);
 
   const itemRefs = picked.refs.filter((ref) => isBundleRef(ref) === null);
   for (const itemRef of itemRefs) {
@@ -1257,7 +1265,7 @@ export async function runInteractiveAdd(request: {
       // was never written. The next item that succeeds calls `saveManifest`
       // and `saveLock` on these same objects, which would persist the failed
       // item's entry and claim an install that is absent or half-written.
-      ctx = await loadAddContext(opts, cmd, dataRepo);
+      ctx = await loadAddContext(opts, cmd, boundRepo);
     }
   }
 
