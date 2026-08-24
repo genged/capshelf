@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  GUTTER_WIDTH,
   MARKED,
   PLAIN_PALETTE,
+  POINTER,
   UNMARKED,
   renderLegend,
   renderPickBody,
@@ -129,8 +131,8 @@ describe("renderRows", () => {
 
   test("points at the cursor row and only that row", () => {
     const lines = renderRows(frame({ query: "x", cursor: 1 }));
-    expect(lines.filter((l) => l.startsWith("❯")).length).toBe(1);
-    expect(lines[1]).toStartWith("❯");
+    expect(lines.filter((l) => l.startsWith(POINTER)).length).toBe(1);
+    expect(lines[1]).toStartWith(POINTER);
   });
 
   test("draws the hint only for the focused row", () => {
@@ -175,10 +177,84 @@ describe("renderRows", () => {
     expect(lines[0]).toContain("<a>rev</a>");
   });
 
-  test("pads refs to a common width so hints line up", () => {
-    const lines = renderRows(frame({ query: "x", cursor: -1 }));
-    const widths = new Set(lines.map((l) => l.length));
-    expect(widths.size).toBe(1);
+  test("the pointer column is reserved on every row, so boxes align", () => {
+    // A one-cell pointer put the marker hard against the checkbox and the two
+    // rendered as a single blob.
+    const lines = renderRows(frame({ query: "x", cursor: 1 }));
+    const boxAt = lines.map((line) => line.indexOf(UNMARKED));
+    expect(new Set(boxAt.filter((index) => index >= 0)).size).toBe(1);
+    expect(POINTER.length).toBe(2);
+  });
+
+  test("the marker is not a triangle", () => {
+    // The checkboxes are round. Unicode's right-pointing triangles come in a
+    // small size and a full size, and neither is drawn to the same vertical
+    // metrics as the checkbox, so neither sits level beside it.
+    expect(POINTER.trimEnd()).not.toMatch(/[▸▶►]/u);
+    expect(POINTER.trimEnd()).toBe("❯");
+  });
+
+  test("no row carries trailing blanks", () => {
+    // Padding every row to the longest ref aligned a single hint against
+    // nothing and left the rest with invisible trailing space.
+    for (const line of renderRows(frame({ query: "x", cursor: 1 }))) {
+      expect(line).toBe(line.trimEnd());
+    }
+  });
+
+  test("the hint follows its own ref rather than a shared column", () => {
+    const rows = [ranked(SHELF[2] as PickRow), ranked(SHELF[1] as PickRow)];
+    const [focused] = renderRows(frame({ query: "x", rows, cursor: 0 }));
+    expect(focused).toBe(
+      `${POINTER}${UNMARKED} skills/security-review  Find flaws`,
+    );
+  });
+
+  test("a row is kept inside the terminal width", () => {
+    // A row wider than the terminal wraps, and the redraw then counts one line
+    // where two were drawn, so the frame walks up the screen.
+    for (const columns of [80, 60, 44, 34]) {
+      for (const line of renderRows(frame({ columns, cursor: 2 }))) {
+        expect(line.length + GUTTER_WIDTH).toBeLessThanOrEqual(columns);
+      }
+    }
+  });
+
+  test("a ref too long for the terminal is shortened, not wrapped", () => {
+    const long = row(`skills/${"x".repeat(60)}`);
+    const [line] = renderRows(
+      frame({ query: "x", rows: [ranked(long)], cursor: -1, columns: 40 }),
+    );
+    expect((line as string).length + GUTTER_WIDTH).toBeLessThanOrEqual(40);
+    expect(line).toContain("…");
+  });
+
+  test("a hint with no room left is dropped rather than stubbed", () => {
+    const [line] = renderRows(
+      frame({
+        query: "x",
+        rows: [ranked(SHELF[2] as PickRow)],
+        cursor: 0,
+        columns: 34,
+      }),
+    );
+    expect(line).not.toContain("Find flaws");
+    expect((line as string).length + GUTTER_WIDTH).toBeLessThanOrEqual(34);
+  });
+
+  test("a heading is never the last line of the window", () => {
+    // A heading labels the rows under it, so one at the bottom edge labels
+    // nothing and reads as a group with no members.
+    const rows = [
+      ranked(row("skills/a")),
+      ranked(row("skills/b")),
+      ranked(row("mcp/c", { kind: "mcp" })),
+    ];
+    for (const height of [2, 3, 4]) {
+      const lines = renderRows(frame({ rows, cursor: 0, height, query: "" }));
+      expect(lines.at(-1)).not.toBe("mcp");
+      expect(lines.at(-1)).not.toBe("skills");
+    }
   });
 
   test("headings count against the height budget", () => {
@@ -214,7 +290,7 @@ describe("renderRows", () => {
     );
     expect(lines.length).toBeLessThanOrEqual(5);
     expect(lines.some((l) => l.includes("mcp/m-5"))).toBe(true);
-    expect(lines.filter((l) => l.startsWith("❯")).length).toBe(1);
+    expect(lines.filter((l) => l.startsWith(POINTER)).length).toBe(1);
   });
 
   test("windows a long list around the cursor", () => {
@@ -282,6 +358,38 @@ describe("renderPickBody", () => {
     const legend = renderLegend(PLAIN_PALETTE);
     for (const key of ["←/→", "↑/↓", "tab", "enter", "esc"]) {
       expect(legend).toContain(key);
+    }
+  });
+
+  test("the legend drops words rather than wrapping", () => {
+    for (const columns of [80, 60, 44, 30]) {
+      const legend = renderLegend(PLAIN_PALETTE, columns);
+      expect(legend.length + GUTTER_WIDTH).toBeLessThanOrEqual(columns);
+      expect(legend).toContain("enter");
+    }
+  });
+
+  test("the tab bar compacts rather than wrapping", () => {
+    const tabs = pickTabs(SHELF);
+    const lines = renderTabBar(tabs, 2, PLAIN_PALETTE, 24);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("skills");
+    // Which of how many, since the other names no longer fit.
+    expect(lines[0]).toContain("(3/4)");
+    expect((lines[0] as string).length + GUTTER_WIDTH).toBeLessThanOrEqual(24);
+  });
+
+  test("a bar that fits keeps every name and its underline", () => {
+    const lines = renderTabBar(pickTabs(SHELF), 2, PLAIN_PALETTE, 100);
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toContain("bundles");
+  });
+
+  test("the whole frame fits the terminal at any width", () => {
+    for (const columns of [100, 80, 60, 44, 34]) {
+      for (const line of renderPickBody(frame({ columns }))) {
+        expect(line.length + GUTTER_WIDTH).toBeLessThanOrEqual(columns);
+      }
     }
   });
 });

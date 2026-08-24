@@ -350,6 +350,10 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
       cursor: this.cursorFromFocus(),
       marked: new Set(this.selectedValues),
       height: LIST_HEIGHT,
+      // The stream the frame is drawn on decides how wide a row may be.
+      ...(process.stderr.columns !== undefined && {
+        columns: process.stderr.columns,
+      }),
       palette: TERMINAL_PALETTE,
     });
     return [
