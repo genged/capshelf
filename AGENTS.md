@@ -4,12 +4,25 @@ This file gives coding agents the shared project context that should be true
 for every task in this repository. Keep it concise; prefer pointers to the
 living docs and source over copying long procedures here.
 
-## Conversational Style
+## Writing Style
 
 - Write technical text with the rules of ASD-STE100 Simplified Technical English. STE is the controlled language that aerospace and defense manufacturers use for maintenance documentation. The rules exist so that a tired reader who is not a native English speaker cannot misread an instruction. They remove the usual signs of AI-generated text as a side effect: long sentences, synonym rotation, hedges, filler, and decorative clauses.
 - Write for that tired reader. Each sentence must survive one read.
 - Technical prose only, be direct
 - When the user asks a question, answer it first before making edits or running implementation commands.
+- These rules cover every document you write or edit. They are not only for
+  conversation. They apply to `docs/`, `README.md`, release notes, commit
+  messages, and this file.
+- This file beats the prose of an older document. Many pages under `docs/`
+  predate these rules. If a task tells you to follow an existing page, copy its
+  structure and its section order. Do not copy its prose habits.
+- In release notes and What's New pages, use the simple past for a change that
+  the release made: "Added `--merge`". Use the simple present for behavior that
+  the software now has: "A conflict writes nothing." Do not use the imperative
+  for a change. It reads as an instruction to the reader.
+- Before you commit a document, check the prose mechanically: count the words
+  in each sentence outside a code fence, and grep for `—`, `;`, and hedge
+  words.
 
 ## Project
 
