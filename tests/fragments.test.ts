@@ -146,7 +146,9 @@ describe("fragment output planning", () => {
     }
 
     // Naming both fragments and the conflicting path, instead of silently
-    // last-write-win by manifest order.
+    // last-write-win by manifest order. The earlier fragment comes from the
+    // provenance map, so assert the name: a lookup that misses still refuses,
+    // but degrades the message to "an earlier fragment".
     await expect(
       applyFragmentOutput({
         project,
@@ -156,7 +158,58 @@ describe("fragment output planning", () => {
         nextLock,
         target: "claude-settings",
       }),
-    ).rejects.toThrow(/set a conflicting value at model/);
+    ).rejects.toThrow(
+      "settings/strict/settings.json and settings/base/settings.json set a conflicting value at model (string vs string)",
+    );
+    expect(existsSync(join(project, ".claude", "settings.json"))).toBe(false);
+  });
+
+  test("names the right fragment when another leaf path shares its words", async () => {
+    // Provenance is keyed by the leaf path. A key may hold any character that
+    // JSON allows, including whatever separator a joined key would pick, so
+    // two distinct paths must not share a key. Here ["status line","command"]
+    // and ["status","line command"] differ, but join them on a space and both
+    // read "status line command": the conflict below would then name "nested",
+    // which set the other path and is not party to this conflict.
+    const dataRepo = await tempRepo();
+    const project = await tempDir("capshelf-fragments-project-");
+    for (const [name, value] of [
+      ["spaced", { "status line": { command: "left" } }],
+      ["nested", { status: { "line command": "x" } }],
+      ["rival", { "status line": { command: "right" } }],
+    ] as const) {
+      await mkdir(join(dataRepo, "settings", name), { recursive: true });
+      await writeFile(
+        join(dataRepo, "settings", name, "settings.json"),
+        JSON.stringify(value),
+      );
+    }
+    await commitAll(dataRepo, "fragments whose leaf paths share words");
+    const manifest = {
+      ...emptyManifest(),
+      settings: ["spaced", "nested", "rival"],
+    };
+    const nextLock = emptyLock();
+    for (const name of ["spaced", "nested", "rival"]) {
+      nextLock.items[dataKey("settings", name)] = {
+        source: "data",
+        ...(await currentPin(dataRepo, "settings", name)),
+        appliedAt: new Date().toISOString(),
+      };
+    }
+
+    await expect(
+      applyFragmentOutput({
+        project,
+        dataRepo,
+        manifest,
+        oldLock: emptyLock(),
+        nextLock,
+        target: "claude-settings",
+      }),
+    ).rejects.toThrow(
+      "settings/rival/settings.json and settings/spaced/settings.json set a conflicting value at status line.command (string vs string)",
+    );
     expect(existsSync(join(project, ".claude", "settings.json"))).toBe(false);
   });
 
