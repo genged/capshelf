@@ -10,6 +10,17 @@ CLI=(bun run "$ROOT/src/cli.ts")
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_NOSYSTEM=1
 
+# Detach the whole suite from the terminal's input. `init` offers the picker
+# when stdin and stderr are both terminals, so a smoke run started from an
+# interactive shell drew the prompt and waited for a keystroke that never
+# came. Every script sources this file before its first CLI call, so the
+# redirect binds here once instead of each `init` remembering `--no-pick`.
+#
+# This is the layer boundary, not only a fix: smoke proves non-interactive
+# behavior and passes `--yes` for consent, while the picker is terminal
+# behavior that only the end-to-end pseudo-terminal cells can prove.
+exec < /dev/null
+
 init_git_repo() {
   local repo="$1"
   git -C "$repo" init -q
