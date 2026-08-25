@@ -213,9 +213,14 @@ describe("renderRows", () => {
   test("a row is kept inside the terminal width", () => {
     // A row wider than the terminal wraps, and the redraw then counts one line
     // where two were drawn, so the frame walks up the screen.
+    //
+    // Strictly less than `columns`, not equal to it: a line that fills the
+    // last column wraps on terminals that wrap there, so the budget leaves
+    // that column empty. An assertion of `<= columns` passes with the margin
+    // removed, which is the wrap this test is here to catch.
     for (const columns of [80, 60, 44, 34]) {
       for (const line of renderRows(frame({ columns, cursor: 2 }))) {
-        expect(line.length + GUTTER_WIDTH).toBeLessThanOrEqual(columns);
+        expect(line.length + GUTTER_WIDTH).toBeLessThan(columns);
       }
     }
   });
@@ -225,7 +230,7 @@ describe("renderRows", () => {
     const [line] = renderRows(
       frame({ query: "x", rows: [ranked(long)], cursor: -1, columns: 40 }),
     );
-    expect((line as string).length + GUTTER_WIDTH).toBeLessThanOrEqual(40);
+    expect((line as string).length + GUTTER_WIDTH).toBeLessThan(40);
     expect(line).toContain("…");
   });
 
@@ -239,7 +244,7 @@ describe("renderRows", () => {
       }),
     );
     expect(line).not.toContain("Find flaws");
-    expect((line as string).length + GUTTER_WIDTH).toBeLessThanOrEqual(34);
+    expect((line as string).length + GUTTER_WIDTH).toBeLessThan(34);
   });
 
   test("a heading is never the last line of the window", () => {
@@ -364,7 +369,7 @@ describe("renderPickBody", () => {
   test("the legend drops words rather than wrapping", () => {
     for (const columns of [80, 60, 44, 30]) {
       const legend = renderLegend(PLAIN_PALETTE, bodyBudget(columns));
-      expect(legend.length + GUTTER_WIDTH).toBeLessThanOrEqual(columns);
+      expect(legend.length + GUTTER_WIDTH).toBeLessThan(columns);
       expect(legend).toContain("enter");
     }
   });
@@ -376,7 +381,7 @@ describe("renderPickBody", () => {
     expect(lines[0]).toContain("skills");
     // Which of how many, since the other names no longer fit.
     expect(lines[0]).toContain("(3/4)");
-    expect((lines[0] as string).length + GUTTER_WIDTH).toBeLessThanOrEqual(24);
+    expect((lines[0] as string).length + GUTTER_WIDTH).toBeLessThan(24);
   });
 
   test("a bar that fits keeps every name and its underline", () => {
@@ -393,7 +398,7 @@ describe("renderPickBody", () => {
   test("the whole frame fits the terminal at any width", () => {
     for (const columns of [100, 80, 60, 44, 34]) {
       for (const line of renderPickBody(frame({ columns }))) {
-        expect(line.length + GUTTER_WIDTH).toBeLessThanOrEqual(columns);
+        expect(line.length + GUTTER_WIDTH).toBeLessThan(columns);
       }
     }
   });
@@ -404,7 +409,7 @@ describe("renderPickBody", () => {
     for (const columns of [100, 80, 60, 44, 34]) {
       const long = frame({ columns, query: "a".repeat(120) });
       for (const line of renderPickBody(long)) {
-        expect(line.length + GUTTER_WIDTH).toBeLessThanOrEqual(columns);
+        expect(line.length + GUTTER_WIDTH).toBeLessThan(columns);
       }
     }
   });
