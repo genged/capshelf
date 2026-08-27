@@ -31,6 +31,7 @@ import {
   personalClaudeSkillPath,
   projectRoot,
   rootManifestPath,
+  shellArg,
 } from "../src/paths";
 import { resolveDataRepo, resolveDataRepoOptional } from "../src/data-repo";
 
@@ -239,6 +240,41 @@ describe("path normalization", () => {
       codexConfig: [],
     });
     expect(detectInstallMode(project)).toBe("claude-only");
+  });
+});
+
+describe("shellArg", () => {
+  test("leaves an ordinary path bare and quotes anything a shell would read", () => {
+    expect(shellArg("/home/me/shelf")).toBe("/home/me/shelf");
+    expect(shellArg("settings/theme/settings.json")).toBe(
+      "settings/theme/settings.json",
+    );
+    // `~` is data, not an expansion request, so it is quoted like anything
+    // else. That is why a caller building a command passes the absolute path
+    // and keeps `homeRelative` for the prose around it.
+    expect(shellArg("~/code/shelf")).toBe("'~/code/shelf'");
+    expect(shellArg("/My Code/shelf")).toBe("'/My Code/shelf'");
+    // Item names reach printed commands from untrusted data-repo input, and
+    // `isSafeItemName` permits both of these.
+    expect(shellArg("settings/$(whoami)/settings.json")).toBe(
+      "'settings/$(whoami)/settings.json'",
+    );
+    expect(shellArg("it's")).toBe(`'it'\\''s'`);
+  });
+
+  test("the quoted form survives a real shell", async () => {
+    for (const value of [
+      "/My Code/shelf",
+      "settings/$(echo PWNED)/settings.json",
+      "back`tick`",
+      "it's",
+      "semi;colon",
+    ]) {
+      const printed = await $`bash -c ${`printf '%s' ${shellArg(value)}`}`
+        .quiet()
+        .text();
+      expect(printed).toBe(value);
+    }
   });
 });
 
