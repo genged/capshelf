@@ -68,7 +68,6 @@ import {
   currentFragmentSourcesForItem,
   isFragmentKind,
   parseFragmentSourceText,
-  shaOfFragmentItem,
   touchedFragmentTargetsForItem,
 } from "../fragments";
 import { upstreamFactsForItem } from "../upstream-facts";
@@ -663,31 +662,18 @@ export async function promoteFragmentSource(
     }
     dirty = dirty || pathDirty;
   }
-  const currentSha = await shaOfFragmentItem(dataRepo, kind, name);
-  if (!dirty) {
-    if (currentSha === entry.sha) {
-      return {
-        source: "data",
-        kind,
-        name,
-        action: "already-current",
-        sha: currentSha,
-        sourceCommit: entry.sourceCommit,
-        committed: false,
-      };
-    }
-    // Unchanged and not bypassable by --stale-ok: in this branch there is
-    // nothing local to promote, the only correct action is update.
-    throw new PreconditionError(
-      `${kind}/${name} has committed source changes not in this project lock; run capshelf update ${kind}/${name}`,
-    );
-  }
-
-  // Stale gate for the dirty-commit path: compare the canonical sources as
-  // committed at HEAD (ignoring the dirty worktree edits about to be
-  // committed) against the lock. A difference means upstream advanced past
-  // the lock; committing would silently fold that advance into a lock bump
-  // the user never reviewed.
+  // The canonical sources as committed at HEAD, which is what both branches
+  // below compare the lock against. Reading the commit rather than the
+  // worktree is what makes the two comparable: `entry.sourcePinDigest` is a
+  // digest over `(path, mode, blobId)` tree entries (`src/pin.ts:114`), and a
+  // content hash of the same files is a different number.
+  //
+  // The clean branch used `shaOfFragmentItem(...) === entry.sha` until
+  // 2026-08-26. `entry` is a `DataLockEntryV4`, whose `sha` is typed
+  // `undefined` (`src/lock.ts:188-192`), so on a version 4 lock that test was
+  // never true and every no-op fragment promote fell through to the refusal
+  // below. The message named committed changes that did not exist and sent
+  // the user to `capshelf update`, which had nothing to update.
   const headCommittedSha = sourcePinDigest(
     await itemTreeEntriesAtCommit(
       dataRepo,
@@ -696,6 +682,31 @@ export async function promoteFragmentSource(
       await headSha(dataRepo),
     ),
   );
+  if (!dirty) {
+    // Nothing local to promote. The worktree is clean, so it holds what HEAD
+    // holds, and the only question left is whether the lock names that.
+    if (headCommittedSha === entry.sourcePinDigest) {
+      return {
+        source: "data",
+        kind,
+        name,
+        action: "already-current",
+        sha: entry.sourcePinDigest,
+        sourceCommit: entry.sourceCommit,
+        committed: false,
+      };
+    }
+    // Not bypassable by --stale-ok: there is nothing local to promote, so the
+    // only correct action is update.
+    throw new PreconditionError(
+      `${kind}/${name} has committed source changes not in this project lock; run capshelf update ${kind}/${name}`,
+    );
+  }
+
+  // Stale gate for the dirty-commit path: the digest above ignores the dirty
+  // worktree edits about to be committed. A difference means upstream
+  // advanced past the lock, and committing would silently fold that advance
+  // into a lock bump the user never reviewed.
   let staleOverride = false;
   if (headCommittedSha !== entry.sourcePinDigest) {
     if (!opts.staleOk) {

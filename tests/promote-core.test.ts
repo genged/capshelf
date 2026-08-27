@@ -1894,6 +1894,40 @@ describe("stale-promote guard (fragments)", () => {
     expect(result.staleOverride).toBeUndefined();
   });
 
+  test("a clean tree at the locked commit is already-current, not a stale refusal", async () => {
+    const f = await fragmentStaleFixture();
+    const headBefore = await $`git -C ${f.dataRepo} rev-parse HEAD`
+      .quiet()
+      .text();
+
+    // Nothing edited anywhere: the canonical source is clean and HEAD is the
+    // commit the lock names. Until 2026-08-26 this threw, because the clean
+    // branch compared against `entry.sha`, which a version 4 entry never has
+    // (`src/lock.ts:188-192`). The refusal named committed changes that did
+    // not exist and sent the user to `capshelf update`.
+    const result = await promoteFragmentSource(
+      f.project,
+      f.dataRepo,
+      { ...emptyManifest(), settings: ["theme"] },
+      f.lock,
+      "settings",
+      "theme",
+      {},
+    );
+
+    expect(result.action).toBe("already-current");
+    expect(result.committed).toBe(false);
+    expect(result.sha).toBe(f.lockedSha);
+    // A no-op promote writes nothing: no commit, and the lock keeps its pin.
+    expect(await $`git -C ${f.dataRepo} rev-parse HEAD`.quiet().text()).toBe(
+      headBefore,
+    );
+    expect(
+      dataEntryOrThrow(f.lock.items[dataKey("settings", "theme")], "test")
+        .sourcePinDigest,
+    ).toBe(f.lockedSha);
+  });
+
   test("the clean-path committed-changes check is not bypassable by --stale-ok", async () => {
     const f = await fragmentStaleFixture();
     await writeFile(
