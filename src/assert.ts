@@ -24,7 +24,11 @@ export function isSafeItemName(name: string): boolean {
   if (
     [...name].some((character) => {
       const codePoint = character.codePointAt(0)!;
-      return codePoint <= 0x1f || codePoint === 0x7f;
+      // C0, DEL, and C1. C1 (U+0080–U+009F) carries single-byte CSI and OSC,
+      // so a name holding one can drive a terminal the moment a picker or a
+      // listing renders it — the same reason C0 is rejected. `pick-core.ts`
+      // leaves refs unsanitized on the strength of this rule.
+      return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f);
     })
   ) {
     return false;

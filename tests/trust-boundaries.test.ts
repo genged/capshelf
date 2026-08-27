@@ -84,7 +84,7 @@ describe("trust boundaries", () => {
     );
   });
 
-  test("all item categories and bundle refs reject C0 controls and DEL", () => {
+  test("all item categories and bundle refs reject C0, DEL, and C1 controls", () => {
     const invalid = [
       "evil\0x",
       "evil\tx",
@@ -92,6 +92,12 @@ describe("trust boundaries", () => {
       "evil\nx",
       "evil\r\nx",
       "evil\u007fx",
+      // C1: U+009B is a single-byte CSI and U+009D a single-byte OSC
+      // terminator, so a name holding one drives the terminal the moment a
+      // picker or a listing renders it, exactly like C0.
+      "evil\u0080x",
+      "evil\u009bx",
+      "evil\u009fx",
     ];
     for (const name of invalid) {
       expect(isSafeItemName(name)).toBe(false);
