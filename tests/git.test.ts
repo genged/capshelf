@@ -26,6 +26,7 @@ import {
   sourceWriteBuffer,
   sourceVisibleFilesUnderPath,
   headSha,
+  indexEntryFlags,
   isPathClean,
   isRepoClean,
   lastTouchingCommit,
@@ -33,6 +34,7 @@ import {
   lsTreeAtCommit,
   normalizeRemoteUrl,
   showAtCommit,
+  statusPorcelain,
   statusPorcelainOutsidePath,
   statusPorcelainRecords,
   trackingRef,
@@ -193,6 +195,66 @@ describe("git cleanliness helpers", () => {
       "keep.txt",
       "new.txt",
     ]);
+  });
+});
+
+describe("indexEntryFlags", () => {
+  test("reports each flag separately, since they differ when the file is gone", async () => {
+    const repo = await tempRepo();
+    await writeFile(join(repo, "normal.json"), "{}\n");
+    await writeFile(join(repo, "assumed.json"), "{}\n");
+    await writeFile(join(repo, "skipped.json"), "{}\n");
+    await writeFile(join(repo, "both.json"), "{}\n");
+    await commitAll(repo, "init");
+    await $`git -C ${repo} update-index --assume-unchanged assumed.json`.quiet();
+    await $`git -C ${repo} update-index --skip-worktree skipped.json`.quiet();
+    // Two invocations, not one: `git update-index --assume-unchanged
+    // --skip-worktree <path>` applies only the first, verified on git 2.55.0.
+    await $`git -C ${repo} update-index --assume-unchanged both.json`.quiet();
+    await $`git -C ${repo} update-index --skip-worktree both.json`.quiet();
+
+    // The flags are what make this worth checking: a change under either one
+    // leaves `git status` empty, so a porcelain-only cleanliness test reports
+    // nothing. Verified against git 2.55.0, which tags them `h`, `S`, and `s`.
+    await writeFile(join(repo, "assumed.json"), '{"edited":true}\n');
+    await rm(join(repo, "skipped.json"));
+    expect((await statusPorcelain(repo)).trim()).toBe("");
+
+    expect(
+      await indexEntryFlags(repo, [
+        "normal.json",
+        "assumed.json",
+        "skipped.json",
+        "both.json",
+      ]),
+    ).toEqual([
+      { path: "assumed.json", assumeUnchanged: true, skipWorktree: false },
+      { path: "both.json", assumeUnchanged: true, skipWorktree: true },
+      // Every tracked path is reported, flagged or not: a caller also needs to
+      // know which of the paths it asked about are missing from the answer.
+      { path: "normal.json", assumeUnchanged: false, skipWorktree: false },
+      { path: "skipped.json", assumeUnchanged: false, skipWorktree: true },
+    ]);
+    expect(await indexEntryFlags(repo, ["normal.json"])).toEqual([
+      { path: "normal.json", assumeUnchanged: false, skipWorktree: false },
+    ]);
+    expect(await indexEntryFlags(repo, [])).toEqual([]);
+  });
+
+  test("omits a path that is absent from the index", async () => {
+    // The omission is the signal. A present file with no entry here is one
+    // `git add` may refuse, which is what a promotability guard tests for.
+    const repo = await tempRepo();
+    await writeFile(join(repo, "tracked.json"), "{}\n");
+    await commitAll(repo, "init");
+    await writeFile(join(repo, "untracked.json"), "{}\n");
+
+    expect(
+      await indexEntryFlags(repo, [
+        "untracked.json",
+        "settings/absent/settings.json",
+      ]),
+    ).toEqual([]);
   });
 });
 

@@ -1072,6 +1072,77 @@ export async function statusPorcelainRecords(
   return records;
 }
 
+/** One tracked path and the index bits that make git stop looking at it. */
+export interface IndexEntryFlags {
+  path: string;
+  /** `--assume-unchanged`: a promise to git that the file did not change. */
+  assumeUnchanged: boolean;
+  /** `--skip-worktree`: also how a sparse checkout excludes a file. */
+  skipWorktree: boolean;
+}
+
+/**
+ * The index entry for each of `relPaths` that git tracks, carrying the two
+ * bits that make `git status` blind to a real change.
+ *
+ * Two questions, one `ls-files` call. A caller asks which paths carry a bit,
+ * and also which paths are missing from the answer, because a path git does
+ * not track is one `git add` may not stage.
+ *
+ * This is the blind spot every porcelain check shares. Git skips the worktree
+ * comparison for such a path, so `status` reports nothing, `add` stages
+ * nothing, and a command that reads cleanliness from porcelain alone concludes
+ * there is no change when there is one. Verified against git 2.55.0: an edited
+ * `assume-unchanged` file produces empty `status --porcelain` output and an
+ * empty `git add`.
+ *
+ * `ls-files -v` is the question git answers directly. It tags each path with a
+ * letter: `H` cached, `S` skip-worktree, and a lowercase letter for
+ * assume-unchanged (`h`, or `s` when both bits are set). Comparing bytes
+ * instead would be wrong — a clean filter or `core.autocrlf` makes worktree
+ * bytes legitimately differ from the committed blob, and every clean repo with
+ * one configured would be reported as hiding a change.
+ *
+ * The two bits are reported separately because a caller may want to name them
+ * separately: they are cleared by different options, and `git update-index`
+ * applies only the first `--no-*` option of an invocation (verified on 2.55.0,
+ * where a combined command took `s` to `S` and left it there). Both clear
+ * cleanly when run one at a time, present or absent, and `status` then reports
+ * the change git had been ignoring.
+ *
+ * One record per path, not per index stage: git prints an unmerged path three
+ * times (verified on 2.55.0, which prints `M f.txt` three times during a
+ * conflict), and the bits are merged across those records.
+ */
+export async function indexEntryFlags(
+  repo: string,
+  relPaths: string[],
+): Promise<IndexEntryFlags[]> {
+  if (relPaths.length === 0) return [];
+  const out = await sourceReadText(repo, [
+    "ls-files",
+    "-v",
+    "-z",
+    "--",
+    ...relPaths.map(literalPathspec),
+  ]);
+  const entries = new Map<string, IndexEntryFlags>();
+  for (const record of out.split("\0")) {
+    if (record.length < 3) continue;
+    const tag = record[0] as string;
+    const assumeUnchanged = tag !== tag.toUpperCase();
+    const path = record.slice(2);
+    const existing = entries.get(path);
+    entries.set(path, {
+      path,
+      assumeUnchanged: assumeUnchanged || existing?.assumeUnchanged === true,
+      skipWorktree:
+        tag.toUpperCase() === "S" || existing?.skipWorktree === true,
+    });
+  }
+  return [...entries.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+
 /**
  * Raw porcelain text. Callers must only test this for emptiness — parsing
  * paths out of it is unsafe without `-z`; use `statusPorcelainRecords`.
