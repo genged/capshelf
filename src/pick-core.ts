@@ -31,6 +31,14 @@ export const PICK_KIND_ORDER: readonly PickKind[] = ["bundles", ...ITEM_KINDS];
 export interface PickRow {
   /** Kind-qualified ref, e.g. `skills/security-review` or `bundles/review-kit`. */
   ref: string;
+  /**
+   * Identity apart from the label, for catalogs where two rows share a `ref` —
+   * a share catalog offers one mcp server once per output file, and both rows
+   * are labelled with the server name. Absent means the `ref` is the identity,
+   * so `add` does not change. Marks, the cursor, and the picked result all use
+   * `pickRowId`.
+   */
+  id?: string;
   kind: PickKind;
   name: string;
   description?: string;
@@ -41,8 +49,24 @@ export interface PickRow {
    * no-op that prints guidance, which is noise inside a bulk install.
    */
   installed: boolean;
+  /**
+   * Visible but unmarkable for a reason that is not "already installed" — a
+   * promote row whose state has nothing to promote. The `detail` carries the
+   * reason; the row draws struck through like an installed one.
+   */
+  disabled?: boolean;
   /** Right-hand annotation, e.g. a bundle's `4 skills · 2 mcp` summary. */
   detail?: string;
+}
+
+/** The string marks and the picked result carry for a row. */
+export function pickRowId(row: PickRow): string {
+  return row.id ?? row.ref;
+}
+
+/** Whether the row is visible but cannot be marked. */
+export function isPickRowDisabled(row: PickRow): boolean {
+  return row.installed || row.disabled === true;
 }
 
 export interface RankedPickRow {
@@ -139,11 +163,17 @@ function bestFieldForTerm(
 /**
  * Order the catalog for an empty query: bundles first, then kind order, then
  * name. This ordering *is* the browsable catalog a user sees before typing.
+ *
+ * The order is a parameter with the shelf catalog's value as its default, so a
+ * caller with its own catalog — the share picker's three fragment kinds —
+ * states its order instead of inheriting one built for `add`.
  */
-export function orderPickRows(rows: readonly PickRow[]): PickRow[] {
+export function orderPickRows(
+  rows: readonly PickRow[],
+  order: readonly PickKind[] = PICK_KIND_ORDER,
+): PickRow[] {
   return [...rows].sort((a, b) => {
-    const kinds =
-      PICK_KIND_ORDER.indexOf(a.kind) - PICK_KIND_ORDER.indexOf(b.kind);
+    const kinds = order.indexOf(a.kind) - order.indexOf(b.kind);
     if (kinds !== 0) return kinds;
     return a.name.localeCompare(b.name);
   });
@@ -157,8 +187,11 @@ export function orderPickRows(rows: readonly PickRow[]): PickRow[] {
  * would replace the kind grouping with a list ordered by ref length, which
  * reads as random to someone who has not typed anything yet.
  */
-export function createPickFinder(rows: readonly PickRow[]): PickFinder {
-  const ordered = orderPickRows(rows);
+export function createPickFinder(
+  rows: readonly PickRow[],
+  order: readonly PickKind[] = PICK_KIND_ORDER,
+): PickFinder {
+  const ordered = orderPickRows(rows, order);
   return {
     find(query: string): RankedPickRow[] {
       if (fuzzyTerms(query).length === 0) {

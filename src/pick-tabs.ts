@@ -25,14 +25,17 @@ export interface PickTab {
 
 /**
  * Build the tab bar for a catalog: `All`, then every kind that has at least
- * one row, in the canonical kind order.
+ * one row, in the caller's kind order (the shelf catalog's by default).
  *
  * An empty kind gets no tab. A tab that shows nothing is a dead stop when
  * cycling, and the shelf's shape is exactly what the bar should report.
  */
-export function pickTabs(rows: readonly PickRow[]): PickTab[] {
+export function pickTabs(
+  rows: readonly PickRow[],
+  order: readonly PickKind[] = PICK_KIND_ORDER,
+): PickTab[] {
   const tabs: PickTab[] = [{ key: "all", label: "All", count: rows.length }];
-  for (const kind of PICK_KIND_ORDER) {
+  for (const kind of order) {
     const count = rows.filter((row) => row.kind === kind).length;
     if (count > 0) tabs.push({ key: kind, label: kind, count });
   }

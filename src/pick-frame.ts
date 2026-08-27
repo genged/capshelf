@@ -10,7 +10,12 @@
  * reason `highlightRef` takes a `paint` function: a module that owns escape
  * sequences cannot be asserted on as text.
  */
-import { highlightRef, pickRowHint } from "./pick-core";
+import {
+  highlightRef,
+  isPickRowDisabled,
+  pickRowHint,
+  pickRowId,
+} from "./pick-core";
 import type { RankedPickRow } from "./pick-core";
 import { showsGroupHeadings } from "./pick-tabs";
 import type { PickTab } from "./pick-tabs";
@@ -69,6 +74,8 @@ export interface PickFrame {
    */
   columns?: number;
   palette?: PickPalette;
+  /** The verb Enter performs, for the legend. Absent means `install`. */
+  action?: string;
 }
 
 /** The gutter `pick.ts` draws before every body line, and the cells it takes. */
@@ -209,7 +216,7 @@ export function renderRows(frame: PickFrame): string[] {
       renderRow(item.entry, {
         indent: grouped ? "  " : "",
         focused: item.entry === frame.rows[frame.cursor],
-        marked: frame.marked.has(item.entry.row.ref),
+        marked: frame.marked.has(pickRowId(item.entry.row)),
         palette,
         budget,
       }),
@@ -242,12 +249,13 @@ function renderRow(
   const usable = opts.budget - prefixCells;
 
   const clamped = clampRef(entry.row.ref, entry.positions, usable);
-  const box = entry.row.installed
+  const disabled = isPickRowDisabled(entry.row);
+  const box = disabled
     ? palette.disabled(UNMARKED)
     : opts.marked
       ? palette.accent(MARKED)
       : UNMARKED;
-  const label = entry.row.installed
+  const label = disabled
     ? palette.disabled(clamped.text)
     : highlightRef(clamped.text, clamped.positions, palette.accent);
   // The hint is drawn only for the focused row. Every row carrying its own
@@ -352,22 +360,26 @@ export function visibleWindow(
  * The key legend under the list, in the longest form that fits.
  *
  * A legend that wraps breaks the redraw for the whole frame, so a narrow
- * terminal gets fewer words rather than a second line.
+ * terminal gets fewer words rather than a second line. `action` is the verb
+ * Enter performs — `install` for the shelf, `share` and `promote` for the
+ * publication pickers — because a legend naming the wrong verb teaches the
+ * wrong thing.
  */
 const SHORTEST_LEGEND = "tab · enter";
-const LEGENDS = [
-  "←/→ type · ↑/↓ move · tab mark · enter install · esc skip",
-  "←/→ type · ↑/↓ move · tab mark · enter",
-  "tab mark · enter install",
-  SHORTEST_LEGEND,
-] as const;
 
 export function renderLegend(
   palette: PickPalette = PLAIN_PALETTE,
   budget = Number.POSITIVE_INFINITY,
+  action = "install",
 ): string {
+  const legends = [
+    `←/→ type · ↑/↓ move · tab mark · enter ${action} · esc skip`,
+    "←/→ type · ↑/↓ move · tab mark · enter",
+    `tab mark · enter ${action}`,
+    SHORTEST_LEGEND,
+  ];
   const text =
-    LEGENDS.find((legend) => legend.length <= budget) ?? SHORTEST_LEGEND;
+    legends.find((legend) => legend.length <= budget) ?? SHORTEST_LEGEND;
   return palette.dim(text);
 }
 
@@ -386,6 +398,6 @@ export function renderPickBody(frame: PickFrame): string[] {
   } else {
     lines.push(...renderRows(frame));
   }
-  lines.push("", renderLegend(palette, budget));
+  lines.push("", renderLegend(palette, budget, frame.action));
   return lines;
 }

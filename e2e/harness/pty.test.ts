@@ -58,6 +58,33 @@ test(
   E2E_TEST_TIMEOUT_MS,
 );
 
+/**
+ * The raw-mode variant. The command sleeps first, so an answer written
+ * immediately would sit in the terminal's unfinished-line buffer and be
+ * discarded at the raw switch on macOS. The answer arriving intact proves the
+ * driver held it until canonical mode was off.
+ */
+test(
+  "an answer held for raw mode arrives after the switch",
+  async () => {
+    await withWorld("pty-raw-answer", async (world) => {
+      const result = await runInPty(
+        world,
+        world.stage,
+        [
+          "/bin/sh",
+          "-c",
+          'sleep 1; stty raw -echo; keys=$(dd bs=1 count=3 2>/dev/null); stty sane; echo "keys=[$keys]"',
+        ],
+        { answer: "abc", answerAfterRawMode: true },
+      );
+      expect(result.outcome).toEqual({ kind: "exit", exitCode: 0 });
+      expect(result.stdout).toContain("keys=[abc]");
+    });
+  },
+  E2E_TEST_TIMEOUT_MS,
+);
+
 test(
   "the reported command is the one under test, not the driver",
   async () => {

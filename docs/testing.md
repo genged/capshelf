@@ -151,9 +151,15 @@ capshelf refuses one. A cell that drives such a prompt therefore asks for a
 real `TERM` through the command's `env`. One cell keeps the default on purpose,
 to hold the refusal.
 
-The answer goes into the terminal before the program can configure it. These
-cells prove that the keys reach the program, and what it does with them. They
-do not prove behavior under per-keystroke timing.
+An answer for a canonical prompt goes into the terminal before the program can
+configure it. An answer for a raw-mode prompt cannot. It has no newline, so an
+early write leaves it in the terminal's unfinished-line buffer. On macOS the
+switch to raw mode discards that buffer. The prompt then draws an empty query
+and waits forever. A cell that drives a raw-mode prompt therefore sets
+`answerAfterRawMode`, and the driver holds the answer until the program turns
+canonical mode off. Either way the keys go in as one burst, so these cells
+prove that the keys reach the program and what it does with them. They do not
+prove behavior under per-keystroke timing.
 
 ## Continuous integration
 

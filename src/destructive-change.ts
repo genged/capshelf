@@ -143,6 +143,23 @@ export function setDestructiveConfirmationContext(
   return previous;
 }
 
+/**
+ * One free-text question on the terminal, through the same injectable context
+ * the consent prompt uses.
+ *
+ * The share picker asks for a new item's name after its full-screen frame
+ * closes, and that question must be testable without a pseudo-terminal. The
+ * seam already exists for consent; reusing it keeps one prompt mechanism and
+ * one way to fake it.
+ */
+export async function askQuestion(
+  message: string,
+  context: DestructiveConfirmationContext = installedConfirmationContext ??
+    defaultDestructiveConfirmationContext(),
+): Promise<string> {
+  return await context.prompt(message);
+}
+
 export async function confirmDestructiveChanges(
   plan: DestructiveChangePlan,
   options: DestructiveConfirmationOptions,

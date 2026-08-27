@@ -21,6 +21,14 @@ const DRIVER = join(import.meta.dir, "pty-driver.py");
 export interface PtyOptions extends CommandOptions {
   /** Sent into the terminal before output is read. */
   answer?: string;
+  /**
+   * Hold the answer until the command turns canonical mode off. A raw-mode
+   * answer has no newline, so a write before the switch leaves it in the
+   * terminal's unfinished-line buffer, and macOS discards that buffer at the
+   * switch. Set this for a full-screen prompt; leave it off for a canonical
+   * one, which never leaves canonical mode.
+   */
+  answerAfterRawMode?: boolean;
 }
 
 export async function runInPty(
@@ -35,9 +43,10 @@ export async function runInPty(
     await writeFile(inputPath, options.answer);
   }
 
+  const flags = options.answerAfterRawMode ? ["--answer-after-raw"] : [];
   const result = await world.run(
     cwd,
-    ["python3", DRIVER, inputPath, ...command],
+    ["python3", DRIVER, ...flags, inputPath, ...command],
     options,
   );
   if (result.outcome.kind === "spawn-error") {

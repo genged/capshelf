@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { atomicWriteFile, lstatOrNull } from "../fs-utils";
-import { homeRelative } from "../paths";
+import { homeRelative, shellArg } from "../paths";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import { saveManifest } from "../manifest";
 import type { Manifest } from "../manifest";
@@ -32,7 +32,9 @@ import {
   itemRepoRelPath,
 } from "../master";
 import type { FragmentItemKind, ItemKind } from "../master";
-import { NotFoundError, PreconditionError } from "../errors";
+import { NotFoundError, PreconditionError, ResultExitError } from "../errors";
+import { pickUnavailableMessage } from "../pick";
+import { runInteractivePromote } from "./promote-interactive";
 import {
   assertRepoCleanOutsidePath,
   assertRepoCleanOutsidePaths,
@@ -106,12 +108,24 @@ import {
   validateSubagentSource,
 } from "../subagents";
 
-interface PromoteOptions {
+export interface PromoteOptions {
   message?: string;
   json?: boolean;
   local?: boolean;
   staleOk?: boolean;
   merge?: boolean;
+  /**
+   * Not a CLI flag. The interactive loop promotes several items in one run
+   * and prints the data-repo guidance once at the end instead of per item.
+   */
+  suppressGuidance?: boolean;
+  /**
+   * Not a CLI flag. The interactive loop pins the repository its catalog was
+   * read from and promotes into that one — the same pin `runInteractiveAdd`
+   * holds — so `capshelf data bind` in another terminal while the picker is
+   * open cannot move the destination under the marks.
+   */
+  boundRepo?: string;
   persistLock?: () => Promise<void>;
   afterMergePlan?: () => Promise<void>;
   beforeCanonicalWrite?: () => Promise<void>;
@@ -135,9 +149,9 @@ interface SyncOptions {
 
 export function registerPromote(program: Command): void {
   program
-    .command("promote <item>")
+    .command("promote [item]")
     .description(
-      "push edits for an already-tracked data item into the data repo and bump the lock",
+      "push edits for an already-tracked data item into the data repo and bump the lock; with no item, pick from the promotable items interactively",
     )
     .option("--local", "promote a local-scope item")
     .option(
@@ -150,121 +164,186 @@ export function registerPromote(program: Command): void {
     )
     .option("-m, --message <msg>", "git commit message")
     .option("--json", "output JSON")
-    .action(async (itemRef: string, opts: PromoteOptions, cmd: Command) => {
-      if (opts.merge && !opts.json) {
-        console.error(
-          `promote --merge is deprecated; use update ${itemRef} --merge, review the result, then run promote ${itemRef}`,
-        );
-      }
-      if (opts.merge && opts.staleOk) {
-        throw new PreconditionError(
-          "--merge and --stale-ok cannot be combined; choose merge or overwrite",
-        );
-      }
-      const ref = parseItemRef(itemRef);
-      if (opts.local && ref.kind) {
-        assertLocalScopeSupported(ref.kind, ref.name, "promote --local");
-      }
-      if (isSystemItemName(ref.name)) {
-        throw new PreconditionError(
-          `"${ref.name}" is a system item — submit a PR to the capshelf repo instead`,
-        );
-      }
-
-      const {
-        project,
-        manifest,
-        projectLock: lock,
-        localLock,
-      } = await loadProjectContext({ cmd });
-      const dataRepo = await resolveProjectDataRepo(project, manifest, cmd);
-
-      let result: PromoteResult;
-      let saveProject = false;
-      let saveLocal = false;
-      let lockPersisted = false;
-      const writableLock = assertLockV4(lock, "capshelf promote");
-      const writableLocalLock = assertLockV4(localLock, "capshelf promote");
-      if (opts.local) {
-        result = await promoteLocalTracked(
-          project,
-          dataRepo,
-          writableLocalLock,
-          ref,
-          {
-            ...opts,
-            persistLock: async () => {
-              await saveLocalLock(project, writableLocalLock);
-              lockPersisted = true;
-            },
-          },
-        );
-        saveLocal = true;
-      } else {
-        result = await promoteProjectTracked(
-          project,
-          dataRepo,
-          manifest,
-          writableLock,
-          writableLocalLock,
-          ref,
-          {
-            ...opts,
-            persistLock: async () => {
-              await saveLock(project, writableLock);
-              lockPersisted = true;
-            },
-          },
-        );
-        saveProject = true;
-      }
-
-      if (saveProject) {
-        await saveManifest(project, manifest);
-        if (!lockPersisted) await saveLock(project, writableLock);
-      }
-      if (saveLocal && !lockPersisted) {
-        await saveLocalLock(project, writableLocalLock);
-      }
-
-      const origin = await originRemoteUrl(dataRepo);
-      if (opts.json) {
-        console.log(
-          JSON.stringify(
-            { ...result, dataRepo, dataRepoHasOrigin: origin !== null },
-            null,
-            2,
-          ),
-        );
-        return;
-      }
-      if (result.merged) {
-        const action = result.committed
-          ? "merged upstream and promoted"
-          : "merged result already upstream for";
-        console.log(
-          `✓ ${action} data/${result.kind}/${result.name} @ ${result.sha}`,
-        );
-      } else {
-        console.log(
-          `✓ ${result.action} data/${result.kind}/${result.name} @ ${result.sha}`,
-        );
-      }
-      console.log(`  source commit: ${result.sourceCommit}`);
-      printRuntimeWarnings(result.runtimeWarnings);
-      printPrivateDotenvWarnings(result.privateDotenvWarnings);
-      if (result.committed) {
-        console.log("");
-        console.log("committed to local data repo:");
-        console.log(`  ${homeRelative(dataRepo)}`);
-        if (origin !== null) {
-          console.log("");
-          console.log("to share upstream:");
-          console.log(`  cd ${homeRelative(dataRepo)}`);
-          console.log("  git push");
+    .action(
+      async (
+        itemRef: string | undefined,
+        opts: PromoteOptions,
+        cmd: Command,
+      ) => {
+        if (itemRef === undefined) {
+          await promoteWithoutItem(opts, cmd);
+          return;
         }
-      }
-    });
+        await promoteOne(itemRef, opts, cmd);
+      },
+    );
+}
+
+/** The no-item branch: the interactive picker over the tracked items. */
+async function promoteWithoutItem(
+  opts: PromoteOptions,
+  cmd: Command,
+): Promise<void> {
+  // These flags are per-item judgments. `--stale-ok` authorizes overwriting
+  // one item's newer upstream, and authorizing it for a pile of independent
+  // marks would be consent to losses nobody enumerated.
+  if (opts.staleOk || opts.merge) {
+    throw new PreconditionError(
+      "promote --stale-ok and --merge require an item",
+    );
+  }
+  // `--json` names a scripted caller, and a script cannot answer a prompt.
+  if (opts.json) {
+    throw new PreconditionError(
+      "promote --json requires an item; the interactive picker needs a terminal",
+      {
+        hint: "pass an item ref (capshelf promote <kind>/<name>), or run capshelf promote without --json to pick interactively",
+      },
+    );
+  }
+  const summary = await runInteractivePromote({ promote: opts, cmd });
+  if (summary.outcome === "unavailable") {
+    throw new PreconditionError(
+      `cannot pick interactively — ${pickUnavailableMessage(summary.reason)}`,
+      {
+        hint: "name the item instead: capshelf promote <kind>/<name>. Run capshelf status to see what changed.",
+      },
+    );
+  }
+  // Any failed item is a refusal the user needs a non-zero code for; each one
+  // already printed its reason and its retry command.
+  if (summary.outcome === "promoted" && summary.failed.length > 0) {
+    throw new ResultExitError(3);
+  }
+}
+
+/**
+ * One named promote, printing the same report whether the ref was typed or
+ * marked in the picker. Returns the result so the interactive loop can tell a
+ * commit from a no-op without re-parsing output.
+ */
+export async function promoteOne(
+  itemRef: string,
+  opts: PromoteOptions,
+  cmd: Command,
+): Promise<PromoteResult> {
+  if (opts.merge && !opts.json) {
+    console.error(
+      `promote --merge is deprecated; use update ${itemRef} --merge, review the result, then run promote ${itemRef}`,
+    );
+  }
+  if (opts.merge && opts.staleOk) {
+    throw new PreconditionError(
+      "--merge and --stale-ok cannot be combined; choose merge or overwrite",
+    );
+  }
+  const ref = parseItemRef(itemRef);
+  if (opts.local && ref.kind) {
+    assertLocalScopeSupported(ref.kind, ref.name, "promote --local");
+  }
+  if (isSystemItemName(ref.name)) {
+    throw new PreconditionError(
+      `"${ref.name}" is a system item — submit a PR to the capshelf repo instead`,
+    );
+  }
+
+  const {
+    project,
+    manifest,
+    projectLock: lock,
+    localLock,
+  } = await loadProjectContext({ cmd });
+  const dataRepo =
+    opts.boundRepo ?? (await resolveProjectDataRepo(project, manifest, cmd));
+
+  let result: PromoteResult;
+  let saveProject = false;
+  let saveLocal = false;
+  let lockPersisted = false;
+  const writableLock = assertLockV4(lock, "capshelf promote");
+  const writableLocalLock = assertLockV4(localLock, "capshelf promote");
+  if (opts.local) {
+    result = await promoteLocalTracked(
+      project,
+      dataRepo,
+      writableLocalLock,
+      ref,
+      {
+        ...opts,
+        persistLock: async () => {
+          await saveLocalLock(project, writableLocalLock);
+          lockPersisted = true;
+        },
+      },
+    );
+    saveLocal = true;
+  } else {
+    result = await promoteProjectTracked(
+      project,
+      dataRepo,
+      manifest,
+      writableLock,
+      writableLocalLock,
+      ref,
+      {
+        ...opts,
+        persistLock: async () => {
+          await saveLock(project, writableLock);
+          lockPersisted = true;
+        },
+      },
+    );
+    saveProject = true;
+  }
+
+  if (saveProject) {
+    await saveManifest(project, manifest);
+    if (!lockPersisted) await saveLock(project, writableLock);
+  }
+  if (saveLocal && !lockPersisted) {
+    await saveLocalLock(project, writableLocalLock);
+  }
+
+  const origin = await originRemoteUrl(dataRepo);
+  if (opts.json) {
+    console.log(
+      JSON.stringify(
+        { ...result, dataRepo, dataRepoHasOrigin: origin !== null },
+        null,
+        2,
+      ),
+    );
+    return result;
+  }
+  if (result.merged) {
+    const action = result.committed
+      ? "merged upstream and promoted"
+      : "merged result already upstream for";
+    console.log(
+      `✓ ${action} data/${result.kind}/${result.name} @ ${result.sha}`,
+    );
+  } else {
+    console.log(
+      `✓ ${result.action} data/${result.kind}/${result.name} @ ${result.sha}`,
+    );
+  }
+  console.log(`  source commit: ${result.sourceCommit}`);
+  printRuntimeWarnings(result.runtimeWarnings);
+  printPrivateDotenvWarnings(result.privateDotenvWarnings);
+  if (result.committed && !opts.suppressGuidance) {
+    console.log("");
+    console.log("committed to local data repo:");
+    console.log(`  ${homeRelative(dataRepo)}`);
+    if (origin !== null) {
+      console.log("");
+      console.log("to share upstream:");
+      // The absolute path through `shellArg`, per its contract: this line is
+      // a command to paste, and a repo path may hold a space or a `$`.
+      console.log(`  cd ${shellArg(dataRepo)}`);
+      console.log("  git push");
+    }
+  }
+  return result;
 }
 
 async function promoteProjectTracked(
@@ -464,7 +543,7 @@ export async function promoteSubagent(
         lockedSha: entry.sourcePinDigest,
         sourceCommit: entry.sourceCommit,
         upstreamSha: upstream.upstreamSha,
-        logPathspec: allCanonicalItemRelPaths("subagents", name).join(" "),
+        logPathspecs: allCanonicalItemRelPaths("subagents", name),
         scope: "project",
       });
     }
@@ -717,7 +796,7 @@ export async function promoteFragmentSource(
         lockedSha: entry.sourcePinDigest,
         sourceCommit: entry.sourceCommit,
         upstreamSha: headCommittedSha,
-        logPathspec: canonicalPaths.join(" "),
+        logPathspecs: canonicalPaths,
         scope: "project",
       });
     }
@@ -990,7 +1069,7 @@ export async function syncTrackedIntoDataRepo(
         lockedSha: entry.sourcePinDigest,
         sourceCommit: entry.sourceCommit,
         upstreamSha,
-        logPathspec: repoRelPath,
+        logPathspecs: [repoRelPath],
         scope: opts.scope ?? "project",
       });
     }
@@ -1415,12 +1494,17 @@ function stalePromoteError(input: {
   lockedSha: string;
   sourceCommit: string;
   upstreamSha: string;
-  logPathspec: string;
+  logPathspecs: string[];
   scope: Scope;
 }): PreconditionError {
   const item = `${input.kind}/${input.name}`;
+  // The item ref appears bare in prose and quoted in every command line. An
+  // item name comes from the lock or the data-repo catalog, which a cloned
+  // project treats as untrusted, and `isSafeItemName` permits a space and a
+  // `$` — so an unquoted printed command would carry that text into the
+  // user's shell. `shellArg` leaves ordinary refs unchanged.
+  const itemArg = shellArg(item);
   const shortCommit = input.sourceCommit.slice(0, 7);
-  const repo = homeRelative(input.dataRepo);
   const scopeFlag = input.scope === "local" ? " --local" : "";
   const preserveHint =
     input.scope === "local"
@@ -1431,25 +1515,29 @@ function stalePromoteError(input: {
   // local Pi extension would print a command that then refuses.
   const mergeChoice = isCopyDirectoryItemKind(input.kind)
     ? "  inspect both lines of work:\n" +
-      `    capshelf status ${item}${scopeFlag} --diff\n\n` +
+      `    capshelf status ${itemArg}${scopeFlag} --diff\n\n` +
       "  merge upstream into this installed copy:\n" +
-      `    capshelf update ${item}${scopeFlag} --merge\n\n` +
+      `    capshelf update ${itemArg}${scopeFlag} --merge\n\n` +
       "  review the merged installed copy:\n" +
-      `    capshelf status ${item}${scopeFlag} --diff-view installed\n\n` +
+      `    capshelf status ${itemArg}${scopeFlag} --diff-view installed\n\n` +
       "  publish after review:\n" +
-      `    capshelf promote ${item}${scopeFlag} -m "..."\n\n`
+      `    capshelf promote ${itemArg}${scopeFlag} -m "..."\n\n`
     : "";
   return new PreconditionError(
     `${item} changed in the data repo since this project last updated; promoting would overwrite the newer upstream version.\n\n` +
       `  locked:   ${input.lockedSha}  (sourceCommit ${shortCommit})\n` +
       `  upstream: ${input.upstreamSha}  (data repo HEAD)\n\n` +
       "  optional history context:\n" +
-      `    git -C ${repo} log --oneline ${shortCommit}..HEAD -- ${input.logPathspec}\n\n` +
+      // The absolute repo path and a quoted pathspec: this line is a command
+      // to paste, and `~` is not data a quoted argument can expand.
+      `    git -C ${shellArg(input.dataRepo)} log --oneline ${shortCommit}..HEAD -- ${input.logPathspecs
+        .map(shellArg)
+        .join(" ")}\n\n` +
       mergeChoice +
       "  to take the upstream version and redo your edit on top of it\n" +
       preserveHint +
-      `    capshelf update ${item}${scopeFlag}\n\n` +
+      `    capshelf update ${itemArg}${scopeFlag}\n\n` +
       "  to overwrite upstream with this installed version on purpose:\n" +
-      `    capshelf promote ${item}${scopeFlag} --stale-ok -m "..."`,
+      `    capshelf promote ${itemArg}${scopeFlag} --stale-ok -m "..."`,
   );
 }

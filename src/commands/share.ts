@@ -3,8 +3,9 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { atomicWriteFile, lstatOrNull } from "../fs-utils";
 import { basename, dirname, join, relative } from "node:path";
-import { homeRelative, projectRoot } from "../paths";
+import { homeRelative, projectRoot, shellArg } from "../paths";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
+import { globalOpts } from "../global-options";
 import { loadManifest, saveManifest, type Manifest } from "../manifest";
 import { addManifestName } from "../manifest";
 import {
@@ -24,7 +25,9 @@ import { isCopyDirectoryItemKind, itemRepoRelPath } from "../master";
 import type { FragmentItemKind } from "../master";
 import { assertRepoClean, headSha, originRemoteUrl } from "../git";
 import { commitDataRepoMutation } from "../marketplace-files";
-import { PreconditionError } from "../errors";
+import { PreconditionError, ResultExitError } from "../errors";
+import { pickUnavailableMessage } from "../pick";
+import { runInteractiveShare } from "./share-interactive";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import {
   addLocalConfigName,
@@ -85,19 +88,33 @@ type ShareScope = "project" | "local";
 /** `share` tracks what it commits, so the `capshelf update` line always applies. */
 const SHARED_COVERAGE = { presentWord: "present", tracked: true } as const;
 
-interface ShareOptions {
+export interface ShareOptions {
   to?: string;
   from?: string;
   pick?: string[];
   target?: string;
   message?: string;
   json?: boolean;
+  /**
+   * Not a CLI flag. The interactive loop shares several items in one run and
+   * prints the data-repo guidance once at the end instead of once per item.
+   */
+  suppressGuidance?: boolean;
+  /**
+   * Not a CLI flag. The interactive loop pins the repository its catalog was
+   * read from and shares into that one — the same pin `runInteractiveAdd`
+   * holds — so `capshelf data bind` in another terminal while the picker is
+   * open cannot move the destination under the marks.
+   */
+  boundRepo?: string;
 }
 
 export function registerShare(program: Command): void {
   program
-    .command("share <item>")
-    .description("adopt an on-disk item into the data repo and track it here")
+    .command("share [item]")
+    .description(
+      "adopt an on-disk item into the data repo and track it here; with no item, pick unmanaged config values interactively",
+    )
     .option(
       "--to <scope>",
       "resulting scope: local or project (default: local for skills, project for Pi extensions, subagents, and fragments)",
@@ -118,149 +135,211 @@ export function registerShare(program: Command): void {
       "after",
       "\nRecovery: if the data-repo commit succeeds but local metadata is interrupted, rerun add <item> or add --local <item>.",
     )
-    .action(async (itemRef: string, opts: ShareOptions, cmd: Command) => {
-      const ref = parseItemRef(itemRef);
-      if (isSystemItemName(ref.name)) {
-        throw new PreconditionError(
-          `"${ref.name}" is a system item — submit a PR to the capshelf repo instead`,
-        );
-      }
+    .action(
+      async (itemRef: string | undefined, opts: ShareOptions, cmd: Command) => {
+        if (itemRef === undefined) {
+          await shareWithoutItem(opts, cmd);
+          return;
+        }
+        await shareOne(itemRef, opts, cmd);
+      },
+    );
+}
 
-      const kind = ref.kind ?? "skills";
-      const name = ref.name;
-      const scope = parseShareScope(
-        opts.to,
-        kind === "skills" ? "local" : "project",
+/**
+ * The no-item branch: the interactive picker over unmanaged config values.
+ * Phase 1 of the picker spec covers fragments only, which is where the
+ * `--pick` syntax cannot be guessed from the error messages.
+ */
+async function shareWithoutItem(
+  opts: ShareOptions,
+  cmd: Command,
+): Promise<void> {
+  // These flags describe one named share. With no item there is nothing for
+  // them to describe, and silently ignoring a flag installs the wrong habit.
+  // `!== undefined`, not truthiness: commander stores `--from ""` as an empty
+  // string, and an explicitly supplied flag must refuse like any other.
+  if (
+    opts.from !== undefined ||
+    opts.pick !== undefined ||
+    opts.target !== undefined ||
+    opts.to !== undefined
+  ) {
+    throw new PreconditionError(
+      "share --from, --pick, --target, and --to require an item; run capshelf share with no flags to pick interactively",
+    );
+  }
+  // `--json` names a scripted caller, and a script cannot answer a prompt.
+  if (opts.json) {
+    throw new PreconditionError(
+      "share --json requires an item; the interactive picker needs a terminal",
+      {
+        hint: "pass an item ref (capshelf share settings/<name> --pick <path>), or run capshelf share without --json to pick interactively",
+      },
+    );
+  }
+  const summary = await runInteractiveShare({ share: opts, cmd });
+  if (summary.outcome === "unavailable") {
+    throw new PreconditionError(
+      `cannot pick interactively — ${pickUnavailableMessage(summary.reason)}`,
+      {
+        hint: "name the item instead: capshelf share <kind>/<name> --pick <path>",
+      },
+    );
+  }
+  // Any failed item is a refusal the user needs a non-zero code for; each one
+  // already printed its reason and its retry command.
+  if (summary.outcome === "shared" && summary.failed.length > 0) {
+    throw new ResultExitError(3);
+  }
+}
+
+async function shareOne(
+  itemRef: string,
+  opts: ShareOptions,
+  cmd: Command,
+): Promise<void> {
+  const ref = parseItemRef(itemRef);
+  if (isSystemItemName(ref.name)) {
+    throw new PreconditionError(
+      `"${ref.name}" is a system item — submit a PR to the capshelf repo instead`,
+    );
+  }
+
+  const kind = ref.kind ?? "skills";
+  const name = ref.name;
+  const scope = parseShareScope(
+    opts.to,
+    kind === "skills" ? "local" : "project",
+  );
+  if (isFragmentKind(kind)) {
+    await shareFragment(kind, name, scope, opts, cmd);
+    return;
+  }
+  if (kind === "subagents") {
+    await shareSubagent(name, scope, opts, cmd);
+    return;
+  }
+  if (!isCopyDirectoryItemKind(kind)) {
+    throw new Error(`no share strategy for ${kind}/${name}`);
+  }
+  if (opts.pick !== undefined) {
+    throw new PreconditionError(
+      "--pick is only valid for fragment items (settings, mcp, codex-config)",
+    );
+  }
+
+  if (scope === "local") {
+    assertLocalScopeSupported(kind, name, "share");
+  }
+
+  const { project, manifest, projectLock, localLock } =
+    await loadProjectContext({ cmd });
+  const localConfig = await loadLocalConfig(project);
+  const dataRepo = await resolveProjectDataRepo(project, manifest, cmd);
+
+  const repoRelPath = itemRepoRelPath(kind, name);
+  if (existsSync(join(dataRepo, repoRelPath))) {
+    throw new PreconditionError(
+      `data repo already has ${repoRelPath}; use promote to push edits, or move to change scope`,
+    );
+  }
+
+  const key = dataKey(kind, name);
+  const projectKey = lockKeyForRef(projectLock, { kind, name }, "data");
+  const localKey = lockKeyForRef(localLock, { kind, name }, "data");
+  if (projectKey) {
+    throw new PreconditionError(
+      `already tracked in project scope: ${kind}/${name}`,
+    );
+  }
+  if (scope === "local") {
+    if (!localConfig) {
+      throw new PreconditionError(
+        "no local manifest exists; run capshelf init or capshelf set-data first",
       );
-      if (isFragmentKind(kind)) {
-        await shareFragment(kind, name, scope, opts, cmd);
-        return;
-      }
-      if (kind === "subagents") {
-        await shareSubagent(name, scope, opts, cmd);
-        return;
-      }
-      if (!isCopyDirectoryItemKind(kind)) {
-        throw new Error(`no share strategy for ${kind}/${name}`);
-      }
-      if (opts.pick !== undefined) {
-        throw new PreconditionError(
-          "--pick is only valid for fragment items (settings, mcp, codex-config)",
-        );
-      }
+    }
+    await assertLocalInstallPathsUntracked(project, kind, name);
+  }
 
-      if (scope === "local") {
-        assertLocalScopeSupported(kind, name, "share");
-      }
+  const adopted = await adoptIntoDataRepo(project, dataRepo, kind, name, {
+    installMode: manifest.installMode,
+    message: opts.message,
+    ...((scope === "local" || localKey) && {
+      sourceScope: "local" as const,
+    }),
+  });
 
-      const { project, manifest, projectLock, localLock } =
-        await loadProjectContext({ cmd });
-      const localConfig = await loadLocalConfig(project);
-      const dataRepo = await resolveProjectDataRepo(project, manifest, cmd);
-
-      const repoRelPath = itemRepoRelPath(kind, name);
-      if (existsSync(join(dataRepo, repoRelPath))) {
-        throw new PreconditionError(
-          `data repo already has ${repoRelPath}; use promote to push edits, or move to change scope`,
-        );
+  const snapshot = await captureCommittedItemNeeds(dataRepo, {
+    kind,
+    name,
+  });
+  if (!adopted.pin) {
+    throw new Error(`expected a verified pin for ${kind}/${name}`);
+  }
+  const entry = createDataLockEntry({ pin: adopted.pin, ...snapshot });
+  const runtimeWarnings = runtimeWarningsForItem(project, kind, name);
+  const writableProjectLock = assertLockV4(projectLock, "capshelf share");
+  const writableLocalLock = assertLockV4(localLock, "capshelf share");
+  let localChanged = false;
+  if (scope === "project") {
+    addToManifest(manifest, kind, name);
+    writableProjectLock.items[key] = preserveLabel(entry, localLock, key);
+    if (localKey) {
+      delete writableLocalLock.items[key];
+      if (localConfig) {
+        removeLocalConfigName(localConfig, kind, name);
       }
+      await removeLocalExcludes(project, kind, name);
+      localChanged = true;
+    }
+    await saveManifest(project, manifest);
+    await saveLock(project, writableProjectLock);
+    if (localChanged) {
+      await saveLocalLock(project, writableLocalLock);
+      if (localConfig) await saveLocalConfig(project, localConfig);
+    }
+  } else {
+    if (!localConfig) throw new Error("expected local manifest");
+    addLocalConfigName(localConfig, kind, name);
+    writableLocalLock.items[key] = preserveLabel(entry, localLock, key);
+    await ensureLocalExcludes(project, kind, name);
+    await saveLocalConfig(project, localConfig);
+    await saveLocalLock(project, writableLocalLock);
+  }
 
-      const key = dataKey(kind, name);
-      const projectKey = lockKeyForRef(projectLock, { kind, name }, "data");
-      const localKey = lockKeyForRef(localLock, { kind, name }, "data");
-      if (projectKey) {
-        throw new PreconditionError(
-          `already tracked in project scope: ${kind}/${name}`,
-        );
-      }
-      if (scope === "local") {
-        if (!localConfig) {
-          throw new PreconditionError(
-            "no local manifest exists; run capshelf init or capshelf set-data first",
-          );
-        }
-        await assertLocalInstallPathsUntracked(project, kind, name);
-      }
+  if (opts.json) {
+    console.log(
+      JSON.stringify(
+        {
+          verb: "share",
+          kind,
+          name,
+          scope,
+          action: adopted.action,
+          sha: adopted.sha,
+          sourceCommit: adopted.sourceCommit,
+          committed: adopted.committed,
+          needs: snapshot.needs,
+          ...(runtimeWarnings.length > 0 && {
+            runtimeWarnings,
+          }),
+          ...(adopted.privateDotenvWarnings && {
+            privateDotenvWarnings: adopted.privateDotenvWarnings,
+          }),
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
 
-      const adopted = await adoptIntoDataRepo(project, dataRepo, kind, name, {
-        installMode: manifest.installMode,
-        message: opts.message,
-        ...((scope === "local" || localKey) && {
-          sourceScope: "local" as const,
-        }),
-      });
-
-      const snapshot = await captureCommittedItemNeeds(dataRepo, {
-        kind,
-        name,
-      });
-      if (!adopted.pin) {
-        throw new Error(`expected a verified pin for ${kind}/${name}`);
-      }
-      const entry = createDataLockEntry({ pin: adopted.pin, ...snapshot });
-      const runtimeWarnings = runtimeWarningsForItem(project, kind, name);
-      const writableProjectLock = assertLockV4(projectLock, "capshelf share");
-      const writableLocalLock = assertLockV4(localLock, "capshelf share");
-      let localChanged = false;
-      if (scope === "project") {
-        addToManifest(manifest, kind, name);
-        writableProjectLock.items[key] = preserveLabel(entry, localLock, key);
-        if (localKey) {
-          delete writableLocalLock.items[key];
-          if (localConfig) {
-            removeLocalConfigName(localConfig, kind, name);
-          }
-          await removeLocalExcludes(project, kind, name);
-          localChanged = true;
-        }
-        await saveManifest(project, manifest);
-        await saveLock(project, writableProjectLock);
-        if (localChanged) {
-          await saveLocalLock(project, writableLocalLock);
-          if (localConfig) await saveLocalConfig(project, localConfig);
-        }
-      } else {
-        if (!localConfig) throw new Error("expected local manifest");
-        addLocalConfigName(localConfig, kind, name);
-        writableLocalLock.items[key] = preserveLabel(entry, localLock, key);
-        await ensureLocalExcludes(project, kind, name);
-        await saveLocalConfig(project, localConfig);
-        await saveLocalLock(project, writableLocalLock);
-      }
-
-      if (opts.json) {
-        console.log(
-          JSON.stringify(
-            {
-              verb: "share",
-              kind,
-              name,
-              scope,
-              action: adopted.action,
-              sha: adopted.sha,
-              sourceCommit: adopted.sourceCommit,
-              committed: adopted.committed,
-              needs: snapshot.needs,
-              ...(runtimeWarnings.length > 0 && {
-                runtimeWarnings,
-              }),
-              ...(adopted.privateDotenvWarnings && {
-                privateDotenvWarnings: adopted.privateDotenvWarnings,
-              }),
-            },
-            null,
-            2,
-          ),
-        );
-        return;
-      }
-
-      console.log(`✓ shared ${scope}/data/${kind}/${name} @ ${adopted.sha}`);
-      console.log(`  source commit: ${adopted.sourceCommit}`);
-      printRuntimeWarnings(runtimeWarnings);
-      printPrivateDotenvWarnings(adopted.privateDotenvWarnings);
-      await printShareUpstreamGuidance(dataRepo);
-    });
+  console.log(`✓ shared ${scope}/data/${kind}/${name} @ ${adopted.sha}`);
+  console.log(`  source commit: ${adopted.sourceCommit}`);
+  printRuntimeWarnings(runtimeWarnings);
+  printPrivateDotenvWarnings(adopted.privateDotenvWarnings);
+  await printShareUpstreamGuidance(dataRepo);
 }
 
 async function shareSubagent(
@@ -429,7 +508,7 @@ async function shareSubagent(
   await printShareUpstreamGuidance(dataRepo);
 }
 
-async function shareFragment(
+export async function shareFragment(
   kind: FragmentItemKind,
   name: string,
   scope: ShareScope,
@@ -466,9 +545,14 @@ async function shareFragment(
   const project = projectRoot();
   const manifest = await loadManifest(project);
   const projectLock = await loadLock(project);
+  // Before any data-repo mutation. This assertion used to run after the
+  // commit, so a legacy lock refused the share only after the fragment was
+  // already committed — leaving a data-repo commit with no project tracking.
+  const writableProjectLock = assertLockV4(projectLock, "capshelf share");
   const oldManifest = structuredClone(manifest);
   const oldLock = structuredClone(projectLock);
-  const dataRepo = await resolveProjectDataRepo(project, manifest, cmd);
+  const dataRepo =
+    opts.boundRepo ?? (await resolveProjectDataRepo(project, manifest, cmd));
   await assertRepoClean(dataRepo);
 
   const candidates = fragmentSourceCandidates(kind, name).filter((candidate) =>
@@ -529,7 +613,6 @@ async function shareFragment(
   const sha = pin.sourcePinDigest;
 
   addManifestName(manifest, kind, name);
-  const writableProjectLock = assertLockV4(projectLock, "capshelf share");
   writableProjectLock.items[dataKey(kind, name)] = createDataLockEntry({
     pin,
     ...(await captureCommittedItemNeeds(dataRepo, { kind, name })),
@@ -564,6 +647,20 @@ async function shareFragment(
     name,
     sourceCommit,
   );
+  // The non-interactive command that repeats this share. For a user who read
+  // the picker's output to learn the CLI, this line is the deliverable; in
+  // `--json` a script records what a human did. A `--from` share has no
+  // repeatable command — the file it read may be gone.
+  const equivalentCommand = opts.from
+    ? null
+    : shareEquivalentCommand(
+        kind,
+        name,
+        explicitPicks,
+        cliTarget,
+        opts.message,
+        globalOpts(cmd).data,
+      );
 
   if (opts.json) {
     console.log(
@@ -578,6 +675,7 @@ async function shareFragment(
           sourceCommit,
           committed: true,
           ...(picks.length > 0 && { picks }),
+          ...(equivalentCommand !== null && { equivalentCommand }),
           sources: sources.map((fragmentSource) => ({
             target: fragmentSource.sourceTarget ?? fragmentSource.target,
             sourcePath: fragmentSource.relPath,
@@ -601,12 +699,45 @@ async function shareFragment(
   for (const fragmentSource of sources) {
     console.log(`  ${fragmentSource.relPath}`);
   }
+  if (equivalentCommand !== null) console.log(`  ${equivalentCommand}`);
   if (coverage)
     printTargetCoverage(coverage, `${kind}/${name}`, SHARED_COVERAGE);
-  await printShareUpstreamGuidance(dataRepo);
+  if (!opts.suppressGuidance) await printShareUpstreamGuidance(dataRepo);
 }
 
-async function printShareUpstreamGuidance(dataRepo: string): Promise<void> {
+/**
+ * The command that would repeat a pick-based fragment share. Arguments go
+ * through `shellArg`: pick paths come from the user's own config files and can
+ * hold a space or a `$`, and a printed command must survive being pasted.
+ */
+function shareEquivalentCommand(
+  kind: FragmentItemKind,
+  name: string,
+  explicitPicks: string[],
+  cliTarget: ReturnType<typeof sourceTargetForCli>,
+  message: string | undefined,
+  dataOverride: string | undefined,
+): string {
+  // `--data` is repeated only when this run used the override: without it the
+  // machine-local binding resolves the same repository on a rerun, and the
+  // printed command stays portable. With it, omitting the flag would resolve
+  // a different repository than the one this share committed to.
+  const prefix =
+    dataOverride === undefined
+      ? "capshelf"
+      : `capshelf --data ${shellArg(dataOverride)}`;
+  const parts = [`${prefix} share ${shellArg(`${kind}/${name}`)}`];
+  for (const pick of explicitPicks) parts.push(`--pick ${shellArg(pick)}`);
+  if (cliTarget !== null) parts.push(`--target ${cliTarget}`);
+  // The command claims to repeat this share, and the commit message is part
+  // of what it did.
+  if (message !== undefined) parts.push(`-m ${shellArg(message)}`);
+  return parts.join(" ");
+}
+
+export async function printShareUpstreamGuidance(
+  dataRepo: string,
+): Promise<void> {
   const origin = await originRemoteUrl(dataRepo);
   console.log("");
   console.log("committed to local data repo:");
@@ -614,7 +745,9 @@ async function printShareUpstreamGuidance(dataRepo: string): Promise<void> {
   if (origin !== null) {
     console.log("");
     console.log("to share upstream:");
-    console.log(`  cd ${homeRelative(dataRepo)}`);
+    // The absolute path through `shellArg`, per its contract: this line is a
+    // command to paste, and a repo path may hold a space or a `$`.
+    console.log(`  cd ${shellArg(dataRepo)}`);
     console.log("  git push");
   }
 }

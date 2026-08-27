@@ -20,8 +20,8 @@
  * pseudo-terminal, while the shipped code still runs the real prompt.
  */
 import { AutocompletePrompt, isCancel } from "@clack/core";
-import { createPickFinder } from "./pick-core";
-import type { PickRow, RankedPickRow } from "./pick-core";
+import { createPickFinder, isPickRowDisabled, pickRowId } from "./pick-core";
+import type { PickKind, PickRow, RankedPickRow } from "./pick-core";
 import { GUTTER, bodyBudget, renderPickBody } from "./pick-frame";
 import type { PickPalette } from "./pick-frame";
 import { pickTabs, rowsForTab, stepTab } from "./pick-tabs";
@@ -31,6 +31,13 @@ export interface PickRequest {
   rows: PickRow[];
   /** The question above the list. */
   message: string;
+  /**
+   * Tab and browse order for the catalog's kinds. Absent means the shelf
+   * catalog's order, which is what `add` and `init` want.
+   */
+  kindOrder?: readonly PickKind[];
+  /** The verb Enter performs, for the key legend. Absent means `install`. */
+  action?: string;
 }
 
 /** Why a picker could not be shown. A code, not prose, so callers can branch. */
@@ -40,6 +47,7 @@ export type PickUnavailableReason =
   | "empty-shelf";
 
 export type PickOutcome =
+  /** `refs` holds `pickRowId` per marked row — the `ref` unless the row set an `id`. */
   | { kind: "picked"; refs: string[] }
   | { kind: "cancelled" }
   | { kind: "unavailable"; reason: PickUnavailableReason };
@@ -160,7 +168,6 @@ export function pickTerminalUnavailable(
 interface PickOption {
   value: string;
   label: string;
-  disabled?: boolean;
 }
 
 /**
@@ -180,13 +187,29 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
   ranked: RankedPickRow[] = [];
   /** Every row on the shelf; each tab is a view of these. */
   private allRows: PickRow[] | undefined;
+  /** The kind order for the tab bar and the browse ordering. */
+  private kindOrder: readonly PickKind[] | undefined;
+  /** The verb Enter performs, for the key legend. */
+  private action: string | undefined;
   /** The query the option list was last built for; see `buildOptions`. */
   private renderedQuery: string | null = null;
+  /**
+   * Row ids `Tab` must ignore. This is the picker's own rule, not clack's:
+   * marking `disabled: true` on the option made clack's cursor walk skip the
+   * row (`findCursor` in `@clack/core`), so a disabled row could never be
+   * focused, its reason in the detail column could never be read, and a list
+   * where every row was disabled — a promote picker with nothing to promote —
+   * had a cursor that refused to move at all. Every row stays focusable;
+   * `toggleSelected` below is where unmarkable stays unmarkable.
+   */
+  private unmarkableIds = new Set<string>();
 
   constructor(opts: {
     rows: PickRow[];
     message: string;
     output: NodeJS.WriteStream;
+    kindOrder?: readonly PickKind[];
+    action?: string;
   }) {
     // These two hooks must be `function`, not arrows, and nothing may precede
     // `super()`.
@@ -213,15 +236,29 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
       },
     });
     this.allRows = opts.rows;
-    this.tabs = pickTabs(opts.rows);
+    this.kindOrder = opts.kindOrder;
+    this.action = opts.action;
+    this.tabs = pickTabs(opts.rows, opts.kindOrder);
     // Prime the list. The base constructor reads `options` before any of this
     // subclass's fields exist, so it got an empty list and focused nothing.
     // Without this the first frame is blank until the user types.
     this.filteredOptions = this.buildOptions();
-    this.focusedValue = this.filteredOptions.find(
-      (option) => !option.disabled,
-    )?.value;
+    // Index 0, exactly where clack's own private cursor starts. An earlier
+    // version preferred the first *markable* row, which desynchronized the
+    // two: the frame pointed at the markable row while the next arrow key
+    // navigated from index 0, jumping the pointer backwards. Opening on a
+    // disabled first row is fine — the cursor rests there and its reason
+    // shows; `Tab` is simply inert until the cursor reaches a markable row.
+    this.focusedValue = this.filteredOptions[0]?.value;
     this.on("key", (_char, key) => this.onTypeKey(key?.name));
+  }
+
+  /** `Tab` on a disabled row does nothing; the row is browsable, not markable. */
+  override toggleSelected(value: string): void {
+    // Optional chaining: the base constructor can call this before the field
+    // initialisers run, and at that point nothing is unmarkable yet.
+    if (this.unmarkableIds?.has(value)) return;
+    super.toggleSelected(value);
   }
 
   private buildOptions(): PickOption[] {
@@ -244,11 +281,23 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
     this.renderedQuery = query;
 
     const tab = this.tabs?.[this.activeTab]?.key ?? "all";
-    this.ranked = createPickFinder(rowsForTab(this.allRows, tab)).find(query);
+    this.ranked = createPickFinder(
+      rowsForTab(this.allRows, tab),
+      this.kindOrder,
+    ).find(query);
+    this.unmarkableIds = new Set(
+      this.ranked
+        .filter((entry) => isPickRowDisabled(entry.row))
+        .map((entry) => pickRowId(entry.row)),
+    );
+    // No `disabled` flag on the options: clack would then skip the row when
+    // moving the cursor, and a row nobody can focus is a row whose reason
+    // nobody can read. See `unmarkableIds`.
     return this.ranked.map((entry) => ({
-      value: entry.row.ref,
+      // The identity, not the label: a share catalog offers one mcp server
+      // once per output file, and both rows carry the server name as `ref`.
+      value: pickRowId(entry.row),
       label: entry.row.ref,
-      ...(entry.row.installed && { disabled: true }),
     }));
   }
 
@@ -337,7 +386,7 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
   private cursorFromFocus(): number {
     if (this.focusedValue === undefined) return -1;
     return this.ranked.findIndex(
-      (entry) => entry.row.ref === this.focusedValue,
+      (entry) => pickRowId(entry.row) === this.focusedValue,
     );
   }
 
@@ -355,6 +404,7 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
       // that as unlimited.
       columns: process.stderr.columns,
       palette: TERMINAL_PALETTE,
+      ...(this.action !== undefined && { action: this.action }),
     });
     // The header sits above lines the frame already fitted, so it answers to
     // the same budget. `init` supplies a message long enough to wrap a
@@ -411,6 +461,8 @@ function defaultPickContext(): PickContext {
         rows: request.rows,
         message: request.message,
         output: process.stderr,
+        ...(request.kindOrder && { kindOrder: request.kindOrder }),
+        ...(request.action !== undefined && { action: request.action }),
       });
       const restoreWidth = borrowTerminalWidth();
       try {

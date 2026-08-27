@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { existsSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expectExit, expectOutputContains } from "../support/assertions";
 import { runInPty } from "../support/pty";
@@ -29,7 +30,7 @@ test(
       labels: ["reproduced-user-workflow"],
       proofLimits: [
         "the terminal is opened by a helper rather than by a real terminal emulator, so line-discipline details such as echo and CR endings differ from an interactive shell",
-        "the keystrokes are written in one burst before the program enters raw mode, so this does not prove behavior under per-keystroke timing",
+        "the keystrokes are written in one burst once the program enters raw mode, so this does not prove behavior under per-keystroke timing",
       ],
     });
 
@@ -55,6 +56,7 @@ test(
         // the prompt, so they ask for a terminal that has capabilities.
         env: { TERM: "xterm-256color" },
         answer: "pgh\t\r",
+        answerAfterRawMode: true,
       });
 
       expectExit(picked, 0);
@@ -122,6 +124,7 @@ test(
         // the prompt, so they ask for a terminal that has capabilities.
         env: { TERM: "xterm-256color" },
         answer: "rev\t\r",
+        answerAfterRawMode: true,
       });
 
       expectExit(picked, 0);
@@ -182,6 +185,7 @@ test(
         // the prompt, so they ask for a terminal that has capabilities.
         env: { TERM: "xterm-256color" },
         answer: "re\u001b[Dv\t\r",
+        answerAfterRawMode: true,
       });
 
       expectExit(picked, 0);
@@ -241,6 +245,7 @@ test(
         // the prompt, so they ask for a terminal that has capabilities.
         env: { TERM: "xterm-256color" },
         answer: "\u001b[Cgit\t\r",
+        answerAfterRawMode: true,
       });
 
       expectExit(picked, 0);
@@ -304,6 +309,7 @@ test(
       const picked = await runInPty(world, project, [world.binary, "add"], {
         env: { TERM: "xterm-256color" },
         answer: "sec\u001b[B rev\t\r",
+        answerAfterRawMode: true,
       });
 
       expectExit(picked, 0);
@@ -316,6 +322,222 @@ test(
       expect(existsSync(join(project, ".claude", "skills", "aaa-decoy"))).toBe(
         false,
       );
+    });
+  },
+  E2E_TEST_TIMEOUT_MS,
+);
+
+/**
+ * The share picker, end to end in the packaged binary: rows from the unmanaged
+ * remainder, the fuzzy filter, the mark, the grouped share, the committed
+ * fragment, and the printed equivalent command.
+ *
+ * The marked row is an mcp server on purpose. Its name is the item name, so
+ * the run needs no readline question after the frame — the pty driver writes
+ * every key in one burst, and the picker's raw-mode reader consumes whatever
+ * the burst still holds when Enter closes it, so keys meant for a later
+ * canonical prompt never arrive. The settings name prompt is covered at the
+ * CLI layer through the injectable prompt seam instead.
+ *
+ * The query is `ghb` — not a substring of any row, only a subsequence of
+ * `github` — so an item landing in the data repo proves the whole chain in the
+ * packaged binary: raw-mode input, the ported fzf match, the mark, the share.
+ */
+test(
+  "with a terminal, share with no item offers unmanaged values and commits the marked one",
+  async () => {
+    declareEvidence({
+      scenario: SCENARIO,
+      property:
+        "on a TTY, `capshelf share` with no item lists unmanaged config values, filters by fuzzy subsequence, marks with Tab, shares on Enter, commits the fragment, and prints the equivalent non-interactive command",
+      labels: ["reproduced-user-workflow"],
+      proofLimits: [
+        "the terminal is opened by a helper rather than by a real terminal emulator, so line-discipline details such as echo and CR line endings differ from an interactive shell",
+        "the keystrokes are written in one burst once the program enters raw mode, so this does not prove behavior under per-keystroke timing",
+        "the settings name prompt is not driven here, because the one-burst input cannot feed a canonical prompt after a raw-mode one; the CLI layer covers it through the injectable prompt seam",
+      ],
+    });
+
+    await withWorld(SCENARIO, async (world) => {
+      const shelf = await world.git.createDataRepo({
+        origin: "https://example.invalid/shelf.git",
+        files: { "README.md": "shelf\n" },
+      });
+      const project = await world.git.createProject("platform");
+      expectExit(
+        await world.capshelf(project, ["init", "--no-pick", "--data", shelf]),
+        0,
+      );
+      await writeFile(
+        join(project, ".mcp.json"),
+        JSON.stringify({
+          mcpServers: {
+            github: { command: "github-mcp" },
+            "aaa-decoy": { command: "decoy-mcp" },
+          },
+        }),
+      );
+
+      const picked = await runInPty(world, project, [world.binary, "share"], {
+        env: { TERM: "xterm-256color" },
+        answer: "ghb\t\r",
+        answerAfterRawMode: true,
+      });
+
+      expectExit(picked, 0);
+      // One marked output file means the command carries its target.
+      expectOutputContains(picked, "capshelf share mcp/github --target claude");
+      const fragment = JSON.parse(
+        await readFile(join(shelf, "mcp", "github", "claude.json"), "utf-8"),
+      ) as Record<string, unknown>;
+      expect(fragment).toEqual({
+        mcpServers: { github: { command: "github-mcp" } },
+      });
+      // Precision, not just recall: the decoy matched nothing, was never
+      // marked, and must not have been shared.
+      expect(existsSync(join(shelf, "mcp", "aaa-decoy"))).toBe(false);
+    });
+  },
+  E2E_TEST_TIMEOUT_MS,
+);
+
+/**
+ * The promote picker, end to end: a tracked fragment whose canonical source
+ * changed in the data repo is offered, marked by fuzzy subsequence, and
+ * promoting it commits the edit.
+ */
+test(
+  "with a terminal, promote with no item offers the dirty item and commits it",
+  async () => {
+    declareEvidence({
+      scenario: SCENARIO,
+      property:
+        "on a TTY, `capshelf promote` with no item lists tracked items, offers the one with a dirty canonical source, and Enter promotes the marked row into a data-repo commit",
+      labels: ["reproduced-user-workflow"],
+      proofLimits: [
+        "the terminal is opened by a helper rather than by a real terminal emulator, so line-discipline details such as echo and CR line endings differ from an interactive shell",
+      ],
+    });
+
+    await withWorld(SCENARIO, async (world) => {
+      const shelf = await world.git.createDataRepo({
+        origin: "https://example.invalid/shelf.git",
+        files: { "README.md": "shelf\n" },
+      });
+      const project = await world.git.createProject("platform");
+      expectExit(
+        await world.capshelf(project, ["init", "--no-pick", "--data", shelf]),
+        0,
+      );
+      await mkdir(join(project, ".claude"), { recursive: true });
+      await writeFile(
+        join(project, ".claude", "settings.json"),
+        JSON.stringify({ env: { FOO: "bar" } }),
+      );
+      expectExit(
+        await world.capshelf(project, [
+          "share",
+          "settings/theme",
+          "--pick",
+          "env",
+        ]),
+        0,
+      );
+      await writeFile(
+        join(shelf, "settings", "theme", "settings.json"),
+        JSON.stringify({ env: { FOO: "baz" } }),
+      );
+
+      // `sth` is a subsequence of `settings/theme`, not a substring.
+      const picked = await runInPty(world, project, [world.binary, "promote"], {
+        env: { TERM: "xterm-256color" },
+        answer: "sth\t\r",
+        answerAfterRawMode: true,
+      });
+
+      expectExit(picked, 0);
+      expectOutputContains(picked, "promoted data/settings/theme");
+      const log = await world.run(shelf, ["git", "log", "--oneline"]);
+      expect(log.stdout).toContain("capshelf: settings/theme");
+      const status = await world.run(shelf, ["git", "status", "--porcelain"]);
+      expect(status.stdout.trim()).toBe("");
+    });
+  },
+  E2E_TEST_TIMEOUT_MS,
+);
+
+/**
+ * A disabled row is browsable: the cursor moves onto it — across the kind
+ * headings of the `All` view — and its reason renders in the detail column.
+ *
+ * This held a real defect. Disabled rows were passed to the prompt library as
+ * disabled options, and its cursor walk skips those, so a struck-through row
+ * could never be focused, its reason could never be read, and a promote list
+ * where nothing was promotable had a cursor that refused to move at all. The
+ * rows exist *for* their reasons, so the cursor must reach them.
+ */
+test(
+  "with a terminal, the cursor reaches a disabled promote row and Tab on it marks nothing",
+  async () => {
+    declareEvidence({
+      scenario: SCENARIO,
+      property:
+        "in the promote picker, ↓ moves the cursor onto a disabled row in another kind group, the row's reason renders, and Tab there marks nothing so Enter promotes nothing",
+      labels: ["reproduced-user-workflow"],
+      proofLimits: [
+        "the terminal is opened by a helper rather than by a real terminal emulator, so line-discipline details such as echo and CR line endings differ from an interactive shell",
+      ],
+    });
+
+    await withWorld(SCENARIO, async (world) => {
+      const shelf = await world.git.createDataRepo({
+        origin: "https://example.invalid/shelf.git",
+        files: { "skills/hello/SKILL.md": "# hello\n" },
+      });
+      const project = await world.git.createProject("platform");
+      expectExit(
+        await world.capshelf(project, ["init", "--no-pick", "--data", shelf]),
+        0,
+      );
+      // Two tracked items in two kind groups: a dirty skill the cursor opens
+      // on (skills sort first), and a clean settings fragment whose row is
+      // disabled with a reason.
+      expectExit(await world.capshelf(project, ["add", "skills/hello"]), 0);
+      await mkdir(join(project, ".claude"), { recursive: true });
+      await writeFile(
+        join(project, ".claude", "settings.json"),
+        JSON.stringify({ env: { FOO: "bar" } }),
+      );
+      expectExit(
+        await world.capshelf(project, [
+          "share",
+          "settings/theme",
+          "--pick",
+          "env",
+        ]),
+        0,
+      );
+      await writeFile(
+        join(project, ".agents", "skills", "hello", "SKILL.md"),
+        "# hello v2\n",
+      );
+      const before = await world.run(shelf, ["git", "rev-parse", "HEAD"]);
+
+      // ↓ onto the disabled settings row, Tab there, Enter.
+      const picked = await runInPty(world, project, [world.binary, "promote"], {
+        env: { TERM: "xterm-256color" },
+        answer: "\u001b[B\t\r",
+        answerAfterRawMode: true,
+      });
+
+      expectExit(picked, 0);
+      // The disabled row was focused: its reason is on screen. Only the
+      // focused row draws a detail, so this is also the traversal proof.
+      expectOutputContains(picked, "nothing to promote");
+      // Tab on it marked nothing, so nothing was promoted or committed.
+      expect(picked.stdout + picked.stderr).not.toContain("✓ promoted");
+      const after = await world.run(shelf, ["git", "rev-parse", "HEAD"]);
+      expect(after.stdout.trim()).toBe(before.stdout.trim());
     });
   },
   E2E_TEST_TIMEOUT_MS,

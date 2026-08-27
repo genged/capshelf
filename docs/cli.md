@@ -258,9 +258,9 @@ registered.
 | `get-path <item>` | print the editable path; subagents and MCP support `--target`, while `--output` returns the corresponding runtime output | implemented |
 | `apply [<item>]` | reconcile project and local files with lockfiles after a full-set destructive preflight; a failing fragment target aborts every write, while an unresolvable copy or subagent item is reported and the rest still converge (exit 1); supports `--local`, `--dry-run`, and `--yes` | implemented |
 | `update [<item>...]` | bump content and declared-needs pins; needs-only changes do not reinstall unchanged content; `--merge` reconciles one explicit skill or Pi extension and pins upstream without publishing; `--local` selects clone-local scope; supports `--dry-run` and explicit drift overwrite consent with `--yes` | implemented |
-| `share <item>` | adopt a not-yet-shared on-disk item into the data repo and report the new item's runtime target coverage; subagents scan both runtime outputs by default and require `--target` with `--from` | implemented |
+| `share [item]` | adopt a not-yet-shared on-disk item into the data repo and report the new item's runtime target coverage; subagents scan both runtime outputs by default and require `--target` with `--from`; with no item, opens the interactive picker over unmanaged config values (see The picker); pick-based fragment shares print and report the equivalent non-interactive command | implemented |
 | `move <item> --to <scope>` | move an already-tracked data item between local and project scope without changing data-repo content | implemented |
-| `promote <item>` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects clone-local copy items; `--stale-ok` is the intentional overwrite option; `--merge` is deprecated compatibility behavior | implemented |
+| `promote [item]` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects clone-local copy items; `--stale-ok` is the intentional overwrite option; `--merge` is deprecated compatibility behavior; with no item, opens the interactive picker over the tracked items (see The picker) | implemented |
 | `keep-local <item>` | mark drifted copy-item content as intentional divergence; supports project and clone-local skills/Pi extensions, and rejects fragments; `--unset` is the only thing that clears the marker, and `promote` refuses a marked item | implemented |
 | `revert <item>` | restore one locked version; the lock is never rewritten, so a keep-local marker survives; discarding local state requires consent or `--yes`; supports `--local` | implemented |
 | `lock migrate` | convert this project's lock files to version 4 in one transaction; supports `--dry-run`, `--repin`, `--remove-item`, `--yes`, and `--json` | implemented |
@@ -768,7 +768,8 @@ Bundle exit codes:
 
 `capshelf add` with no item opens an interactive list of everything on the
 shelf: every data item and every bundle. `capshelf init` opens the same list
-once, after it finishes.
+once, after it finishes. `capshelf share` and `capshelf promote` with no item
+open the same picker over their own rows. See *share and promote* below.
 
 | key | action |
 |---|---|
@@ -776,8 +777,8 @@ once, after it finishes.
 | left / right | switch item type |
 | up / down | move |
 | tab | mark or unmark the row |
-| enter | install every marked row |
-| esc | cancel and install nothing |
+| enter | act on every marked row: install, share, or promote, per verb |
+| esc | cancel and change nothing |
 
 A menu across the top selects the item type: `All`, then every kind the data
 repo holds. A kind with no items gets no tab. `left` and `right` move between
@@ -819,7 +820,9 @@ scriptable command whose results a user cites and reruns. The picker is a live
 filter that one more keystroke corrects.
 
 An item the project already has stays in the list, struck through and grey. It
-cannot be marked. A bundle is always offered, because a bundle is a manifest
+cannot be marked. The cursor can still rest on a struck-through row, and the
+detail column then shows why the row is off: that reason is what the row is
+for. `tab` on such a row does nothing. A bundle is always offered, because a bundle is a manifest
 macro and is never locked. Members that are already present are skipped when
 the bundle expands.
 
@@ -839,6 +842,49 @@ working. Without a usable terminal, `capshelf add` with no item exits 3 and
 asks for an item ref. `capshelf init` prints the reason and continues.
 `capshelf add --json` and `capshelf add --target` with no item are refused for
 the same reason. A script cannot answer a prompt.
+
+#### share and promote
+
+`capshelf share` with no item opens the same picker over this project's
+unmanaged config values. Each row is one legal `--pick` path. A settings or
+codex-config row is one config path in `.claude/settings.json` or
+`.codex/config.toml`, parents included. An MCP row is one server in one output
+file. A server present in both outputs gets two rows. Mark both rows and the
+share covers both outputs with no `--target`. Mark one row and the share
+carries `--target claude` or `--target codex`. The detail column shows a shape
+summary (`2 keys`, `3 entries`, `string`), never the value itself.
+
+Marked rows group into items. MCP rows group by server name, and the server
+name becomes the item name. Settings rows form one item, and codex-config rows
+form another. The picker asks for each new item's name once, after the
+full-screen prompt closes. It refuses a name the data repo already holds and
+an unsafe name. An empty answer skips that item. A marked ancestor path drops
+its marked descendants, because both marks name the same fragment.
+
+Each shared item prints the same lines a named `share` prints, then the
+non-interactive command that repeats it. A named pick-based share also reports
+that command, and its `--json` carries it as `equivalentCommand`. When no
+output holds an unmanaged value, the picker does not open. `share` lists the
+outputs it looked in and exits 0.
+
+`capshelf promote` with no item opens the picker over the tracked data items.
+A row whose status state has something to promote can be marked. Every other
+row stays visible, struck through, with the reason in its detail column. A
+clean item says `nothing to promote`. Output drift says `run capshelf apply,
+not promote`. A canonical source hidden from git by an index flag or an ignore
+rule says `git is not watching <path>`. The detail for a promotable item names
+the file that changed: the installed path for a local edit, or the data-repo
+canonical file for a dirty source. Each marked item promotes independently.
+The commit message is `-m` when given, and the default `promote` message
+otherwise. A failure names its reason and the retry command, the other items
+stay promoted, and any failure exits 3. `promote --local` with no item lists
+the clone-local items instead.
+
+Both pickers re-read the project and the data repo after the prompt closes. A
+value that changed while the picker was open fails its own row instead of
+being committed from a stale read. With no item, `share` refuses `--json`,
+`--from`, `--pick`, `--target`, and `--to`, and `promote` refuses `--json`,
+`--stale-ok`, and `--merge`.
 
 ### search
 
