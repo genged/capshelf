@@ -48,6 +48,7 @@ describe("human-readable DX output", () => {
     expect(stdout).toContain("capshelf search <task>");
     expect(stdout).toContain("capshelf ls");
     expect(stdout).toContain("capshelf add bundles/<name>");
+    expect(stdout).toContain("capshelf share");
   });
 
   test("share prints the local data repo location without push guidance when there is no origin", async () => {

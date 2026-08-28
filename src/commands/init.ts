@@ -339,6 +339,9 @@ export function registerInit(program: Command): void {
       );
       console.log("  capshelf ls                  # browse the shelf");
       console.log("  capshelf add bundles/<name>  # install a curated bundle");
+      console.log(
+        "  capshelf share               # put this project's config on the shelf",
+      );
     });
 }
 
