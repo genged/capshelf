@@ -659,6 +659,41 @@ describe("cli integration", () => {
     expect(exclude).not.toContain(".agents/skills/policy/");
   });
 
+  test("share refuses a legacy lock before any data-repo commit", async () => {
+    const project = await tempRepo("capshelf-share-v3-project-");
+    const dataRepo = await tempRepo("capshelf-share-v3-data-");
+    const run = runInProcess(project);
+    await writeFile(join(dataRepo, ".gitkeep"), "");
+    await commitAll(dataRepo, "baseline");
+    const init = await run(["init", "--data", dataRepo]);
+    expect(init.exitCode).toBe(0);
+
+    await mkdir(join(project, ".agents", "skills", "policy"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(project, ".agents", "skills", "policy", "SKILL.md"),
+      "policy\n",
+    );
+    // A version-3 lock: `share` writes lock version 4, and the refusal must
+    // land before `adoptIntoDataRepo` commits the skill.
+    await writeFile(
+      join(project, ".capshelf", "capshelf.lock.json"),
+      JSON.stringify({ version: 3, items: {} }),
+    );
+    const headBefore = (
+      await $`git -C ${dataRepo} rev-parse HEAD`.text()
+    ).trim();
+
+    const share = await run(["share", "skills/policy", "--to", "project"]);
+    expect(share.exitCode).toBe(3);
+    expect(share.stderr.toString()).toContain("writes lock version");
+    expect(await file(join(dataRepo, "skills", "policy")).exists()).toBe(false);
+    expect((await $`git -C ${dataRepo} rev-parse HEAD`.text()).trim()).toBe(
+      headBefore,
+    );
+  });
+
   test("share to local rejects a project-git-tracked skill path", async () => {
     const project = await tempRepo("capshelf-share-tracked-project-");
     const dataRepo = await tempRepo("capshelf-share-tracked-data-");

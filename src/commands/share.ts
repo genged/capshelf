@@ -272,6 +272,13 @@ export async function shareCopyItem(
     await assertLocalInstallPathsUntracked(project, kind, name);
   }
 
+  // Before any data-repo mutation. This assertion used to run after
+  // `adoptIntoDataRepo`, so a legacy lock refused the share only after the
+  // item was already committed — leaving a data-repo commit with no project
+  // tracking.
+  const writableProjectLock = assertLockV4(projectLock, "capshelf share");
+  const writableLocalLock = assertLockV4(localLock, "capshelf share");
+
   const adopted = await adoptIntoDataRepo(project, dataRepo, kind, name, {
     installMode: manifest.installMode,
     message: opts.message,
@@ -289,8 +296,6 @@ export async function shareCopyItem(
   }
   const entry = createDataLockEntry({ pin: adopted.pin, ...snapshot });
   const runtimeWarnings = runtimeWarningsForItem(project, kind, name);
-  const writableProjectLock = assertLockV4(projectLock, "capshelf share");
-  const writableLocalLock = assertLockV4(localLock, "capshelf share");
   let localChanged = false;
   if (scope === "project") {
     addToManifest(manifest, kind, name);
@@ -386,6 +391,10 @@ export async function shareSubagent(
       `already tracked in this project: subagents/${name}`,
     );
   }
+  // Before any data-repo mutation. This assertion used to run after the
+  // commit, so a legacy lock refused the share only after the subagent was
+  // already committed — leaving a data-repo commit with no project tracking.
+  const writableProjectLock = assertLockV4(projectLock, "capshelf share");
 
   const allCandidates = subagentSourceCandidates(project, name);
   for (const candidate of allCandidates) {
@@ -481,7 +490,6 @@ export async function shareSubagent(
     name,
   });
   addManifestName(manifest, "subagents", name);
-  const writableProjectLock = assertLockV4(projectLock, "capshelf share");
   writableProjectLock.items[key] = createDataLockEntry({ pin, ...snapshot });
   await saveManifest(project, manifest);
   await saveLock(project, writableProjectLock);

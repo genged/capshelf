@@ -764,6 +764,40 @@ describe("subagent CLI lifecycle", () => {
     expect(await file(lockPath).text()).toBe(lockBefore);
   });
 
+  test("a legacy lock refuses the share before any data-repo commit", async () => {
+    const project = await tempRepo("capshelf-subagent-share-v3-project-");
+    const dataRepo = await tempRepo("capshelf-subagent-share-v3-data-");
+    const run = runInProcess(project);
+    await writeFile(join(dataRepo, ".gitkeep"), "");
+    await commitAll(dataRepo, "baseline");
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+
+    await mkdir(join(project, ".claude", "agents"), { recursive: true });
+    await writeFile(join(project, ".claude", "agents", "reviewer.md"), CLAUDE);
+    // A version-3 lock: `share` writes lock version 4, and the refusal must
+    // land while the data repo is still untouched.
+    await writeFile(
+      join(project, ".capshelf", "capshelf.lock.json"),
+      JSON.stringify({ version: 3, items: {} }),
+    );
+    const headBefore = (
+      await $`git -C ${dataRepo} rev-parse HEAD`.text()
+    ).trim();
+
+    const result = await run([
+      "share",
+      "subagents/reviewer",
+      "--to",
+      "project",
+    ]);
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr.toString()).toContain("writes lock version");
+    expect(existsSync(join(dataRepo, "subagents", "reviewer"))).toBe(false);
+    expect((await $`git -C ${dataRepo} rev-parse HEAD`.text()).trim()).toBe(
+      headBefore,
+    );
+  });
+
   test("supports discovery, target-aware paths, and bundle expansion", async () => {
     const project = await tempRepo("capshelf-subagent-bundle-project-");
     const dataRepo = await tempRepo("capshelf-subagent-bundle-data-");

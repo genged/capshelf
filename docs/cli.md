@@ -1234,7 +1234,9 @@ Until a project migrates, `status`, `ls`, `show`, and `apply` keep working
 against the old lock, and every command that would *write* a lock — `add`,
 `update`, `promote`, `share`, `move`, `keep-local`, `rm`, `revert`, bundle
 installs, and `init` — refuses with migration guidance. No ordinary command
-silently upgrades a project.
+silently upgrades a project. For `share` the refusal lands before the
+data-repo commit, so a legacy lock leaves the data repo untouched and there is
+nothing to undo.
 
 Recommended team rollout:
 
