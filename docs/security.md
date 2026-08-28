@@ -137,20 +137,14 @@ Explicitly out of scope, with the reasoning:
 Claude managed entries use the data-repo root as their official Git source,
 although their explicit `skills` list controls loaded components. Do not keep
 secrets or files inappropriate for marketplace consumers in a hosted data
-repo. Capshelf preserves unsupported Claude entries but does not validate or
-execute them.
+repo.
 
 The native Codex projection and both package formats contain regular files
-only. Capshelf copies only Git-visible selected skill files, excludes
-`.capshelf.yml` sidecars and ignored content, refuses private dotenv files and
-all symlinks (including symlinked ancestors), and validates generated paths
-remain inside the artifact. Output containment resolves the nearest existing
-ancestor before comparing it with the real data-repo root. Generated relative
-paths reject traversal, absolute and Windows-drive paths, backslashes, NUL
-bytes, duplicates, and file/directory prefix collisions before any owned tree
-or package is written.
-Generated Codex files are derived state: review and commit them with their
-source definitions or skill changes, and gate CI with
+only: packaging copies only Git-visible selected skill files, refuses
+private dotenv files and all symlinks, and validates that generated paths
+stay inside the artifact. The full packaging and containment rules are in
+[`docs/marketplaces.md`](marketplaces.md). Generated Codex files are derived
+state: review and commit them with their source changes, and gate CI with
 `capshelf marketplace validate --target codex`.
 
 The common thread: at this layer, delegation beats reinvention. Git hosting

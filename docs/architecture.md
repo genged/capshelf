@@ -188,14 +188,6 @@ their manifest.
 `capshelf init --claude-only` stores real skill directories directly under
 `.claude/skills/<name>/` and does not create `.agents` compatibility symlinks.
 
-Project commands can be run from the project root — the directory containing
-`.capshelf/capshelf.json` — or any subdirectory of it: capshelf walks upward to
-find the nearest project root, like git/npm/cargo. It does not fall back to Git
-roots. `init` acts on the current directory (no upward discovery), so it creates
-`.capshelf/` exactly where it is run. After every file is written, `init`
-offers the shelf in the picker. Cancelling the offer, or a missing terminal,
-leaves a fully initialized project, and `--no-pick` skips it.
-
 Manifest:
 ```json
 {
@@ -263,12 +255,10 @@ data:   { source: "data",   sourcePinDigest, sourceCommit, needs, needsSourceCom
 system: { source: "system", sha,             cliVersion,   appliedAt }
 ```
 
-The lock version describes **every entry in the file**. Version 4 has no
-legacy data-entry variant: a union would keep two identity models alive in
-every consumer until the last entry happened to re-pin, and a project holding
-one unreachable historical commit could stay mixed forever. `capshelf lock
-migrate` builds a complete version-4 candidate for the project lock and the
-local lock, or writes nothing.
+The lock version describes **every entry in the file**: version 4 has no
+legacy data-entry variant, because a union would keep two identity models
+alive in every consumer. `capshelf lock migrate` builds a complete
+version-4 candidate for both locks, or writes nothing.
 
 Lock keys are prefixed, for example `data/skills/<name>`,
 `data/pi-extensions/<name>`, `data/settings/<name>`, `data/mcp/<name>`,
@@ -295,12 +285,10 @@ Lock keys are prefixed, for example `data/skills/<name>`,
   forward.
 - `cliVersion` — for system items, the capshelf binary version that wrote the
   entry. Drives "update available" detection when the binary upgrades.
-  Provenance only, never a retrieval handle: the binary carries exactly one
-  copy of the bundled tree, so a system entry's `sha` records what capshelf
-  last wrote rather than content it can read back, and superseded bundled
-  content is unrecoverable by design. `update` re-pins a system item to the
-  bundle the running binary carries; `apply` refuses an entry whose bundled
-  content the binary no longer has.
+  Provenance only, never a retrieval handle: the binary carries one copy of
+  the bundled tree, so superseded bundled content is unrecoverable by
+  design. `update` re-pins a system item to the running binary's bundle;
+  `apply` refuses an entry whose bundled content the binary no longer has.
 
 - `label` — an optional human tag such as `"v3"`. Decoration, not identity:
   nothing reads it back.
@@ -491,12 +479,11 @@ complete safety policy:
 | `isolated-diff` | disposable directory | neutral attributes and line endings; no external diff or textconv |
 | `isolated-merge` | disposable repository | neutral config, hooks, attributes, and environment |
 
-There is no default and no fallback to the process working directory. A
-nullable repository argument could not express this: `null` meant both "no
-repository needed" and "use whatever repository the current directory is in",
-which is why `status --diff` once rendered its answer under the user's own
-`core.autocrlf` and reported nothing for the very difference being
-investigated.
+There is no default and no fallback to the process working directory: a
+nullable repository argument meant both "no repository needed" and "use the
+current directory's repository", which once let `status --diff` render under
+the user's own `core.autocrlf` and report nothing for the very difference
+being investigated.
 
 Git 2.40.0 is a runtime dependency, because filter attributes are read from the
 pinned commit with `check-attr --source`. The query is additionally bound to a
@@ -613,12 +600,6 @@ owner-only `.env.local` came from the user's filesystem and goes back to the
 same path, so capshelf never dereferences, hashes, or publishes it, and Git's
 two-mode model does not apply to it.
 
-Claude custom commands are represented as skills. In the default layout, a
-skill at `.agents/skills/<name>/SKILL.md` is exposed to Claude through
-`.claude/skills/<name>`. In Claude-only layout, the skill lives directly at
-`.claude/skills/<name>/SKILL.md`. capshelf does not manage
-`.claude/commands/`.
-
 ### Destructive reconciliation boundary
 
 The lock defines reproducible managed state, but installed trees and generated
@@ -649,8 +630,21 @@ Each verb builds its own rows. `src/pick-catalog.ts` reads the shelf for
 `init` and `add`. `src/share-catalog.ts` and `src/share-scan.ts` collect
 unmanaged config values and untracked on-disk items for `share`.
 `src/promote-catalog.ts` derives promotability for the tracked items.
-Matching is fzf's FuzzyMatchV1 (`src/fuzzy.ts`), deliberately separate from
-`search`.
+
+Matching is fzf's FuzzyMatchV1 (`src/fuzzy.ts`), ported from the published
+description in `src/algo/algo.go` of junegunn/fzf, and keeps that
+algorithm's scoring: a match at the start of a word scores higher,
+consecutive characters beat scattered ones, a wide gap cancels the
+word-start bonus, and equal scores prefer the shorter ref. Each field is
+scored on its own and then weighted, and a term takes the best weighted
+field it hits. The fields are deliberately not joined into one string: fzf
+scores a match after a space above one after a delimiter, so every word of
+a description would outrank the item name, which follows the `/` in its
+ref. The picker is deliberately not `search`: `search` is a scriptable
+command whose results a user cites and reruns, while the picker is a live
+filter that one more keystroke corrects. The `All` tab's kind headings
+disappear once a query ranks the list, because a heading between two
+results would put the best match in the middle.
 
 Every flow follows the same order: read, prompt, then re-read and revalidate
 before acting, because the picker holds the terminal for an unbounded time.
@@ -674,26 +668,21 @@ another:
    old sha; their `status` reports "update available" but files don't change.
 
 Network sync is equally explicit: only `data sync` fetches the data repo's
-`origin`, and the only branch mutation it ever performs is a provably safe
-fast-forward (diverged, dirty, and detached states stop with git guidance).
-In the other direction, `promote` refuses to overwrite data-repo content
-newer than the calling project's lock — a stale promote is a conflict (exit
-3) reconciled by an explicit `update --merge` for supported copy items or
-bypassed by an intentional `promote --stale-ok`
-(`stalePromoteError` in `src/commands/promote.ts`).
-Uncommitted data-repo edits under the item's path always block.
+`origin`, and its only branch mutation is a provably safe fast-forward. In
+the other direction, a stale promote is a conflict (exit 3): `promote`
+refuses to overwrite data-repo content newer than the calling project's
+lock, and uncommitted data-repo edits under the item's path always block.
+The reconciliation options are in [`docs/cli.md`](cli.md) under
+Stale-promote protection.
 
 The merge engine reconstructs raw-byte trees and executable modes for the
-locked base, installed local snapshot, and current upstream commit, then runs
-standard Git merge behavior in a disposable synthetic repository. That
-process receives no inherited system/global Git configuration, templates,
-hooks, filters, merge drivers, fsmonitor, or signing commands. Before writing,
-update revalidates data-repo HEAD and cleanliness, the upstream pin and needs,
-the selected lock entry, and the installed snapshot and sidecar. Conflicts are
-read-only. A clean result is written to the installed copy before the selected
-lock is saved. A lock-save failure restores the installed copy. The lock pins
-the exact upstream tree, not the merged result. A later normal promote is the
-separate publication transaction. Other projects remain unchanged
+locked base, installed local snapshot, and current upstream commit, then
+runs standard Git merge behavior in a disposable synthetic repository that
+inherits no system or global Git configuration, templates, hooks, filters,
+merge drivers, fsmonitor, or signing commands. Before writing, update
+revalidates data-repo HEAD and cleanliness, the upstream pin and needs, the
+selected lock entry, and the installed snapshot and sidecar. A lock-save
+failure restores the installed copy. Other projects remain unchanged
 (`src/commands/update.ts:606-635`).
 
 ### Two commit operations, one hook policy
@@ -737,12 +726,9 @@ See `docs/team-workflow.md` for the team loop built on these guarantees.
 ## Coexistence with peer tools
 
 `skills.sh` can manage read-only third-party skills and records them in
-`<project>/skills-lock.json`. In Claude projects those skills appear in
-`.claude/skills/`; in Codex-style projects skills.sh stores them in
-`.agents/skills/` and creates one symlink per skill into `.claude/skills/`.
-capshelf reads `skills-lock.json` only to avoid co-managing the same path, and
-follows `.claude/skills/<name>` symlinks to the real managed directory when a
-skill is capshelf-owned.
+`<project>/skills-lock.json`. capshelf reads that file only to avoid
+co-managing the same path, and follows `.claude/skills/<name>` symlinks to
+the real managed directory when a skill is capshelf-owned.
 
 | population | source of truth | editability | tracked by |
 |---|---|---|---|
@@ -751,69 +737,37 @@ skill is capshelf-owned.
 | Claude plugins | Claude plugin marketplaces/settings | read-only | Claude `enabledPlugins` settings |
 | project-only | this project | edit freely | nothing |
 
-When a skill name is present in `skills-lock.json`, capshelf `add`, `share`,
-`rm`, `revert`, and `promote` reject that path; bulk `apply` and `update` skip
-it; `status` shows it under `external/` and does not trip `--strict`.
-
-Claude Code marketplace plugins are also treated as external. Capshelf reads
-`enabledPlugins` from managed, user, project, and local Claude settings and
-reports them in `status`, but it does not edit those settings or touch
-`~/.claude/plugins/cache`.
-
-Claude personal skills under `~/.claude/skills/<name>` are outside project
-ownership but can shadow project-managed skills at runtime. Capshelf treats
-that as a warning, not a filesystem conflict: materializing commands surface
-`shadowed_by_personal_claude_skill`, `status` includes the warning in human and
-JSON output, `status` lists the personal skill under
-`external/  (Personal Claude)`, and `status --strict` exits 4 until the personal
-skill is removed or renamed.
-
-`ls` and `status` include a broader read-only inventory of user-level runtime
-skills in `~/.claude/skills`, `~/.agents/skills`, and `$CODEX_HOME/skills` (or
-`~/.codex/skills`) by default; `--user` narrows either command to only that
-inventory. Human output groups Claude and Codex user skills separately because
-the runtimes do not load each other's user paths. These rows are external
-inventory, not managed state: capshelf does not write user-scope metadata,
-adopt the skills, or reconcile them. When run from a project root, the
-inventory reports whether a user skill shadows a project or clone-local
-capshelf skill.
+Everything outside the first row is external state: capshelf reports or
+warns, refuses to co-manage the paths, and never mutates the other tool's
+files or caches. Personal Claude skills under `~/.claude/skills/<name>` can
+shadow a project-managed skill at runtime; capshelf treats that as a
+warning, not a filesystem conflict. The command surface — which verbs
+refuse, which `status` groups appear, and the user-level skill inventory —
+is in [`docs/cli.md`](cli.md) under Coexisting with other tools.
 
 ## Plugin marketplaces
 
 Marketplace definitions are data-repo catalog state, not Capshelf items.
 They never appear in a project manifest or lock and are never materialized
-into a consuming project.
-
-Claude composition is authored directly in the official
-`.claude-plugin/marketplace.json`. Capshelf-managed entries are skill-only
-root sources (`source: "./"`, `strict: false`) with explicit canonical skill
-paths. Malformed attempted-managed entries are invalid; versioned,
-remote-source, and mixed-component entries are preserved as external state.
-
-Codex composition is authored in `codex/plugin-definitions/`. Capshelf
-projects it into `.agents/plugins/marketplace.json` and self-contained regular
-file copies under `codex/generated/plugins/`. The generated tree is committed
+into a consuming project. Claude composition is authored directly in the
+official `.claude-plugin/marketplace.json`. Codex composition is authored in
+`codex/plugin-definitions/` and projected into a committed native catalog,
 so the data repo can be registered directly with
-`codex plugin marketplace add <data-repo>`. `marketplace sync --target codex`
-repairs clean derived drift and never stages or commits. Dirty affected paths
-inside the owned projection roots require consent and are reported by dry-run.
-Marketplace mutations and Capshelf skill share/promote commits update
-the projection in the same local Git commit.
+`codex plugin marketplace add <data-repo>`.
 
-Package outputs are disposable. Claude packages are deterministic root-content
-ZIP `.plugin` files; detached Codex packages are one-plugin marketplace
-directories. Capshelf stops at the runtime boundary: it does not push,
-register, install, enable, refresh, or inspect plugin caches.
+Generated plugin versions are logical hashes: JSON object keys are sorted
+recursively, array order is preserved, and tracked files use Git executable
+intent, so unrelated commits, host chmod drift, and object-key ordering do
+not rotate cachebusters. Canonical skill identity is independent of plugin
+identity, and a dangling plugin reference blocks every marketplace
+operation. The command surface, entry rules, packaging, and containment
+checks are in [`docs/marketplaces.md`](marketplaces.md).
 
-Marketplace source, selected-skill, generated, and package paths are checked
-component-by-component for symlink ancestors before reads, deletion, or
-writes. Package containment compares resolved real paths through the nearest
-existing ancestor. Logical hashes recursively sort JSON object keys, preserve
-array order, and use Git executable intent for tracked files, so unrelated
-commits, host chmod drift, and object-key ordering do not rotate cachebusters.
+## Why no MCP server in v1
 
-Canonical skill identity is independent of plugin identity. When renaming a
-skill directly in the data repo, rename its directory and update every Claude
-and Codex membership in the same Git change, then sync and validate. A skill
-cannot be deleted while any plugin still selects it: validation, sync,
-packaging, and marketplace mutations all refuse the dangling reference.
+An MCP server would let agents call `capshelf_add`, `capshelf_status`, and
+the rest as first-class tools without shelling out. It is a better
+interface long-term. For v1 the bootstrap skill bundled into the binary
+tells any agent how to use the CLI, agents already have a shell tool, and
+adding MCP later is the same operations over a different transport. Defer
+until the CLI is stable.

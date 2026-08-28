@@ -258,14 +258,6 @@ substrings: `secrev` finds `security-review`. `tab` marks a row, and `enter`
 installs every marked row. A menu across the top selects the item type, and
 `left` and `right` move between types.
 
-Update a project when the data repo changes:
-
-```bash
-capshelf status
-capshelf update --dry-run
-capshelf update
-```
-
 Edit a skill locally, then choose what to do with the drift:
 
 ```bash
@@ -292,95 +284,14 @@ skills, Pi extensions, subagents, and unmanaged config values, and adopts the
 rows you mark. `capshelf promote` with no item opens the same kind of picker
 over the tracked items.
 
-Share fragment values that already live in this project's generated outputs —
-no separate source file needed; the output file stays as it is, and the picked
-values become managed:
+Config fragments, `--pick` extraction, Pi extensions, subagents, and bundles
+have worked examples in [`docs/cli.md`](docs/cli.md); plugin marketplaces in
+[`docs/marketplaces.md`](docs/marketplaces.md).
 
-```bash
-capshelf share mcp/github                                    # adopt the unmanaged `github` server from .mcp.json / .codex/config.toml
-capshelf share settings/permissions --pick permissions.allow # extract a settings value by path
-```
-
-Add a project-local Pi extension from `pi/extensions/<name>/index.ts` in the
-data repo (review it first; extensions execute arbitrary code after Pi project
-trust):
-
-```bash
-capshelf show pi-extensions/path-guard
-capshelf add pi-extensions/path-guard
-# or keep the selection clone-local:
-capshelf add pi-extensions/path-guard --local
-# then run /reload in Pi or restart Pi
-```
-
-Add shared config fragments:
-
-```bash
-capshelf add settings/security-base
-capshelf add mcp/github
-capshelf add codex-config/defaults
-capshelf get-path mcp/github --target codex
-capshelf get-path mcp/github --target codex --output
-```
-
-Add one logical subagent for every runtime definition it provides:
-
-```bash
-capshelf add subagents/reviewer
-capshelf get-path subagents/reviewer --target claude --output
-capshelf get-path subagents/reviewer --target codex
-```
-
-Set up a whole service from a curated bundle (`bundles/<name>.yml` in the
-data repo) — members install as independent items, all-or-nothing:
-
-```bash
-capshelf search "go backend"
-capshelf show bundles/go-backend     # preview members + install state
-capshelf add bundles/go-backend
-```
-
-Curate the same canonical skills into independent Claude/Cowork and Codex
-plugins without installing either runtime:
-
-```bash
-capshelf --data ~/code/agent-config marketplace init \
-  --target codex --name company-workflows --owner Engineering
-capshelf --data ~/code/agent-config marketplace plugin create engineering \
-  --target codex --skill skills/security-review
-capshelf --data ~/code/agent-config marketplace validate --target codex
-```
-
-The data repo is then a native local Codex marketplace. Claude entries use
-the official `.claude-plugin/marketplace.json`; `plugin pack --target claude`
-builds a standalone `.plugin` file for Cowork upload. Capshelf creates and
-commits catalog state; the runtimes handle the plugin lifecycle. Identities are
-kebab-case, and plugin creation requires a skill. `validate` reports projection
-drift, where a generated Codex catalog no longer matches its source
-definitions, and checks Claude packages against Cowork's known file and byte
-limits. [`docs/marketplaces.md`](docs/marketplaces.md) covers the full report.
-
-Bootstrap a new project straight from a shared data repo URL (capshelf clones
-it once under `~/.local/share/capshelf/data/...`, or to `--data-dir <path>`,
-and binds the local clone):
-
-```bash
-cd ~/code/my-app
-capshelf init --data https://github.com/acme/agent-config
-capshelf add security-review
-```
-
-Connect a freshly cloned project to its data repo:
-
-```bash
-cd ~/code/my-app
-capshelf init
-capshelf apply
-```
-
-That works when the project committed `.capshelf/capshelf.json` with a
-`dataRepoUpstream`. If you already cloned the data repo somewhere custom, use
-`capshelf data bind <path-to-data-repo>` instead of `capshelf init`.
+`capshelf init --data <remote-url>` bootstraps a project straight from a
+shared data repo URL, and plain `capshelf init` connects a freshly cloned
+project through its committed `dataRepoUpstream` — both are worked through
+in [`docs/cli.md`](docs/cli.md) under Getting started.
 
 ## What Capshelf manages
 
@@ -453,39 +364,24 @@ Capshelf is a declarative reconciler, not a package installer:
 That last bullet is why the transcript above works: project B keeps its pin
 until someone runs `capshelf update` there.
 
+## What a human still does
+
+1. Approve a `promote` when the agent surfaces it.
+2. Glance at `capshelf status` when starting a project.
+3. Make project-specific policy decisions for new projects.
+
+Everything else — inspect, edit, share, move, promote, and reconcile — is
+the agent's job. `search`, item metadata, and bundles give agents the
+discovery loop; the interactive picker gives humans theirs.
+
 ## Command reference
 
-| Verb | Purpose |
-|---|---|
-| `init` | scaffold `.capshelf/`, install bundled system items, bind a data repo, then offer the shelf in the picker (`--no-pick` skips it) |
-| `data bind` | bind this machine's clone of the data repo |
-| `data upstream` | write the committed upstream URL |
-| `data path` | print the resolved local data repo path |
-| `data sync` | fetch the data repo's `origin` and fast-forward when safe; the only network command besides the `init` bootstrap clone and `self-update` |
-| `ls` / `show` | inspect data repo items, installed items, and bundles; `ls` also shows user-level runtime skills by default |
-| `search` | find items and bundles by name, tags, description, or content |
-| `add` / `rm` | add or remove an item in this project; `add bundles/<name>` expands a bundle |
-| `status` | report drift, missing files, update availability, and user-level runtime skill inventory |
-| `apply` | reconcile project files to the current locks |
-| `update` | bump pins to data repo HEAD, then apply |
-| `share` | adopt an on-disk item into the data repo; fragments can extract unmanaged values straight from generated outputs (`--pick`); with no item, opens the interactive picker |
-| `move` | move an item between local and project scope |
-| `promote` | commit local edits or fragment source edits for a tracked item back to the data repo; with no item, opens the interactive picker |
-| `keep-local` | mark drift as intentional |
-| `revert` | restore one item to its locked version |
-| `get-path` | print the editable path; subagents and multi-target fragments use `--target`, and `--output` returns runtime outputs |
-| `lock migrate` | convert the project and local locks to version 4 in one transaction — the one-way upgrade every project on lock version 2 or 3 must run once |
-| `self-update` | check for and install a Homebrew update for the capshelf binary |
-| `marketplace ...` | author, validate, sync, and package Claude/Cowork or Codex plugin catalogs in the data repo |
-
-The four `data` subcommands keep their older flat names as aliases: `set-data`,
-`set-upstream`, `data-path`, and `sync-data`.
-
-Commands support `--json` where useful for agent consumption. Exit codes are
-stable: `0` success, `1` generic error, `2` not found, `3` conflict or refused
-precondition, `4` drift or upstream mismatch, `5` reserved for future
-unmet-requires checks, `6` no data repo configured, `7` `git` missing or older
-than 2.40. Full reference: [`docs/cli.md`](docs/cli.md).
+The verbs: `init`, `add`, `rm`, `status`, `apply`, `update`, `share`,
+`move`, `promote`, `keep-local`, `revert`, `get-path`, `ls`, `show`,
+`search`, `lock migrate`, `self-update`, the `data` subcommands, and the
+`marketplace` family. Commands support `--json` where useful for agent
+consumption, and exit codes are stable. The full table with flags, JSON
+shapes, and exit codes is in [`docs/cli.md`](docs/cli.md).
 
 Startup self-update prompts are best-effort, cached, and only shown for
 interactive Homebrew installs. Set `CAPSHELF_NO_SELF_UPDATE=1` to disable them.
@@ -569,7 +465,6 @@ records each member on its own.
 
 ## Further reading
 
-- [`docs/project-brief.md`](docs/project-brief.md) - one-page overview
 - [`docs/cli.md`](docs/cli.md) - full command reference, flags, exit codes
 - [`docs/architecture.md`](docs/architecture.md) - data model and rationale
 - [`docs/team-workflow.md`](docs/team-workflow.md) - team loop: `data sync`, propose-upstream recipe, CI drift gate

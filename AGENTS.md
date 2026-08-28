@@ -31,7 +31,7 @@ configuration across projects. It materializes user-owned skills, settings
 fragments, and future MCP config from a Git-backed data repo into consuming
 projects.
 
-More info: `docs/project-brief.md`,  `docs/architecture.md`, `docs/cli.md`,
+More info: `docs/architecture.md`, `docs/cli.md`, `docs/testing.md`
 
 ## Code Quality
 

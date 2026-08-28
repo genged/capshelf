@@ -28,12 +28,11 @@ capshelf status
 capshelf update security-review
 ```
 
-`data sync` is the only capshelf command that talks to the data repo's
-remote, and only when you run it. The only other network operations are the
-one-time clone in `init --data <remote-url>` and the Homebrew `self-update`. It fetches `origin` and fast-forwards the current branch only
-when that is provably safe; diverged history, dirty worktrees, and detached
-HEADs stop with copy-pasteable git guidance. `promote` never pushes — sharing
-upstream is always an explicit `git push` in the data repo.
+`data sync` fetches `origin` and fast-forwards the current branch only when
+that is provably safe; diverged history, dirty worktrees, and detached HEADs
+stop with copy-pasteable git guidance. `promote` never pushes — sharing
+upstream is always an explicit `git push` in the data repo. The full network
+policy is in [`docs/security.md`](security.md).
 
 If Bob edits an item locally while someone else has already pushed a newer
 version of it, `promote` refuses instead of silently clobbering:
@@ -45,22 +44,17 @@ version of it, `promote` refuses instead of silently clobbering:
 
 Bob runs `capshelf status security-review --diff` to inspect the installed and
 committed upstream branches from their locked base. He then runs `capshelf
-update security-review --merge`. This command merges into the installed copy
-and pins the selected lock to upstream. It does not change the data repo. Bob
-reviews the installed result with `--diff-view installed`. He then uses a
-normal `promote` command to publish it. A conflict lists sorted item-relative
-paths and changes no installed file or lock. Skills and Pi extensions support
-this flow in project and local scope. Keep `--local` on each command for local
-scope. A clean Git merge still requires human review
-(`updateMergeTarget` in `src/commands/update.ts`).
+update security-review --merge`, which merges into the installed copy and
+pins the lock to upstream without changing the data repo. He reviews the
+result with `--diff-view installed` and publishes it with a normal
+`promote`. The merge rules, supported kinds, and conflict behavior are in
+[`docs/cli.md`](cli.md) under Stale-promote protection. A clean Git merge
+still requires human review.
 
-Taking upstream is the option that discards work, so `update` gates it behind
-the destructive-change prompt: the installed copy is drifted by definition
-here, and overwriting it is consentable loss. Interactively, `update` lists the
-affected path with `overwrite managed content` and asks once; declining writes
-nothing and exits 0. With `--json`, in CI, or on any non-TTY it refuses with
-exit 3 instead of prompting. So Bob reviews the drift, preserves the edit
-outside the item, then authorizes the overwrite:
+Taking upstream is the option that discards work, so `update` gates it
+behind the destructive-change prompt described in [`docs/cli.md`](cli.md).
+Bob reviews the drift, preserves the edit outside the item, then authorizes
+the overwrite:
 
 ```bash
 capshelf status security-review --diff-view installed # what update would destroy
@@ -74,19 +68,14 @@ matches the lock, so re-pinning to merged history is not a destructive change.
 
 ## Putting a new item on the shelf
 
-`promote` moves edits in items the project already tracks. A hand-written
-skill in `.claude/skills/` starts untracked. Run `capshelf share` with no
-item to offer it to the shelf. The picker scans `.claude/`, `.codex/`, and
-`.pi/` for skills, Pi extensions, and subagents that no lock claims, plus
-unmanaged config values in the generated outputs. Each marked row runs the
-same adoption a named `capshelf share <kind>/<name>` runs. Skills adopt into
-local scope by default. Pi extensions and subagents adopt into project
-scope. After adoption, `promote` is the verb for later edits.
-
-Bare `capshelf promote` opens the same kind of picker over the project's
-tracked items. Each mark runs the same promote a named invocation runs, so
-the review rules in this document do not change. Both pickers need a
-terminal and refuse on a non-TTY, so CI must name items explicitly.
+A hand-written skill in `.claude/skills/` starts untracked. `capshelf share`
+with no item opens a picker over untracked skills, Pi extensions, subagents,
+and unmanaged config values, and adopts the rows you mark. After adoption,
+`promote` is the verb for later edits, and bare `capshelf promote` opens the
+same kind of picker over the tracked items. Each mark runs the same command
+a named invocation runs, so the review rules in this document do not change.
+Both pickers refuse on a non-TTY, so CI must name items explicitly. Row
+rules and scope defaults are in [`docs/cli.md`](cli.md) under The picker.
 
 ## Proposing a change upstream (review required, or branch-protected main)
 

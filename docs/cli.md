@@ -21,30 +21,13 @@ runs on top of it, and `docs/marketplaces.md` covers plugin catalogs.
 
 ## Install
 
-Homebrew:
-
 ```
 brew install genged/tap/capshelf
 ```
 
-Release binary without Homebrew (verifies the published SHA-256 manifest,
-installs to `~/.local/bin/capshelf`):
-
-```
-curl -fsSL https://raw.githubusercontent.com/genged/capshelf/main/scripts/install.sh | sh
-```
-
-Source install:
-
-```
-make install        # builds binary, copies to ~/.local/bin/capshelf
-```
-
-Dev loop:
-
-```
-bun run src/cli.ts <verb> [args]    # run source directly, no build
-```
+The release-script and source install paths are in the
+[README](../README.md) Quickstart. Dev loop:
+`bun run src/cli.ts <verb> [args]` runs the CLI from source, no build.
 
 ## Concepts
 
@@ -69,20 +52,9 @@ they also run outside any project when a data repo is given via `--data` or
 `$CAPSHELF_HOME`, so a shelf can be evaluated before it is adopted. Inside a
 project they use its binding and show install/tracking status as usual.
 
-Claude also loads personal skills from `~/.claude/skills/<name>`. If a personal
-skill has the same name as a project-managed skill, Claude will use the personal
-skill first. Capshelf does not manage the personal copy, but `init`, `add`,
-`apply`, `update`, `revert`, `promote`, and `status` warn with
-`shadowed_by_personal_claude_skill`. `status` also lists the shadowing skill in
-`external/  (Personal Claude)`, and `status --strict` exits 4 while the shadow
-exists.
-
-Capshelf also inventories user-level runtime skills without taking ownership:
-`capshelf ls` and `capshelf status` include skills from `~/.claude/skills`,
-`~/.agents/skills`, and `$CODEX_HOME/skills` (defaulting to
-`~/.codex/skills`) by default. Hidden directories such as `.system` are
-ignored. The `--user` flag narrows `ls` or `status` to only this user-level
-inventory and does not require a capshelf project or data repo.
+Personal Claude skills, skills.sh-managed skills, and Claude plugins are
+external state that capshelf reports without taking ownership — see
+Coexisting with other tools below.
 
 Most item arguments accept either a bare unique name (`hello`) or an explicit kind/name ref (`skills/hello`). Lock keys such as `data/skills/hello` are internal and are not accepted as normal item refs.
 
@@ -152,13 +124,7 @@ upstream at the same default clone path `init --data <remote-url>` uses, writes
 materializes the project's locked data items.
 
 If you already cloned the data repo somewhere else, bind that local clone
-explicitly instead:
-
-```bash
-git clone https://github.com/acme/capshelf-data ~/code/capshelf-data
-capshelf set-data ~/code/capshelf-data
-capshelf apply
-```
+with `capshelf data bind <path>` instead — see Changing the binding.
 
 ### Cloning from a remote URL
 
@@ -183,7 +149,7 @@ clone had been passed to `--data`:
 - `file://` URLs are accepted as bootstrap input only with `--no-upstream`
   (useful for local mirrors and testing). They are never recorded as
   `dataRepoUpstream`: a machine-local path is not a portable upstream, and
-  `set-upstream` rejects `file://` URLs.
+  `data upstream` rejects `file://` URLs.
 - Passing `--upstream` alongside a remote `--data` URL requires both to
   normalize to the same identity; a mismatch fails with exit 4 before
   anything is cloned or written.
@@ -195,31 +161,26 @@ clone had been passed to `--data`:
 
 Supported forms are full remote URLs: `https://host/owner/repo[.git]`,
 `git@host:owner/repo[.git]`, and `ssh://git@host/path/repo[.git]`. Shorthand
-such as `owner/repo` or `github:owner/repo` is rejected. `set-data` stays a
+such as `owner/repo` or `github:owner/repo` is rejected. `data bind` stays a
 local-path binding command; pass remote URLs only to `init --data`.
 
 ### Changing the binding
 
-`set-data` verifies the path is the root of a Git worktree, checks the clone's `origin` against
-`dataRepoUpstream` when present, verifies existing data lock entries can be read
-from the clone, writes `.capshelf/local.json`, and ensures
-`.capshelf/.gitignore` contains that file.
+`data bind` verifies the path is the root of a Git worktree, checks the
+clone's `origin` against `dataRepoUpstream` when present, verifies existing
+data lock entries can be read from the clone, writes `.capshelf/local.json`,
+and ensures `.capshelf/.gitignore` contains that file. Nested directories
+inside a worktree are not valid bindings. Paths containing `..` or symlinked
+parent components are accepted only when their canonical path is the
+worktree root. `data bind` accepts only local paths: a remote data repo URL
+fails with exit 3 and points at `capshelf init --data <remote-url>` for new
+projects, or a manual `git clone` plus `data bind <path>` for existing ones.
 
-Nested directories inside a worktree are not valid bindings. Paths containing
-`..` or symlinked parent components are accepted only when their canonical
-path is the worktree root.
-
-`set-data` accepts only local paths. Passing a remote data repo URL fails with
-exit 3 and points at `capshelf init --data <remote-data-repo-url>` for new
-projects, or a manual `git clone` plus `set-data <path>` for existing ones.
-
-Use `capshelf set-upstream <url>` to add or change the committed upstream URL.
-The URL is normalized before writing. Unsupported URL shapes are rejected.
-
-Both `set-data` and `set-upstream` support `--json`: `set-data --json` prints
-`{ project, dataRepo }` with the resolved absolute path, and
-`set-upstream --json` prints `{ project, dataRepoUpstream }` with the
-normalized URL.
+`data upstream <url>` adds or changes the committed upstream URL, normalized
+before writing; unsupported URL shapes are rejected. Both subcommands
+support `--json`: `data bind --json` prints `{ project, dataRepo }` with the
+resolved absolute path, and `data upstream --json` prints
+`{ project, dataRepoUpstream }` with the normalized URL.
 
 ### Legacy manifests
 
@@ -312,21 +273,9 @@ The core agent-driven flow. Works on data items only — system items are read-o
  agent: Edit tool on .agents/skills/security-review/SKILL.md
 
  agent: capshelf status security-review --json
-   ← {
-       "items": [
-         {
-           "scope": "project",
-           "source": "data",
-           "kind": "skills",
-           "name": "security-review",
-           "state": "drifted_local",
-           "lockedSha": "9f2c1e",
-           "currentSha": "fa17b2",
-           "upstreamSha": "9f2c1e",
-           "sourceCommit": "abc123"
-         }
-       ]
-     }
+   ← { "items": [ { "kind": "skills", "name": "security-review",
+       "state": "drifted_local", "lockedSha": "9f2c1e",
+       "currentSha": "fa17b2", "upstreamSha": "9f2c1e", … } ] }
 
  agent (or user) chooses:
    capshelf promote security-review -m "add SQLi check"
@@ -397,9 +346,6 @@ lock, `add` adopts the canonical installed target only when its bytes and
 executable modes exactly match the commit it would pin; a mismatch remains an
 unmanaged-target conflict and writes no metadata.
 
-`promote --create` and `promote --local --to-project` have been removed; use
-`share` for adoption and `move --to <scope>` for scope changes.
-
 ### Config fragments
 
 Fragments are data repo source files merged into project-owned config outputs:
@@ -441,35 +387,27 @@ order; identical values and mergeable arrays/objects are fine. JSON outputs
 tolerated), but a managed rewrite serializes plain JSON.
 
 That JSONC tolerance is capshelf's alone. **Claude Code requires strict JSON
-for both files** (verified against 2.1.220): a `//` comment in
-`.claude/settings.json` makes the whole file silently not load, and the same
-comment in `.mcp.json` reports `[Failed to parse] … MCP config is not a valid
-JSON`. So removing those comments repairs the file rather than destroying
-anything: capshelf warns and proceeds instead of asking for consent. TOML is
-the opposite — `#` comments are standard and Codex reads them — so comment loss
-in `.codex/config.toml` is a `config_comments` destructive change that requires
-consent, and dry-run and refusal output name the affected config path. TOML
-date/time values are rejected in
-fragment sources: capshelf's merge and hash pipeline round-trips values through
-JSON, which cannot preserve TOML date types (a local date would silently become
-a string or an offset date-time on re-emit).
+for both files** (verified against 2.1.220): a `//` comment stops either
+file from loading, so removing the comments repairs the file, and capshelf
+warns and proceeds without a consent prompt. `#` comments in
+`.codex/config.toml` are standard TOML that Codex reads, so their loss is a
+`config_comments` destructive change that requires consent, and dry-run and
+refusal output name the affected config path. TOML date/time, `inf`,
+`-inf`, and `nan` values are rejected in fragment sources: the merge and
+hash pipeline round-trips values through JSON, which cannot preserve them.
 
-`add` materializes exactly what the pin contains. Both the destructive-change
-preflight and the install itself derive the target set from the commit `add`
-pins, not from the data repo's working tree — the same source `apply` reads
-from the lock. A canonical source deleted in the working tree but still present
-at that commit is therefore written by `add`, and consent for any collateral
-loss is asked for before it is.
+`add` materializes exactly what the pin contains: the destructive-change
+preflight and the install both derive the target set from the commit `add`
+pins, never from the data repo's working tree. A canonical source deleted
+in the working tree but present at that commit is still written, behind the
+usual consent.
 
 Commands that reconcile multiple fragment outputs preflight every target
-before writing any of them. If a later output swap fails, earlier swaps are
-rolled back and lock changes are not persisted. That all-or-nothing rule is
-scoped to fragment targets, because they share output files and a partial
-write leaves the runtime diverged from the lock. Independent copy-directory
-and subagent items share nothing, so a failing one is reported and every
-healthy item still converges; the command exits 1. TOML `inf`, `-inf`, and `nan`
-are rejected before hashing or comparison because JSON canonicalization cannot
-represent them distinctly.
+before writing any of them; if a later output swap fails, earlier swaps are
+rolled back and lock changes are not persisted. Fragment targets share
+output files, so the rule is all-or-nothing there. Independent
+copy-directory and subagent items share nothing, so a failing one is
+reported, every healthy item still converges, and the command exits 1.
 
 `share` for fragments always lands in project scope (`--to project` is the
 default; `--to local` is rejected). For mcp items the common case needs no
@@ -583,10 +521,9 @@ name that differs from the Capshelf item name warns but does not fail.
 ### Target coverage
 
 `mcp/<name>` and `subagents/<name>` each have two candidate runtime targets,
-and an item may carry one source or both. `.mcp.json` is not a neutral fact —
-it is Claude Code's project MCP file — so naming it alone said nothing about
-Codex. `add`, `show`, and `status` therefore state which runtime targets an
-item covers, which it does not, and where the missing source belongs.
+and an item may carry one source or both, so `add`, `show`, and `status`
+state which runtime targets an item covers, which it does not, and where
+the missing source belongs.
 
 `add` and `show` print a block in place of a single output path:
 
@@ -615,13 +552,9 @@ Rules:
 - **A gap is a fact, not a fault.** capshelf has no project-level declaration
   of which harnesses you use, so a one-target item is a valid install: exit
   stays 0, there is no `⚠` glyph, and `--strict` is unaffected.
-- **The gap line names a canonical path, never a computed repair command.** The
-  path a target reads is fixed, so the sentence is true whether the source is
-  missing everywhere, present at `HEAD` but not at the locked commit, or
-  present only in the data repo's working tree. `capshelf share <ref> --target
-  <t> --from <file>` remains the convenient route when the file is already on
-  disk, but it refuses in several of the states this report covers, so it is
-  documented rather than printed.
+- **The gap line names a canonical path, never a computed repair command.**
+  `capshelf share <ref> --target <t> --from <file>` remains the convenient
+  route when the file is already on disk.
 - **Coverage is read at a commit, never at the worktree.** `add` reads the
   commit it just pinned; `show` and `status` read an installed item's locked
   `sourceCommit`, and `HEAD` for an item nothing has pinned.
@@ -637,7 +570,7 @@ Rules:
 - `settings/<name>` and `codex-config/<name>` have one candidate target each
   and are unchanged: no block, and no `targetCoverage` key in `--json`.
 - `add bundles/<name>` reports no per-member coverage; its members' gaps show
-  up in `status`, which is why that sub-line repeats the whole sentence.
+  up in `status`.
 
 `share` prints the same block for the item it just committed, so a one-target
 share names the target it did not create a source for. `rm` reports every
@@ -798,35 +731,20 @@ match nothing outside it.
 with backspace.
 
 The `All` tab groups the list under one heading per kind while the search box
-is empty. Once you type, the headings go and the list is ranked. A heading
-between two results would put the best match in the middle of the list.
+is empty. Once you type, the headings go and the list is ranked.
 
-Typing filters by fuzzy subsequence, not by substring. The characters must
-appear in order, and gaps between them are allowed, so `secrev` finds
-`skills/security-review` and `pgh` finds `skills/postgres-helper`. The matcher
-is fzf's FuzzyMatchV1, ported from the published description in
-`src/algo/algo.go` of junegunn/fzf. It keeps that algorithm's scoring. A match
-at the start of a word scores higher. Consecutive characters score higher than
-scattered ones. A wide gap cancels the word-start bonus. Equal scores prefer
-the shorter ref, which is fzf's own default tiebreak. Smart case follows fzf
-too. A lowercase query ignores case, and one capital letter makes the query
-case-sensitive.
-
-A query matches against the ref, the tags, and the description, so `vulnerab`
-finds an item through its description. Whitespace splits the query into terms,
-and every term must match, exactly as `capshelf search` defines a query. Space
-is always query text. Only `tab` marks a row.
-
-Each field is scored on its own and then weighted: ref 8, tags 4, description
-2. These are the `capshelf search` weights, without `content`, which the picker
-does not read. A term takes the best weighted field it hits, and the term
-scores add. A name match therefore beats a description match unless the name
-match is far sloppier. Do not match the fields as one joined string. fzf scores
-a match after a space above one after a delimiter. Every word of a description
-would then outrank the item name, which follows the `/` in its ref.
-`capshelf search` is unchanged and still matches exact substrings. It is a
-scriptable command whose results a user cites and reruns. The picker is a live
-filter that one more keystroke corrects.
+Typing filters by fuzzy subsequence, not by substring: the characters must
+appear in order and gaps are allowed, so `secrev` finds
+`skills/security-review`. Scoring is fzf's FuzzyMatchV1 with fzf's tiebreaks
+and smart case — a lowercase query ignores case, and one capital letter
+makes the query case-sensitive. A query matches against the ref, the tags,
+and the description, weighted ref 8, tags 4, description 2, so a name match
+beats a description match unless it is far sloppier. The picker reads no
+item content. Whitespace splits the query into terms, and every term must
+match, exactly as `capshelf search` defines a query. Space is always query
+text; only `tab` marks a row. `capshelf search` is unchanged and still
+matches exact substrings. The design rationale is in
+[`docs/architecture.md`](architecture.md) under Interactive selection.
 
 An item the project already has stays in the list, struck through and grey. It
 cannot be marked. The cursor can still rest on a struck-through row, and the
@@ -835,13 +753,12 @@ for. `tab` on such a row does nothing. A bundle is always offered, because a bun
 macro and is never locked. Members that are already present are skipped when
 the bundle expands.
 
-The picker installs each selection independently. This is the one way it
-differs from `add bundles/<name>`. A bundle is a curated set, so one member
-that fails preflight refuses the whole bundle. A picker selection is a pile of
-separate choices. A failure there reports its reason and names the command that
-retries that one item. The other selections stay installed. `capshelf add` with
-no item exits 3 if any selection failed. `capshelf init` still exits 0, because
-its exit code answers whether the project is initialized.
+The picker installs each selection independently, unlike `add
+bundles/<name>`: one bundle member that fails preflight refuses the whole
+bundle, while a picker failure reports its reason and the retry command for
+that one item, and the other selections stay installed. `capshelf add` with
+no item exits 3 if any selection failed. `capshelf init` still exits 0,
+because its exit code answers whether the project is initialized.
 
 The picker needs a terminal on both stdin and stderr, and that terminal must
 declare capabilities. `TERM=dumb` is refused, and so is an unset or empty
@@ -969,16 +886,12 @@ kinds) and SKILL.md YAML frontmatter (skills only). The sidecar declares
 `description`.
 
 For skills, the sidecar `description` is optional and usually unnecessary —
-frontmatter fills it in. It exists because (a) fragment kinds have no
-frontmatter, so the sidecar is their only source and one schema covers all
-kinds; (b) the costs differ: frontmatter is shipped to Claude and hashed, so
-editing it is content drift that every consuming project must `update`
-through, while a sidecar edit causes no drift at all; and (c) the audiences
-differ: frontmatter is the runtime invocation trigger Claude reads ("Use
-when…"), while the sidecar is catalog copy for whoever browses the shelf.
-Use a sidecar `description` on a skill only when the catalog blurb should
-differ from the trigger phrasing, or to tune copy without shipping a
-content change. When both exist, the sidecar wins.
+frontmatter fills it in. Use a sidecar `description` on a skill only when
+the catalog blurb should differ from the trigger phrasing, or to tune copy
+without shipping a content change: a frontmatter edit is content drift,
+while a sidecar edit causes none. When both exist, the sidecar wins. The
+full rationale is in [`docs/architecture.md`](architecture.md) under Item
+metadata.
 
 `ls` appends a description (truncated to 60 characters) and `#tags` to each
 row; `ls --json` rows gain optional `description` and `tags` fields
@@ -997,7 +910,7 @@ can rely on the keys; `description` is included when present.
 The sidecar is catalog data, not item content: it is never hashed or
 materialized into projects. Tags, descriptions, and relations remain live
 catalog data and need no project update. Declared needs are pinned separately
-in lock version 3: `status` can report a requirements update while content
+in the lock: `status` can report a requirements update while content
 stays `ok`, and `update` refreshes that snapshot without rewriting unchanged
 installed bytes. Malformed metadata warns and degrades per field.
 
@@ -1066,10 +979,9 @@ each difference: `content-edit`, `line-endings`, `encoding`, `ident`, `mode`,
 best-effort *explanations*, not a taxonomy — two transformations can compose —
 so an entry carries a primary kind plus secondary facts.
 
-They never decide anything. Whether a file was rewritten by a person or by a
-checkout is not decidable from bytes: a user who deliberately converts a file
-to CRLF for a Windows tool produces exactly what `core.autocrlf=true` produces.
-So the classification labels the consent prompt and never suppresses it.
+They never decide anything: whether a person or a checkout rewrote the file
+is not decidable from bytes, so the classification labels the consent
+prompt and never suppresses it.
 
 ### Destructive-change consent
 
@@ -1216,12 +1128,10 @@ state, Git configuration, checkout filters, ignore rules, and the filesystem
 cannot reach it. `add`, `apply`, `update`, and `revert` all write bytes read
 from those same blob ids, so they cannot disagree about what an item is.
 
-Version 3 recorded `sha`, a hash of the data repo's *working tree*, next to a
-commit chosen separately. Git's cleanliness is not byte equality, so a clean
-filter, an index bit, or a sparse checkout produced a lock that reported
-`up-to-date` forever and that `update`, `apply`, and `revert` all refused.
+Why the older working-tree identity failed is in
+[`docs/architecture.md`](architecture.md) under Identity is the Git tree.
 
-What this changes for a user:
+What version 4 changes for a user:
 
 - An item whose repository uses `core.autocrlf`, `text` attributes, or
   `eol=crlf` installs and updates normally. Every project receives what Git
@@ -1414,6 +1324,15 @@ Capshelf reads Claude Code `enabledPlugins` entries from managed settings,
 read-only external items: capshelf does not edit Claude plugin settings or
 mutate `~/.claude/plugins/cache`.
 
+### Personal Claude skills
+
+Claude loads personal skills from `~/.claude/skills/<name>` ahead of a
+project-managed skill with the same name. Capshelf does not manage the
+personal copy, but `init`, `add`, `apply`, `update`, `revert`, `promote`,
+and `status` warn with `shadowed_by_personal_claude_skill`, `status` lists
+the shadowing skill under `external/  (Personal Claude)`, and
+`status --strict` exits 4 while the shadow exists.
+
 ### User-level skills
 
 `capshelf ls` and `capshelf status` include a read-only inventory for skills
@@ -1468,51 +1387,17 @@ fix by one of:
       capshelf init --data <path-or-url> --no-upstream
 ```
 
-Missing binding with an upstream declared:
+The other binding errors follow the same shape — the message states the
+facts it read and enumerates the fixes as pasteable commands:
 
-```text
-no data repo configured for this project.
-upstream (per .capshelf/capshelf.json): https://github.com/acme/capshelf-data
-
-  1. clone it somewhere you control:
-       git clone https://github.com/acme/capshelf-data <path>
-  2. point capshelf at it:
-       capshelf set-data <path>
-  3. retry:
-       capshelf apply
-```
-
-Missing binding without a declared upstream:
-
-```text
-no data repo configured for this project.
-
-  pass --data <path>, or create .capshelf/local.json:
-    mkdir -p .capshelf
-    echo '{"dataRepo": "/path/to/clone"}' > .capshelf/local.json
-  or set the env var for machine-wide default:
-    export CAPSHELF_HOME=/path/to/clone
-
-  if this is a cloned project, .capshelf/capshelf.json does not declare dataRepoUpstream,
-  so capshelf cannot tell you which data repo to clone. Ask a maintainer
-  for the data repo URL, then make it discoverable with:
-    capshelf set-upstream <data-repo-url>
-```
-
-Upstream mismatch:
-
-```text
-data repo at <path> is bound to the wrong upstream.
-
-  .capshelf/capshelf.json declares: <canonical-upstream>
-  local clone origin:     <canonical-origin>
-
-  fix by one of:
-    - point capshelf at a clone of the declared upstream:
-        capshelf set-data <path-to-correct-clone>
-    - change the project's declared upstream (commits to .capshelf/capshelf.json):
-        capshelf set-upstream <new-url>
-```
+- **Missing binding with a declared upstream** (exit 6) prints the upstream
+  URL and the three steps: clone it, bind the clone, retry.
+- **Missing binding without a declared upstream** (exit 6) prints the
+  `--data`, `.capshelf/local.json`, and `$CAPSHELF_HOME` options, and says
+  to ask a maintainer for the URL and declare it as the upstream.
+- **Upstream mismatch** (exit 4) prints the declared and actual normalized
+  URLs and the two fixes: bind a clone of the declared upstream, or change
+  the project's declared upstream.
 
 ### missing_source_commit
 

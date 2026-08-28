@@ -24,7 +24,11 @@ and support `--dry-run`, `--json`, and `-m`. A failed commit restores the
 source, generated paths, index, and HEAD when Capshelf still owns the observed
 HEAD. If another process commits concurrently, Capshelf never rewinds that
 commit; it restores only unchanged owned roots that are safe to restore.
-Claude preserves structurally external entries but refuses to mutate them.
+Capshelf-managed Claude entries are skill-only root sources
+(`source: "./"`, `strict: false`) with explicit canonical skill paths.
+Versioned, remote-source, and mixed-component entries are preserved as
+external state and refused for mutation; a malformed attempted-managed
+entry is invalid.
 
 Marketplace and plugin identities use kebab-case, 1-64 characters, and may
 not be `claude`, `anthropic`, `codex`, `openai`, or `capshelf`. Claude
@@ -69,12 +73,19 @@ mutually exclusive.
 repo. Claude produces a deterministic root-content `.plugin` ZIP for Cowork
 upload; Codex produces a detached one-plugin marketplace directory. Packaging
 uses current Git-visible working-tree bytes by default; `--from-head` selects
-committed bytes. Symlinks, private dotenv files, unsafe output containment,
-unsafe generated paths, and non-identical output replacement are refused.
-Containment follows real paths through the nearest existing ancestor, so a
-lexically external output cannot re-enter the data repo through a symlink.
-Tracked files use Git executable intent; untracked files use filesystem mode.
-Rebuilding identical output returns `already-built`.
+committed bytes. Packaging copies only Git-visible selected skill files and
+excludes `.capshelf.yml` sidecars and ignored content. Symlinks, private
+dotenv files, unsafe output containment, unsafe generated paths, and
+non-identical output replacement are refused. Source, selected-skill,
+generated, and package paths are checked component-by-component for symlink
+ancestors before reads, deletions, or writes. Containment follows real
+paths through the nearest existing ancestor, so a lexically external output
+cannot re-enter the data repo through a symlink. Generated relative paths
+reject traversal, absolute and Windows-drive paths, backslashes, NUL bytes,
+duplicates, and file/directory prefix collisions before any owned tree or
+package is written. Tracked files use Git executable intent; untracked
+files use filesystem mode. Rebuilding identical output returns
+`already-built`.
 
 Plugin membership must always name existing canonical skills. For a direct
 data-repo skill rename, rename the skill and update every Claude/Codex
