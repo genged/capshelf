@@ -48,7 +48,12 @@ import {
   printMetadataWarnings,
 } from "../metadata";
 import type { ItemMetadata, ItemNeeds } from "../metadata";
-import { NotFoundError, PreconditionError, ResultExitError } from "../errors";
+import {
+  NotFoundError,
+  PreconditionError,
+  ResultExitError,
+  firstErrorLine,
+} from "../errors";
 import { targetDir } from "../sync";
 import { findInstallConflict, installedPath, parseLockKey } from "../installed";
 import { isSystemItemName } from "../bundled";
@@ -237,9 +242,7 @@ async function addOne(
     );
   }
   if (isSystemItemName(ref.name)) {
-    throw new PreconditionError(
-      `"${ref.name}" is a system item — managed by the CLI, not addable from a data repo. It is installed automatically by 'capshelf init'.`,
-    );
+    throw new PreconditionError(systemItemAddRefusal(ref.name));
   }
 
   const ctx = await loadAddContext(opts, cmd);
@@ -265,27 +268,14 @@ async function addOne(
     );
   }
 
-  let approvedPin: PinnedSource | null = null;
-  if (isFragmentItemKind(item.kind)) {
-    const preflight = await planStandaloneFragmentAdd(ctx, item);
-    if (
-      !(await confirmDestructiveChanges(preflight.plan, {
-        operation: "Add",
-        json: opts.json === true,
-        yes: opts.yes === true,
-        dryRun: false,
-        rerunCommand: `capshelf add ${item.kind}/${item.name}${ctx.local ? " --local" : ""} --yes`,
-      }))
-    ) {
-      return;
-    }
-    const revalidated = await planStandaloneFragmentAdd(ctx, item);
-    assertDestructivePlanUnchanged(preflight.plan, revalidated.plan);
-    approvedPin = revalidated.pin;
-  }
+  const consent = await approveFragmentPin(ctx, item, {
+    json: opts.json === true,
+    yes: opts.yes === true,
+  });
+  if (!consent.proceed) return;
 
   const result = await installDataItem(ctx, item, {
-    ...(approvedPin && { pin: approvedPin }),
+    ...(consent.pin && { pin: consent.pin }),
   });
 
   if (opts.json) {
@@ -1211,9 +1201,7 @@ export async function runInteractiveAdd(request: {
       // next to `system/skills/capshelf`, giving two lock entries ownership of
       // one destination.
       if (isSystemItemName(ref.name)) {
-        throw new PreconditionError(
-          `"${ref.name}" is a system item — managed by the CLI, not addable from a data repo. It is installed automatically by 'capshelf init'.`,
-        );
+        throw new PreconditionError(systemItemAddRefusal(ref.name));
       }
       const item = await findMasterItemByRef(boundRepo, ref);
       if (!item) {
@@ -1222,30 +1210,19 @@ export async function runInteractiveAdd(request: {
         );
       }
 
-      let approvedPin: PinnedSource | null = null;
-      if (isFragmentItemKind(item.kind)) {
-        // The same consent gate a named `add` reaches. A fragment picked from
-        // a list can destroy a config comment exactly as one typed by hand.
-        const preflight = await planStandaloneFragmentAdd(ctx, item);
-        if (
-          !(await confirmDestructiveChanges(preflight.plan, {
-            operation: "Add",
-            json: false,
-            yes: opts.yes === true,
-            dryRun: false,
-            rerunCommand: `capshelf add ${item.kind}/${item.name}${ctx.local ? " --local" : ""} --yes`,
-          }))
-        ) {
-          failed.push(itemRef);
-          continue;
-        }
-        const revalidated = await planStandaloneFragmentAdd(ctx, item);
-        assertDestructivePlanUnchanged(preflight.plan, revalidated.plan);
-        approvedPin = revalidated.pin;
+      // The same consent gate a named `add` reaches. A fragment picked from
+      // a list can destroy a config comment exactly as one typed by hand.
+      const consent = await approveFragmentPin(ctx, item, {
+        json: false,
+        yes: opts.yes === true,
+      });
+      if (!consent.proceed) {
+        failed.push(itemRef);
+        continue;
       }
 
       const result = await installDataItem(ctx, item, {
-        ...(approvedPin && { pin: approvedPin }),
+        ...(consent.pin && { pin: consent.pin }),
       });
       added.push(itemRef);
       console.log(`+ ${itemRef.padEnd(33)} @ ${shortIdentity(result.sha)}`);
@@ -1279,14 +1256,48 @@ export async function runInteractiveAdd(request: {
   return { outcome: "installed", added, alreadyInstalled, failed };
 }
 
+/** The refusal both entry points into `installDataItem` print for a system name. */
+function systemItemAddRefusal(name: string): string {
+  return `"${name}" is a system item — managed by the CLI, not addable from a data repo. It is installed automatically by 'capshelf init'.`;
+}
+
+/**
+ * The fragment consent gate both entry points into `installDataItem` run: a
+ * fragment picked from a list can destroy a config comment exactly as one
+ * typed by hand. Preflight, confirm, then re-plan and prove the plan
+ * unchanged — the consent was for the plan the user saw. A non-fragment item
+ * has no gate and proceeds with no pin.
+ */
+async function approveFragmentPin(
+  ctx: Awaited<ReturnType<typeof loadAddContext>>,
+  item: MasterItem,
+  opts: { json: boolean; yes: boolean },
+): Promise<{ proceed: boolean; pin: PinnedSource | null }> {
+  if (!isFragmentItemKind(item.kind)) return { proceed: true, pin: null };
+  const preflight = await planStandaloneFragmentAdd(ctx, item);
+  if (
+    !(await confirmDestructiveChanges(preflight.plan, {
+      operation: "Add",
+      json: opts.json,
+      yes: opts.yes,
+      dryRun: false,
+      rerunCommand: `capshelf add ${item.kind}/${item.name}${ctx.local ? " --local" : ""} --yes`,
+    }))
+  ) {
+    return { proceed: false, pin: null };
+  }
+  const revalidated = await planStandaloneFragmentAdd(ctx, item);
+  assertDestructivePlanUnchanged(preflight.plan, revalidated.plan);
+  return { proceed: true, pin: revalidated.pin };
+}
+
 /**
  * A one-line reason for a per-item failure. `ResultExitError` carries no
  * message because the command that threw it already reported the detail.
  */
 function errorDetail(error: unknown): string {
   if (error instanceof ResultExitError) return "";
-  if (error instanceof Error) return error.message.split("\n")[0] ?? "failed";
-  return String(error);
+  return firstErrorLine(error);
 }
 
 function printInteractiveSummary(

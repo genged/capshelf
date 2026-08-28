@@ -21,7 +21,7 @@ import {
   originRemoteUrl,
 } from "../git";
 import { globalOpts } from "../global-options";
-import { PreconditionError } from "../errors";
+import { PreconditionError, firstErrorLine } from "../errors";
 import { localConfigPath, saveLocalConfig } from "../local-config";
 import { UpstreamVerificationError } from "../upstream-check";
 import {
@@ -370,8 +370,7 @@ async function offerShelf(
       dataRepo,
     });
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    console.error(`⚠ could not offer the shelf: ${detail.split("\n")[0]}`);
+    console.error(`⚠ could not offer the shelf: ${firstErrorLine(error)}`);
     console.error("  the project is initialized; run capshelf ls to see why");
     return null;
   }

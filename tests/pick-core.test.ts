@@ -3,7 +3,6 @@ import {
   createPickFinder,
   highlightRef,
   orderPickRows,
-  pickRowCounts,
   pickRowHint,
   sanitizeDisplayText,
   scorePickRow,
@@ -242,18 +241,6 @@ describe("pickRowHint", () => {
 
   test("a bare row has no hint", () => {
     expect(pickRowHint(row("skills/a"))).toBeUndefined();
-  });
-});
-
-describe("pickRowCounts", () => {
-  test("splits installable from installed", () => {
-    expect(
-      pickRowCounts([
-        row("skills/a"),
-        row("skills/b", { installed: true }),
-        row("skills/c"),
-      ]),
-    ).toEqual({ total: 3, installable: 2, installed: 1 });
   });
 });
 

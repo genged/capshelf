@@ -19,11 +19,11 @@ import { PreconditionError } from "../errors";
 import { parseItemRef } from "../item-ref";
 import { assertLockV4 } from "../lock";
 import { reportItemFailure } from "./picker-report";
-import { homeRelative, shellArg } from "../paths";
+import { capshelfCommandPrefix, shellArg } from "../paths";
 import { pickItems, pickTerminalUnavailable } from "../pick";
 import type { PickUnavailableReason } from "../pick";
 import { loadPromoteCatalog, unwatchedPathsForItem } from "../promote-catalog";
-import { originRemoteUrl } from "../git";
+import { printShareUpstreamGuidance } from "./share";
 import { promoteOne } from "./promote";
 import type { PromoteOptions } from "./promote";
 
@@ -136,11 +136,7 @@ export async function runInteractivePromote(request: {
       reportItemFailure(
         ref,
         error,
-        `${
-          dataOverride === undefined
-            ? "capshelf"
-            : `capshelf --data ${shellArg(dataOverride)}`
-        } promote ${shellArg(ref)}${request.promote.local ? " --local" : ""}${
+        `${capshelfCommandPrefix(dataOverride)} promote ${shellArg(ref)}${request.promote.local ? " --local" : ""}${
           request.promote.message !== undefined
             ? ` -m ${shellArg(request.promote.message)}`
             : ""
@@ -153,18 +149,6 @@ export async function runInteractivePromote(request: {
   if (failed.length > 0) parts.push(`${failed.length} failed`);
   console.log("");
   console.log(`${failed.length > 0 ? "!" : "✓"} ${parts.join(", ")}`);
-  if (committed) {
-    console.log("");
-    console.log("committed to local data repo:");
-    console.log(`  ${homeRelative(dataRepo)}`);
-    if ((await originRemoteUrl(dataRepo)) !== null) {
-      console.log("");
-      console.log("to share upstream:");
-      // The absolute path through `shellArg`, per its contract: this line is a
-      // command to paste, and a repo path may hold a space or a `$`.
-      console.log(`  cd ${shellArg(dataRepo)}`);
-      console.log("  git push");
-    }
-  }
+  if (committed) await printShareUpstreamGuidance(dataRepo);
   return { outcome: "promoted", promoted, failed };
 }

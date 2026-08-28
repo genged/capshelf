@@ -21,7 +21,7 @@
  */
 import { AutocompletePrompt, isCancel } from "@clack/core";
 import { createPickFinder, isPickRowDisabled, pickRowId } from "./pick-core";
-import type { PickKind, PickRow, RankedPickRow } from "./pick-core";
+import type { PickFinder, PickKind, PickRow, RankedPickRow } from "./pick-core";
 import { GUTTER, bodyBudget, renderPickBody } from "./pick-frame";
 import type { PickPalette } from "./pick-frame";
 import { pickTabs, rowsForTab, stepTab } from "./pick-tabs";
@@ -194,6 +194,13 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
   /** The query the option list was last built for; see `buildOptions`. */
   private renderedQuery: string | null = null;
   /**
+   * One finder per tab, built lazily. Rows never change during a session, so
+   * the copy-and-sort inside `createPickFinder` runs once per tab instead of
+   * once per keystroke — `find` alone is the per-keystroke path, which is the
+   * split `pick-core.ts` documents.
+   */
+  private finders = new Map<string, PickFinder>();
+  /**
    * Row ids `Tab` must ignore. This is the picker's own rule, not clack's:
    * marking `disabled: true` on the option made clack's cursor walk skip the
    * row (`findCursor` in `@clack/core`), so a disabled row could never be
@@ -281,10 +288,12 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
     this.renderedQuery = query;
 
     const tab = this.tabs?.[this.activeTab]?.key ?? "all";
-    this.ranked = createPickFinder(
-      rowsForTab(this.allRows, tab),
-      this.kindOrder,
-    ).find(query);
+    let finder = this.finders?.get(tab);
+    if (!finder) {
+      finder = createPickFinder(rowsForTab(this.allRows, tab), this.kindOrder);
+      this.finders?.set(tab, finder);
+    }
+    this.ranked = finder.find(query);
     this.unmarkableIds = new Set(
       this.ranked
         .filter((entry) => isPickRowDisabled(entry.row))

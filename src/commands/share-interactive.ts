@@ -30,7 +30,7 @@ import type { Lock } from "../lock";
 import { loadManifest } from "../manifest";
 import { isFragmentKindName } from "../master";
 import type { FragmentItemKind } from "../master";
-import { projectRoot, shellArg } from "../paths";
+import { capshelfCommandPrefix, projectRoot, shellArg } from "../paths";
 import { pickItems, pickTerminalUnavailable } from "../pick";
 import { sanitizeDisplayText } from "../pick-core";
 import type { PickUnavailableReason } from "../pick";
@@ -40,11 +40,12 @@ import {
   loadShareCatalog,
   plannedSharesFromMarks,
 } from "../share-catalog";
-import type { PlannedShare, SharePick } from "../share-catalog";
+import type { SharePick } from "../share-catalog";
 import { plannedItemSharesFromMarks } from "../share-scan";
-import type { ItemSharePick, PlannedItemShare } from "../share-scan";
+import type { ItemSharePick } from "../share-scan";
 import {
   printShareUpstreamGuidance,
+  shareCommandLine,
   shareCopyItem,
   shareFragment,
   shareSubagent,
@@ -128,28 +129,20 @@ export async function runInteractiveShare(request: {
     // equivalent command needs no --to flag.
     const scope = planned.kind === "skills" ? "local" : "project";
     const ref = sanitizeDisplayText(`${planned.kind}/${planned.name}`);
-    const command = itemShareCommand(
-      planned,
-      request.share.message,
+    // The equivalent line after a success and the retry line after a failure
+    // are the same string for an on-disk item, because the item's name was
+    // never chosen in the frame.
+    const command = shareCommandLine({
+      ref: `${planned.kind}/${planned.name}`,
+      picks: [],
+      target: planned.target,
+      message: request.share.message,
       dataOverride,
-    );
+    });
     try {
-      // Re-derive after the prompt, then act — the same consent rule the
-      // fragment loop follows. The digest proves the directory or file is
-      // still the content the frame offered.
-      const revalidated = await loadShareCatalog({
-        project,
-        dataRepo,
-        manifest: await loadManifest(project),
-        lock: await loadLock(project),
-        localLock: await loadLocalLock(project),
-      });
-      const changed = changedMarks(planned, revalidated.picks);
-      if (changed.length > 0) {
-        throw new PreconditionError(
-          `${ref} changed while the picker was open; nothing was committed for this item`,
-        );
-      }
+      // The digest proves the directory or file is still the content the
+      // frame offered.
+      await assertMarksFresh(planned, { project, dataRepo }, () => ref);
       const options: ShareOptions = {
         ...(request.share.message !== undefined && {
           message: request.share.message,
@@ -183,15 +176,7 @@ export async function runInteractiveShare(request: {
     } catch (error) {
       failed.push(ref);
       reportItemFailure(ref, error, command);
-      // See the fragment loop below: the commit lands before local tracking
-      // persists, and `add` is the documented repair for that partial state.
-      const addPrefix =
-        dataOverride === undefined
-          ? "capshelf"
-          : `capshelf --data ${shellArg(dataOverride)}`;
-      console.error(
-        `  if the data-repo commit succeeded and only local tracking failed: ${addPrefix} add ${scope === "local" ? "--local " : ""}${shellArg(ref)}`,
-      );
+      printAddRepairHint(ref, scope, dataOverride);
     }
   }
   for (const planned of plannedSharesFromMarks(fragmentMarks)) {
@@ -222,28 +207,9 @@ export async function runInteractiveShare(request: {
         });
         if (refusal !== null) throw new PreconditionError(refusal);
       }
-      // Re-derive after the prompt, then act. The consent was for the values
-      // the frame showed, and the prompt held the terminal for an unbounded
-      // time — so first prove each marked value is still the one that was
-      // offered, against a catalog rebuilt from fresh reads. A changed or
-      // vanished value fails this row; it is not committed from a stale mark.
-      const revalidated = await loadShareCatalog({
-        project,
-        dataRepo,
-        manifest: await loadManifest(project),
-        lock: await loadLock(project),
-        localLock: await loadLocalLock(project),
-      });
-      const changed = changedMarks(planned, revalidated.picks);
-      if (changed.length > 0) {
-        throw new PreconditionError(
-          `${changed
-            .map((mark) => mark.pick)
-            .join(
-              ", ",
-            )} changed while the picker was open; nothing was committed for this item`,
-        );
-      }
+      await assertMarksFresh(planned, { project, dataRepo }, (changed) =>
+        changed.map((mark) => mark.pick).join(", "),
+      );
       // `shareFragment` then reloads the manifest and lock, re-reads the
       // output, re-runs the extraction, and asserts the data repo clean,
       // which narrows the remaining window to the one every command has
@@ -271,25 +237,15 @@ export async function runInteractiveShare(request: {
       reportItemFailure(
         ref,
         error,
-        retryCommand(
-          planned,
-          name,
-          request.share.message,
-          globalOpts(request.cmd).data,
-        ),
+        shareCommandLine({
+          ref: `${planned.kind}/${name}`,
+          picks: planned.picks,
+          target: planned.target,
+          message: request.share.message,
+          dataOverride,
+        }),
       );
-      // The command's standing recovery note, surfaced here because the
-      // interactive user never sees `share --help`: `shareFragment` commits
-      // the fragment before persisting the manifest and lock, and a failure
-      // between those two steps leaves an item the retry command would refuse
-      // as already existing. `add` is the documented repair for that state.
-      const addPrefix =
-        globalOpts(request.cmd).data === undefined
-          ? "capshelf"
-          : `capshelf --data ${shellArg(globalOpts(request.cmd).data as string)}`;
-      console.error(
-        `  if the data-repo commit succeeded and only local tracking failed: ${addPrefix} add ${shellArg(ref)}`,
-      );
+      printAddRepairHint(ref, "project", dataOverride);
     }
   }
 
@@ -362,42 +318,45 @@ function isFragmentSharePick(
 }
 
 /**
- * The command that repeats one item share: the equivalent line after a
- * success, and the retry line after a failure — for an on-disk item the two
- * are the same string, because the item's name was never chosen in the frame.
+ * Re-derive after the prompt, then act. The consent was for the content the
+ * frame showed, and the prompt held the terminal for an unbounded time — so
+ * first prove each marked value is still the one that was offered, against a
+ * catalog rebuilt from fresh reads. A changed or vanished mark fails its row;
+ * it is not committed from a stale read.
  */
-function itemShareCommand(
-  planned: PlannedItemShare,
-  message: string | undefined,
-  dataOverride: string | undefined,
-): string {
-  const prefix =
-    dataOverride === undefined
-      ? "capshelf"
-      : `capshelf --data ${shellArg(dataOverride)}`;
-  const parts = [
-    `${prefix} share ${shellArg(`${planned.kind}/${planned.name}`)}`,
-  ];
-  if (planned.target !== null) parts.push(`--target ${planned.target}`);
-  if (message !== undefined) parts.push(`-m ${shellArg(message)}`);
-  return parts.join(" ");
+async function assertMarksFresh<M extends { id: string; digest: string }>(
+  planned: { marks: M[] },
+  ctx: { project: string; dataRepo: string },
+  describeChanged: (changed: M[]) => string,
+): Promise<void> {
+  const revalidated = await loadShareCatalog({
+    project: ctx.project,
+    dataRepo: ctx.dataRepo,
+    manifest: await loadManifest(ctx.project),
+    lock: await loadLock(ctx.project),
+    localLock: await loadLocalLock(ctx.project),
+  });
+  const changed = changedMarks(planned, revalidated.picks);
+  if (changed.length > 0) {
+    throw new PreconditionError(
+      `${describeChanged(changed)} changed while the picker was open; nothing was committed for this item`,
+    );
+  }
 }
 
-function retryCommand(
-  planned: PlannedShare,
-  name: string,
-  message: string | undefined,
+/**
+ * The command's standing recovery note, surfaced here because the interactive
+ * user never sees `share --help`: every share path commits to the data repo
+ * before persisting the manifest and lock, and a failure between those two
+ * steps leaves an item the retry command would refuse as already existing.
+ * `add` is the documented repair for that state.
+ */
+function printAddRepairHint(
+  ref: string,
+  scope: "project" | "local",
   dataOverride: string | undefined,
-): string {
-  // Repeat `--data` only when this run used the override; see
-  // `shareEquivalentCommand`.
-  const prefix =
-    dataOverride === undefined
-      ? "capshelf"
-      : `capshelf --data ${shellArg(dataOverride)}`;
-  const parts = [`${prefix} share ${shellArg(`${planned.kind}/${name}`)}`];
-  for (const pick of planned.picks) parts.push(`--pick ${shellArg(pick)}`);
-  if (planned.target !== null) parts.push(`--target ${planned.target}`);
-  if (message !== undefined) parts.push(`-m ${shellArg(message)}`);
-  return parts.join(" ");
+): void {
+  console.error(
+    `  if the data-repo commit succeeded and only local tracking failed: ${capshelfCommandPrefix(dataOverride)} add ${scope === "local" ? "--local " : ""}${shellArg(ref)}`,
+  );
 }

@@ -89,3 +89,14 @@ export class ResultExitError extends CliError {
     super("", { exitCode });
   }
 }
+
+/**
+ * The first line of a caught error, for one-line diagnostics (catalog rows,
+ * per-item failure summaries) where a multi-line git message would break the
+ * layout.
+ */
+export function firstErrorLine(error: unknown): string {
+  return (error instanceof Error ? error.message : String(error)).split(
+    "\n",
+  )[0]!;
+}

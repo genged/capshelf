@@ -21,7 +21,8 @@ import {
   isFragmentKind,
   lockedFragmentTargetsForItem,
 } from "./fragments";
-import type { FragmentContributionState } from "./fragments";
+import type { FragmentContributionState, FragmentTarget } from "./fragments";
+import { firstErrorLine } from "./errors";
 import { commitExists, indexEntryFlags, statusPorcelainRecords } from "./git";
 import { entryIdentity } from "./lock";
 import type { DataLockEntryV4, LockV4 } from "./lock";
@@ -126,102 +127,131 @@ export async function loadPromoteCatalog(
   // change, so a flagged row's "nothing to promote" would be the wrong reason.
   // Every kind is covered — a copy item's directory pathspec lists the tracked
   // files beneath it — because the blind spot is a property of porcelain, not
-  // of fragments. The batched answer relabels exactly those rows.
-  const canonicalPaths = items.flatMap((item) =>
-    allCanonicalItemRelPaths(item.kind, item.name),
-  );
-  const trackedFlags = await indexEntryFlags(opts.dataRepo, canonicalPaths);
-  const tracked = new Set(trackedFlags.map((entry) => entry.path));
-  const hidden = trackedFlags
-    .filter((entry) => entry.assumeUnchanged || entry.skipWorktree)
-    .map((entry) => entry.path);
-  // A canonical file that is present, untracked, and one `git status` stays
-  // silent about even when asked for every untracked file: that is an ignore
-  // rule, and `git add` refuses such a path, so promote cannot publish it. An
-  // ordinary untracked source is reported `??` here, stays out of this set,
-  // and promotes normally. File-path kinds only — a copy item's expected file
-  // set cannot be enumerated from the catalog.
-  const untrackedPresent = items
-    .filter((item) => !isCopyDirectoryItemKind(item.kind))
-    .flatMap((item) => allCanonicalItemRelPaths(item.kind, item.name))
-    .filter(
-      (relPath) =>
-        !tracked.has(relPath) &&
-        existsSync(join(opts.dataRepo, ...relPath.split("/"))),
-    );
-  const reported = new Set(
-    untrackedPresent.length > 0
-      ? (
-          await statusPorcelainRecords(opts.dataRepo, untrackedPresent, {
-            untrackedFiles: "all",
-          })
-        ).map((record) => record.path)
-      : [],
-  );
-  const ignoredHidden = new Set(
-    untrackedPresent.filter((relPath) => !reported.has(relPath)),
+  // of fragments. The batched answer relabels exactly those rows. The ignore
+  // probe covers file-path kinds only — a copy item's expected file set
+  // cannot be enumerated from the catalog.
+  const { hidden, ignoredHidden } = await gitBlindSpots(
+    opts.dataRepo,
+    items.flatMap((item) => allCanonicalItemRelPaths(item.kind, item.name)),
+    items
+      .filter((item) => !isCopyDirectoryItemKind(item.kind))
+      .flatMap((item) => allCanonicalItemRelPaths(item.kind, item.name)),
   );
 
-  const rows: PickRow[] = [];
-  for (const item of items) {
-    const { kind, name, key } = item;
-    const entry = opts.lock.items[key];
-    if (entry?.source !== "data") continue;
-    // Per item, not all-or-nothing: deriving one item's state can throw for
-    // reasons that belong to that item alone (a missing source commit pulled
-    // in through another fragment's contribution, an unreadable object), and
-    // a named promote of an unrelated dirty item would still succeed. The
-    // broken item degrades to a disabled row naming the failure.
-    let state: State;
-    try {
-      state = await itemState(opts, kind, name, entry);
-    } catch (error) {
-      const reason =
-        error instanceof Error
-          ? (error.message.split("\n")[0] ?? "unreadable")
-          : String(error);
-      rows.push({
-        ref: `${kind}/${name}`,
-        kind,
-        name,
-        tags: [],
-        installed: false,
-        disabled: true,
-        detail: sanitizeDisplayText(`state unavailable: ${reason}`),
-      });
-      continue;
-    }
-    const disposition = promoteRowDisposition(state);
+  // Items are independent reads, so their states derive concurrently; the map
+  // keeps the row order. The cache holds one fragment-contribution answer per
+  // target for this load — the contribution is a property of the target, not
+  // of the item asking.
+  const contributionCache: FragmentContributionCache = new Map();
+  const rows = await Promise.all(
+    items.map((item) =>
+      catalogRow(opts, item, hidden, ignoredHidden, contributionCache),
+    ),
+  );
+  return { rows: rows.filter((row): row is PickRow => row !== null) };
+}
 
-    // A path git is not watching disables the row in *every* state, not only
-    // `ok`. The states come from `git status`, which cannot see these paths:
-    // an `ok` row's "nothing to promote" would be the wrong reason, and an
-    // offered row would invite a promote that rewrites the canonical tree
-    // while git silently discards the hidden worktree edit. The row names the
-    // path instead, which is the repairable fact.
-    const unwatched = unwatchedPaths(kind, name, hidden, ignoredHidden);
-    let detail: string;
-    if (unwatched.length > 0) {
-      detail = `git is not watching ${unwatched.join(", ")}`;
-    } else if (disposition.offered) {
-      detail = await offeredDetail(opts, kind, name, state);
-    } else {
-      detail = disposition.reason as string;
-    }
-
-    rows.push({
+async function catalogRow(
+  opts: LoadPromoteCatalogOptions,
+  item: { key: string; kind: ItemKind; name: string },
+  hidden: readonly string[],
+  ignoredHidden: ReadonlySet<string>,
+  contributionCache: FragmentContributionCache,
+): Promise<PickRow | null> {
+  const { kind, name, key } = item;
+  const entry = opts.lock.items[key];
+  if (entry?.source !== "data") return null;
+  // Per item, not all-or-nothing: deriving one item's state can throw for
+  // reasons that belong to that item alone (a missing source commit pulled
+  // in through another fragment's contribution, an unreadable object), and
+  // a named promote of an unrelated dirty item would still succeed. The
+  // broken item degrades to a disabled row naming the failure.
+  let state: State;
+  try {
+    state = await itemState(opts, kind, name, entry, contributionCache);
+  } catch (error) {
+    return {
       ref: `${kind}/${name}`,
       kind,
       name,
       tags: [],
       installed: false,
-      ...(disposition.offered && unwatched.length === 0
-        ? {}
-        : { disabled: true }),
-      detail: sanitizeDisplayText(detail),
-    });
+      disabled: true,
+      detail: sanitizeDisplayText(
+        `state unavailable: ${firstErrorLine(error)}`,
+      ),
+    };
   }
-  return { rows };
+  const disposition = promoteRowDisposition(state);
+
+  // A path git is not watching disables the row in *every* state, not only
+  // `ok`. The states come from `git status`, which cannot see these paths:
+  // an `ok` row's "nothing to promote" would be the wrong reason, and an
+  // offered row would invite a promote that rewrites the canonical tree
+  // while git silently discards the hidden worktree edit. The row names the
+  // path instead, which is the repairable fact.
+  const unwatched = unwatchedPaths(kind, name, hidden, ignoredHidden);
+  let detail: string;
+  if (unwatched.length > 0) {
+    detail = `git is not watching ${unwatched.join(", ")}`;
+  } else if (disposition.offered) {
+    detail = await offeredDetail(opts, kind, name, state);
+  } else {
+    detail = disposition.reason as string;
+  }
+
+  return {
+    ref: `${kind}/${name}`,
+    kind,
+    name,
+    tags: [],
+    installed: false,
+    ...(disposition.offered && unwatched.length === 0
+      ? {}
+      : { disabled: true }),
+    detail: sanitizeDisplayText(detail),
+  };
+}
+
+/**
+ * The paths git is not watching among an item set's canonical paths, from
+ * fresh reads: index-flagged tracked files among `flagPaths`, plus the
+ * ignore-hidden files among `probePaths`. A probed file that is present,
+ * untracked, and one `git status` stays silent about even when asked for
+ * every untracked file is under an ignore rule, and `git add` refuses such a
+ * path, so promote cannot publish it. An ordinary untracked source is
+ * reported `??`, stays out of the set, and promotes normally.
+ */
+async function gitBlindSpots(
+  dataRepo: string,
+  flagPaths: readonly string[],
+  probePaths: readonly string[],
+): Promise<{ hidden: string[]; ignoredHidden: Set<string> }> {
+  const flags = await indexEntryFlags(dataRepo, [...flagPaths]);
+  const tracked = new Set(flags.map((entry) => entry.path));
+  const hidden = flags
+    .filter((entry) => entry.assumeUnchanged || entry.skipWorktree)
+    .map((entry) => entry.path);
+  const untrackedPresent = probePaths.filter(
+    (relPath) =>
+      !tracked.has(relPath) &&
+      existsSync(join(dataRepo, ...relPath.split("/"))),
+  );
+  const reported = new Set(
+    untrackedPresent.length > 0
+      ? (
+          await statusPorcelainRecords(dataRepo, untrackedPresent, {
+            untrackedFiles: "all",
+          })
+        ).map((record) => record.path)
+      : [],
+  );
+  return {
+    hidden,
+    ignoredHidden: new Set(
+      untrackedPresent.filter((relPath) => !reported.has(relPath)),
+    ),
+  };
 }
 
 /**
@@ -239,34 +269,13 @@ export async function unwatchedPathsForItem(
   name: string,
 ): Promise<string[]> {
   const canonical = allCanonicalItemRelPaths(kind, name);
-  const flags = await indexEntryFlags(dataRepo, canonical);
-  const tracked = new Set(flags.map((entry) => entry.path));
-  const hidden = flags
-    .filter((entry) => entry.assumeUnchanged || entry.skipWorktree)
-    .map((entry) => entry.path);
-  if (isCopyDirectoryItemKind(kind)) {
-    return unwatchedPaths(kind, name, hidden, new Set());
-  }
-  const untrackedPresent = canonical.filter(
-    (relPath) =>
-      !tracked.has(relPath) &&
-      existsSync(join(dataRepo, ...relPath.split("/"))),
+  // The same ignore-probe scope as the loader: file-path kinds only.
+  const { hidden, ignoredHidden } = await gitBlindSpots(
+    dataRepo,
+    canonical,
+    isCopyDirectoryItemKind(kind) ? [] : canonical,
   );
-  const reported = new Set(
-    untrackedPresent.length > 0
-      ? (
-          await statusPorcelainRecords(dataRepo, untrackedPresent, {
-            untrackedFiles: "all",
-          })
-        ).map((record) => record.path)
-      : [],
-  );
-  return unwatchedPaths(
-    kind,
-    name,
-    hidden,
-    new Set(untrackedPresent.filter((relPath) => !reported.has(relPath))),
-  );
+  return unwatchedPaths(kind, name, hidden, ignoredHidden);
 }
 
 /**
@@ -298,12 +307,18 @@ function unwatchedPaths(
   return [...new Set([...flagged, ...ignored])];
 }
 
+type FragmentContributionCache = Map<
+  FragmentTarget,
+  Promise<FragmentContributionState>
+>;
+
 /** The same facts `status` gathers for one row, fed to the same state machine. */
 async function itemState(
   opts: LoadPromoteCatalogOptions,
   kind: ItemKind,
   name: string,
   entry: DataLockEntryV4,
+  contributionCache: FragmentContributionCache,
 ): Promise<State> {
   const lockedSha = entryIdentity(entry);
   const sourceCommitPresent = await commitExists(
@@ -322,6 +337,7 @@ async function itemState(
         kind,
         name,
         entry,
+        contributionCache,
       );
       currentSha =
         fragmentOutputState === "ok"
@@ -374,6 +390,7 @@ async function itemFragmentContributionState(
   kind: Extract<ItemKind, "settings" | "mcp" | "codex-config">,
   name: string,
   entry: DataLockEntryV4,
+  cache: FragmentContributionCache,
 ): Promise<FragmentContributionState> {
   const targets = await lockedFragmentTargetsForItem(
     opts.dataRepo,
@@ -384,13 +401,18 @@ async function itemFragmentContributionState(
   );
   let state: FragmentContributionState = "ok";
   for (const target of targets) {
-    const targetState = await fragmentContributionState(
-      opts.project,
-      opts.dataRepo,
-      opts.manifest,
-      opts.lock,
-      target,
-    );
+    let pending = cache.get(target);
+    if (!pending) {
+      pending = fragmentContributionState(
+        opts.project,
+        opts.dataRepo,
+        opts.manifest,
+        opts.lock,
+        target,
+      );
+      cache.set(target, pending);
+    }
+    const targetState = await pending;
     if (targetState === "missing") return "missing";
     if (targetState === "drifted") state = "drifted";
   }

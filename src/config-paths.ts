@@ -9,13 +9,16 @@
  * config value can be a credential and the picker paints into a live frame.
  * `2 keys` and `string` identify a row; the path does the rest.
  */
+import { isTerminalControlCode } from "./assert";
 import { isPlainConfigObject } from "./config-values";
 import type { ConfigObject, ConfigValue } from "./config-values";
 
 export interface ConfigPathRow {
-  /** Dot-joined path — the exact string `--pick` takes. */
+  /**
+   * Dot-joined path — the exact string `--pick` takes. Pickable keys cannot
+   * contain a dot, so `path.split(".")` recovers the segments exactly.
+   */
   path: string;
-  segments: string[];
   /** Shape summary, never the value: `2 keys`, `3 entries`, `string`. */
   shape: string;
   /** The node itself, so a caller can fingerprint what the row named. */
@@ -65,7 +68,6 @@ function walk(
     const segments = [...prefix, key];
     rows.push({
       path: segments.join("."),
-      segments,
       shape: configShapeLabel(child),
       value: child,
     });
@@ -83,8 +85,7 @@ function walk(
 export function isPickableKey(key: string): boolean {
   if (key.length === 0 || key.includes(".")) return false;
   for (const char of key) {
-    const code = char.codePointAt(0) ?? 0;
-    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return false;
+    if (isTerminalControlCode(char.codePointAt(0) ?? 0)) return false;
   }
   return true;
 }

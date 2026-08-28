@@ -66,6 +66,21 @@ export function shellArg(value: string): string {
     : `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
+/**
+ * The `capshelf` prefix for a printed command. `--data` is repeated only when
+ * this run used the override: without it the machine-local binding resolves
+ * the same repository on a rerun, and the printed command stays portable. With
+ * it, omitting the flag would resolve a different repository than the one this
+ * run acted on.
+ */
+export function capshelfCommandPrefix(
+  dataOverride: string | undefined,
+): string {
+  return dataOverride === undefined
+    ? "capshelf"
+    : `capshelf --data ${shellArg(dataOverride)}`;
+}
+
 export function normalizePath(
   p: string,
   baseDir: string = process.cwd(),

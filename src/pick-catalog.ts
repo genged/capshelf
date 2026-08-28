@@ -10,7 +10,6 @@
  */
 import { isSystemItemName } from "./bundled";
 import { listBundles, memberCountSummary } from "./bundles";
-import { dataKey } from "./lock";
 import type { Lock } from "./lock";
 import { listMasterItems } from "./master";
 import { loadDataItemMetadata } from "./metadata";
@@ -59,13 +58,19 @@ export async function loadPickCatalog(
     });
   }
 
-  for (const item of await listMasterItems(opts.dataRepo)) {
-    // A data repo may hold an item whose name collides with a system item's.
-    // `add` refuses those, so offering one would be offering a row that can
-    // only fail. Installed detection would not even mark it present, because
-    // the system copy is locked under `system/`, not `data/`.
-    if (isSystemItemName(item.name)) continue;
-    const meta = await loadDataItemMetadata(item);
+  // A data repo may hold an item whose name collides with a system item's.
+  // `add` refuses those, so offering one would be offering a row that can
+  // only fail. Installed detection would not even mark it present, because
+  // the system copy is locked under `system/`, not `data/`.
+  const dataItems = (await listMasterItems(opts.dataRepo)).filter(
+    (item) => !isSystemItemName(item.name),
+  );
+  // Independent per-item file reads; the map keeps the row order.
+  const metas = await Promise.all(
+    dataItems.map((item) => loadDataItemMetadata(item)),
+  );
+  dataItems.forEach((item, index) => {
+    const meta = metas[index]!;
     warnings.push(...meta.warnings);
     const ref = `${item.kind}/${item.name}`;
     rows.push({
@@ -76,7 +81,7 @@ export async function loadPickCatalog(
       tags: meta.tags,
       installed: installed.has(ref),
     });
-  }
+  });
 
   // Warnings quote data-repo text back to the user, and some of it verbatim:
   // an unrecognised `includes` key goes straight into the message. The picker
@@ -102,16 +107,4 @@ function installedRefs(projectLock: Lock, localLock: Lock): Set<string> {
     }
   }
   return refs;
-}
-
-/** True when the ref names a lock entry in either scope. */
-export function isRefInstalled(
-  refs: { kind: string; name: string },
-  projectLock: Lock,
-  localLock: Lock,
-): boolean {
-  const key = dataKey(refs.kind, refs.name);
-  return (
-    projectLock.items[key] !== undefined || localLock.items[key] !== undefined
-  );
 }

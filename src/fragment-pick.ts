@@ -8,7 +8,11 @@ import {
   type ConfigValue,
 } from "./config-values";
 import { PreconditionError } from "./errors";
-import type { FragmentSource, FragmentValue } from "./fragments";
+import type {
+  FragmentSource,
+  FragmentSourceTarget,
+  FragmentValue,
+} from "./fragments";
 
 /**
  * Resolve a --pick argument to output config path segments. Paths split on
@@ -26,15 +30,21 @@ export function pickPathSegments(
     throw new PreconditionError(`invalid --pick path "${pick}"`);
   }
   if (source.kind === "mcp") {
-    const container = mcpServerContainerKey(source);
+    const container = mcpServerContainerKey(source.sourceTarget);
     if (segments[0] !== container) return [container, ...segments];
   }
   return segments;
 }
 
-/** Output key that holds the server table for an mcp fragment target. */
-export function mcpServerContainerKey(source: FragmentSource): string {
-  return source.sourceTarget === "codex" ? "mcp_servers" : "mcpServers";
+/**
+ * Output key that holds the server table, per mcp source target. The single
+ * definition of the two container constants — `share-catalog.ts` derives its
+ * per-output key from this too.
+ */
+export function mcpServerContainerKey(
+  sourceTarget: FragmentSourceTarget | undefined,
+): string {
+  return sourceTarget === "codex" ? "mcp_servers" : "mcpServers";
 }
 
 /** Current output minus every locked fragment's contribution. */

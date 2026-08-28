@@ -13,6 +13,7 @@
  *
  * `pick.ts` is the shell that puts these rows on a terminal.
  */
+import { isTerminalControlCode } from "./assert";
 import { fuzzyMatchV1, fuzzyTerms } from "./fuzzy";
 import { ITEM_KINDS } from "./master";
 import type { ItemKind } from "./master";
@@ -276,9 +277,8 @@ export function highlightRef(
 export function sanitizeDisplayText(text: string): string {
   let out = "";
   for (const char of text) {
-    const code = char.codePointAt(0) ?? 0;
     // C0 (which is where ESC lives), DEL, and C1.
-    const control = code <= 0x1f || (code >= 0x7f && code <= 0x9f);
+    const control = isTerminalControlCode(char.codePointAt(0) ?? 0);
     out += control ? " " : char;
   }
   return out;
@@ -296,18 +296,4 @@ export function pickRowHint(row: PickRow): string | undefined {
     parts.push(sanitizeDisplayText(truncatedDescription(row.description)));
   }
   return parts.length > 0 ? parts.join(" · ") : undefined;
-}
-
-/** Counts for the line above the list. */
-export function pickRowCounts(rows: readonly PickRow[]): {
-  total: number;
-  installable: number;
-  installed: number;
-} {
-  const installed = rows.filter((row) => row.installed).length;
-  return {
-    total: rows.length,
-    installable: rows.length - installed,
-    installed,
-  };
 }

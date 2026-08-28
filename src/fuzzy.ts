@@ -91,10 +91,8 @@ export interface FuzzyMatch {
   positions: number[];
 }
 
-/** Split a query the way `capshelf search` does. */
-export function fuzzyTerms(query: string): string[] {
-  return query.split(/\s+/).filter((term) => term.length > 0);
-}
+/** Split a query the way `capshelf search` does — it is the same function. */
+export { splitTerms as fuzzyTerms } from "./search-core";
 
 /**
  * Smart case, as fzf defines it: an all-lowercase pattern matches

@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import { printShareUpstreamGuidance } from "./share";
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
@@ -304,8 +305,8 @@ export async function promoteOne(
     await saveLocalLock(project, writableLocalLock);
   }
 
-  const origin = await originRemoteUrl(dataRepo);
   if (opts.json) {
+    const origin = await originRemoteUrl(dataRepo);
     console.log(
       JSON.stringify(
         { ...result, dataRepo, dataRepoHasOrigin: origin !== null },
@@ -331,17 +332,7 @@ export async function promoteOne(
   printRuntimeWarnings(result.runtimeWarnings);
   printPrivateDotenvWarnings(result.privateDotenvWarnings);
   if (result.committed && !opts.suppressGuidance) {
-    console.log("");
-    console.log("committed to local data repo:");
-    console.log(`  ${homeRelative(dataRepo)}`);
-    if (origin !== null) {
-      console.log("");
-      console.log("to share upstream:");
-      // The absolute path through `shellArg`, per its contract: this line is
-      // a command to paste, and a repo path may hold a space or a `$`.
-      console.log(`  cd ${shellArg(dataRepo)}`);
-      console.log("  git push");
-    }
+    await printShareUpstreamGuidance(dataRepo);
   }
   return result;
 }

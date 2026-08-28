@@ -31,7 +31,6 @@ describe("walkConfigPaths", () => {
       ["env", "1 key"],
       ["env.FOO", "string"],
     ]);
-    expect(rows[1]?.segments).toEqual(["permissions", "allow"]);
   });
 
   test("skips a key holding a terminal control byte, with its subtree", () => {

@@ -3,7 +3,12 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
 import { atomicWriteFile, lstatOrNull } from "../fs-utils";
 import { basename, dirname, join, relative } from "node:path";
-import { homeRelative, projectRoot, shellArg } from "../paths";
+import {
+  capshelfCommandPrefix,
+  homeRelative,
+  projectRoot,
+  shellArg,
+} from "../paths";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import { globalOpts } from "../global-options";
 import { loadManifest, saveManifest, type Manifest } from "../manifest";
@@ -672,14 +677,13 @@ export async function shareFragment(
   // repeatable command — the file it read may be gone.
   const equivalentCommand = opts.from
     ? null
-    : shareEquivalentCommand(
-        kind,
-        name,
-        explicitPicks,
-        cliTarget,
-        opts.message,
-        globalOpts(cmd).data,
-      );
+    : shareCommandLine({
+        ref: `${kind}/${name}`,
+        picks: explicitPicks,
+        target: cliTarget,
+        message: opts.message,
+        dataOverride: globalOpts(cmd).data,
+      });
 
   if (opts.json) {
     console.log(
@@ -725,32 +729,26 @@ export async function shareFragment(
 }
 
 /**
- * The command that would repeat a pick-based fragment share. Arguments go
- * through `shellArg`: pick paths come from the user's own config files and can
- * hold a space or a `$`, and a printed command must survive being pasted.
+ * The command that would repeat a share: the printed equivalent after a
+ * success and the retry line after a failure. Arguments go through `shellArg`:
+ * pick paths come from the user's own config files and can hold a space or a
+ * `$`, and a printed command must survive being pasted. The commit message is
+ * included because the command claims to repeat the share, and the message is
+ * part of what it did.
  */
-function shareEquivalentCommand(
-  kind: FragmentItemKind,
-  name: string,
-  explicitPicks: string[],
-  cliTarget: ReturnType<typeof sourceTargetForCli>,
-  message: string | undefined,
-  dataOverride: string | undefined,
-): string {
-  // `--data` is repeated only when this run used the override: without it the
-  // machine-local binding resolves the same repository on a rerun, and the
-  // printed command stays portable. With it, omitting the flag would resolve
-  // a different repository than the one this share committed to.
-  const prefix =
-    dataOverride === undefined
-      ? "capshelf"
-      : `capshelf --data ${shellArg(dataOverride)}`;
-  const parts = [`${prefix} share ${shellArg(`${kind}/${name}`)}`];
-  for (const pick of explicitPicks) parts.push(`--pick ${shellArg(pick)}`);
-  if (cliTarget !== null) parts.push(`--target ${cliTarget}`);
-  // The command claims to repeat this share, and the commit message is part
-  // of what it did.
-  if (message !== undefined) parts.push(`-m ${shellArg(message)}`);
+export function shareCommandLine(opts: {
+  ref: string;
+  picks: readonly string[];
+  target: string | null;
+  message: string | undefined;
+  dataOverride: string | undefined;
+}): string {
+  const parts = [
+    `${capshelfCommandPrefix(opts.dataOverride)} share ${shellArg(opts.ref)}`,
+  ];
+  for (const pick of opts.picks) parts.push(`--pick ${shellArg(pick)}`);
+  if (opts.target !== null) parts.push(`--target ${opts.target}`);
+  if (opts.message !== undefined) parts.push(`-m ${shellArg(opts.message)}`);
   return parts.join(" ");
 }
 
@@ -891,7 +889,7 @@ function extractFromRemainder(
 
 function unmanagedServerNames(remainder: OutputRemainder): string[] {
   const base = unmanagedRemainder(remainder.current, remainder.managed);
-  const servers = base[mcpServerContainerKey(remainder.source)];
+  const servers = base[mcpServerContainerKey(remainder.source.sourceTarget)];
   return isPlainConfigObject(servers) ? Object.keys(servers) : [];
 }
 

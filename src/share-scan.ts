@@ -23,9 +23,10 @@ import { join, relative } from "node:path";
 import { isSystemItemName } from "./bundled";
 import { hashNamedContents } from "./content-hash";
 import { findAdoptionSource } from "./data-repo-adopt";
+import { firstErrorLine } from "./errors";
 import { findSkillsShSkill, skillsShConflictMessage } from "./external";
 import { lstatOrNull } from "./fs-utils";
-import { parseItemRef } from "./item-ref";
+import { isAddressableItemName } from "./item-ref";
 import { dataKey, systemKey } from "./lock";
 import type { Lock } from "./lock";
 import type { Manifest } from "./manifest";
@@ -207,7 +208,9 @@ export async function scanUntrackedShareItems(opts: {
   projectLock: Lock;
   localLock: Lock;
 }): Promise<UntrackedItemScan> {
-  const candidates: UntrackedItemCandidate[] = [];
+  // Candidates are independent reads (a directory walk and hash each), so
+  // they build concurrently; the pending order is the row order.
+  const pending: Array<Promise<UntrackedItemCandidate>> = [];
   const scanned: ShareScanLocation[] = [];
   const tracked = (kind: ShareableItemKind, name: string): boolean =>
     [dataKey(kind, name), systemKey(kind, name)].some(
@@ -244,7 +247,7 @@ export async function scanUntrackedShareItems(opts: {
     }
     for (const name of [...names].sort()) {
       if (tracked(kind, name)) continue;
-      candidates.push(await copyItemCandidate(opts, kind, name));
+      pending.push(copyItemCandidate(opts, kind, name));
     }
   }
 
@@ -274,13 +277,13 @@ export async function scanUntrackedShareItems(opts: {
       if (entry.name.startsWith(".") || !entry.name.endsWith(suffix)) continue;
       const name = entry.name.slice(0, -suffix.length);
       if (name === "" || tracked("subagents", name)) continue;
-      candidates.push(
-        await subagentCandidate(opts, name, target, join(dir, entry.name)),
+      pending.push(
+        subagentCandidate(opts, name, target, join(dir, entry.name)),
       );
     }
   }
 
-  return { ...untrackedItemRows(candidates), scanned };
+  return { ...untrackedItemRows(await Promise.all(pending)), scanned };
 }
 
 async function copyItemCandidate(
@@ -335,7 +338,7 @@ async function copyItemCandidate(
   } catch (error) {
     // Per candidate, not all-or-nothing: one refused directory must not hide
     // the other untracked items (share-catalog.ts follows the same rule).
-    return refused(firstLine(error));
+    return refused(firstErrorLine(error));
   }
 }
 
@@ -381,29 +384,15 @@ async function subagentCandidate(
       digest: hashNamedContents([{ name: label, content: raw }]),
     };
   } catch (error) {
-    return refused(firstLine(error));
+    return refused(firstErrorLine(error));
   }
 }
 
-/**
- * Why this on-disk name cannot become an item name, or null. The same
- * boundary a typed ref passes: the parser trims and splits, so a name that
- * does not round-trip could never be addressed by a named command.
- */
+/** Why this on-disk name cannot become an item name, or null. */
 function itemNameRefusal(kind: ShareableItemKind, name: string): string | null {
-  try {
-    const parsed = parseItemRef(`${kind}/${name}`);
-    if (parsed.kind !== kind || parsed.name !== name) {
-      return "name cannot become an item name";
-    }
-  } catch {
+  if (!isAddressableItemName(kind, name)) {
     return "name cannot become an item name";
   }
   if (isSystemItemName(name)) return "reserved system item name";
   return null;
-}
-
-function firstLine(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return message.split("\n")[0] ?? "unreadable";
 }

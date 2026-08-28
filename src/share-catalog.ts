@@ -16,8 +16,8 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { relative } from "node:path";
-import { isSafeItemName } from "./assert";
 import { isSystemItemName } from "./bundled";
+import { isAddressableItemName } from "./item-ref";
 import {
   configShapeLabel,
   dedupeAncestorPaths,
@@ -30,15 +30,18 @@ import {
   stableStringifyConfig,
 } from "./config-values";
 import type { ConfigObject } from "./config-values";
-import { unmanagedRemainder } from "./fragment-pick";
+import { firstErrorLine } from "./errors";
+import { mcpServerContainerKey, unmanagedRemainder } from "./fragment-pick";
 import {
   allFragmentTargets,
+  fragmentKindForTarget,
   fragmentOutputSpec,
   fragmentValuesForTarget,
 } from "./fragments";
 import type { FragmentSourceTarget, FragmentTarget } from "./fragments";
 import type { Lock } from "./lock";
 import type { Manifest } from "./manifest";
+import { ITEM_KINDS } from "./master";
 import type { FragmentItemKind } from "./master";
 import { sanitizeDisplayText } from "./pick-core";
 import type { PickKind, PickRow } from "./pick-core";
@@ -47,16 +50,10 @@ import type { ItemSharePick, ShareScanLocation } from "./share-scan";
 
 /**
  * The tab order for the share catalog: the canonical kind order, items before
- * fragments, matching `add` and `status`.
+ * fragments, matching `add` and `status`. `ITEM_KINDS` itself, so a new kind
+ * gets its tab without a second list to update.
  */
-export const SHARE_KIND_ORDER: readonly PickKind[] = [
-  "skills",
-  "pi-extensions",
-  "subagents",
-  "settings",
-  "mcp",
-  "codex-config",
-];
+export const SHARE_KIND_ORDER: readonly PickKind[] = ITEM_KINDS;
 
 /** What one marked row means to `share`. */
 export interface SharePick {
@@ -109,66 +106,24 @@ export async function loadShareCatalog(opts: {
   lock: Lock;
   localLock: Lock;
 }): Promise<ShareCatalog> {
-  const scan = await scanUntrackedShareItems({
-    project: opts.project,
-    dataRepo: opts.dataRepo,
-    manifest: opts.manifest,
-    projectLock: opts.lock,
-    localLock: opts.localLock,
-  });
-  const remainders: ShareOutputRemainder[] = [];
-  const brokenRows: PickRow[] = [];
-  for (const target of allFragmentTargets()) {
-    const spec = fragmentOutputSpec(target);
-    const outputPath = spec.outputPath(opts.project);
-    const label = relative(opts.project, outputPath);
-    if (!existsSync(outputPath)) {
-      remainders.push({ target, label, exists: false, remainder: {} });
-      continue;
-    }
-    // Per output, not all-or-nothing: an unparseable `.codex/config.toml` or
-    // an unreachable source commit for one target must not hide the other
-    // outputs' shareable values — a named share of those values only reads
-    // its own target and would succeed. The broken output gets a disabled
-    // diagnostic row instead.
-    try {
-      const current = spec.parse(await readFile(outputPath, "utf-8"), label);
-      const managed = spec.normalizeOutput(
-        mergeConfigObjects(
-          (
-            await fragmentValuesForTarget({
-              dataRepo: opts.dataRepo,
-              manifest: opts.manifest,
-              lock: opts.lock,
-              target,
-            })
-          ).map((fragment) => fragment.value),
-        ),
-      );
-      remainders.push({
-        target,
-        label,
-        exists: true,
-        remainder: unmanagedRemainder(current, managed),
-      });
-    } catch (error) {
-      remainders.push({ target, label, exists: true, remainder: {} });
-      const reason =
-        error instanceof Error
-          ? (error.message.split("\n")[0] ?? "unreadable")
-          : String(error);
-      brokenRows.push({
-        ref: sanitizeDisplayText(label),
-        id: JSON.stringify(["share-broken-output", target]),
-        kind: shareKindForTarget(target),
-        name: label,
-        tags: [],
-        installed: false,
-        disabled: true,
-        detail: sanitizeDisplayText(`cannot read this output: ${reason}`),
-      });
-    }
-  }
+  // The scan and the three outputs are independent reads; only the row order
+  // below is fixed.
+  const [scan, perTarget] = await Promise.all([
+    scanUntrackedShareItems({
+      project: opts.project,
+      dataRepo: opts.dataRepo,
+      manifest: opts.manifest,
+      projectLock: opts.lock,
+      localLock: opts.localLock,
+    }),
+    Promise.all(
+      allFragmentTargets().map((target) => readOutputState(opts, target)),
+    ),
+  ]);
+  const remainders = perTarget.map((result) => result.remainder);
+  const brokenRows = perTarget.flatMap((result) =>
+    result.brokenRow ? [result.brokenRow] : [],
+  );
   const built = shareCatalogRows(remainders);
   return {
     rows: [...scan.rows, ...brokenRows, ...built.rows],
@@ -185,18 +140,73 @@ export async function loadShareCatalog(opts: {
   };
 }
 
-/** The row kind a whole-output diagnostic row files under. */
-function shareKindForTarget(target: FragmentTarget): FragmentItemKind {
-  if (target === "claude-settings") return "settings";
-  if (target === "claude-mcp") return "mcp";
-  return "codex-config";
+/**
+ * One output's unmanaged remainder. Per output, not all-or-nothing: an
+ * unparseable `.codex/config.toml` or an unreachable source commit for one
+ * target must not hide the other outputs' shareable values — a named share of
+ * those values only reads its own target and would succeed. The broken output
+ * gets a disabled diagnostic row instead.
+ */
+async function readOutputState(
+  opts: {
+    project: string;
+    dataRepo: string;
+    manifest: Manifest;
+    lock: Lock;
+  },
+  target: FragmentTarget,
+): Promise<{ remainder: ShareOutputRemainder; brokenRow?: PickRow }> {
+  const spec = fragmentOutputSpec(target);
+  const outputPath = spec.outputPath(opts.project);
+  const label = relative(opts.project, outputPath);
+  if (!existsSync(outputPath)) {
+    return { remainder: { target, label, exists: false, remainder: {} } };
+  }
+  try {
+    const current = spec.parse(await readFile(outputPath, "utf-8"), label);
+    const managed = spec.normalizeOutput(
+      mergeConfigObjects(
+        (
+          await fragmentValuesForTarget({
+            dataRepo: opts.dataRepo,
+            manifest: opts.manifest,
+            lock: opts.lock,
+            target,
+          })
+        ).map((fragment) => fragment.value),
+      ),
+    );
+    return {
+      remainder: {
+        target,
+        label,
+        exists: true,
+        remainder: unmanagedRemainder(current, managed),
+      },
+    };
+  } catch (error) {
+    return {
+      remainder: { target, label, exists: true, remainder: {} },
+      brokenRow: {
+        ref: sanitizeDisplayText(label),
+        id: JSON.stringify(["share-broken-output", target]),
+        kind: fragmentKindForTarget(target),
+        name: label,
+        tags: [],
+        installed: false,
+        disabled: true,
+        detail: sanitizeDisplayText(
+          `cannot read this output: ${firstErrorLine(error)}`,
+        ),
+      },
+    };
+  }
 }
 
 /** The output key that holds the server table, per output target. */
 function serverContainerKey(target: FragmentTarget): string | null {
-  if (target === "claude-mcp") return "mcpServers";
-  if (target === "codex-config") return "mcp_servers";
-  return null;
+  if (target === "claude-settings") return null;
+  return mcpServerContainerKey(sourceTargetOf(target));
 }
 
 function sourceTargetOf(target: FragmentTarget): FragmentSourceTarget {
@@ -230,12 +240,9 @@ export function shareCatalogRows(outputs: ShareOutputRemainder[]): {
   for (const output of outputs) {
     if (!output.exists) continue;
     const container = serverContainerKey(output.target);
-    const pathKind: FragmentItemKind | null =
-      output.target === "claude-settings"
-        ? "settings"
-        : output.target === "codex-config"
-          ? "codex-config"
-          : null;
+    // mcp rows are servers, not config paths, so the path walk skips them.
+    const kind = fragmentKindForTarget(output.target);
+    const pathKind: FragmentItemKind | null = kind === "mcp" ? null : kind;
 
     if (pathKind !== null) {
       const walkable = { ...output.remainder };
@@ -313,10 +320,11 @@ export function shareCatalogRows(outputs: ShareOutputRemainder[]): {
 
     if (container !== null) {
       const servers = output.remainder[container];
+      if (servers === undefined) continue;
       // A scalar server table is unmanaged data the fragment validators would
       // reject, not an empty one. Silence here would let the output read as
       // "nothing to share"; a disabled row names the problem instead.
-      if (servers !== undefined && !isPlainConfigObject(servers)) {
+      if (!isPlainConfigObject(servers)) {
         rows.push({
           ref: sanitizeDisplayText(container),
           id: JSON.stringify([
@@ -334,7 +342,6 @@ export function shareCatalogRows(outputs: ShareOutputRemainder[]): {
         });
         continue;
       }
-      if (!isPlainConfigObject(servers)) continue;
       for (const [name, server] of Object.entries(servers)) {
         // A server name with a dot has no `--pick` sugar (pick paths split on
         // dots), and one the item-ref grammar cannot round-trip — a slash, a
@@ -347,13 +354,14 @@ export function shareCatalogRows(outputs: ShareOutputRemainder[]): {
         // The share validators require a server definition to be an object;
         // a scalar entry would fail every time after selection.
         const malformed = !isPlainConfigObject(server);
+        // The trim check is not part of the round-trip: the ref grammar trims
+        // the whole ref, so a leading space after the slash survives parsing.
+        // A name needing that quirk stays offerable only through --from.
         const unshareable =
           malformed ||
           name.includes(".") ||
-          name.includes(":") ||
-          name.includes("/") ||
           name !== name.trim() ||
-          !isSafeItemName(name) ||
+          !isAddressableItemName("mcp", name) ||
           isSystemItemName(name);
         const id = shareRowId("mcp", output.target, name);
         add(

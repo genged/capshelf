@@ -55,6 +55,22 @@ export function formatItemRef(ref: ItemRef): string {
   return ref.kind ? `${ref.kind}/${ref.name}` : ref.name;
 }
 
+/**
+ * Whether `name` round-trips through the ref grammar as `kind/name` — the
+ * boundary every typed ref passes. The parser trims, splits, and rejects
+ * unsafe names, so a name with surrounding whitespace, a slash, a colon, or
+ * an unsafe character parses into a different ref or none at all, and the
+ * item it would create could never be addressed by a named command.
+ */
+export function isAddressableItemName(kind: ItemKind, name: string): boolean {
+  try {
+    const parsed = parseItemRef(`${kind}/${name}`);
+    return parsed.kind === kind && parsed.name === name;
+  } catch {
+    return false;
+  }
+}
+
 export async function findMasterItemByRef(
   dataRepo: string,
   ref: ItemRef,
