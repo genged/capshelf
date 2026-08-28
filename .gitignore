@@ -8,3 +8,4 @@ logs/
 .idea/
 .claude/settings.local.json
 .worktrees/
+tmp/
