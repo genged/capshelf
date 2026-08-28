@@ -26,9 +26,10 @@ HEAD. If another process commits concurrently, Capshelf never rewinds that
 commit; it restores only unchanged owned roots that are safe to restore.
 Claude preserves structurally external entries but refuses to mutate them.
 
-Marketplace and plugin identities use kebab-case. Claude marketplace names
-also reject Anthropic's current reserved names and obvious official
-impersonation. `plugin create` requires at least one selected skill. Codex
+Marketplace and plugin identities use kebab-case, 1-64 characters, and may
+not be `claude`, `anthropic`, `codex`, `openai`, or `capshelf`. Claude
+marketplace names also reject Anthropic's current reserved names and obvious
+official impersonation. `plugin create` requires at least one selected skill. Codex
 installation policy accepts `NOT_AVAILABLE`, `AVAILABLE`, or
 `INSTALLED_BY_DEFAULT`; authentication policy accepts `ON_INSTALL` or
 `ON_USE`. Options that do not apply to the selected target are errors.

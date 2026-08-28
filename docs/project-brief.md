@@ -55,9 +55,11 @@ the project filesystem against that state.
 
 Core commands:
 
-- `init` binds a project to a data repo and installs bundled system items.
+- `init` binds a project to a data repo, installs bundled system items, and
+  then offers the shelf in the interactive picker (`--no-pick` skips the
+  offer).
 - `add` installs a new item from the data repo; repeating it for an installed
-  item is a stable no-op.
+  item is a stable no-op. With no item, `add` opens the picker.
 - `status` reports local drift, upstream changes, missing files, and external
   ownership.
 - `status --diff` compares current files against the locked source commit.
@@ -67,14 +69,20 @@ Core commands:
 - `apply` converges installed files back to the lock.
 - `update` advances lock entries to current upstream content and applies them.
 - `share` adopts a not-yet-shared on-disk item into the data repo and tracks it
-  in local or project scope.
+  in local or project scope, or extracts an unmanaged config value with
+  `--pick`. With no item, `share` opens the picker over unmanaged config
+  values and untracked on-disk items.
 - `move` changes an already-tracked item's scope between local and project
   without changing data-repo content.
 - `keep-local` marks intentional divergence for copy items, including skills
   and Pi extensions.
 - `revert` restores one item to its locked version.
 - `promote` copies already-tracked local edits or fragment source edits back
-  into the data repo, commits them, and updates only the calling project's lock.
+  into the data repo, commits them, and updates only the calling project's
+  lock. With no item, `promote` opens the picker over the tracked items.
+
+The pickers are for humans at a terminal. Key bindings and per-verb rules
+are in [`docs/cli.md`](cli.md) under The picker.
 
 ## Git-Based Source Of Truth
 
@@ -156,8 +164,10 @@ An MCP server would let agents call `capshelf_add`, `capshelf_status`, etc. as f
 
 Everything else in the current CLI surface — inspect, edit, share, move,
 promote, and reconcile — is the agent's job, and `search` plus item metadata
-and bundles give it the discovery loop. Validation is a roadmap workflow
-extension.
+and bundles give it the discovery loop. The discovery loop has a human half
+too: the interactive picker browses and selects on a terminal, while
+`search` and `--json` serve scripts and agents, which the picker refuses.
+Validation is a roadmap workflow extension.
 
 ## One-Sentence Summary
 

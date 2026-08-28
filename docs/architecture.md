@@ -37,7 +37,7 @@ Requirements:
        │ .agents/ │ │ .agents/ │ │ .agents/ │
        └──────────┘ └──────────┘ └──────────┘
               ▲
-              │  share/promote <item>
+              │  share/promote [item]
               └─────────► the data repo this project is bound to
 ```
 
@@ -73,18 +73,25 @@ Verbs map to this model:
 - **`apply`** — converge project files and generated config outputs to match
   manifest + lock after destructive-change preflight.
 - **`add`** — add a new data-repo item to the spec and materialize it; an
-  already-installed item is a stable no-op.
+  already-installed item is a stable no-op. With no item, `add` opens the
+  interactive picker over the shelf; `--json` and `--target` then require an
+  item.
 - **`status`** — show the diff between desired (lock) and actual project
   files. Read-only.
 - **`update`** — bump the spec (lock pointer → data repo HEAD), then apply.
 - **`revert`** — discard local edits to one item by reapplying its locked
   content.
 - **`share`** — adopt not-yet-shared on-disk content into the data repo, then
-  track it in local or project scope.
+  track it in local or project scope. A fragment share can extract an
+  unmanaged config value from a generated output with `--pick`. With no
+  item, `share` opens the picker over unmanaged config values and untracked
+  on-disk items.
 - **`move`** — change an already-tracked item's scope between local and
   project metadata without changing data-repo content.
 - **`promote`** — flow edits for an already-tracked item the other direction:
-  project → data repo, then update the spec.
+  project → data repo, then update the spec. With no item, `promote` opens
+  the picker over the tracked items; `--json`, `--stale-ok`, and `--merge`
+  then require an item.
 - **`keep-local`** — explicitly mark an item as intentionally diverged so
   reconciliation tolerates the drift.
 
@@ -185,7 +192,9 @@ Project commands can be run from the project root — the directory containing
 `.capshelf/capshelf.json` — or any subdirectory of it: capshelf walks upward to
 find the nearest project root, like git/npm/cargo. It does not fall back to Git
 roots. `init` acts on the current directory (no upward discovery), so it creates
-`.capshelf/` exactly where it is run.
+`.capshelf/` exactly where it is run. After every file is written, `init`
+offers the shelf in the picker. Cancelling the offer, or a missing terminal,
+leaves a fully initialized project, and `--no-pick` skips it.
 
 Manifest:
 ```json
@@ -233,7 +242,8 @@ commands ensure it appears in `.capshelf/.gitignore`.
 When `dataRepoUpstream` is present, capshelf verifies that the resolved local
 clone's `origin` remote normalizes to the same URL before using the data repo.
 This check runs for `set-data`, `.capshelf/local.json`, `--data`, and env-var
-bindings. Capshelf does not fetch or clone; if a lock `sourceCommit` is missing,
+bindings. Outside the one-time clone `init` performs for a remote URL,
+capshelf does not fetch or clone; if a lock `sourceCommit` is missing,
 the user has either pointed at the wrong clone, needs to fetch, or has a data
 repo whose history was rewritten.
 
@@ -249,7 +259,7 @@ path case is preserved.
 Each entry is a discriminated union on `source`:
 
 ```ts
-data:   { source: "data",   sourcePinDigest, sourceCommit, needs, needsSourceCommit, appliedAt, label? }
+data:   { source: "data",   sourcePinDigest, sourceCommit, needs, needsSourceCommit, appliedAt, label?, local?, localReason? }
 system: { source: "system", sha,             cliVersion,   appliedAt }
 ```
 
@@ -294,6 +304,8 @@ Lock keys are prefixed, for example `data/skills/<name>`,
 
 - `label` — an optional human tag such as `"v3"`. Decoration, not identity:
   nothing reads it back.
+- `local` / `localReason` — the `keep-local` marker and its recorded reason.
+  `promote` reads them to refuse publishing an intentionally diverged item.
 
 CLI-only changes in the data repo (e.g. someone edits `src/foo.ts`) don't bump
 `sourceCommit` for unaffected data items — `lastTouchingCommit` is
@@ -336,7 +348,8 @@ Items carry catalog metadata from two sources:
    Skills with good frontmatter need no sidecar `description` at all.
 
 This metadata feeds `ls` (descriptions, `#tags`, `--tag` filtering),
-`show` (relations with install state), `search`, and `add` enforcement
+`show` (relations with install state), `search`, the interactive picker
+(row description, tags, and match ranking), and `add` enforcement
 (`requires` warns and exits 0; `conflicts-with` refuses symmetrically with
 exit 3 and no force flag).
 
@@ -419,7 +432,9 @@ Properties of the implemented model:
   per-member availability and install state.
 - **Discovery.** `ls` appends a `bundles/` section, `search` ranks bundles
   alongside items (member refs score as content), and all bundle JSON
-  surfaces are append-only sibling keys.
+  surfaces are append-only sibling keys. The picker lists bundles in a
+  leading tab, always markable, and a picked bundle expands through the same
+  all-or-nothing path as `add bundles/<name>`.
 
 ## Identity is the Git tree
 
@@ -453,6 +468,14 @@ sourcePinDigest = sha256 over sorted (name, mode, blobId)     from one ls-tree
 - A managed path that declares an external filter driver is refused at pin
   time, in every clone. Git stores a placeholder for such a path, so faithful
   delivery would deliver the placeholder.
+
+One porcelain blind spot remains on the publishing side. A path that carries
+the `--assume-unchanged` or `--skip-worktree` index bit produces empty
+`git status` output, so a cleanliness check alone treats a hidden data-repo
+edit as no change. The interactive promote picker reads those bits
+(`indexEntryFlags` in `src/git.ts`) and disables the affected item with
+`git is not watching <paths>`. The named `promote` command does not run this
+check yet.
 
 ### Git execution profiles
 
@@ -613,6 +636,29 @@ tree, including ignored files. Fragment planning preserves unmanaged values and
 separately identifies managed contribution drift and JSONC/TOML comment loss.
 Missing managed content is reproducible and safe to recreate.
 
+## Interactive selection
+
+`init`, `add`, `share`, and `promote` open a full-screen picker when they
+get no item. The picker code splits a pure core from the terminal shell:
+`src/pick-core.ts` holds the row model, filtering, and ranking, and
+`src/pick.ts` owns the terminal. Frames draw on stderr, so stdout stays
+reserved for `--json` and command output. A run without a usable terminal
+(no TTY, or an unset, empty, or `dumb` `TERM`) never opens the prompt.
+
+Each verb builds its own rows. `src/pick-catalog.ts` reads the shelf for
+`init` and `add`. `src/share-catalog.ts` and `src/share-scan.ts` collect
+unmanaged config values and untracked on-disk items for `share`.
+`src/promote-catalog.ts` derives promotability for the tracked items.
+Matching is fzf's FuzzyMatchV1 (`src/fuzzy.ts`), deliberately separate from
+`search`.
+
+Every flow follows the same order: read, prompt, then re-read and revalidate
+before acting, because the picker holds the terminal for an unbounded time.
+Each marked row then runs the same code path as the named command,
+best-effort per row. A failed row reports its retry command, and the other
+rows' writes stand. Key bindings and per-verb behavior are in
+[`docs/cli.md`](cli.md) under The picker.
+
 ## Publication and parallel-PR safety
 
 Three rules together guarantee that an edit in one project never disturbs
@@ -627,14 +673,14 @@ another:
 3. **`update` is opt-in per-project.** Other projects remain pinned to their
    old sha; their `status` reports "update available" but files don't change.
 
-Network sync is equally explicit: only `sync-data` fetches the data repo's
+Network sync is equally explicit: only `data sync` fetches the data repo's
 `origin`, and the only branch mutation it ever performs is a provably safe
 fast-forward (diverged, dirty, and detached states stop with git guidance).
 In the other direction, `promote` refuses to overwrite data-repo content
 newer than the calling project's lock — a stale promote is a conflict (exit
 3) reconciled by an explicit `update --merge` for supported copy items or
 bypassed by an intentional `promote --stale-ok`
-(`src/commands/promote.ts:1395-1440`).
+(`stalePromoteError` in `src/commands/promote.ts`).
 Uncommitted data-repo edits under the item's path always block.
 
 The merge engine reconstructs raw-byte trees and executable modes for the
@@ -665,6 +711,10 @@ from the project, so restoring its files on failure restores what capshelf
 itself put there. A fragment promote commits the user's own edit where they
 made it, so restoring the file would throw their work away — the index is put
 back, the working tree is not.
+
+An interactive selection is N of these operations run in sequence, each
+committing independently. A failed row is reported with its retry command,
+and the earlier commits stand.
 
 A hook is trusted user code, but it does not get to change what is published
 silently: wherever a validated candidate exists, the committed tree is compared

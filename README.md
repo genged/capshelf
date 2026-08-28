@@ -287,6 +287,11 @@ $EDITOR .agents/skills/write-migration/SKILL.md
 capshelf share skills/write-migration --to project -m "add write-migration skill"
 ```
 
+`capshelf share` with no item opens the picker instead. It finds untracked
+skills, Pi extensions, subagents, and unmanaged config values, and adopts the
+rows you mark. `capshelf promote` with no item opens the same kind of picker
+over the tracked items.
+
 Share fragment values that already live in this project's generated outputs —
 no separate source file needed; the output file stays as it is, and the picked
 values become managed:
@@ -452,7 +457,7 @@ until someone runs `capshelf update` there.
 
 | Verb | Purpose |
 |---|---|
-| `init` | scaffold `.capshelf/`, install bundled system items, bind a data repo |
+| `init` | scaffold `.capshelf/`, install bundled system items, bind a data repo, then offer the shelf in the picker (`--no-pick` skips it) |
 | `data bind` | bind this machine's clone of the data repo |
 | `data upstream` | write the committed upstream URL |
 | `data path` | print the resolved local data repo path |
@@ -463,9 +468,9 @@ until someone runs `capshelf update` there.
 | `status` | report drift, missing files, update availability, and user-level runtime skill inventory |
 | `apply` | reconcile project files to the current locks |
 | `update` | bump pins to data repo HEAD, then apply |
-| `share` | adopt an on-disk item into the data repo; fragments can extract unmanaged values straight from generated outputs (`--pick`) |
+| `share` | adopt an on-disk item into the data repo; fragments can extract unmanaged values straight from generated outputs (`--pick`); with no item, opens the interactive picker |
 | `move` | move an item between local and project scope |
-| `promote` | commit local edits or fragment source edits for a tracked item back to the data repo |
+| `promote` | commit local edits or fragment source edits for a tracked item back to the data repo; with no item, opens the interactive picker |
 | `keep-local` | mark drift as intentional |
 | `revert` | restore one item to its locked version |
 | `get-path` | print the editable path; subagents and multi-target fragments use `--target`, and `--output` returns runtime outputs |
@@ -492,9 +497,13 @@ bun install
 bun run src/cli.ts <verb> [args]   # run from source
 bun run test                       # unit tests (4 workers)
 make smoke                         # smoke suites (4 workers)
-make check                         # typecheck, lint, docs freeze, tests, smoke
+make e2e                           # build dist/capshelf, then run the e2e suite
+make check                         # typecheck, lint, docs freeze, tests, smoke, e2e
 make build                         # compile dist/capshelf
 ```
+
+The end-to-end suite, and therefore `make check`, also needs `python3` on
+your `PATH` for the terminal cells.
 
 ### CLI source repo
 
@@ -509,6 +518,9 @@ The capshelf source repository contains:
 │   ├── git.ts                      git wrapper module
 │   └── …
 ├── dist/                           built binary (gitignored)
+├── tests/                          unit tests
+├── e2e/                            end-to-end suite
+├── scripts/                        smoke tests and release scripts
 ├── package.json
 ├── Makefile
 ├── docs/                           living docs
@@ -563,6 +575,7 @@ records each member on its own.
 - [`docs/team-workflow.md`](docs/team-workflow.md) - team loop: `data sync`, propose-upstream recipe, CI drift gate
 - [`docs/security.md`](docs/security.md) - trust model, threat model per item kind, guidance for teams
 - [`docs/marketplaces.md`](docs/marketplaces.md) - Claude/Cowork and Codex plugin catalogs in the data repo
+- [`docs/testing.md`](docs/testing.md) - the four test layers and the rules the harness enforces
 - [`AGENTS.md`](AGENTS.md) - guidance for coding agents working in this repo
 
 ### Release history

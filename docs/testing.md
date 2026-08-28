@@ -15,6 +15,11 @@ fault at any boundary. They cannot find a build, entry-point, or packaging
 fault, because they never run the file the package installs. That is the gap
 the E2E layer closes.
 
+Every smoke script sources `scripts/smoke-lib.sh`, which detaches the suite
+from terminal input (`exec < /dev/null`) and passes `--yes` for consent.
+Smoke therefore proves non-interactive behavior only. Terminal behavior
+belongs to the E2E pseudo-terminal cells.
+
 ## The end-to-end layer
 
 Every E2E test starts the compiled executable named by `CAPSHELF_E2E_BIN` as a
@@ -56,7 +61,12 @@ result. A fixture may construct a damaged state for a recovery test, and the
 test then says that the state was constructed: it proves recovery, not that an
 interruption produces the state.
 
-Each test prints one `evidence:` line with its labels —
+`e2e/` holds three directories. `e2e/harness/` self-tests the harness, so a
+harness fault names the harness instead of surfacing as a scenario that did
+not prompt. `e2e/environments/` holds terminal and user-level cells.
+`e2e/scenarios/` holds product workflows.
+
+Each scenario and environment test prints one `evidence:` line with its labels —
 `reproduced-user-workflow`, `modeled-external-step`,
 `constructed-recovery-state`, or `real-provider-compatibility` — and names what
 stays unproved. Set `CAPSHELF_E2E_REPORT=<path>` to collect those records as
@@ -123,8 +133,9 @@ Every command has a generous safety deadline. At the deadline the runner sends
 grandchild cannot outlive the test. The deadline is not a performance
 assertion.
 
-Some cells need a terminal, because a consent prompt and the item picker both
-behave differently on one. Those cells open a pseudo-terminal through
+Some cells need a terminal, because a consent prompt and the pickers behave
+differently on one. The picker cells cover the `init`, `add`, `share`, and
+`promote` entry points. Those cells open a pseudo-terminal through
 `e2e/support/pty-driver.py`. They need `python3` on `PATH`, and they fail with
 that message when it is absent. The captured output carries terminal echo and
 CR line endings, so they assert substrings, not exact bytes.

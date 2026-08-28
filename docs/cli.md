@@ -88,8 +88,9 @@ Most item arguments accept either a bare unique name (`hello`) or an explicit ki
 
 Mutating commands only touch item files that are tracked in `.capshelf/capshelf.lock.json` or `.capshelf/local.lock.json`. `add` refuses to overwrite an existing untracked target, `init` refuses to overwrite an existing untracked system target, and `rm` deletes only locked data items. Copy-directory items—skills and Pi extensions—can use either committed project scope or clone-local scope. Use `share <item> --to local|project` to choose when adopting an unmanaged copy.
 
-Copy-item names reject control characters, and copy-item trees accept regular
-files only. Symlinks, Git links, and special filesystem objects are refused at
+Item names of every kind reject control characters (C0, DEL, and C1),
+backslashes, a leading `/` or `-`, and `.` or `..` path segments. Copy-item
+trees accept regular files only. Symlinks, Git links, and special filesystem objects are refused at
 both working-tree and committed-object boundaries. Executable intent is
 normalized to Git modes `100644` and `100755`; status, promote, apply, and
 update preserve and compare that mode without changing the existing content
@@ -120,6 +121,11 @@ under The picker. The offer runs after every file is written, so cancelling it
 leaves a fully initialized project and installs nothing. `--no-pick` skips it,
 and so does any run without a terminal, which then names the reason and
 continues. `init --json` never prompts.
+
+`init` closes with a `next:` block that points at `capshelf add`,
+`capshelf search <task>`, `capshelf ls`, `capshelf add bundles/<name>`, and
+`capshelf share`. When the picker installed something, the first line offers
+to pick more items instead.
 
 A project is initialized on the current machine once `.capshelf/local.json`
 exists. Re-running `init` in that state is refused with exit 3 before Capshelf
@@ -339,10 +345,13 @@ and, when the data repo has an `origin` remote, how to share it:
 
 ```text
 to share upstream:
-  cd ~/.local/share/capshelf/data/github.com/genged/agent-shared
+  cd /Users/mg/.local/share/capshelf/data/github.com/genged/agent-shared
   git push
 ```
 
+The `committed to local data repo:` line abbreviates `$HOME` to `~`. The
+`cd` line is a command to paste, so it prints the absolute path and
+single-quotes it when the path holds a character the shell would interpret.
 Capshelf never pushes implicitly. `promote --json` includes the resolved
 `dataRepo` path and a `dataRepoHasOrigin` boolean.
 
@@ -835,13 +844,21 @@ no item exits 3 if any selection failed. `capshelf init` still exits 0, because
 its exit code answers whether the project is initialized.
 
 The picker needs a terminal on both stdin and stderr, and that terminal must
-declare capabilities. `TERM=dumb` is refused, because a terminal with no
-capabilities cannot run a full-screen prompt. The picker draws on stderr, so
-stdout stays free for command output and `capshelf add > out.txt` keeps
-working. Without a usable terminal, `capshelf add` with no item exits 3 and
-asks for an item ref. `capshelf init` prints the reason and continues.
-`capshelf add --json` and `capshelf add --target` with no item are refused for
-the same reason. A script cannot answer a prompt.
+declare capabilities. `TERM=dumb` is refused, and so is an unset or empty
+`TERM`, because a terminal with no capabilities cannot run a full-screen
+prompt. The picker draws on stderr, so stdout stays free for command output
+and `capshelf add > out.txt` keeps working. Without a usable terminal,
+`capshelf add` with no item exits 3 and asks for an item ref. `capshelf
+init` prints the reason and continues. An empty shelf also keeps the picker
+closed: with no items or bundles in the data repo, `add` exits 3 with `the
+data repo has no items or bundles yet`, and `init` prints the same reason
+and continues. `capshelf add --json` and `capshelf add --target` with no
+item are refused for the same reason. A script cannot answer a prompt.
+
+Before the frame opens, the picker prints each data-repo catalog warning to
+stderr as `⚠ <warning>`. Every string the picker renders from the data repo
+or the filesystem has terminal control characters replaced with spaces
+first, so untrusted text cannot drive the terminal.
 
 #### share and promote
 
@@ -852,7 +869,11 @@ codex-config row is one config path in `.claude/settings.json` or
 file. A server present in both outputs gets two rows. Mark both rows and the
 share covers both outputs with no `--target`. Mark one row and the share
 carries `--target claude` or `--target codex`. The detail column shows a shape
-summary (`2 keys`, `3 entries`, `string`), never the value itself.
+summary (`2 keys`, `3 entries`, `string`), never the value itself. A key
+that contains a literal `.`, an empty key, or a key that holds a control
+character has no `--pick` syntax. Its nearest ancestor row covers it. At the
+top level such a key is a disabled row that reads `no --pick syntax for this
+key · share it with --from`.
 
 Marked rows group into items. MCP rows group by server name, and the server
 name becomes the item name. Settings rows form one item, and codex-config rows
@@ -867,13 +888,18 @@ source path and a file count, never file contents. A subagent row is one
 runtime output file, like an MCP row. Mark both files and the share needs no
 `--target`. Mark one file and the command carries it. The item name comes
 from the directory or file name, so these rows need no name prompt. Skills
-share to local scope, which is the named command's default. An item the
+share to local scope, and Pi extensions and subagents share to project
+scope. Each is the named command's own default, so the printed command
+carries no `--to` flag. An item the
 named command would refuse stays visible, struck through, with the refusal
 in its detail column.
 
 Each shared item prints the same lines a named `share` prints, then the
 non-interactive command that repeats it. A named pick-based share also reports
-that command, and its `--json` carries it as `equivalentCommand`. When no
+that command, and its `--json` carries it as `equivalentCommand`. Printed
+equivalent and retry commands repeat the global `--data` override when this
+run used it, and single-quote any argument that is not shell-safe, so they
+paste as-is. When no
 output holds an unmanaged value and no untracked item is on disk, the picker
 does not open. `share` lists the outputs and directories it looked in and
 exits 0.
@@ -883,13 +909,20 @@ A row whose status state has something to promote can be marked. Every other
 row stays visible, struck through, with the reason in its detail column. A
 clean item says `nothing to promote`. Output drift says `run capshelf apply,
 not promote`. A canonical source hidden from git by an index flag or an ignore
-rule says `git is not watching <path>`. The detail for a promotable item names
+rule says `git is not watching <paths>`. The index bits it detects are
+`--assume-unchanged` and `--skip-worktree`, every hidden path is joined by
+commas, and the row is disabled in every state, even one that could
+otherwise promote. The check runs again per marked item after the prompt
+closes. The detail for a promotable item names
 the file that changed: the installed path for a local edit, or the data-repo
 canonical file for a dirty source. Each marked item promotes independently.
 The commit message is `-m` when given, and the default `promote` message
 otherwise. A failure names its reason and the retry command, the other items
 stay promoted, and any failure exits 3. `promote --local` with no item lists
-the clone-local items instead.
+the clone-local items instead. When the selected scope tracks no data items,
+the picker does not open; `promote` says so and exits 0. The run ends with
+one `✓ N promoted` summary line, and with the `committed to local data
+repo:` block once when anything committed.
 
 Both pickers re-read the project and the data repo after the prompt closes. A
 value that changed while the picker was open fails its own row instead of
@@ -1123,7 +1156,9 @@ the upstream advance, and the safe choices: reconcile the installed and
 upstream branches with `capshelf update <item> --merge`, take upstream with a
 plain `capshelf update <item>`, or overwrite on purpose with `capshelf promote
 <item> --stale-ok`. The suggested commands preserve `--local` when the refusal came
-from a local-scope promote. `update` warns and asks before replacing a drifted
+from a local-scope promote. The `--merge` choice is printed only for skills
+and Pi extensions. For fragments and subagents the refusal offers plain
+`update` or `--stale-ok` only. `update` warns and asks before replacing a drifted
 installed copy; preserve the edit before consenting. Local-scope copy items
 are excluded from the project's Git repository and cannot be recovered from
 its diff.
@@ -1141,7 +1176,7 @@ snapshot. The lock records the exact upstream pin. The installed copy can hold
 the merged result and report local drift until a later normal `promote`
 publishes it. The root `.capshelf.yml` remains outside content identity and is
 preserved byte-for-byte. `promote --merge` remains as a deprecated compatibility
-option for this release (`src/commands/update.ts:445-658`,
+option for this release (`updateMergeTarget` in `src/commands/update.ts`,
 `src/promote-transaction.ts:76-124`).
 
 Two related behaviors:
@@ -1152,9 +1187,12 @@ Two related behaviors:
 - **Convergence**: when the content being promoted is byte-identical to what
   upstream already has, promote succeeds without a commit, re-pins the lock
   to the upstream commit, and reports the action `"already-upstream"`.
+- **Idempotence**: a second `promote` of an unchanged item, fragments
+  included, is a clean no-op. It reports the action `"already-current"` and
+  creates no commit.
 
-`promote --json` notes: `action` may be `"already-upstream"` (consumers must
-tolerate new action values), and `staleOverride: true` appears only when
+`promote --json` notes: `action` may be `"promoted"`, `"already-current"`,
+or `"already-upstream"` (consumers must tolerate new action values), and `staleOverride: true` appears only when
 `--stale-ok` actually bypassed a stale check (absent otherwise, including
 when the flag was passed but nothing was stale). An actual successful
 `--merge` adds `merged: true`, the full `mergeBase`, and the full
@@ -1283,11 +1321,12 @@ failing item and still writes every healthy one, exiting 1.
 ## Syncing the data repo
 
 ```bash
-capshelf sync-data [--json]
+capshelf data sync [--json]
 ```
 
-A project command, run from the project root. `sync-data` is the only capshelf
-command that touches the network, and only when you run it. It resolves the
+A project command, run from the project root. `data sync` (legacy alias
+`sync-data`) is the only capshelf command that talks to the data repo's
+remote, and only when you run it. It resolves the
 data repo through the standard chain, runs the usual upstream verification
 when the manifest declares `dataRepoUpstream` (a declared upstream is *not*
 required — it syncs whatever `origin` is), fetches `origin`, and fast-forwards
@@ -1403,8 +1442,8 @@ writes capshelf metadata and never adopts the user skill.
 | 0 | success |
 | 1 | generic error (missing args, bad config, I/O) |
 | 2 | item or bundle not found in data repo |
-| 3 | conflict or refused precondition (project is already initialized, a destructive `add`/`apply`/`update`/`rm`/`revert`/marketplace sync lacks consent, promote would clobber, a system or externally managed item was selected, an untracked target would be overwritten, a bundle failed preflight, an interactive `add` had a selection fail or had no terminal, or data sync cannot run safely) |
-| 4 | drift detected (for `status --strict`), upstream verification failed, or `sync-data` needs human action (diverged history, or upstream commits blocked by a dirty worktree) |
+| 3 | conflict or refused precondition (project is already initialized, a destructive `add`/`apply`/`update`/`rm`/`revert`/marketplace sync lacks consent, promote would clobber, a system or externally managed item was selected, an untracked target would be overwritten, a bundle failed preflight, an interactive `add`, `share`, or `promote` had a selection fail or had no usable terminal, or data sync cannot run safely) |
+| 4 | drift detected (for `status --strict`), upstream verification failed, or `data sync` needs human action (diverged history, or upstream commits blocked by a dirty worktree) |
 | 5 | reserved for future unmet-requires checks (`add` with unmet `requires` warns and exits 0) |
 | 6 | no data repo configured for this project (pass `--data`, set `.capshelf/local.json`, or `$CAPSHELF_HOME`) |
 | 7 | required dependency missing (`git` not found on `PATH`, or older than 2.40.0) |
@@ -1481,7 +1520,7 @@ data repo at <path> is bound to the wrong upstream.
 the data repo. When it is not (squash/rebase-merged proposal branch, or a
 promote commit that only exists in another clone), the row reports
 `missing_source_commit` and `status --strict` exits 4. Fix by re-pinning:
-`capshelf sync-data && capshelf update <item>` (metadata-only when the
+`capshelf data sync && capshelf update <item>` (metadata-only when the
 content sha is unchanged), or push/fetch the clone that has the commit. See
 [`docs/team-workflow.md`](team-workflow.md) for the team loop, the
 propose-upstream recipe, and the CI gate built on this state.

@@ -30,7 +30,9 @@ to the data repo the way you treat commit access to a shared library.
 
 What capshelf itself does on your machine is narrow: it reads the data repo
 clone you bound, writes managed files inside the current project, and commits
-to the data repo only on explicit `share`/`promote`. It does not execute item
+to the data repo only on explicit `share`, `promote`, and `marketplace`
+catalog mutations. Each of these commits locally and never pushes. It does
+not execute item
 content. Execution happens later, in Claude, Codex, or Pi, when the agent loads
 what capshelf materialized — which is exactly why review has to happen before
 content reaches the data repo's default branch. For Pi extensions that boundary
@@ -69,9 +71,9 @@ that boundary:
 - **No implicit network I/O.** Capshelf never pushes — `promote` commits to
   your local clone and prints the `git push` you may choose to run. It never
   fetches behind your back either: the only network operations are the
-  one-time clone in `init --data <remote-url>`, the explicit `sync-data`
-  command, and the Homebrew `self-update` command. `sync-data` is the single
-  verb that talks to the data repo's remote — it fetches and fast-forwards
+  one-time clone in `init --data <remote-url>`, the explicit `capshelf data
+  sync` command, and the Homebrew `self-update` command. `data sync` is the
+  single verb that talks to the data repo's remote — it fetches and fast-forwards
   only when provably safe, and only when you run it. Nothing in
   `status`/`apply`/`add`/`update`/`promote` can be made to pull unreviewed
   content onto your machine.
@@ -95,6 +97,19 @@ that boundary:
   worktree root. Copy-item ingestion rejects symlinks, Git links, and special
   objects in both the working tree and pinned commits, so a catalog item cannot
   follow a link outside the repository during hashing or materialization.
+- **Untrusted text is checked before your terminal sees it.** Item names come
+  from the manifest, the lock, and the data-repo catalog. Names of every kind
+  reject path escapes, a leading `-`, and all C0, DEL, and C1 control codes,
+  because C1 bytes can carry escape sequences that drive a terminal. The
+  interactive picker also blanks control codes from catalog warnings and row
+  text. Printed copy-paste commands quote every untrusted argument, because a
+  legal name may still contain a space or `$`.
+- **One known blind spot: hidden index bits in the data repo.** Commands that
+  need a clean data repo read `git status`. Git skips a path marked
+  `--assume-unchanged` or `--skip-worktree`, so an edit there is invisible to
+  that check. The interactive `promote` picker detects these paths and
+  disables the item with `git is not watching <paths>`. A named
+  `capshelf promote <item>` does not check them yet.
 
 ## What capshelf does not do
 

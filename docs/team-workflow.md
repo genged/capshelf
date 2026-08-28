@@ -28,8 +28,9 @@ capshelf status
 capshelf update security-review
 ```
 
-`data sync` is the only capshelf command that touches the network, and only
-when you run it. It fetches `origin` and fast-forwards the current branch only
+`data sync` is the only capshelf command that talks to the data repo's
+remote, and only when you run it. The only other network operations are the
+one-time clone in `init --data <remote-url>` and the Homebrew `self-update`. It fetches `origin` and fast-forwards the current branch only
 when that is provably safe; diverged history, dirty worktrees, and detached
 HEADs stop with copy-pasteable git guidance. `promote` never pushes — sharing
 upstream is always an explicit `git push` in the data repo.
@@ -51,7 +52,7 @@ normal `promote` command to publish it. A conflict lists sorted item-relative
 paths and changes no installed file or lock. Skills and Pi extensions support
 this flow in project and local scope. Keep `--local` on each command for local
 scope. A clean Git merge still requires human review
-(`src/commands/update.ts:445-658`).
+(`updateMergeTarget` in `src/commands/update.ts`).
 
 Taking upstream is the option that discards work, so `update` gates it behind
 the destructive-change prompt: the installed copy is drifted by definition
@@ -71,11 +72,27 @@ outside project Git and are not recoverable from its diff. Step 4 of the
 proposal flow below needs no `--yes`: after a promote the installed copy
 matches the lock, so re-pinning to merged history is not a destructive change.
 
+## Putting a new item on the shelf
+
+`promote` moves edits in items the project already tracks. A hand-written
+skill in `.claude/skills/` starts untracked. Run `capshelf share` with no
+item to offer it to the shelf. The picker scans `.claude/`, `.codex/`, and
+`.pi/` for skills, Pi extensions, and subagents that no lock claims, plus
+unmanaged config values in the generated outputs. Each marked row runs the
+same adoption a named `capshelf share <kind>/<name>` runs. Skills adopt into
+local scope by default. Pi extensions and subagents adopt into project
+scope. After adoption, `promote` is the verb for later edits.
+
+Bare `capshelf promote` opens the same kind of picker over the project's
+tracked items. Each mark runs the same promote a named invocation runs, so
+the review rules in this document do not change. Both pickers need a
+terminal and refuse on a non-TTY, so CI must name items explicitly.
+
 ## Proposing a change upstream (review required, or branch-protected main)
 
 Capshelf never pushes and never creates branches. The data repo is an
-ordinary git clone; branch in it with ordinary git, let `promote` commit on
-your branch, then push and open a PR with `gh`.
+ordinary git clone; branch in it with ordinary git, let `promote` or `share`
+commit on your branch, then push and open a PR with `gh`.
 
 Locate the bound data repo clone:
 
@@ -235,3 +252,16 @@ Notes:
   (metadata-only when the merged content is identical);
 - or it only exists in another clone (an unpushed promote) — push that
   clone first, then sync.
+
+## Fixing `git is not watching <paths>`
+
+The interactive promote picker disables an item when git holds an
+`--assume-unchanged` or `--skip-worktree` bit on one of its data-repo paths,
+or when an ignore rule hides one. Git skips such a path, so a promote could
+overwrite an edit that `git status` cannot report. Clear the bit in the data
+repo, review the change it hid, then retry:
+
+```bash
+git -C "$DATA" update-index --no-assume-unchanged <path>
+git -C "$DATA" update-index --no-skip-worktree <path>
+```
