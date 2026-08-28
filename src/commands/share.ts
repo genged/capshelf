@@ -22,7 +22,7 @@ import type { PinnedSource } from "../pin";
 import { assertCommittedTreeEqualsProject } from "../promote-proof";
 import { isSystemItemName } from "../bundled";
 import { isCopyDirectoryItemKind, itemRepoRelPath } from "../master";
-import type { FragmentItemKind } from "../master";
+import type { CopyDirectoryItemKind, FragmentItemKind } from "../master";
 import { assertRepoClean, headSha, originRemoteUrl } from "../git";
 import { commitDataRepoMutation } from "../marketplace-files";
 import { PreconditionError, ResultExitError } from "../errors";
@@ -113,7 +113,7 @@ export function registerShare(program: Command): void {
   program
     .command("share [item]")
     .description(
-      "adopt an on-disk item into the data repo and track it here; with no item, pick unmanaged config values interactively",
+      "adopt an on-disk item into the data repo and track it here; with no item, pick unmanaged config values and untracked items interactively",
     )
     .option(
       "--to <scope>",
@@ -147,9 +147,8 @@ export function registerShare(program: Command): void {
 }
 
 /**
- * The no-item branch: the interactive picker over unmanaged config values.
- * Phase 1 of the picker spec covers fragments only, which is where the
- * `--pick` syntax cannot be guessed from the error messages.
+ * The no-item branch: the interactive picker over unmanaged config values and
+ * the untracked skills, Pi extensions, and subagents found on disk.
  */
 async function shareWithoutItem(
   opts: ShareOptions,
@@ -223,6 +222,16 @@ async function shareOne(
   if (!isCopyDirectoryItemKind(kind)) {
     throw new Error(`no share strategy for ${kind}/${name}`);
   }
+  await shareCopyItem(kind, name, scope, opts, cmd);
+}
+
+export async function shareCopyItem(
+  kind: CopyDirectoryItemKind,
+  name: string,
+  scope: ShareScope,
+  opts: ShareOptions,
+  cmd: Command,
+): Promise<void> {
   if (opts.pick !== undefined) {
     throw new PreconditionError(
       "--pick is only valid for fragment items (settings, mcp, codex-config)",
@@ -236,7 +245,8 @@ async function shareOne(
   const { project, manifest, projectLock, localLock } =
     await loadProjectContext({ cmd });
   const localConfig = await loadLocalConfig(project);
-  const dataRepo = await resolveProjectDataRepo(project, manifest, cmd);
+  const dataRepo =
+    opts.boundRepo ?? (await resolveProjectDataRepo(project, manifest, cmd));
 
   const repoRelPath = itemRepoRelPath(kind, name);
   if (existsSync(join(dataRepo, repoRelPath))) {
@@ -339,10 +349,10 @@ async function shareOne(
   console.log(`  source commit: ${adopted.sourceCommit}`);
   printRuntimeWarnings(runtimeWarnings);
   printPrivateDotenvWarnings(adopted.privateDotenvWarnings);
-  await printShareUpstreamGuidance(dataRepo);
+  if (!opts.suppressGuidance) await printShareUpstreamGuidance(dataRepo);
 }
 
-async function shareSubagent(
+export async function shareSubagent(
   name: string,
   scope: ShareScope,
   opts: ShareOptions,
@@ -367,7 +377,8 @@ async function shareSubagent(
 
   const { project, manifest, projectLock, localLock } =
     await loadProjectContext({ cmd });
-  const dataRepo = await resolveProjectDataRepo(project, manifest, cmd);
+  const dataRepo =
+    opts.boundRepo ?? (await resolveProjectDataRepo(project, manifest, cmd));
   await assertRepoClean(dataRepo);
   const key = dataKey("subagents", name);
   if (projectLock.items[key] || localLock.items[key]) {
@@ -505,7 +516,7 @@ async function shareSubagent(
   for (const { source } of pending) console.log(`  ${source.relPath}`);
   if (coverage)
     printTargetCoverage(coverage, `subagents/${name}`, SHARED_COVERAGE);
-  await printShareUpstreamGuidance(dataRepo);
+  if (!opts.suppressGuidance) await printShareUpstreamGuidance(dataRepo);
 }
 
 export async function shareFragment(

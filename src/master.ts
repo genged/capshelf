@@ -200,7 +200,7 @@ export function isMetadataSidecarPath(rel: string): boolean {
   return rel === METADATA_SIDECAR;
 }
 
-async function walkFiles(root: string): Promise<string[]> {
+export async function walkItemFiles(root: string): Promise<string[]> {
   const out: string[] = [];
   async function go(rel: string): Promise<void> {
     const abs = rel ? join(root, rel) : root;
@@ -241,7 +241,9 @@ export async function shaOfItem(itemPath: string): Promise<string> {
   }
   return shaOfItemFiles(
     itemPath,
-    (await walkFiles(itemPath)).filter((rel) => !isMetadataSidecarPath(rel)),
+    (await walkItemFiles(itemPath)).filter(
+      (rel) => !isMetadataSidecarPath(rel),
+    ),
   );
 }
 

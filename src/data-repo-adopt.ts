@@ -50,7 +50,7 @@ import {
   refreshCodexProjection,
 } from "./marketplace-integration";
 
-interface AdoptionSource {
+export interface AdoptionSource {
   path: string;
   kind: "installed" | "claude-real";
 }
@@ -232,7 +232,12 @@ function assertCanNormalizeAdoptedSkill(
   }
 }
 
-function findAdoptionSource(
+/**
+ * Where a `share` of this copy item would read from, or null when no local
+ * copy exists. Exported for the share picker's scanner, so a scanned row
+ * points at exactly the directory the named command adopts.
+ */
+export function findAdoptionSource(
   project: string,
   kind: CopyDirectoryItemKind,
   name: string,

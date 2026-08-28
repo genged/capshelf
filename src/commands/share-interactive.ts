@@ -2,11 +2,13 @@
  * The interactive share path: `capshelf share` with no item.
  *
  * The picker lists every unmanaged config value as one row per legal `--pick`
- * path, the marks group into share invocations (`share-catalog.ts`), and each
- * item then runs through the same `shareFragment` a named share runs — which
- * re-reads the outputs, re-runs the extraction, and checks the data repo is
- * clean *after* the prompt, so a value that changed while the picker was open
- * fails its own row instead of being committed from a stale read.
+ * path, plus every untracked skill, Pi extension, and subagent output found
+ * on disk (`share-scan.ts`). The marks group into share invocations
+ * (`share-catalog.ts`, `share-scan.ts`), and each one then runs through the
+ * same command a named share runs — which re-reads its sources and checks the
+ * data repo is clean *after* the prompt, so content that changed while the
+ * picker was open fails its own row instead of being committed from a stale
+ * read.
  *
  * Best effort per item, like the `add` picker's install loop: a failure names
  * its reason and the command that retries that one item, and the other items
@@ -26,6 +28,7 @@ import { parseItemRef } from "../item-ref";
 import { assertLockV4, dataKey, loadLocalLock, loadLock } from "../lock";
 import type { Lock } from "../lock";
 import { loadManifest } from "../manifest";
+import { isFragmentKindName } from "../master";
 import type { FragmentItemKind } from "../master";
 import { projectRoot, shellArg } from "../paths";
 import { pickItems, pickTerminalUnavailable } from "../pick";
@@ -38,7 +41,14 @@ import {
   plannedSharesFromMarks,
 } from "../share-catalog";
 import type { PlannedShare, SharePick } from "../share-catalog";
-import { printShareUpstreamGuidance, shareFragment } from "./share";
+import { plannedItemSharesFromMarks } from "../share-scan";
+import type { ItemSharePick, PlannedItemShare } from "../share-scan";
+import {
+  printShareUpstreamGuidance,
+  shareCopyItem,
+  shareFragment,
+  shareSubagent,
+} from "./share";
 import type { ShareOptions } from "./share";
 
 export type InteractiveShareSummary =
@@ -77,20 +87,21 @@ export async function runInteractiveShare(request: {
     dataRepo,
     manifest,
     lock: projectLock,
+    localLock,
   });
 
   if (catalog.rows.length === 0) {
     // An empty answer is a valid answer, like a `search` with no matches.
-    console.log("nothing to share: no unmanaged values in");
-    for (const output of catalog.outputs) {
-      console.log(`  ${output.label}${output.exists ? "" : " (absent)"}`);
+    console.log("nothing to share: no unmanaged values or untracked items in");
+    for (const location of [...catalog.outputs, ...catalog.scanned]) {
+      console.log(`  ${location.label}${location.exists ? "" : " (absent)"}`);
     }
     return { outcome: "empty" };
   }
 
   const picked = await pickItems({
     rows: catalog.rows,
-    message: "Select config values to share",
+    message: "Select items and config values to share",
     kindOrder: SHARE_KIND_ORDER,
     action: "share",
   });
@@ -100,13 +111,90 @@ export async function runInteractiveShare(request: {
   if (picked.kind === "cancelled") return { outcome: "cancelled" };
   const marks = picked.refs
     .map((id) => catalog.picks.get(id))
-    .filter((mark): mark is SharePick => mark !== undefined);
+    .filter((mark): mark is SharePick | ItemSharePick => mark !== undefined);
   if (marks.length === 0) return { outcome: "nothing-selected" };
+  const fragmentMarks = marks.filter(isFragmentSharePick);
+  const itemMarks = marks.filter(
+    (mark): mark is ItemSharePick => !isFragmentSharePick(mark),
+  );
 
   const shared: string[] = [];
   const skipped: string[] = [];
   const failed: string[] = [];
-  for (const planned of plannedSharesFromMarks(marks)) {
+  const dataOverride = globalOpts(request.cmd).data;
+  for (const planned of plannedItemSharesFromMarks(itemMarks)) {
+    // The named command's own default: skills adopt into local scope,
+    // Pi extensions and subagents into project scope, so the printed
+    // equivalent command needs no --to flag.
+    const scope = planned.kind === "skills" ? "local" : "project";
+    const ref = sanitizeDisplayText(`${planned.kind}/${planned.name}`);
+    const command = itemShareCommand(
+      planned,
+      request.share.message,
+      dataOverride,
+    );
+    try {
+      // Re-derive after the prompt, then act — the same consent rule the
+      // fragment loop follows. The digest proves the directory or file is
+      // still the content the frame offered.
+      const revalidated = await loadShareCatalog({
+        project,
+        dataRepo,
+        manifest: await loadManifest(project),
+        lock: await loadLock(project),
+        localLock: await loadLocalLock(project),
+      });
+      const changed = changedMarks(planned, revalidated.picks);
+      if (changed.length > 0) {
+        throw new PreconditionError(
+          `${ref} changed while the picker was open; nothing was committed for this item`,
+        );
+      }
+      const options: ShareOptions = {
+        ...(request.share.message !== undefined && {
+          message: request.share.message,
+        }),
+        suppressGuidance: true,
+        // The repository the catalog and the staleness check read. A rebind
+        // while the picker was open must not move the destination.
+        boundRepo: dataRepo,
+      };
+      if (planned.kind === "subagents") {
+        await shareSubagent(
+          planned.name,
+          "project",
+          {
+            ...options,
+            ...(planned.target !== null && { target: planned.target }),
+          },
+          request.cmd,
+        );
+      } else {
+        await shareCopyItem(
+          planned.kind,
+          planned.name,
+          scope,
+          options,
+          request.cmd,
+        );
+      }
+      console.log(`  ${command}`);
+      shared.push(ref);
+    } catch (error) {
+      failed.push(ref);
+      reportItemFailure(ref, error, command);
+      // See the fragment loop below: the commit lands before local tracking
+      // persists, and `add` is the documented repair for that partial state.
+      const addPrefix =
+        dataOverride === undefined
+          ? "capshelf"
+          : `capshelf --data ${shellArg(dataOverride)}`;
+      console.error(
+        `  if the data-repo commit succeeded and only local tracking failed: ${addPrefix} add ${scope === "local" ? "--local " : ""}${shellArg(ref)}`,
+      );
+    }
+  }
+  for (const planned of plannedSharesFromMarks(fragmentMarks)) {
     const name =
       planned.name ??
       (await promptItemName(planned.kind, {
@@ -144,6 +232,7 @@ export async function runInteractiveShare(request: {
         dataRepo,
         manifest: await loadManifest(project),
         lock: await loadLock(project),
+        localLock: await loadLocalLock(project),
       });
       const changed = changedMarks(planned, revalidated.picks);
       if (changed.length > 0) {
@@ -264,6 +353,34 @@ function itemNameRefusal(
     return `already tracked in this project: ${kind}/${name} — pick another name`;
   }
   return null;
+}
+
+function isFragmentSharePick(
+  mark: SharePick | ItemSharePick,
+): mark is SharePick {
+  return isFragmentKindName(mark.kind);
+}
+
+/**
+ * The command that repeats one item share: the equivalent line after a
+ * success, and the retry line after a failure — for an on-disk item the two
+ * are the same string, because the item's name was never chosen in the frame.
+ */
+function itemShareCommand(
+  planned: PlannedItemShare,
+  message: string | undefined,
+  dataOverride: string | undefined,
+): string {
+  const prefix =
+    dataOverride === undefined
+      ? "capshelf"
+      : `capshelf --data ${shellArg(dataOverride)}`;
+  const parts = [
+    `${prefix} share ${shellArg(`${planned.kind}/${planned.name}`)}`,
+  ];
+  if (planned.target !== null) parts.push(`--target ${planned.target}`);
+  if (message !== undefined) parts.push(`-m ${shellArg(message)}`);
+  return parts.join(" ");
 }
 
 function retryCommand(

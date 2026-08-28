@@ -10,7 +10,8 @@
  *
  * `shareCatalogRows` is pure over parsed remainders, like `pick-core.ts`, so
  * the row split and the grouping are unit tests. `loadShareCatalog` is the
- * thin read half.
+ * thin read half; it also folds in the untracked skills, Pi extensions, and
+ * subagents that `share-scan.ts` finds on disk (picker spec, phase 3).
  */
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -41,9 +42,17 @@ import type { Manifest } from "./manifest";
 import type { FragmentItemKind } from "./master";
 import { sanitizeDisplayText } from "./pick-core";
 import type { PickKind, PickRow } from "./pick-core";
+import { scanUntrackedShareItems } from "./share-scan";
+import type { ItemSharePick, ShareScanLocation } from "./share-scan";
 
-/** The tab order for a catalog that holds only fragment kinds. */
+/**
+ * The tab order for the share catalog: the canonical kind order, items before
+ * fragments, matching `add` and `status`.
+ */
 export const SHARE_KIND_ORDER: readonly PickKind[] = [
+  "skills",
+  "pi-extensions",
+  "subagents",
   "settings",
   "mcp",
   "codex-config",
@@ -81,9 +90,11 @@ export interface ShareOutputState {
 
 export interface ShareCatalog {
   rows: PickRow[];
-  /** Row id -> what the mark means. */
-  picks: Map<string, SharePick>;
+  /** Row id -> what the mark means: a fragment value or an on-disk item. */
+  picks: Map<string, SharePick | ItemSharePick>;
   outputs: ShareOutputState[];
+  /** The item directories the scanner looked in, for the empty state. */
+  scanned: ShareScanLocation[];
 }
 
 export interface ShareOutputRemainder extends ShareOutputState {
@@ -96,7 +107,15 @@ export async function loadShareCatalog(opts: {
   dataRepo: string;
   manifest: Manifest;
   lock: Lock;
+  localLock: Lock;
 }): Promise<ShareCatalog> {
+  const scan = await scanUntrackedShareItems({
+    project: opts.project,
+    dataRepo: opts.dataRepo,
+    manifest: opts.manifest,
+    projectLock: opts.lock,
+    localLock: opts.localLock,
+  });
   const remainders: ShareOutputRemainder[] = [];
   const brokenRows: PickRow[] = [];
   for (const target of allFragmentTargets()) {
@@ -152,13 +171,17 @@ export async function loadShareCatalog(opts: {
   }
   const built = shareCatalogRows(remainders);
   return {
-    rows: [...brokenRows, ...built.rows],
-    picks: built.picks,
+    rows: [...scan.rows, ...brokenRows, ...built.rows],
+    picks: new Map<string, SharePick | ItemSharePick>([
+      ...scan.picks,
+      ...built.picks,
+    ]),
     outputs: remainders.map(({ target, label, exists }) => ({
       target,
       label,
       exists,
     })),
+    scanned: scan.scanned,
   };
 }
 
@@ -432,15 +455,16 @@ export function plannedSharesFromMarks(marks: SharePick[]): PlannedShare[] {
 
 /**
  * The marks of one planned item whose values no longer match what the picker
- * showed, judged against a freshly rebuilt catalog.
+ * showed, judged against a freshly rebuilt catalog. Covers fragment and
+ * on-disk item marks alike: both carry an id and a content digest.
  *
  * A vanished row counts as changed: the value was removed, or another process
  * now manages it, and either way it is not what the user marked.
  */
-export function changedMarks(
-  planned: PlannedShare,
-  fresh: ReadonlyMap<string, SharePick>,
-): SharePick[] {
+export function changedMarks<M extends { id: string; digest: string }>(
+  planned: { marks: M[] },
+  fresh: ReadonlyMap<string, { digest: string }>,
+): M[] {
   return planned.marks.filter(
     (mark) => fresh.get(mark.id)?.digest !== mark.digest,
   );

@@ -142,8 +142,14 @@ describe("share with no item — refusals and empty state", () => {
       const result = await run(["share"]);
       expect(result.exitCode).toBe(0);
       const stdout = result.stdout.toString();
-      expect(stdout).toContain("nothing to share: no unmanaged values in");
+      expect(stdout).toContain(
+        "nothing to share: no unmanaged values or untracked items in",
+      );
       expect(stdout).toContain(".mcp.json (absent)");
+      // The scanned item locations too: tracked system skills contribute no
+      // rows, so an initialized project is still empty.
+      expect(stdout).toContain(".agents/skills");
+      expect(stdout).toContain(".claude/agents (absent)");
       expect(seen).toHaveLength(0);
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
@@ -540,6 +546,191 @@ describe("share with no item — the picker flow", () => {
         join(second.dataRepo, "settings", "perms", "settings.json"),
       ).text();
       expect(secondBlob).toBe(firstBlob);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+});
+
+describe("share with no item — untracked items", () => {
+  test(
+    "an untracked skill is offered, shares to local scope, and prints the command that repeats it",
+    async () => {
+      const { project, dataRepo, run } = await initializedProject(
+        "capshelf-shareskill-",
+      );
+      await mkdir(join(project, ".agents", "skills", "hello"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(project, ".agents", "skills", "hello", "SKILL.md"),
+        "hello\n",
+      );
+      const { seen } = answerWith((request) =>
+        request.rows
+          .filter((row) => row.ref === "hello")
+          .map((row) => row.id as string),
+      );
+
+      const result = await run(["share"]);
+      expect(result.exitCode).toBe(0);
+
+      const rows = seen[0]?.rows ?? [];
+      const row = rows.find((r) => r.ref === "hello");
+      expect(row?.kind).toBe("skills");
+      expect(row?.detail).toContain(".agents/skills/hello");
+      expect(row?.detail).toContain("1 file");
+      // Tracked system skills contribute no rows: the scanner offers only
+      // what no lock entry claims.
+      expect(rows.filter((r) => r.kind === "skills")).toHaveLength(1);
+
+      const stdout = result.stdout.toString();
+      // The named command's default scope for skills is local, so the printed
+      // command needs no --to flag to repeat this share.
+      expect(stdout).toContain("✓ shared local/data/skills/hello @");
+      expect(stdout).toContain("capshelf share skills/hello");
+      expect(stdout).toContain("1 shared");
+      expect(existsSync(join(dataRepo, "skills", "hello", "SKILL.md"))).toBe(
+        true,
+      );
+      const localLock = JSON.parse(
+        await file(join(project, ".capshelf", "local.lock.json")).text(),
+      );
+      expect(localLock.items["data/skills/hello"]).toBeDefined();
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "subagent rows are one per output file, and the marked outputs decide --target",
+    async () => {
+      const { project, dataRepo, run } = await initializedProject(
+        "capshelf-sharesubagent-",
+      );
+      const claudeAgents = join(project, ".claude", "agents");
+      const codexAgents = join(project, ".codex", "agents");
+      await mkdir(claudeAgents, { recursive: true });
+      await mkdir(codexAgents, { recursive: true });
+      const frontmatter = (name: string): string =>
+        `---\nname: ${name}\ndescription: reviews\n---\nbody\n`;
+      await writeFile(
+        join(claudeAgents, "reviewer.md"),
+        frontmatter("reviewer"),
+      );
+      await writeFile(
+        join(codexAgents, "reviewer.toml"),
+        'name = "reviewer"\ndescription = "reviews"\ndeveloper_instructions = "review"\n',
+      );
+      await writeFile(join(claudeAgents, "solo.md"), frontmatter("solo"));
+      // An invalid source would fail every time after selection, so it must
+      // be a visible, disabled row instead of an enabled trap.
+      await writeFile(join(claudeAgents, "broken.md"), "no frontmatter\n");
+      const { seen } = answerWith((request) =>
+        request.rows
+          .filter(
+            (row) =>
+              row.ref === "solo" ||
+              (row.ref === "reviewer" &&
+                row.detail?.includes(".claude/agents/reviewer.md") === true),
+          )
+          .map((row) => row.id as string),
+      );
+
+      const result = await run(["share"]);
+      expect(result.exitCode).toBe(0);
+
+      const rows = seen[0]?.rows ?? [];
+      expect(rows.filter((r) => r.ref === "reviewer")).toHaveLength(2);
+      const broken = rows.find((r) => r.ref === "broken");
+      expect(broken?.disabled).toBe(true);
+      expect(broken?.detail).toContain("frontmatter");
+
+      // One of two reviewer outputs marked: the share carries its target and
+      // commits only that canonical source.
+      expect(
+        existsSync(join(dataRepo, "subagents", "reviewer", "claude.md")),
+      ).toBe(true);
+      expect(
+        existsSync(join(dataRepo, "subagents", "reviewer", "codex.toml")),
+      ).toBe(false);
+      const stdout = result.stdout.toString();
+      expect(stdout).toContain(
+        "capshelf share subagents/reviewer --target claude",
+      );
+      // solo's only output was marked, so its command needs no flag.
+      expect(stdout).toContain("capshelf share subagents/solo\n");
+      expect(existsSync(join(dataRepo, "subagents", "solo", "claude.md"))).toBe(
+        true,
+      );
+      expect(stdout).toContain("2 shared");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "an item the named share would refuse is a disabled row that names the reason",
+    async () => {
+      const { project, dataRepo, run } = await initializedProject(
+        "capshelf-shareitemrefused-",
+      );
+      // Already on the shelf under the same name.
+      await mkdir(join(dataRepo, "skills", "taken"), { recursive: true });
+      await writeFile(join(dataRepo, "skills", "taken", "SKILL.md"), "x\n");
+      await $`git -C ${dataRepo} add skills`.quiet();
+      await $`git -C ${dataRepo} commit -qm taken`.quiet();
+      await mkdir(join(project, ".agents", "skills", "taken"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(project, ".agents", "skills", "taken", "SKILL.md"),
+        "local\n",
+      );
+      // A directory that is not a valid skill.
+      await mkdir(join(project, ".agents", "skills", "noskill"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(project, ".agents", "skills", "noskill", "notes.txt"),
+        "notes\n",
+      );
+      const { seen } = answerWith(() => []);
+
+      const result = await run(["share"]);
+      expect(result.exitCode).toBe(0);
+      const rows = seen[0]?.rows ?? [];
+      const taken = rows.find((r) => r.ref === "taken");
+      expect(taken?.disabled).toBe(true);
+      expect(taken?.detail).toContain("already on the shelf as skills/taken");
+      const noskill = rows.find((r) => r.ref === "noskill");
+      expect(noskill?.disabled).toBe(true);
+      expect(noskill?.detail).toContain("missing SKILL.md");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "a skill edited while the picker was open fails that row, not commits it",
+    async () => {
+      const { project, dataRepo, run } = await initializedProject(
+        "capshelf-shareitemstale-",
+      );
+      const skillFile = join(project, ".agents", "skills", "hello", "SKILL.md");
+      await mkdir(join(project, ".agents", "skills", "hello"), {
+        recursive: true,
+      });
+      await writeFile(skillFile, "hello\n");
+      answerWith((request) => {
+        writeFileSync(skillFile, "changed under the open frame\n");
+        return request.rows
+          .filter((row) => row.ref === "hello")
+          .map((row) => row.id as string);
+      });
+
+      const result = await run(["share"]);
+      expect(result.exitCode).toBe(3);
+      expect(result.stderr.toString()).toContain(
+        "skills/hello changed while the picker was open",
+      );
+      expect(existsSync(join(dataRepo, "skills"))).toBe(false);
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );

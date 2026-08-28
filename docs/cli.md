@@ -258,7 +258,7 @@ registered.
 | `get-path <item>` | print the editable path; subagents and MCP support `--target`, while `--output` returns the corresponding runtime output | implemented |
 | `apply [<item>]` | reconcile project and local files with lockfiles after a full-set destructive preflight; a failing fragment target aborts every write, while an unresolvable copy or subagent item is reported and the rest still converge (exit 1); supports `--local`, `--dry-run`, and `--yes` | implemented |
 | `update [<item>...]` | bump content and declared-needs pins; needs-only changes do not reinstall unchanged content; `--merge` reconciles one explicit skill or Pi extension and pins upstream without publishing; `--local` selects clone-local scope; supports `--dry-run` and explicit drift overwrite consent with `--yes` | implemented |
-| `share [item]` | adopt a not-yet-shared on-disk item into the data repo and report the new item's runtime target coverage; subagents scan both runtime outputs by default and require `--target` with `--from`; with no item, opens the interactive picker over unmanaged config values (see The picker); pick-based fragment shares print and report the equivalent non-interactive command | implemented |
+| `share [item]` | adopt a not-yet-shared on-disk item into the data repo and report the new item's runtime target coverage; subagents scan both runtime outputs by default and require `--target` with `--from`; with no item, opens the interactive picker over unmanaged config values and untracked skills, Pi extensions, and subagents (see The picker); pick-based fragment shares print and report the equivalent non-interactive command | implemented |
 | `move <item> --to <scope>` | move an already-tracked data item between local and project scope without changing data-repo content | implemented |
 | `promote [item]` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects clone-local copy items; `--stale-ok` is the intentional overwrite option; `--merge` is deprecated compatibility behavior; with no item, opens the interactive picker over the tracked items (see The picker) | implemented |
 | `keep-local <item>` | mark drifted copy-item content as intentional divergence; supports project and clone-local skills/Pi extensions, and rejects fragments; `--unset` is the only thing that clears the marker, and `promote` refuses a marked item | implemented |
@@ -861,11 +861,22 @@ full-screen prompt closes. It refuses a name the data repo already holds and
 an unsafe name. An empty answer skips that item. A marked ancestor path drops
 its marked descendants, because both marks name the same fragment.
 
+The list also holds every untracked skill, Pi extension, and subagent found
+on disk. A skill or Pi extension row is one directory. Its detail shows the
+source path and a file count, never file contents. A subagent row is one
+runtime output file, like an MCP row. Mark both files and the share needs no
+`--target`. Mark one file and the command carries it. The item name comes
+from the directory or file name, so these rows need no name prompt. Skills
+share to local scope, which is the named command's default. An item the
+named command would refuse stays visible, struck through, with the refusal
+in its detail column.
+
 Each shared item prints the same lines a named `share` prints, then the
 non-interactive command that repeats it. A named pick-based share also reports
 that command, and its `--json` carries it as `equivalentCommand`. When no
-output holds an unmanaged value, the picker does not open. `share` lists the
-outputs it looked in and exits 0.
+output holds an unmanaged value and no untracked item is on disk, the picker
+does not open. `share` lists the outputs and directories it looked in and
+exits 0.
 
 `capshelf promote` with no item opens the picker over the tracked data items.
 A row whose status state has something to promote can be marked. Every other
