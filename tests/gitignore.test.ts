@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { PreconditionError } from "../src/errors";
 import { gitignoreVisibleFiles, inventoryLocalTree } from "../src/gitignore";
 
 async function tempDir(prefix: string): Promise<string> {
@@ -64,8 +65,16 @@ describe("gitignoreVisibleFiles", () => {
 
     // Row 1 of the object-model table: the data-repo trust boundary does not
     // move when ignored local state learns to carry symlinks across.
-    expect(gitignoreVisibleFiles(root)).rejects.toThrow(
+    const error = await gitignoreVisibleFiles(root).then(
+      () => null,
+      (thrown: unknown) => thrown,
+    );
+    expect(error).toBeInstanceOf(PreconditionError);
+    expect((error as PreconditionError).message).toContain(
       "contains an unsupported symlink: link.txt",
+    );
+    expect((error as PreconditionError).hint).toContain(
+      ".gitignore inside the item",
     );
   });
 });

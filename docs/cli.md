@@ -63,7 +63,10 @@ Mutating commands only touch item files that are tracked in `.capshelf/capshelf.
 Item names of every kind reject control characters (C0, DEL, and C1),
 backslashes, a leading `/` or `-`, and `.` or `..` path segments. Copy-item
 trees accept regular files only. Symlinks, Git links, and special filesystem objects are refused at
-both working-tree and committed-object boundaries. Executable intent is
+both working-tree and committed-object boundaries. A symlink refusal adds a
+hint. The usual cause is a dependency install, for example `node_modules` from
+pnpm. The fix is to delete the path or to ignore it with a `.gitignore` inside
+the item. Executable intent is
 normalized to Git modes `100644` and `100755`; status, promote, apply, and
 update preserve and compare that mode without changing the existing content
 hash format.

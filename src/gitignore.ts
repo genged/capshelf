@@ -30,12 +30,16 @@ export async function gitignoreVisibleFiles(root: string): Promise<string[]> {
 
       if (entry.isDirectory()) await walk(rel, activeScopes);
       else if (entry.isFile()) out.push(rel);
-      else {
-        const type = entry.isSymbolicLink()
-          ? "symlink"
-          : "unsupported filesystem object";
+      else if (entry.isSymbolicLink()) {
         throw new PreconditionError(
-          `${root} contains an unsupported ${type}: ${rel}; copy items support regular files only`,
+          `${root} contains an unsupported symlink: ${rel}; copy items support regular files only`,
+          {
+            hint: "Dependency installs create symlinks, for example node_modules from pnpm. Delete the path, or list it in a .gitignore inside the item. Only .gitignore files inside the item apply here.",
+          },
+        );
+      } else {
+        throw new PreconditionError(
+          `${root} contains an unsupported filesystem object: ${rel}; copy items support regular files only`,
         );
       }
     }

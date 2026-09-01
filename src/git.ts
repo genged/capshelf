@@ -1005,6 +1005,11 @@ async function presentFilesRelativeTo(
             : "non-regular filesystem object";
         throw new PreconditionError(
           `${normalized} contains an unsupported ${type}: ${path}; copy items support regular files only`,
+          info.isSymbolicLink()
+            ? {
+                hint: "Dependency installs create symlinks, for example node_modules from pnpm. Delete the path, or cover it with a .gitignore rule.",
+              }
+            : {},
         );
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") {

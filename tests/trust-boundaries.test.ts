@@ -5,6 +5,7 @@ import { chmod, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { isSafeItemName } from "../src/assert";
 import { isBundleRef } from "../src/bundles";
+import { PreconditionError } from "../src/errors";
 import { defaultSelfUpdateContext } from "../src/self-update";
 import { gitInfoExcludePath, headSha } from "../src/git";
 import { ManifestSchema } from "../src/manifest";
@@ -48,8 +49,16 @@ describe("trust boundaries", () => {
       }
       await $`git -C ${repo} add -A`.quiet();
 
-      await expect(shaOfGitVisibleItem(repo, "skills/unsafe")).rejects.toThrow(
+      const error = await shaOfGitVisibleItem(repo, "skills/unsafe").then(
+        () => null,
+        (thrown: unknown) => thrown,
+      );
+      expect(error).toBeInstanceOf(PreconditionError);
+      expect((error as PreconditionError).message).toMatch(
         /unsupported symlink.*skills\/unsafe\/linked/u,
+      );
+      expect((error as PreconditionError).hint).toContain(
+        "Dependency installs create symlinks",
       );
     }
   });

@@ -210,12 +210,16 @@ export async function walkItemFiles(root: string): Promise<string[]> {
       const childRel = rel ? join(rel, e.name) : e.name;
       if (e.isDirectory()) await go(childRel);
       else if (e.isFile()) out.push(childRel);
-      else {
-        const type = e.isSymbolicLink()
-          ? "symlink"
-          : "unsupported filesystem object";
+      else if (e.isSymbolicLink()) {
         throw new PreconditionError(
-          `${root} contains an unsupported ${type}: ${childRel}; copy items support regular files only`,
+          `${root} contains an unsupported symlink: ${childRel}; copy items support regular files only`,
+          {
+            hint: "Dependency installs create symlinks, for example node_modules from pnpm. Delete the path, then run the command again.",
+          },
+        );
+      } else {
+        throw new PreconditionError(
+          `${root} contains an unsupported filesystem object: ${childRel}; copy items support regular files only`,
         );
       }
     }
