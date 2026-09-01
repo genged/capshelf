@@ -1023,13 +1023,20 @@ paths are listed directly because status deliberately filters them. Use
 `capshelf marketplace sync --target codex --dry-run --json` for generated
 projection changes. Dry runs report `destructiveChanges` and never prompt.
 
+An `add` prompt names `capshelf status --diff` only when a tracked
+contribution to the target has drifted (`src/commands/add.ts:560-570`).
+`status` reports lock entries, so a first fragment add gives it no row to
+diff. A comment does not change parsed values, so comment-only loss gives it
+no diff either. In both cases the prompt asks you to review the listed paths
+directly.
+
 | Case | Result | Review or next command |
 | --- | --- | --- |
 | Clean locked content is applied, updated, removed, or already current | No prompt | Continue normally |
 | Installed managed content or mode differs | Prompt; non-TTY/JSON exits 3 | `capshelf status <item> --diff`, then rerun with `--yes` if approved |
 | Ignored local-only file survives reconciliation | Preserved without a prompt | Its path remains installed; a collision with new managed content hard-refuses |
 | `rm` would delete an ignored or visible extra path | Prompt names the physical path | Preserve it elsewhere or rerun `rm ... --yes` |
-| Fragment serialization would remove `.codex/config.toml` comments | Prompt names the output | Review the output and managed item diff before `--yes` |
+| Fragment serialization would remove `.codex/config.toml` comments | Prompt names the output | Open the named file and review its comments before `--yes` |
 | Fragment serialization would remove `.claude/settings.json` or `.mcp.json` comments | No prompt; a warning says the file was not loading and the rewrite repairs it | Nothing — the comments were already stopping Claude Code from reading the file |
 | Codex projection is stale but Git-clean | Syncs normally | Review the resulting Git diff before committing |
 | Codex projection has dirty affected paths | Prompt; dry-run lists paths | `capshelf marketplace sync --target codex --dry-run --json` |

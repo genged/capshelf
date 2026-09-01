@@ -87,7 +87,15 @@ describe("standalone add convergence", () => {
       // real destruction the user has to authorize.
       const refused = await run(["add", "codex-config/extra", "--json"]);
       expect(refused.exitCode).toBe(3);
-      expect(refused.stderr.toString()).toContain("remove config comments");
+      const refusedStderr = refused.stderr.toString();
+      expect(refusedStderr).toContain("remove config comments");
+      // A comment does not change parsed values, so the tracked contribution
+      // still reads "ok" and `status --diff` would print no diff for it. The
+      // prompt must not name a review command that shows nothing.
+      expect(refusedStderr).not.toContain("capshelf status --diff");
+      expect(refusedStderr).toContain(
+        "Review the affected paths before continuing.",
+      );
       expect(
         await Promise.all([
           file(output).text(),
@@ -104,6 +112,73 @@ describe("standalone add convergence", () => {
       ]);
       expect(accepted.exitCode).toBe(0);
       expect(await file(output).text()).toContain('approval = "never"');
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "first fragment add onto an unmanaged commented config names no status command",
+    async () => {
+      const project = await tempRepo("capshelf-add-toml-first-project-");
+      const dataRepo = await tempRepo("capshelf-add-toml-first-data-");
+      const run = runInProcess(project);
+      const base = join(dataRepo, "codex", "config", "base");
+      await mkdir(base, { recursive: true });
+      await writeFile(join(base, "config.toml"), 'model = "gpt-5"\n');
+      await commitAll(dataRepo, "codex fragment");
+      expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+      await mkdir(join(project, ".codex"), { recursive: true });
+      const output = join(project, ".codex", "config.toml");
+      await writeFile(output, '# local rationale\nsandbox = "strict"\n');
+
+      // Nothing contributes to this target yet, so `status` has no row that
+      // could show the loss; the prompt falls back to naming the path.
+      const refused = await run(["add", "codex-config/base", "--json"]);
+      expect(refused.exitCode).toBe(3);
+      const stderr = refused.stderr.toString();
+      expect(stderr).toContain("remove config comments");
+      expect(stderr).not.toContain("capshelf status --diff");
+      expect(stderr).toContain("Review the affected paths before continuing.");
+
+      const accepted = await run(["add", "codex-config/base", "--yes"]);
+      expect(accepted.exitCode).toBe(0);
+      const merged = await file(output).text();
+      expect(merged).toContain('model = "gpt-5"');
+      expect(merged).toContain('sandbox = "strict"');
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "add onto a drifted managed contribution keeps the status review command",
+    async () => {
+      const project = await tempRepo("capshelf-add-toml-drift-project-");
+      const dataRepo = await tempRepo("capshelf-add-toml-drift-data-");
+      const run = runInProcess(project);
+      const base = join(dataRepo, "codex", "config", "base");
+      const extra = join(dataRepo, "codex", "config", "extra");
+      await mkdir(base, { recursive: true });
+      await mkdir(extra, { recursive: true });
+      await writeFile(join(base, "config.toml"), 'model = "gpt-5"\n');
+      await writeFile(join(extra, "config.toml"), 'approval = "never"\n');
+      await commitAll(dataRepo, "codex fragments");
+      expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+      expect((await run(["add", "codex-config/base"])).exitCode).toBe(0);
+      const output = join(project, ".codex", "config.toml");
+      // Drop the managed key: the tracked contribution now reads "drifted",
+      // which is the one state that gives `status --diff` a diff to print.
+      await writeFile(output, 'retain = "local"\n');
+
+      const refused = await run(["add", "codex-config/extra", "--json"]);
+      expect(refused.exitCode).toBe(3);
+      const stderr = refused.stderr.toString();
+      expect(stderr).toContain("replace a managed config contribution");
+      expect(stderr).toContain("capshelf status --diff");
+
+      // The named command shows the loss the prompt asks about.
+      const status = await run(["status", "--diff"]);
+      expect(status.exitCode).toBe(0);
+      expect(status.stdout.toString()).toContain('-model = "gpt-5"');
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );

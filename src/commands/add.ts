@@ -550,17 +550,24 @@ async function planStandaloneFragmentAdd(
         target,
       }),
     );
-    contributionStates.set(
+    const contributionState = await fragmentContributionState(
+      ctx.project,
+      ctx.dataRepo,
+      ctx.manifest,
+      ctx.projectLock,
       target,
-      await fragmentContributionState(
-        ctx.project,
-        ctx.dataRepo,
-        ctx.manifest,
-        ctx.projectLock,
-        target,
-      ),
     );
-    reviewCommands.set(target, "capshelf status --diff");
+    contributionStates.set(target, contributionState);
+    // A review command only when `status --diff` can display the loss. Status
+    // reports lock entries, so it reaches this target's file only through an
+    // already-tracked contributor whose row has a diff to print — and only
+    // drifted parsed values give it one. On a first add nothing contributes,
+    // and comment-only loss parses identical to the managed output, so the
+    // named command would print "(no items tracked)" or
+    // "(no content differences)" under the prompt that cited it.
+    if (contributionState === "drifted") {
+      reviewCommands.set(target, "capshelf status --diff");
+    }
   }
   const destruction = planFragmentDestruction({
     project: ctx.project,
