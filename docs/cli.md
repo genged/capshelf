@@ -1073,6 +1073,13 @@ not assume that each path occurs once. An unavailable comparison has `text:
 null` and an `unavailableReason` (`src/commands/status.ts:492-530`,
 `src/status-diff.ts:90-107`).
 
+A managed file can be binary, for example a font inside a skill. The diff
+calls a file binary when a NUL byte appears in its first 8000 bytes, or when
+its bytes are not valid UTF-8. The NUL check is git's own heuristic. A binary
+file renders a three-line `Binary files differ` entry instead of its bytes
+(`src/status-diff.ts:824-848`). The promote picker preview applies the same
+rule.
+
 ### The keep-local marker
 
 The marker records *intent*, not a fact about current content. Exactly one

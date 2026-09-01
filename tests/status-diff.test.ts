@@ -17,6 +17,7 @@ import {
   currentCopyDirectoryItemSha,
   shouldShowLocalDiff,
   unifiedDiff,
+  unifiedDiffBytes,
 } from "../src/status-diff";
 
 async function tempRepo(prefix: string): Promise<string> {
@@ -65,6 +66,41 @@ describe("status diff helpers", () => {
     expect(diff).toContain(" line 13");
     expect(diff.split("\n")).not.toContain(" line 1");
     expect(diff.split("\n")).not.toContain(" line 20");
+  });
+
+  test("unifiedDiffBytes reports binary content without printing its bytes", async () => {
+    const font = Buffer.from([0x77, 0x4f, 0x46, 0x32, 0x00, 0x01, 0xff, 0xfe]);
+    const edited = Buffer.from([0x77, 0x4f, 0x46, 0x32, 0x00, 0x02, 0xff]);
+    const stanza = "--- from\n+++ to\nBinary files differ\n";
+
+    expect(await unifiedDiffBytes("from", "to", font, edited)).toBe(stanza);
+    expect(await unifiedDiffBytes("from", "to", null, font)).toBe(stanza);
+    expect(await unifiedDiffBytes("from", "to", font, null)).toBe(stanza);
+
+    // A NUL byte marks a file binary even when the bytes decode as UTF-8.
+    // That is git's own heuristic, and it catches UTF-16 text.
+    const utf16 = Buffer.from("plain text", "utf16le");
+    expect(await unifiedDiffBytes("from", "to", utf16, null)).toBe(stanza);
+
+    // Equal binary bytes leave only the mode to differ, and a mode-only
+    // diff carries no content, so it still renders.
+    const modeOnly = await unifiedDiffBytes("from", "to", font, font, {
+      fromExecutable: false,
+      toExecutable: true,
+    });
+    expect(modeOnly).toContain("old mode 100644");
+    expect(modeOnly).toContain("new mode 100755");
+    expect(modeOnly).not.toContain("Binary files differ");
+    expect(await unifiedDiffBytes("from", "to", font, font)).toBe("");
+
+    const text = await unifiedDiffBytes(
+      "from",
+      "to",
+      Buffer.from("a\n"),
+      Buffer.from("b\n"),
+    );
+    expect(text).toContain("-a");
+    expect(text).toContain("+b");
   });
 
   test("reports missing git before rendering diffs", async () => {
@@ -169,6 +205,69 @@ describe("status diff helpers", () => {
     expect(diff?.text).not.toContain("upstream delete");
 
     expect(await file(join(installed, "extra.md")).text()).toBe("local add\n");
+  });
+
+  test("buildStatusDiff reports drifted binary files without their bytes", async () => {
+    const dataRepo = await tempRepo("capshelf-status-binary-data-");
+    const project = await tempRepo("capshelf-status-binary-project-");
+    const dataItem = join(dataRepo, "skills", "hello");
+    const installed = join(project, ".agents", "skills", "hello");
+
+    await mkdir(dataItem, { recursive: true });
+    await writeFile(join(dataItem, "SKILL.md"), "locked v1\n");
+    await writeFile(
+      join(dataItem, "font.woff2"),
+      Buffer.from([0x77, 0x4f, 0x46, 0x32, 0x00, 0x01, 0xff, 0xfe]),
+    );
+    await commitAll(dataRepo, "hello v1");
+    const sourceCommit = await lastTouchingCommit(dataRepo, "skills/hello");
+    const lockedSha = await currentPinDigest(dataRepo, "skills", "hello");
+
+    await mkdir(installed, { recursive: true });
+    await writeFile(join(installed, "SKILL.md"), "local edit\n");
+    await writeFile(
+      join(installed, "font.woff2"),
+      Buffer.from([0x00, 0x01, 0x00, 0x00, 0xff, 0x21]),
+    );
+
+    const diff = await buildStatusDiff({
+      project,
+      dataRepo,
+      manifest: {
+        installMode: "codex-compatible",
+        skills: ["hello"],
+        settings: [],
+        mcp: [],
+        codexConfig: [],
+      },
+      lock: {
+        version: 4,
+        items: {
+          [dataKey("skills", "hello")]: {
+            source: "data",
+            sourcePinDigest: lockedSha,
+            sourceCommit,
+            appliedAt: "2026-09-01T00:00:00.000Z",
+          },
+        },
+      },
+      row: {
+        source: "data",
+        kind: "skills",
+        name: "hello",
+        state: "drifted_local",
+        sourceCommit,
+      },
+    });
+
+    expect(diff?.text).toContain(
+      "--- font.woff2 (locked data/skills/hello)\n+++ font.woff2 (current)\nBinary files differ",
+    );
+    expect(diff?.text).not.toContain("\u0000");
+    expect(diff?.text).not.toContain("�");
+    // The text file beside it still renders content hunks.
+    expect(diff?.text).toContain("-locked v1");
+    expect(diff?.text).toContain("+local edit");
   });
 
   test("buildStatusDiff explains an installed mode-only change", async () => {

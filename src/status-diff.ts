@@ -323,11 +323,11 @@ export async function buildStatusDiff(
         currentStat?.isFile() && !currentStat.isSymbolicLink()
           ? await readFile(source.outputPath)
           : Buffer.alloc(0);
-      const text = await unifiedDiff(
+      const text = await unifiedDiffBytes(
         `${source.outputPath} (locked)`,
         `${source.outputPath} (current)`,
-        expected.toString("utf-8"),
-        current.toString("utf-8"),
+        expected,
+        current,
       );
       if (text) parts.push(text);
     }
@@ -765,11 +765,11 @@ async function diffFileMaps(
     const currentFile = current.get(file) ?? null;
     const expectedFile = expected.get(file) ?? null;
     // locked is the baseline (---), current the new side (+++) — see above.
-    const text = await unifiedDiff(
+    const text = await unifiedDiffBytes(
       `${file} (locked${lockedCommit ? ` ${lockedCommit.slice(0, 7)}` : ` ${item}`})`,
       `${file} (${view}${targetCommit ? ` ${targetCommit.slice(0, 7)}` : ""})`,
-      expectedFile?.content.toString("utf-8") ?? null,
-      currentFile?.content.toString("utf-8") ?? null,
+      expectedFile?.content ?? null,
+      currentFile?.content ?? null,
       {
         ...(expectedFile !== null && {
           fromExecutable: expectedFile.executable,
@@ -798,6 +798,48 @@ function shaOfFileMap(files: FileMap): string {
 export interface UnifiedDiffOptions {
   fromExecutable?: boolean;
   toExecutable?: boolean;
+}
+
+/**
+ * The text of a diff side, or null when the side is binary. Git calls a file
+ * binary when a NUL appears in its first 8000 bytes. That check also catches
+ * UTF-16 text, which can survive a fatal UTF-8 decode.
+ */
+function decodeDiffText(content: Buffer): string | null {
+  if (content.subarray(0, 8000).includes(0)) return null;
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(content);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Diff two files given as bytes. The isolated git profile passes `--text`,
+ * which disables git's own binary check, so binary content must be caught
+ * here before it reaches git. A binary side collapses the diff to a
+ * three-line stanza instead of raw bytes. Equal binary bytes still go to
+ * git: only the mode can differ, and a mode-only diff carries no content.
+ */
+export async function unifiedDiffBytes(
+  fromLabel: string,
+  toLabel: string,
+  fromBytes: Buffer | null,
+  toBytes: Buffer | null,
+  options: UnifiedDiffOptions = {},
+): Promise<string> {
+  const fromText = fromBytes === null ? null : decodeDiffText(fromBytes);
+  const toText = toBytes === null ? null : decodeDiffText(toBytes);
+  const binary =
+    (fromBytes !== null && fromText === null) ||
+    (toBytes !== null && toText === null);
+  if (!binary) {
+    return await unifiedDiff(fromLabel, toLabel, fromText, toText, options);
+  }
+  if (fromBytes !== null && toBytes !== null && fromBytes.equals(toBytes)) {
+    return await unifiedDiff(fromLabel, toLabel, "", "", options);
+  }
+  return `--- ${fromLabel}\n+++ ${toLabel}\nBinary files differ\n`;
 }
 
 /**

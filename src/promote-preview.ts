@@ -25,7 +25,7 @@ import {
   namedFilesTreeEntries,
   sourcePinDigest,
 } from "./pin";
-import { unifiedDiff } from "./status-diff";
+import { unifiedDiffBytes } from "./status-diff";
 import { lstatOrNull } from "./fs-utils";
 import { subagentSourcesAtCommit } from "./subagents";
 import type { Scope } from "./promote-core";
@@ -190,30 +190,11 @@ export async function diffNamedFiles(
     const displayPath = sanitizeDisplayText(path);
     const before = baseByPath.get(path);
     const after = candidateByPath.get(path);
-    const beforeText = before ? decodeText(before.content) : null;
-    const afterText = after ? decodeText(after.content) : null;
-    if ((before && beforeText === null) || (after && afterText === null)) {
-      if (
-        before?.mode === after?.mode &&
-        before?.content.equals(after?.content ?? Buffer.alloc(0))
-      ) {
-        continue;
-      }
-      parts.push(
-        [
-          `--- ${before ? `a/${displayPath}` : "/dev/null"}`,
-          `+++ ${after ? `b/${displayPath}` : "/dev/null"}`,
-          "Binary files differ",
-          "",
-        ].join("\n"),
-      );
-      continue;
-    }
-    const diff = await unifiedDiff(
-      `a/${displayPath}`,
-      `b/${displayPath}`,
-      beforeText,
-      afterText,
+    const diff = await unifiedDiffBytes(
+      before ? `a/${displayPath}` : "/dev/null",
+      after ? `b/${displayPath}` : "/dev/null",
+      before?.content ?? null,
+      after?.content ?? null,
       {
         fromExecutable: before?.mode === "100755",
         toExecutable: after?.mode === "100755",
@@ -222,12 +203,4 @@ export async function diffNamedFiles(
     if (diff) parts.push(diff);
   }
   return parts.join("");
-}
-
-function decodeText(content: Buffer): string | null {
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(content);
-  } catch {
-    return null;
-  }
 }

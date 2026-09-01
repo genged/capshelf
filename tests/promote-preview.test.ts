@@ -63,6 +63,33 @@ describe("promote picker diff preview", () => {
     expect(text).not.toContain("\u001b");
   });
 
+  test("a binary candidate renders a stanza instead of its bytes", async () => {
+    const font = Buffer.from([0x77, 0x4f, 0x46, 0x32, 0x00, 0x01, 0xff, 0xfe]);
+    const named = {
+      path: "assets/font.woff2",
+      content: font,
+      mode: "100644",
+    } as const;
+
+    expect(await diffNamedFiles([], [named])).toBe(
+      "--- /dev/null\n+++ b/assets/font.woff2\nBinary files differ\n",
+    );
+    expect(
+      await diffNamedFiles(
+        [named],
+        [
+          {
+            ...named,
+            content: Buffer.from([0x77, 0x4f, 0x46, 0x32, 0x00, 0x02]),
+          },
+        ],
+      ),
+    ).toBe(
+      "--- a/assets/font.woff2\n+++ b/assets/font.woff2\nBinary files differ\n",
+    );
+    expect(await diffNamedFiles([named], [named])).toBe("");
+  });
+
   test(
     "a reviewed candidate is the candidate that gets committed",
     async () => {
