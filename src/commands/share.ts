@@ -24,7 +24,7 @@ import {
 import type { DataLockEntryV4, Lock } from "../lock";
 import { pinItemAtCommit } from "../pin";
 import type { PinnedSource } from "../pin";
-import { assertCommittedTreeEqualsProject } from "../promote-proof";
+import { assertCommittedTreeEqualsCandidate } from "../promote-proof";
 import { isSystemItemName } from "../bundled";
 import { isCopyDirectoryItemKind, itemRepoRelPath } from "../master";
 import type { CopyDirectoryItemKind, FragmentItemKind } from "../master";
@@ -465,12 +465,12 @@ export async function shareSubagent(
     // PIN-11: the candidate was generated from the project's own files, so
     // what the commit holds must equal what was read. `pending` is `A`.
     verify: async (commit) => {
-      pin = await assertCommittedTreeEqualsProject({
+      pin = await assertCommittedTreeEqualsCandidate({
         dataRepo,
         kind: "subagents",
         name,
         commit,
-        projectFiles: pending.map(({ source, raw }) => ({
+        candidateFiles: pending.map(({ source, raw }) => ({
           path: basename(source.relPath),
           content: Buffer.from(raw, "utf-8"),
           mode: "100644" as const,

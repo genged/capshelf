@@ -76,6 +76,8 @@ export interface PickFrame {
   palette?: PickPalette;
   /** The verb Enter performs, for the legend. Absent means `install`. */
   action?: string;
+  /** Whether the focused row has a Ctrl-V diff overlay. */
+  preview?: boolean;
 }
 
 /** The gutter `pick.ts` draws before every body line, and the cells it takes. */
@@ -371,11 +373,12 @@ export function renderLegend(
   palette: PickPalette = PLAIN_PALETTE,
   budget = Number.POSITIVE_INFINITY,
   action = "install",
+  preview = false,
 ): string {
   const legends = [
-    `←/→ type · ↑/↓ move · tab mark · enter ${action} · esc skip`,
+    `←/→ type · ↑/↓ move · tab mark${preview ? " · ctrl+v diff" : ""} · enter ${action} · esc skip`,
     "←/→ type · ↑/↓ move · tab mark · enter",
-    `tab mark · enter ${action}`,
+    `tab mark${preview ? " · ctrl+v diff" : ""} · enter ${action}`,
     SHORTEST_LEGEND,
   ];
   const text =
@@ -398,6 +401,9 @@ export function renderPickBody(frame: PickFrame): string[] {
   } else {
     lines.push(...renderRows(frame));
   }
-  lines.push("", renderLegend(palette, budget, frame.action));
+  lines.push(
+    "",
+    renderLegend(palette, budget, frame.action, frame.preview === true),
+  );
   return lines;
 }

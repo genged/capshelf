@@ -38,7 +38,7 @@ import {
   adoptionSnapshot,
   namedFilesFromInstalledSnapshot,
 } from "./item-snapshot";
-import { assertCommittedTreeEqualsProject } from "./promote-proof";
+import { assertCommittedTreeEqualsCandidate } from "./promote-proof";
 import type { PinnedSource } from "./pin";
 import { lstatOrNull } from "./fs-utils";
 import {
@@ -147,12 +147,12 @@ export async function adoptIntoDataRepo(
     message: opts.message ?? `capshelf: ${kind}/${name}`,
     mutate: mutateSource,
     verify: async (commit) => {
-      pin = await assertCommittedTreeEqualsProject({
+      pin = await assertCommittedTreeEqualsCandidate({
         dataRepo,
         kind,
         name,
         commit,
-        projectFiles: projectSnapshot,
+        candidateFiles: projectSnapshot,
       });
     },
   });

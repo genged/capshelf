@@ -20,12 +20,26 @@
  * pseudo-terminal, while the shipped code still runs the real prompt.
  */
 import { AutocompletePrompt, isCancel } from "@clack/core";
-import { createPickFinder, isPickRowDisabled, pickRowId } from "./pick-core";
+import type { Key } from "node:readline";
+import {
+  createPickFinder,
+  isPickRowDisabled,
+  pickRowId,
+  sanitizeDisplayText,
+} from "./pick-core";
 import type { PickFinder, PickKind, PickRow, RankedPickRow } from "./pick-core";
 import { GUTTER, bodyBudget, renderPickBody } from "./pick-frame";
 import type { PickPalette } from "./pick-frame";
 import { pickTabs, rowsForTab, stepTab } from "./pick-tabs";
 import type { PickTab } from "./pick-tabs";
+import { highlightTerminalDiff, truncateAnsiLine } from "./terminal-diff";
+
+export interface PickPreview {
+  /** One or more unified file diffs. */
+  text: string;
+  /** Opaque caller data that binds a displayed preview to a later action. */
+  version?: string;
+}
 
 export interface PickRequest {
   rows: PickRow[];
@@ -38,6 +52,8 @@ export interface PickRequest {
   kindOrder?: readonly PickKind[];
   /** The verb Enter performs, for the key legend. Absent means `install`. */
   action?: string;
+  /** Load the focused row's diff when the user presses Ctrl-V. */
+  preview?: (row: PickRow) => Promise<PickPreview>;
 }
 
 /** Why a picker could not be shown. A code, not prose, so callers can branch. */
@@ -48,7 +64,12 @@ export type PickUnavailableReason =
 
 export type PickOutcome =
   /** `refs` holds `pickRowId` per marked row — the `ref` unless the row set an `id`. */
-  | { kind: "picked"; refs: string[] }
+  | {
+      kind: "picked";
+      refs: string[];
+      /** Versions for selected rows whose preview finished rendering. */
+      previewVersions?: Record<string, string>;
+    }
   | { kind: "cancelled" }
   | { kind: "unavailable"; reason: PickUnavailableReason };
 
@@ -191,6 +212,19 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
   private kindOrder: readonly PickKind[] | undefined;
   /** The verb Enter performs, for the key legend. */
   private action: string | undefined;
+  /** The promote picker's on-demand diff provider. */
+  private previewProvider: ((row: PickRow) => Promise<PickPreview>) | undefined;
+  private previewPane:
+    | {
+        rowId: string;
+        ref: string;
+        query: string;
+        state: "loading" | "ready" | "error";
+        lines: string[];
+        scroll: number;
+      }
+    | undefined;
+  private previewVersions = new Map<string, string>();
   /** The query the option list was last built for; see `buildOptions`. */
   private renderedQuery: string | null = null;
   /**
@@ -217,6 +251,7 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
     output: NodeJS.WriteStream;
     kindOrder?: readonly PickKind[];
     action?: string;
+    preview?: (row: PickRow) => Promise<PickPreview>;
   }) {
     // These two hooks must be `function`, not arrows, and nothing may precede
     // `super()`.
@@ -245,6 +280,7 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
     this.allRows = opts.rows;
     this.kindOrder = opts.kindOrder;
     this.action = opts.action;
+    this.previewProvider = opts.preview;
     this.tabs = pickTabs(opts.rows, opts.kindOrder);
     // Prime the list. The base constructor reads `options` before any of this
     // subclass's fields exist, so it got an empty list and focused nothing.
@@ -257,15 +293,31 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
     // disabled first row is fine — the cursor rests there and its reason
     // shows; `Tab` is simply inert until the cursor reaches a markable row.
     this.focusedValue = this.filteredOptions[0]?.value;
-    this.on("key", (_char, key) => this.onTypeKey(key?.name));
+    this.on("key", (_char, key) => this.onTypeKey(key));
+  }
+
+  protected override _shouldSubmit(
+    char: string | undefined,
+    key: Key,
+  ): boolean {
+    return this.previewPane === undefined && super._shouldSubmit(char, key);
   }
 
   /** `Tab` on a disabled row does nothing; the row is browsable, not markable. */
   override toggleSelected(value: string): void {
     // Optional chaining: the base constructor can call this before the field
     // initialisers run, and at that point nothing is unmarkable yet.
-    if (this.unmarkableIds?.has(value)) return;
+    if (this.previewPane || this.unmarkableIds?.has(value)) return;
     super.toggleSelected(value);
+  }
+
+  previewVersionsFor(refs: readonly string[]): Record<string, string> {
+    return Object.fromEntries(
+      refs.flatMap((ref) => {
+        const version = this.previewVersions.get(ref);
+        return version === undefined ? [] : [[ref, version]];
+      }),
+    );
   }
 
   private buildOptions(): PickOption[] {
@@ -310,7 +362,41 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
     }));
   }
 
-  private onTypeKey(name: string | undefined): void {
+  private onTypeKey(key: Key): void {
+    const name = key.name;
+    // Ctrl-V, not Ctrl-D: `0x04` is EOF to the readline layer under this
+    // prompt. Measured through a pty — the toggle keypress arrived once, then
+    // readline closed, stdin stopped delivering keys, and raw mode was
+    // restored, so the pane opened dead and the terminal echoed `^[[A` for
+    // every arrow. Readline does not own Ctrl-V, so it reaches only this
+    // handler.
+    if (
+      this.previewProvider &&
+      name === "v" &&
+      key.ctrl === true &&
+      key.meta !== true
+    ) {
+      if (this.previewPane) this.closePreview();
+      else this.openPreview();
+      return;
+    }
+    if (this.previewPane) {
+      if (name === "q" && key.ctrl !== true && key.meta !== true) {
+        this.closePreview();
+        return;
+      }
+      this.focusedValue = this.previewPane.rowId;
+      const page = this.previewPageHeight();
+      if (name === "up") this.previewPane.scroll--;
+      else if (name === "down") this.previewPane.scroll++;
+      else if (name === "pageup") this.previewPane.scroll -= page;
+      else if (name === "pagedown") this.previewPane.scroll += page;
+      else if (name === "home") this.previewPane.scroll = 0;
+      else if (name === "end")
+        this.previewPane.scroll = this.previewPane.lines.length;
+      this.clampPreviewScroll();
+      return;
+    }
     if (name === "up" || name === "down") {
       // Leave navigation mode as soon as the arrow is handled.
       //
@@ -363,6 +449,13 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
     this._setUserInput(text, true);
   }
 
+  private restoreInputState(text: string): void {
+    this.moveLineCursorToEnd();
+    this._setUserInput(TAB_SWITCH_SENTINEL);
+    this._clearUserInput();
+    this._setUserInput(text, true);
+  }
+
   /**
    * Put `readline`'s own insertion point at the end of the line.
    *
@@ -400,6 +493,7 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
   }
 
   private frame(message: string): string {
+    if (this.previewPane) return this.previewFrame();
     const body = renderPickBody({
       tabs: this.tabs ?? [],
       activeTab: this.activeTab,
@@ -414,6 +508,7 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
       columns: process.stderr.columns,
       palette: TERMINAL_PALETTE,
       ...(this.action !== undefined && { action: this.action }),
+      preview: this.previewProvider !== undefined,
     });
     // The header sits above lines the frame already fitted, so it answers to
     // the same budget. `init` supplies a message long enough to wrap a
@@ -425,6 +520,113 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
       ...body.map((line) => `${TERMINAL_PALETTE.dim(GUTTER)}${line}`),
       TERMINAL_PALETTE.dim("└"),
     ].join("\n");
+  }
+
+  private openPreview(): void {
+    const rowId = this.focusedValue;
+    if (!rowId || !this.previewProvider) return;
+    const row = this.ranked.find(
+      (entry) => pickRowId(entry.row) === rowId,
+    )?.row;
+    if (!row) return;
+    const pane = {
+      rowId,
+      ref: row.ref,
+      query: this.userInput ?? "",
+      state: "loading" as const,
+      lines: [] as string[],
+      scroll: 0,
+    };
+    this.previewPane = pane;
+    this.previewVersions.delete(rowId);
+    void this.previewProvider(row).then(
+      (preview) => {
+        if (this.previewPane !== pane) return;
+        this.previewPane = {
+          ...pane,
+          state: "ready",
+          lines: highlightTerminalDiff(preview.text),
+        };
+        if (preview.version !== undefined) {
+          this.previewVersions.set(rowId, preview.version);
+        }
+        this.forceRedraw();
+      },
+      (error: unknown) => {
+        if (this.previewPane !== pane) return;
+        const message =
+          error instanceof Error ? error.message : "diff preview failed";
+        this.previewPane = {
+          ...pane,
+          state: "error",
+          lines: [sanitizeDisplayText(message)],
+        };
+        this.forceRedraw();
+      },
+    );
+  }
+
+  private closePreview(): void {
+    const pane = this.previewPane;
+    if (!pane) return;
+    this.previewPane = undefined;
+    this.focusedValue = pane.rowId;
+    this.renderedQuery = null;
+    this.restoreInputState(pane.query);
+  }
+
+  private previewFrame(): string {
+    const pane = this.previewPane as NonNullable<typeof this.previewPane>;
+    this.clampPreviewScroll();
+    const budget = bodyBudget(process.stderr.columns);
+    const page = this.previewPageHeight();
+    const sourceLines =
+      pane.state === "loading"
+        ? [`${TERMINAL_PALETTE.dim("loading diff…")}`]
+        : pane.lines;
+    const visible = sourceLines.slice(pane.scroll, pane.scroll + page);
+    const end = Math.min(sourceLines.length, pane.scroll + page);
+    const position =
+      sourceLines.length > page
+        ? `${pane.scroll + 1}-${end} of ${sourceLines.length}`
+        : `${sourceLines.length} line${sourceLines.length === 1 ? "" : "s"}`;
+    const title = truncateAnsiLine(`Diff: ${pane.ref}`, budget);
+    const body = visible.map((line) => truncateAnsiLine(line, budget));
+    while (body.length < page) body.push("");
+    return [
+      `${TERMINAL_PALETTE.accent("◆")}  ${title}`,
+      ...body.map((line) => `${TERMINAL_PALETTE.dim(GUTTER)}${line}`),
+      `${TERMINAL_PALETTE.dim(GUTTER)}${TERMINAL_PALETTE.dim(position)}`,
+      `${TERMINAL_PALETTE.dim(GUTTER)}${TERMINAL_PALETTE.dim("↑/↓ scroll · PgUp/PgDn page · ctrl+v/q close · esc cancel")}`,
+      TERMINAL_PALETTE.dim("└"),
+    ].join("\n");
+  }
+
+  private previewPageHeight(): number {
+    // Header, position, legend, and closing rule use four rows. Keep a useful
+    // pane on terminals that do not report their height.
+    return Math.max(4, (process.stderr.rows ?? 20) - 4);
+  }
+
+  private clampPreviewScroll(): void {
+    if (!this.previewPane) return;
+    const max = Math.max(
+      0,
+      this.previewPane.lines.length - this.previewPageHeight(),
+    );
+    this.previewPane.scroll = Math.min(
+      max,
+      Math.max(0, this.previewPane.scroll),
+    );
+  }
+
+  /** Ask clack to draw after an asynchronous preview load finishes. */
+  private forceRedraw(): void {
+    // `Prompt.render` is private in the type surface but is a normal method in
+    // @clack/core 1.4.3. The preview resolves after the keypress redraw, so it
+    // needs this narrow runtime seam to replace the loading pane.
+    const host = this as unknown as { render?: () => void };
+    host.render?.();
   }
 }
 
@@ -472,12 +674,19 @@ function defaultPickContext(): PickContext {
         output: process.stderr,
         ...(request.kindOrder && { kindOrder: request.kindOrder }),
         ...(request.action !== undefined && { action: request.action }),
+        ...(request.preview !== undefined && { preview: request.preview }),
       });
       const restoreWidth = borrowTerminalWidth();
       try {
         const answer = await prompt.prompt();
         if (isCancel(answer)) return { kind: "cancelled" };
-        return { kind: "picked", refs: Array.isArray(answer) ? answer : [] };
+        const refs = Array.isArray(answer) ? answer : [];
+        const previewVersions = prompt.previewVersionsFor(refs);
+        return {
+          kind: "picked",
+          refs,
+          ...(Object.keys(previewVersions).length > 0 && { previewVersions }),
+        };
       } finally {
         restoreWidth();
       }

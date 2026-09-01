@@ -8,7 +8,7 @@ terminal settings from its *own* stdin, which a test runner never gives it
 ("tcgetattr/ioctl: Operation not supported on socket"). Opening the pty here
 removes both problems and leaves one code path for every platform.
 
-Usage: pty-driver.py [--answer-after-raw] <input-file|-> <command> [args...]
+Usage: pty-driver.py [--answer-after-raw|--interactions-after-raw] <input-file|-> <command> [args...]
 
 The input file is written into the terminal before the command's output is
 read; "-" sends nothing. Output is the merged stream, as a terminal produces
@@ -44,6 +44,7 @@ it waits, because the terminal's mode can only be read through one.
 """
 
 import fcntl
+import json
 import os
 import pty
 import select
@@ -63,21 +64,30 @@ RAW_POLL_INTERVAL = 0.02
 def main() -> int:
     arguments = sys.argv[1:]
     answer_after_raw = False
+    interactions_after_raw = False
     if arguments and arguments[0] == "--answer-after-raw":
         answer_after_raw = True
         arguments = arguments[1:]
+    elif arguments and arguments[0] == "--interactions-after-raw":
+        interactions_after_raw = True
+        arguments = arguments[1:]
     if len(arguments) < 2:
         sys.stderr.write(
-            "usage: pty-driver.py [--answer-after-raw] <input-file|-> <command> [args...]\n"
+            "usage: pty-driver.py [--answer-after-raw|--interactions-after-raw] <input-file|-> <command> [args...]\n"
         )
         return 2
 
     input_path = arguments[0]
     command = arguments[1:]
     answer = b""
+    interactions = []
     if input_path != "-":
-        with open(input_path, "rb") as handle:
-            answer = handle.read()
+        if interactions_after_raw:
+            with open(input_path, "r", encoding="utf-8") as handle:
+                interactions = json.load(handle)
+        else:
+            with open(input_path, "rb") as handle:
+                answer = handle.read()
 
     master, slave = pty.openpty()
     fcntl.ioctl(
@@ -123,6 +133,40 @@ def main() -> int:
                 pending = b""
             elif process.poll() is not None:
                 break
+    if interactions_after_raw:
+        while termios.tcgetattr(slave)[3] & termios.ICANON:
+            ready, _, _ = select.select([master], [], [], RAW_POLL_INTERVAL)
+            if ready:
+                try:
+                    chunk = os.read(master, 65536)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                output += chunk
+            elif process.poll() is not None:
+                break
+        for step in interactions:
+            wait_for = step.get("waitFor")
+            if wait_for:
+                needle = wait_for.encode("utf-8")
+                while needle not in output:
+                    ready, _, _ = select.select(
+                        [master], [], [], RAW_POLL_INTERVAL
+                    )
+                    if ready:
+                        try:
+                            chunk = os.read(master, 65536)
+                        except OSError:
+                            break
+                        if not chunk:
+                            break
+                        output += chunk
+                    elif process.poll() is not None:
+                        break
+            if process.poll() is not None:
+                break
+            os.write(master, step["send"].encode("utf-8"))
     os.close(slave)
 
     while True:

@@ -719,6 +719,8 @@ open the same picker over their own rows. See *share and promote* below.
 | left / right | switch item type |
 | up / down | move |
 | tab | mark or unmark the row |
+| Ctrl-V | open or close the focused diff in the promote picker |
+| q | close the diff overlay |
 | enter | act on every marked row: install, share, or promote, per verb |
 | esc | cancel and change nothing |
 
@@ -840,6 +842,28 @@ the clone-local items instead. When the selected scope tracks no data items,
 the picker does not open; `promote` says so and exits 0. The run ends with
 one `✓ N promoted` summary line, and with the `committed to local data
 repo:` block once when anything committed.
+
+Press Ctrl-V to open the focused item's diff. The overlay loads only that item.
+Use Up, Down, Page Up, or Page Down to scroll. Press Ctrl-V or q to close the
+overlay, or Esc to cancel the picker (`src/pick.ts:365-399,525-603`). Ctrl-D
+cannot carry this binding: the readline layer under the prompt reads `0x04`
+as end of input and stops key delivery.
+
+The diff compares the item at data-repo HEAD with the candidate that promote
+would publish. It covers copy items, fragments, and subagents
+(`src/promote-preview.ts:44-93`). Syntax highlighting uses the file extension.
+It includes TypeScript, Python, Go, Rust, C, and Capshelf config formats.
+Unknown extensions stay plain (`src/terminal-diff.ts:54-87,91-129`). Source
+and file-name control characters are replaced before terminal output
+(`src/promote-preview.ts:179-224`, `src/terminal-diff.ts:201-211`). A binary
+change shows a summary. A preview over 10,000 lines points to
+`capshelf status --diff` for the full output
+(`src/terminal-diff.ts:89-95,131-135`).
+
+A finished preview records the item base and candidate. Promote compares both
+values again before it writes. A change refuses that item and asks for a new
+preview (`src/promote-preview.ts:83-91,95-120`,
+`src/commands/promote-interactive.ts:135-150`).
 
 Both pickers re-read the project and the data repo after the prompt closes. A
 value that changed while the picker was open fails its own row instead of

@@ -3,28 +3,22 @@ import type { ItemKind } from "./master";
 import type { NamedFile } from "./merge-tree";
 import {
   commitProofRefusalMessage,
-  compareProjectToCommit,
+  compareCandidateToCommit,
   pinItemAtCommit,
 } from "./pin";
 import type { PinnedSource } from "./pin";
 
 /**
- * PIN-11 for a **generated candidate**: capshelf built a tree from the project
- * (or from a merge), committed it, and must now show that what landed in the
- * commit is what it meant to publish.
- *
- * This applies to copy items, subagents, and merge results. It deliberately
- * does **not** apply to fragment promotion, where the user's own edits are
- * already in the data repo worktree and `promote` commits them in place: there
- * is no project snapshot to compare, so applying the rule there would refuse a
- * legitimate operation rather than catch anything.
+ * PIN-11 for a selected candidate. The candidate can come from a project
+ * snapshot, a merge, or canonical fragment source bytes. The commit must hold
+ * exactly that candidate.
  */
-export async function assertCommittedTreeEqualsProject(opts: {
+export async function assertCommittedTreeEqualsCandidate(opts: {
   dataRepo: string;
   kind: ItemKind;
   name: string;
   commit: string;
-  projectFiles: readonly NamedFile[];
+  candidateFiles: readonly NamedFile[];
 }): Promise<PinnedSource> {
   const pin = await pinItemAtCommit(
     opts.dataRepo,
@@ -32,7 +26,7 @@ export async function assertCommittedTreeEqualsProject(opts: {
     opts.name,
     opts.commit,
   );
-  const mismatches = compareProjectToCommit(opts.projectFiles, pin.entries);
+  const mismatches = compareCandidateToCommit(opts.candidateFiles, pin.entries);
   if (mismatches.length > 0) {
     throw new PreconditionError(
       commitProofRefusalMessage(`${opts.kind}/${opts.name}`, mismatches),

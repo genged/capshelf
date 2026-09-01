@@ -412,7 +412,7 @@ test(
     declareEvidence({
       scenario: SCENARIO,
       property:
-        "on a TTY, `capshelf promote` with no item lists tracked items, offers the one with a dirty canonical source, and Enter promotes the marked row into a data-repo commit",
+        "on a TTY, `capshelf promote` opens the focused diff with Ctrl-V, closes it with q or Ctrl-V, and promotes the reviewed row into a data-repo commit",
       labels: ["reproduced-user-workflow"],
       proofLimits: [
         "the terminal is opened by a helper rather than by a real terminal emulator, so line-discipline details such as echo and CR line endings differ from an interactive shell",
@@ -448,14 +448,25 @@ test(
         JSON.stringify({ env: { FOO: "baz" } }),
       );
 
-      // `sth` is a subsequence of `settings/theme`, not a substring.
+      // `sth` is a subsequence of `settings/theme`, not a substring. Ctrl-V
+      // opens the diff. The second step waits until the asynchronous preview
+      // is visible. It closes with q, reopens and closes with Ctrl-V, marks
+      // the row, and promotes it.
       const picked = await runInPty(world, project, [world.binary, "promote"], {
         env: { TERM: "xterm-256color" },
-        answer: "sth\t\r",
-        answerAfterRawMode: true,
+        interactions: [
+          { send: "sth\u0016" },
+          {
+            waitFor: "+++ b/settings.json",
+            send: "q\u0016\u0016\t\r",
+          },
+        ],
       });
 
       expectExit(picked, 0);
+      expectOutputContains(picked, "Diff: settings/theme");
+      expectOutputContains(picked, "+++ b/settings.json");
+      expectOutputContains(picked, '"baz"');
       expectOutputContains(picked, "promoted data/settings/theme");
       const log = await world.run(shelf, ["git", "log", "--oneline"]);
       expect(log.stdout).toContain("capshelf: settings/theme");

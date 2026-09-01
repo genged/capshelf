@@ -19,7 +19,7 @@ import {
  * `pre-commit` hook rewrites the worktree *and* the commit, so both sides of
  * that check agree on content the project never had.
  */
-describe("promote proves the commit equals the project (PIN-11)", () => {
+describe("promote proves the commit equals the selected candidate (PIN-11)", () => {
   test(
     "a pre-commit hook that rewrites a file refuses the promotion and rolls back",
     async () => {
@@ -57,7 +57,7 @@ describe("promote proves the commit equals the project (PIN-11)", () => {
       const promoted = await run(["promote", "skills/hello", "-m", "publish"]);
       expect(promoted.exitCode).not.toBe(0);
       expect(promoted.stderr.toString()).toContain(
-        "the committed content is not the content this project holds",
+        "the committed content is not the selected publication content",
       );
 
       // Rolled back: HEAD, the worktree, and the lock are all where they were.
@@ -77,7 +77,7 @@ describe("promote proves the commit equals the project (PIN-11)", () => {
   );
 
   test(
-    "a fragment promote has no project snapshot and is unaffected by the rule",
+    "a fragment promote commits the canonical candidate it captured",
     async () => {
       const project = await tempRepo("capshelf-proof-fragment-project-");
       const dataRepo = await tempRepo("capshelf-proof-fragment-data-");
@@ -92,8 +92,7 @@ describe("promote proves the commit equals the project (PIN-11)", () => {
       expect((await run(["add", "settings/base"])).exitCode).toBe(0);
 
       // A fragment promote commits the user's own edit where it already lives
-      // in the data repo. There is no `A` to compare, so applying `A == B`
-      // here would refuse a legitimate operation.
+      // in the data repo. Its candidate is those exact canonical bytes.
       await writeFile(
         join(dataRepo, "settings", "base", "settings.json"),
         `${JSON.stringify({ env: { A: "2" } }, null, 2)}\n`,
@@ -238,6 +237,66 @@ describe("a refused fragment promote restores only the index (GIT-7)", () => {
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );
+
+  test(
+    "a hook rewrite cannot publish bytes outside the captured candidate",
+    async () => {
+      const project = await tempRepo("capshelf-fragment-rewrite-project-");
+      const dataRepo = await tempRepo("capshelf-fragment-rewrite-data-");
+      const run = runInProcess(project);
+      const source = join(dataRepo, "settings", "base", "settings.json");
+      await mkdir(join(dataRepo, "settings", "base"), { recursive: true });
+      await writeFile(source, `${JSON.stringify({ env: { A: "1" } })}\n`);
+      await commitAll(dataRepo, "settings base");
+      expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+      expect((await run(["add", "settings/base"])).exitCode).toBe(0);
+
+      await writeFile(source, `${JSON.stringify({ env: { A: "2" } })}\n`);
+      const hook = join(dataRepo, ".git", "hooks", "pre-commit");
+      await mkdir(join(dataRepo, ".git", "hooks"), { recursive: true });
+      await writeFile(
+        hook,
+        [
+          "#!/bin/sh",
+          `printf '%s\\n' '${JSON.stringify({ env: { A: "3" } })}' > settings/base/settings.json`,
+          "git add settings/base/settings.json",
+          "",
+        ].join("\n"),
+      );
+      await chmod(hook, 0o755);
+      const lockPath = join(project, ".capshelf", "capshelf.lock.json");
+      const lockBefore = await readFile(lockPath, "utf-8");
+      const headBefore = (
+        await $`git -C ${dataRepo} rev-parse HEAD`.quiet()
+      ).stdout
+        .toString()
+        .trim();
+
+      const promoted = await run(["promote", "settings/base", "-m", "bump"]);
+
+      expect(promoted.exitCode).not.toBe(0);
+      expect(promoted.stderr.toString()).toContain(
+        "the committed content is not the selected publication content",
+      );
+      expect(
+        (await $`git -C ${dataRepo} rev-parse HEAD`.quiet()).stdout
+          .toString()
+          .trim(),
+      ).toBe(headBefore);
+      expect(
+        (
+          await $`git -C ${dataRepo} diff --cached --name-only`.quiet().text()
+        ).trim(),
+      ).toBe("");
+      // The transaction never restores the worktree. It leaves the hook's
+      // edit visible, but it does not accept or record that edit.
+      expect(await readFile(source, "utf-8")).toBe(
+        `${JSON.stringify({ env: { A: "3" } })}\n`,
+      );
+      expect(await readFile(lockPath, "utf-8")).toBe(lockBefore);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
 });
 
 /**
@@ -378,7 +437,7 @@ describe("promote --merge runs the data repo's hooks (GIT-9)", () => {
 
         expect(result.exitCode).not.toBe(0);
         expect(result.stderr.toString()).toContain(
-          "the committed content is not the content this project holds",
+          "the committed content is not the selected publication content",
         );
         expect(await head(f.dataRepo)).toBe(headBefore);
         expect(existsSync(join(f.dataItem, "local.txt"))).toBe(false);

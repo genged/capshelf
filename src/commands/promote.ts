@@ -2,7 +2,7 @@ import type { Command } from "commander";
 import { printShareUpstreamGuidance } from "./share";
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { atomicWriteFile, lstatOrNull } from "../fs-utils";
 import { homeRelative, shellArg } from "../paths";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
@@ -19,12 +19,12 @@ import type { DataLockEntryV4, LockV4 } from "../lock";
 import {
   hashWidthOf,
   itemTreeEntriesAtCommit,
+  namedFilesTreeEntries,
   pinItemAtCommit,
-  projectTreeEntries,
   sourcePinDigest,
 } from "../pin";
 import type { PinnedSource } from "../pin";
-import { assertCommittedTreeEqualsProject } from "../promote-proof";
+import { assertCommittedTreeEqualsCandidate } from "../promote-proof";
 import { installedPath, parseLockKey } from "../installed";
 import {
   isCopyDirectoryItemKind,
@@ -90,7 +90,6 @@ import {
   sidecarFromInstalledSnapshot,
 } from "../item-snapshot";
 import { mergeNamedTrees, namedFilesEqual } from "../merge-tree";
-import type { NamedFile } from "../merge-tree";
 import { beginInstalledReconciliation } from "../promote-transaction";
 import type { PromoteTransactionHooks } from "../promote-transaction";
 import {
@@ -108,6 +107,12 @@ import {
   subagentSourcesAtCommit,
   validateSubagentSource,
 } from "../subagents";
+import {
+  currentFragmentCandidateFiles,
+  promotedSubagentFiles,
+} from "../promote-candidate";
+import { validatePromotePreview } from "../promote-preview";
+import type { PromotePreviewGuard } from "../promote-preview";
 
 export interface PromoteOptions {
   message?: string;
@@ -127,6 +132,8 @@ export interface PromoteOptions {
    * open cannot move the destination under the marks.
    */
   boundRepo?: string;
+  /** The exact item base and candidate that the interactive overlay showed. */
+  previewGuard?: PromotePreviewGuard;
   persistLock?: () => Promise<void>;
   afterMergePlan?: () => Promise<void>;
   beforeCanonicalWrite?: () => Promise<void>;
@@ -146,6 +153,7 @@ interface SyncOptions {
     afterCanonicalCopy?: () => Promise<void>;
   };
   transactionHooks?: PromoteTransactionHooks;
+  previewGuard?: PromotePreviewGuard;
 }
 
 export function registerPromote(program: Command): void {
@@ -446,6 +454,21 @@ export async function promoteSubagent(
       });
     }
   }
+  const projectFiles = await promotedSubagentFiles(
+    project,
+    dataRepo,
+    name,
+    pending,
+  );
+  const previewHead = opts.previewGuard
+    ? await validatePromotePreview({
+        dataRepo,
+        kind: "subagents",
+        name,
+        candidateFiles: projectFiles,
+        guard: opts.previewGuard,
+      })
+    : undefined;
   if (pending.length === 0) {
     return {
       source: "data",
@@ -542,19 +565,9 @@ export async function promoteSubagent(
   }
   const canonicalPaths = allCanonicalItemRelPaths("subagents", name);
   await assertRepoCleanOutsidePaths(dataRepo, canonicalPaths);
-  // PIN-11: the candidate came from the project's target files, so the commit
-  // must hold exactly those bytes. `pending` carries only the files that
-  // differed, so the comparison runs over every canonical source, taking the
-  // unchanged ones from the data repo.
-  const projectFiles = await promotedSubagentFiles(
-    project,
-    dataRepo,
-    name,
-    pending,
-  );
   await commitDataRepoMutation({
     dataRepo,
-    expectedHead: await headSha(dataRepo),
+    expectedHead: previewHead ?? (await headSha(dataRepo)),
     ownedRoots: pending.map(({ relPath }) => relPath),
     message: opts.message ?? `capshelf: subagents/${name}`,
     mutate: async () => {
@@ -566,12 +579,12 @@ export async function promoteSubagent(
       }
     },
     verify: async (commit) => {
-      await assertCommittedTreeEqualsProject({
+      await assertCommittedTreeEqualsCandidate({
         dataRepo,
         kind: "subagents",
         name,
         commit,
-        projectFiles,
+        candidateFiles: projectFiles,
       });
     },
   });
@@ -598,37 +611,6 @@ export async function promoteSubagent(
     committed: true,
     ...(staleOverride && { staleOverride: true as const }),
   };
-}
-
-/**
- * `A` for a subagent promotion: every canonical source the commit will hold,
- * taken from the project where the promotion changed it and from the data repo
- * where it did not. `pending` alone is not `A` — it carries only the files that
- * differed, and PIN-11 compares whole trees.
- */
-async function promotedSubagentFiles(
-  project: string,
-  dataRepo: string,
-  name: string,
-  pending: Array<{ relPath: string; raw: Buffer }>,
-): Promise<NamedFile[]> {
-  const pendingByRelPath = new Map(
-    pending.map(({ relPath, raw }) => [relPath, raw]),
-  );
-  const files: NamedFile[] = [];
-  for (const source of subagentSourceCandidates(project, name)) {
-    const sourcePath = join(dataRepo, ...source.relPath.split("/"));
-    const content =
-      pendingByRelPath.get(source.relPath) ??
-      (existsSync(sourcePath) ? await readFile(sourcePath) : null);
-    if (content === null) continue;
-    files.push({
-      path: basename(source.relPath),
-      content,
-      mode: "100644" as const,
-    });
-  }
-  return files;
 }
 
 async function promoteLocalTracked(
@@ -794,12 +776,35 @@ export async function promoteFragmentSource(
     staleOverride = true;
   }
 
+  const candidateFiles = await currentFragmentCandidateFiles(
+    dataRepo,
+    kind,
+    name,
+  );
+  const candidateByPath = new Map(
+    candidateFiles.map((file) => [file.path, file.content]),
+  );
+  const itemRoot = itemRepoRelPath(kind, name);
   for (const source of existingSources) {
-    parseFragmentSourceText(
-      source,
-      await readFile(join(dataRepo, ...source.relPath.split("/")), "utf-8"),
+    const content = candidateByPath.get(
+      posix.relative(itemRoot, source.relPath),
     );
+    if (!content) {
+      throw new PreconditionError(
+        `not promoting ${kind}/${name} — canonical source changed while it was being read; retry`,
+      );
+    }
+    parseFragmentSourceText(source, content.toString("utf-8"));
   }
+  const previewHead = opts.previewGuard
+    ? await validatePromotePreview({
+        dataRepo,
+        kind,
+        name,
+        candidateFiles,
+        guard: opts.previewGuard,
+      })
+    : undefined;
 
   const oldLock = structuredClone(lock);
   // The canonical file is the user's own edit, sitting where they made it, so
@@ -809,12 +814,21 @@ export async function promoteFragmentSource(
     repo: dataRepo,
     relPaths: commitPaths,
     message: opts.message ?? `capshelf: ${kind}/${name}`,
-    expectedHead: await headSha(dataRepo),
+    expectedHead: previewHead ?? (await headSha(dataRepo)),
+    verify: async (commit) => {
+      await assertCommittedTreeEqualsCandidate({
+        dataRepo,
+        kind,
+        name,
+        commit,
+        candidateFiles,
+      });
+    },
   });
-  // PIN-11's `A == B` does not apply here: a fragment promote commits the
-  // user's own edits where they already live in the data repo worktree, so
-  // there is no project snapshot to compare against. The pin still comes from
-  // the committed tree.
+  // The verifier above binds the commit to the candidate snapshot. A hook or
+  // concurrent editor can change the worktree after the preview and before
+  // Git stages it. The transaction rolls back that commit and does not restore
+  // or discard the worktree bytes.
   const pin = await pinItemAtCommit(dataRepo, kind, name, sourceCommit);
   const sha = pin.sourcePinDigest;
   const snapshot = await captureCommittedItemNeeds(dataRepo, { kind, name });
@@ -931,6 +945,15 @@ export async function syncTrackedIntoDataRepo(
       `not promoting ${kind}/${name} — installed snapshot changed while it was being read; retry`,
     );
   }
+  const previewHead = opts.previewGuard
+    ? await validatePromotePreview({
+        dataRepo,
+        kind,
+        name,
+        candidateFiles: localFiles,
+        guard: opts.previewGuard,
+      })
+    : undefined;
   const lockedCommit = await resolveCommit(dataRepo, entry.sourceCommit);
   if (lockedCommit === null && !opts.merge) {
     throw new PreconditionError(
@@ -944,7 +967,7 @@ export async function syncTrackedIntoDataRepo(
   const installedMatchesPin =
     lockedCommit !== null &&
     sourcePinDigest(
-      projectTreeEntries(
+      namedFilesTreeEntries(
         localFiles,
         hashWidthOf(
           await itemTreeEntriesAtCommit(dataRepo, kind, name, lockedCommit),
@@ -1017,12 +1040,12 @@ export async function syncTrackedIntoDataRepo(
       });
       // Convergence, so the commit already holds the project's bytes — proving
       // `A == B` here is the same check, and it is cheap.
-      const pin = await assertCommittedTreeEqualsProject({
+      const pin = await assertCommittedTreeEqualsCandidate({
         dataRepo,
         kind,
         name,
         commit: sourceCommit,
-        projectFiles: localFiles,
+        candidateFiles: localFiles,
       });
       lock.items[key] = refreshDataLockEntry(entry, { pin, ...needsSnapshot });
       const runtimeWarnings = runtimeWarningsForItem(project, kind, name);
@@ -1101,7 +1124,7 @@ export async function syncTrackedIntoDataRepo(
     }
     if (kind === "skills") await refreshCodexProjection(dataRepo);
   };
-  const expectedHead = await headSha(dataRepo);
+  const expectedHead = previewHead ?? (await headSha(dataRepo));
   // PIN-11. The old guard compared one working-tree hash of the data repo
   // against another, both taken *after* the copy — so a `pre-commit` hook, a
   // clean filter, or a nested `.gitattributes` that rewrote the content
@@ -1119,12 +1142,12 @@ export async function syncTrackedIntoDataRepo(
     message: opts.message ?? `capshelf: ${kind}/${name}`,
     mutate: replaceSource,
     verify: async (commit) => {
-      pin = await assertCommittedTreeEqualsProject({
+      pin = await assertCommittedTreeEqualsCandidate({
         dataRepo,
         kind,
         name,
         commit,
-        projectFiles: localFiles,
+        candidateFiles: localFiles,
       });
     },
   });
@@ -1304,12 +1327,12 @@ async function mergeStalePromote(input: {
     );
     // PIN-11 for a merge candidate: `A` is the merge result, not the project
     // tree, and the commit it converged on must hold exactly those bytes.
-    pin = await assertCommittedTreeEqualsProject({
+    pin = await assertCommittedTreeEqualsCandidate({
       dataRepo,
       kind,
       name,
       commit: sourceCommit,
-      projectFiles: mergedFiles,
+      candidateFiles: mergedFiles,
     });
     const previous = lock.items[key];
     lock.items[key] = refreshDataLockEntry(entry, { pin, ...needsSnapshot });
@@ -1358,12 +1381,12 @@ async function mergeStalePromote(input: {
       // rewrites a merged file unwinds the commit instead of leaving the data
       // repo a commit ahead of a lock this project never recorded.
       verify: async (commit) => {
-        await assertCommittedTreeEqualsProject({
+        await assertCommittedTreeEqualsCandidate({
           dataRepo,
           kind,
           name,
           commit,
-          projectFiles: mergedFiles,
+          candidateFiles: mergedFiles,
         });
       },
     });

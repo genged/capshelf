@@ -29,6 +29,11 @@ export interface PtyOptions extends CommandOptions {
    * one, which never leaves canonical mode.
    */
   answerAfterRawMode?: boolean;
+  /**
+   * Staged raw-mode input. A step can wait for terminal output before it
+   * sends more keys. Use this for an asynchronous pane inside one prompt.
+   */
+  interactions?: Array<{ send: string; waitFor?: string }>;
 }
 
 export async function runInPty(
@@ -37,13 +42,23 @@ export async function runInPty(
   command: readonly string[],
   options: PtyOptions = {},
 ): Promise<CommandResult> {
+  if (options.answer !== undefined && options.interactions !== undefined) {
+    throw new Error("a PTY run cannot use both answer and interactions");
+  }
   let inputPath = "-";
-  if (options.answer !== undefined) {
+  if (options.interactions !== undefined) {
+    inputPath = join(world.root, `pty-script-${process.pid}-${command.length}`);
+    await writeFile(inputPath, JSON.stringify(options.interactions));
+  } else if (options.answer !== undefined) {
     inputPath = join(world.root, `pty-answer-${process.pid}-${command.length}`);
     await writeFile(inputPath, options.answer);
   }
 
-  const flags = options.answerAfterRawMode ? ["--answer-after-raw"] : [];
+  const flags = options.interactions
+    ? ["--interactions-after-raw"]
+    : options.answerAfterRawMode
+      ? ["--answer-after-raw"]
+      : [];
   const result = await world.run(
     cwd,
     ["python3", DRIVER, ...flags, inputPath, ...command],

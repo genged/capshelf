@@ -593,38 +593,35 @@ export async function readEntryBytes(
 
 export interface CommitProofMismatch {
   path: string;
-  /** Blob id of what the project held, or null when the project had no such path. */
-  project: string | null;
+  /** Blob id of the selected candidate, or null when it had no such path. */
+  candidate: string | null;
   /** Blob id of what the commit holds, or null when the commit has no such path. */
   committed: string | null;
 }
 
 /**
- * PIN-11: prove the project snapshot equals the committed tree.
+ * PIN-11: prove the selected publication candidate equals the committed tree.
  *
- * Let `A` be the snapshot `promote`/`share` read from the project. It is
- * copied into the data repo worktree, staged, and committed — and Git or the
- * repository's own policy may turn `A` into `B` in between: a clean filter, a
- * formatter in a `pre-commit` hook, a nested `.gitattributes` that arrived with
- * the copy, or an ignore rule that drops a file from a broad `git add`. A
- * destination-side check then compares `B` with the commit it produced, which
- * agree, and capshelf publishes content the project never held.
+ * Let `A` be the candidate `promote` or `share` selected. It can come from a
+ * project snapshot, a merge, or canonical fragment source bytes. Git or the
+ * repository's own policy may turn `A` into `B` before the commit completes.
+ * A destination-side check then compares `B` with the commit it produced.
+ * Those values agree, but they are not the selected candidate.
  *
- *     A == B                    project snapshot equals the committed tree
+ *     A == B                    selected candidate equals the committed tree
  *     B == tree at newCommit    the commit is what was staged
  *     ────────────────────────
- *     ⇒ sourcePinDigest(B) describes what the project actually holds
+ *     ⇒ sourcePinDigest(B) describes the selected publication content
  *
- * `A`'s ids are computed in process from the project's own bytes, using the
+ * `A`'s ids are computed in process from the selected bytes, using the
  * width the committed tree reports, so a SHA-256 repository compares correctly
  * without asking Git what format it uses.
  */
 /**
- * Name a set of project files the way `ls-tree` names a committed tree, so the
- * two can be digested with the same formula. Used where the question is "does
- * what the project holds already equal the pin?".
+ * Name candidate files the way `ls-tree` names a committed tree, so both sets
+ * can be digested with the same formula.
  */
-export function projectTreeEntries(
+export function namedFilesTreeEntries(
   files: ReadonlyArray<{ path: string; mode: GitFileMode; content: Buffer }>,
   width: GitHashWidth,
 ): PinTreeEntry[] {
@@ -636,8 +633,8 @@ export function projectTreeEntries(
   }));
 }
 
-export function compareProjectToCommit(
-  projectFiles: ReadonlyArray<{
+export function compareCandidateToCommit(
+  candidateFiles: ReadonlyArray<{
     path: string;
     mode: GitFileMode;
     content: Buffer;
@@ -645,8 +642,8 @@ export function compareProjectToCommit(
   committed: readonly PinTreeEntry[],
 ): CommitProofMismatch[] {
   const width = hashWidthOf(committed);
-  const projectIds = new Map(
-    projectFiles.map((file) => [
+  const candidateIds = new Map(
+    candidateFiles.map((file) => [
       file.path,
       `${file.mode}:${blobIdOf(file.content, width)}`,
     ]),
@@ -655,13 +652,16 @@ export function compareProjectToCommit(
     committed.map((entry) => [entry.path, `${entry.mode}:${entry.blobId}`]),
   );
   const mismatches: CommitProofMismatch[] = [];
-  for (const path of new Set([...projectIds.keys(), ...committedIds.keys()])) {
-    const left = projectIds.get(path) ?? null;
+  for (const path of new Set([
+    ...candidateIds.keys(),
+    ...committedIds.keys(),
+  ])) {
+    const left = candidateIds.get(path) ?? null;
     const right = committedIds.get(path) ?? null;
     if (left === right) continue;
     mismatches.push({
       path,
-      project: left?.split(":")[1] ?? null,
+      candidate: left?.split(":")[1] ?? null,
       committed: right?.split(":")[1] ?? null,
     });
   }
@@ -675,14 +675,14 @@ export function commitProofRefusalMessage(
   const width = Math.max(...mismatches.map((entry) => entry.path.length));
   return [
     `not publishing ${ref}`,
-    "  the committed content is not the content this project holds",
+    "  the committed content is not the selected publication content",
     "",
     ...mismatches.map(
       (entry) =>
-        `    ${entry.path.padEnd(width)}    project ${abbreviatePin(entry.project ?? "(absent)")}   committed ${abbreviatePin(entry.committed ?? "(absent)")}`,
+        `    ${entry.path.padEnd(width)}    selected ${abbreviatePin(entry.candidate ?? "(absent)")}   committed ${abbreviatePin(entry.committed ?? "(absent)")}`,
     ),
     "",
-    "  something between the copy and the commit rewrote the file — a pre-commit",
+    "  something before the commit completed rewrote the file — a pre-commit",
     "  hook, a clean filter, or a .gitattributes rule in the data repo",
     "  the data repo was rolled back; nothing was published",
   ].join("\n");

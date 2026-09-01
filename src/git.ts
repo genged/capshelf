@@ -1379,6 +1379,8 @@ export interface CommitExistingPathsInput {
   relPaths: string[];
   message: string;
   expectedHead: string;
+  /** Prove the new commit before the transaction accepts it. */
+  verify?: (commit: string) => Promise<void>;
 }
 
 /**
@@ -1400,7 +1402,7 @@ export interface CommitExistingPathsInput {
 export async function commitExistingPaths(
   input: CommitExistingPathsInput,
 ): Promise<string> {
-  const { repo, relPaths, message, expectedHead } = input;
+  const { repo, relPaths, message, expectedHead, verify } = input;
   if (relPaths.length === 0) {
     throw new Error("commitExistingPaths needs at least one path");
   }
@@ -1436,6 +1438,7 @@ export async function commitExistingPaths(
       throw new PreconditionError("data repo HEAD changed during the commit");
     }
     await assertCommitTouchedOnly(repo, expectedHead, createdCommit, relPaths);
+    await verify?.(createdCommit);
     return createdCommit;
   } catch (error) {
     const current = await headSha(repo).catch(() => null);

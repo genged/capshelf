@@ -172,6 +172,11 @@ canonical mode off. Either way the keys go in as one burst, so these cells
 prove that the keys reach the program and what it does with them. They do not
 prove behavior under per-keystroke timing.
 
+An asynchronous pane needs staged input. The PTY helper can wait for one output
+substring before it sends the next key group. The promote picker cell uses this
+mode to wait for the diff. It then closes the pane and promotes the row
+(`e2e/support/pty.ts:32-64`, `e2e/support/pty-driver.py:136-169`).
+
 ## Continuous integration
 
 The pull-request lane type-checks, runs the unit and smoke suites, builds

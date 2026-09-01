@@ -26,6 +26,11 @@ import { loadPromoteCatalog, unwatchedPathsForItem } from "../promote-catalog";
 import { printShareUpstreamGuidance } from "./share";
 import { promoteOne } from "./promote";
 import type { PromoteOptions } from "./promote";
+import {
+  decodePromotePreviewGuard,
+  encodePromotePreviewGuard,
+  preparePromotePreview,
+} from "../promote-preview";
 
 export type InteractivePromoteSummary =
   | { outcome: "unavailable"; reason: PickUnavailableReason }
@@ -76,6 +81,23 @@ export async function runInteractivePromote(request: {
     rows: catalog.rows,
     message: "Select items to promote",
     action: "promote",
+    preview: async (row) => {
+      if (row.kind === "bundles") {
+        throw new Error("the promote picker cannot contain bundle rows");
+      }
+      const preview = await preparePromotePreview({
+        project,
+        dataRepo,
+        lock,
+        scope,
+        kind: row.kind,
+        name: row.name,
+      });
+      return {
+        text: preview.text,
+        version: encodePromotePreviewGuard(preview.guard),
+      };
+    },
   });
   if (picked.kind === "unavailable") {
     return { outcome: "unavailable", reason: picked.reason };
@@ -121,6 +143,11 @@ export async function runInteractivePromote(request: {
           // The repository the catalog was read from. A rebind while the
           // picker was open must not move the destination.
           boundRepo: dataRepo,
+          ...(picked.previewVersions?.[ref] !== undefined && {
+            previewGuard: decodePromotePreviewGuard(
+              picked.previewVersions[ref],
+            ),
+          }),
         },
         request.cmd,
       );
