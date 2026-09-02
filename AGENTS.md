@@ -172,15 +172,6 @@ difference visible instead of relying on care.
   document. Sequential edits with overlapping boundaries silently leave stale
   fragments behind.
 
-## Local-only docs
-
-- If `local/` exists, treat it as separate, local-only context.
-- Read it before large architectural changes.
-- Never reference files under `local/` from source code, tests, or public docs.
-- Its subfolders carry their own `INDEX.md` stating a directory policy and the
-  status of each document. Read that index before adding, moving, or
-  finishing a document there, and update it in the same change.
-
 ## User Override
 
 If the user's instructions conflict with any rule in this document,
