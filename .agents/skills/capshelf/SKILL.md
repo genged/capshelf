@@ -40,7 +40,9 @@ Results with a `bundles/` prefix are **bundles** — curated item sets. Prefer t
 
 ### 4. Install
 
-`capshelf add <item>`. Repeating add for an installed item is a stable no-op; use the printed `status --diff`, `update`, and `apply` guidance instead of trying to make add reapply it. If the output lists missing required items, install them with the exact `capshelf add <ref>` commands it prints. If `add` refuses with exit 3 because of a `conflicts-with` declaration, that is a curated incompatibility — surface the decision to the user (remove the conflicting item, or fix a stale declaration in the data repo); never work around it. A bundle preflight refusal (exit 3) is the same kind of decision: nothing was installed and the per-member report says why — surface it, don't install members one by one to route around it.
+`capshelf add <item>`. For `mcp/*` and `subagents/*`, read the `targets:` block
+add prints and tell the user which runtimes the item covers — see Target
+coverage. Repeating add for an installed item is a stable no-op; use the printed `status --diff`, `update`, and `apply` guidance instead of trying to make add reapply it. If the output lists missing required items, install them with the exact `capshelf add <ref>` commands it prints. If `add` refuses with exit 3 because of a `conflicts-with` declaration, that is a curated incompatibility — surface the decision to the user (remove the conflicting item, or fix a stale declaration in the data repo); never work around it. A bundle preflight refusal (exit 3) is the same kind of decision: nothing was installed and the per-member report says why — surface it, don't install members one by one to route around it.
 
 ### 5. Verify
 
@@ -73,7 +75,7 @@ For system items (e.g. this `capshelf` skill), the edit loop doesn't apply — t
 - **Data repo** (e.g. `~/code/work-skills/`) holds canonical versions of every shared item under `skills/`, `pi/extensions/`, `subagents/`, `settings/`, `mcp/`, and `codex/config/`. It must be a git repo. Resolution order: `--data <path>` flag > gitignored `.capshelf/local.json` > `$CAPSHELF_HOME`. There is no implicit default.
 - **This project** pins the exact content hash + source commit of each item in `.capshelf/capshelf.lock.json` (clone-local pins in gitignored `.capshelf/local.lock.json`). Data-repo updates do NOT propagate until this project runs `capshelf update`.
 - **Installed copies** live under `.agents/skills/<name>/` by default with `.claude/skills/<name>` symlinks (Claude-only projects install directly under `.claude/skills/<name>/`). Pi extensions live under `.pi/extensions/<name>/`. Claude custom commands are modeled as skills.
-- **Subagents** are project-scoped logical items. `subagents/<name>/claude.md` installs to `.claude/agents/<name>.md`; `subagents/<name>/codex.toml` installs to `.codex/agents/<name>.toml`. Either target or both may exist under one lock.
+- **Subagents** are project-scoped logical items. `subagents/<name>/claude.md` installs to `.claude/agents/<name>.md`; `subagents/<name>/codex.toml` installs to `.codex/agents/<name>.toml`. Either target or both may exist under one lock; capshelf reports which as target coverage.
 - **Item metadata** (optional `<item>/.capshelf.yml` in the data repo: `description`, `tags`, `requires`, `conflicts-with`, `needs`) feeds discovery and checks. It is never copied into projects. Needs are pinned separately from content so requirements freshness never changes content drift.
 
 ## Two kinds of items
@@ -93,11 +95,72 @@ Always check the current surface with `capshelf --help` and `capshelf <verb> --h
 | `data bind` / `data upstream` / `data path` | inspect or change the explicit data-repo binding (old `set-data`/`set-upstream`/`data-path` still work as aliases) |
 | `ls` / `show` / `search` / `status` | inspect and discover (all support `--json`; `ls` and `status` include user-level runtime skills by default, `--user` narrows to them only) |
 | `add` / `rm` / `apply` / `update` / `revert` | converge the project on its locks |
+| `lock migrate` | one-time conversion of this project's locks to version 4; required before any lock-writing command works on an older project |
 | `share` / `move` / `promote` / `keep-local` | flow content and intent between project and data repo |
 | `data sync [--json]` | explicitly fetch the bound data repo's origin and fast-forward when safe; the **only** capshelf command that touches the network besides the `init` bootstrap clone and `self-update`. Run it when the user asks to pick up teammates' changes, then `capshelf status` to see `update_available` |
 | `get-path` | print the editable path for an item; use `--target claude|codex` for multi-target subagents |
 | `self-update` | update the Homebrew-installed binary (not project pins) |
 | `marketplace ...` | author, validate, sync, and package data-repo Claude/Cowork or Codex plugin catalogs; never installs runtime plugins |
+
+## Lock version 4 migration
+
+Locks written before version 4 identified an item by a hash of the data repo
+working tree. Version 4 identifies it by the item's committed Git tree. One
+lock file carries one identity model, never both, so the conversion is an
+explicit command instead of a side effect of the next write.
+
+On a project whose lock is version 2 or 3, **every command that writes a lock
+refuses with exit 3**: `add`, `rm`, `update`, `revert`, `promote`, `share`,
+`move`, `keep-local`, bundle installs, and `init`. The refusal reads:
+
+```text
+✗ this project's lock is version 3; capshelf add writes lock version 4
+  Convert the project and local locks first: capshelf lock migrate (preview it with --dry-run).
+```
+
+`status`, `ls`, `show`, `search`, `get-path`, and `apply` keep working against
+the old lock. Because `status` does not print the lock version, read the
+`version` field of `.capshelf/capshelf.lock.json` when you must know it before
+a write. Read it only; do not hand-edit it.
+
+Convert in two steps:
+
+```bash
+capshelf lock migrate --dry-run   # plan the complete migration, write nothing
+capshelf lock migrate             # convert both lock files in one transaction
+```
+
+The default conversion **selects no new content**. For each entry it re-derives
+the pin from the commit that entry already names and keeps `appliedAt`,
+`needs`, `label`, and the keep-local marker unchanged. A recorded hash that
+disagrees with its own commit is reported as `repaired legacy identity`. The
+project lock and the clone-local lock convert together or neither does. On a
+project that is already current the command prints `✓ already version 4` and
+exits 0, so it is safe to run when unsure.
+
+An entry whose source commit is unreachable, or whose committed content is
+missing or filter-refused, blocks the run. Every blocker is reported in one
+pass, the command exits 3, and no lock or installed file changes. Prefer the
+non-destructive fix: restore the commit (`capshelf data sync`, or push the
+clone that holds it), then retry. The repair flags are the user's decision, not
+yours:
+
+- `--repin <ref>` re-pins a copy item or subagent to its **current** committed
+  source and re-materializes it. That is an update, not a conversion — the
+  installed content changes.
+- `--remove-item <ref>` drops the entry. It is the only choice for a fragment
+  (`settings/`, `mcp/`, `codex-config/`): a fragment's former contribution
+  cannot be told apart from a project-local value in the merged output. Add the
+  item again after the migration.
+- `--yes` authorizes the installed-state loss a repair causes. Show
+  `capshelf status <item> --diff` and get permission before you pass it.
+
+Refs accept a bare kind ref (`skills/hello`) or a scope-qualified one
+(`local/skills/hello`, `project/skills/hello`).
+
+The upgrade is one-way: an older binary refuses a version-4 lock outright.
+Upgrade capshelf on every machine and in CI first, then commit the migrated
+project lock as a lock-only change.
 
 ## Plugin marketplaces
 
@@ -180,6 +243,61 @@ Subagents are project-scope only. Do not use `--local`, `keep-local`, or
 privileged runtime policy because they can combine instructions with tools,
 models, permissions, MCP servers, and sandbox controls.
 
+A subagent may carry a Claude source, a Codex source, or both — read the
+`targets:` block before reporting which runtimes can use it. See Target
+coverage.
+
+## Target coverage (mcp and subagents)
+
+`mcp/<name>` and `subagents/<name>` each have two candidate runtime targets, so
+an item covers Claude, Codex, or both. `add`, `show`, `share`, and `status`
+report which. Read that report before telling the user an MCP server or
+subagent is available: `.mcp.json` is Claude Code's project MCP file, so writing
+it says nothing about Codex.
+
+`add`, `show`, and `share` print the block whether or not there is a gap:
+
+```text
+  targets:
+    Claude  written  /abs/path/.claude/agents/claude-only.md
+    Codex   absent   no codex source in this item
+  Codex reads subagents/claude-only/codex.toml in your data repo.
+  Once it is committed there: capshelf update subagents/claude-only
+```
+
+`status` is a whole-project overview, so it stays silent on full coverage and
+prints one sub-line per item that has a gap:
+
+```text
+  ✓   data/mcp/github                         2b7041f66a52  up-to-date
+      targets: Claude ✓  Codex ✗ — no codex source at the locked commit
+        Codex reads mcp/github/codex.toml; once it is committed there: capshelf update mcp/github
+```
+
+- **A gap is a fact, not a fault.** capshelf does not know which harnesses the
+  project uses, so a one-target item is a valid install: exit stays 0, there is
+  no `⚠` glyph, and `--strict` is unaffected. Report the gap; never route around
+  it by editing a generated output or re-running `add`.
+- **Closing a gap is a data-repo change, then a per-project update.** Author the
+  canonical source the message names, commit it in the data repo, then run
+  `capshelf update <item>` in each project that wants it. `update` prints no
+  coverage block, so confirm with `capshelf status <item>`.
+- **`targets: unknown (<reason>)` is not a gap.** Coverage is read at the locked
+  commit, so an unbound data repo or an unreachable commit means capshelf can
+  say nothing about coverage. Resolve that first (see `missing_source_commit`),
+  then re-read; do not report an unknown as a missing target.
+- **`show --target <t>` for an absent target exits 3** and prints the same
+  guidance. That is the answer to "does this item support Codex?", not a failure
+  to work around.
+- `settings/<name>` and `codex-config/<name>` have one candidate target each and
+  print no block. `add bundles/<name>` reports no per-member coverage — its
+  members' gaps appear in `status`.
+- `rm` reports every output it reconciled, so a two-target item names both.
+- `--json` adds `targetCoverage` to `add`, `show`, `share`, and each `status`
+  row: one entry per candidate with `present: true | false | null`, plus
+  `coverageState: "unknown"` when null. Filter on `present` instead of reading
+  `sources`, which stays present-only.
+
 ## Config fragments
 
 Shared fragments merge into project config outputs: `settings/<name>/settings.json` → `.claude/settings.json`; `mcp/<name>/claude.json` → `.mcp.json`; `mcp/<name>/codex.toml` and `codex/config/<name>/config.toml` → `.codex/config.toml`. Outputs preserve unmanaged project-local values; capshelf refuses unmanaged scalar/shape collisions, and also refuses two fragments that set the same key to conflicting scalar values (naming both) rather than silently letting manifest order decide. JSON outputs are read as JSONC (comments tolerated) but rewritten as plain JSON, and TOML is reserialized. Capshelf detects comment loss during preflight; review the named output and get permission before using `--yes`.
@@ -195,7 +313,11 @@ capshelf share mcp/github
 capshelf share settings/permissions --pick permissions.allow
 ```
 
-Codex only loads `.codex/config.toml` in trusted projects; `status` warns non-fatally when the project appears untrusted.
+An `mcp` item can carry a Claude source, a Codex source, or both, so `add`,
+`show`, `share`, and `status` report its target coverage — see Target coverage
+before reporting that a server is available.
+
+Codex only loads `.codex/config.toml` in trusted projects; `status` warns non-fatally when the project appears untrusted. For `mcp` items that warning follows locked coverage: it appears only when the locked commit has a Codex source, or when coverage is unknown.
 
 ## Coexistence
 
@@ -213,6 +335,13 @@ Codex only loads `.codex/config.toml` in trusted projects; `status` warns non-fa
   `data` or `update` command; install-mode changes need a dedicated migration.
 - **Never pass `promote --stale-ok` without explicit user direction** — it intentionally overwrites a teammate's newer upstream version.
 - **Never pass `--yes` merely to route around a destructive-change refusal.** Show every affected path, use `capshelf status <item> --diff` for managed item drift (or marketplace sync dry-run for projections), explain what will be lost, and get the user's permission first. `--yes` does not bypass hard safety refusals.
+- **Never clear a `lock migrate` blocker with `--repin` or `--remove-item` on
+  your own.** One changes installed content, the other drops an item. Restore
+  the missing source commit first; take the repair flags to the user.
+- **Never treat a target-coverage gap as an error to repair locally.** An
+  absent target means the data repo has no source for that runtime. Author and
+  commit it there, then `capshelf update <item>`; do not hand-write the
+  generated output.
 - **The lock is the source of truth** for what capshelf owns.
 - **Review Pi extension source before adding or promoting it.** The runtime warning is a trust boundary, not proof of safety; capshelf never installs extension dependencies or reloads Pi.
 - **Treat declared needs as metadata.** Capshelf records expected network,
@@ -236,6 +365,13 @@ Codex only loads `.codex/config.toml` in trusted projects; `status` warns non-fa
 - `data repo at <path> is bound to the wrong upstream` — `capshelf set-data <correct-clone>` or intentionally change committed state with `capshelf set-upstream <url>`.
 - `data repo has uncommitted metadata changes: <item>/.capshelf.yml` — commit the sidecar in the data repo; no item content is at risk.
 - `missing_source_commit` in `status` — the locked `sourceCommit` is unreachable in the data repo (unpushed in another clone, or squash-orphaned after a merged proposal). Fix with `capshelf sync-data && capshelf update <item>`; if the commit only exists in another clone, push or fetch that clone first.
+- `this project's lock is version 3; <verb> writes lock version 4` — the
+  project predates lock version 4. Run `capshelf lock migrate --dry-run`, then
+  `capshelf lock migrate`. Never hand-edit the lock's `version` field to route
+  around it.
+- `lock version 4 is newer than this capshelf supports` — the binary is older
+  than the project's lock. Upgrade it (`capshelf self-update`, or
+  `brew upgrade capshelf`); never downgrade the lock.
 - `git is required but was not found on PATH` — install Git or fix `PATH`.
 - `not a git repository: <path>` — data repos must be git repos (`sourceCommit` provenance); `git init` it first.
 - `⚠ <item>: invalid .capshelf.yml … — metadata ignored` — the item still works; fix the sidecar in the data repo when convenient.
