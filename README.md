@@ -30,6 +30,16 @@ silently changes all of them, with no diff and no way to keep a local variant.
   </picture>
 </p>
 
+The recording below runs that loop. `other-app` installs a shared skill from
+the picker. `my-app` edits its copy and promotes the edit. `other-app` keeps
+its pin until it runs `capshelf update`. The transcript after the recording
+shows the same sequence as text.
+
+<p align="center">
+  <img src="docs/demo/demo.gif" width="900"
+    alt="A terminal recording. In other-app, capshelf add opens the picker, the query secrev selects security-review, and Enter installs it. In my-app, an edit to the skill shows as drift in capshelf status --diff, and capshelf promote commits it to the data repo. Back in other-app, capshelf status reports an update available, and capshelf update moves the pin." />
+</p>
+
 Two projects, `my-app` and `other-app`, both using a shared `security-review`
 skill. `other-app` installs it from the data repo:
 
@@ -242,6 +252,17 @@ to open the same list again later.
 Use `add` for an item the data repo already holds, and `share` to move one up
 there for the first time.
 
+## Support matrix - Capabilities and Harnesses
+
+| Item kind | Claude Code | Codex CLI | Cowork / claude.ai | Pi |
+|---|:---:|:---:|:---:|:---:|
+| Skills | ✓ `.claude/skills/` ᵇ | ✓ `.agents/skills/` | ✓ ᵃ | ✗ |
+| Subagents | ✓ `.claude/agents/` | ✓ `.codex/agents/` | ✗ | ✗ |
+| Settings | ✓ `.claude/settings.json` ᵈ | ✓ `.codex/config.toml` ᵈ | ✗ | ✗ |
+| MCP fragments | ✓ `.mcp.json` | ✓ `.codex/config.toml` | ✗ | ✗ |
+| Pi extensions | n/a | n/a | n/a | ✓ `.pi/extensions/` |
+| Plugin catalogs | ✓ authored ᶜ | ✓ generated projection | ✓ `.plugin` pack upload | ✗ |
+
 ## Examples
 
 Add a shared skill:
@@ -309,8 +330,8 @@ in [`docs/cli.md`](docs/cli.md) under Getting started.
 | `pi-extensions` | `pi/extensions/<name>/index.ts` plus local modules | `.pi/extensions/<name>/` |
 | `subagents` | `subagents/<name>/claude.md`, `subagents/<name>/codex.toml` | `.claude/agents/<name>.md` and/or `.codex/agents/<name>.toml` |
 | `settings` | `settings/<name>/settings.json`      | merged into `.claude/settings.json` |
-| `mcp` | `mcp/<name>/claude.json`, `mcp/<name>/codex.toml` | merged into `.mcp.json` and/or `.codex/config.toml` |
 | `codex-config` | `codex/config/<name>/config.toml` | merged into `.codex/config.toml` |
+| `mcp` | `mcp/<name>/claude.json`, `mcp/<name>/codex.toml` | merged into `.mcp.json` and/or `.codex/config.toml` |
 
 Pi extensions can use committed project scope or clone-local Capshelf scope;
 both materialize to Pi's project-local `.pi/extensions/<name>/` path and execute
@@ -400,6 +421,12 @@ make build                         # compile dist/capshelf
 
 The end-to-end suite, and therefore `make check`, also needs `python3` on
 your `PATH` for the terminal cells.
+
+The recording at the top of this page is `docs/demo/demo.gif`. To record it
+again, run `./docs/demo/setup.sh`, then `vhs docs/demo/demo.tape` from the
+repository root. The setup script builds a sandbox under `/tmp/capshelf-demo`
+and compiles the binary the tape runs. Recording needs
+[VHS](https://github.com/charmbracelet/vhs).
 
 ### CLI source repo
 
