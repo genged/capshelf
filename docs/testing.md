@@ -129,9 +129,9 @@ KEEP_E2E_TMP=1 CAPSHELF_E2E_BIN="$PWD/dist/capshelf" bun test ./e2e/scenarios/fr
 ```
 
 Every command has a generous safety deadline. At the deadline the runner sends
-`SIGTERM` to the whole process group, waits briefly, then sends `SIGKILL`, so a
-grandchild cannot outlive the test. The deadline is not a performance
-assertion.
+`SIGTERM` to the whole process group and waits briefly. It then sends
+`SIGKILL`, so a grandchild cannot outlive the test. The deadline is not a
+performance assertion.
 
 Some cells need a terminal, because a consent prompt and the pickers behave
 differently on one. The picker cells cover the `init`, `add`, `share`, and

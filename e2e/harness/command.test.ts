@@ -67,11 +67,7 @@ test(
         },
       );
 
-      expect(result.outcome).toEqual({
-        kind: "timeout",
-        timeoutMs: 700,
-        finalSignal: "SIGKILL",
-      });
+      expect(result.outcome).toEqual({ kind: "timeout", timeoutMs: 700 });
       expect(describeCommand(result)).toContain("timed out after 700 ms");
 
       // A dead process writes nothing. Comparing sizes across a pause proves
@@ -91,7 +87,7 @@ test(
 );
 
 test(
-  "a tree that honors SIGTERM needs no escalation, and none is reported",
+  "a tree that ends on SIGTERM is reported as a timeout and stops writing",
   async () => {
     await withWorld("outcome-timeout-clean", async (world) => {
       const beat = join(world.stage, "beat.log");
@@ -110,14 +106,10 @@ test(
         },
       );
 
-      // SIGTERM ended the group, so the SIGKILL found nothing to signal. The
-      // pair of timeout tests reads the difference: this one must not claim an
-      // escalation the other one genuinely needed.
-      expect(result.outcome).toEqual({
-        kind: "timeout",
-        timeoutMs: 500,
-        finalSignal: "SIGTERM",
-      });
+      // SIGTERM ended the group before the escalation fired, so the SIGKILL
+      // found nothing to signal. The runner must still settle as a timeout
+      // rather than hang or report the child's SIGTERM exit as a signal.
+      expect(result.outcome).toEqual({ kind: "timeout", timeoutMs: 500 });
 
       const first = (await stat(beat)).size;
       await Bun.sleep(400);

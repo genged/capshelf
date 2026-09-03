@@ -34,7 +34,7 @@ test("exit assertions separate a refusal from a signal, timeout, and spawn failu
       {
         command: ["capshelf"],
         cwd: "/tmp",
-        outcome: { kind: "timeout", timeoutMs: 5, finalSignal: "SIGKILL" },
+        outcome: { kind: "timeout", timeoutMs: 5 },
         stdout: "",
         stderr: "",
       },

@@ -11,7 +11,7 @@ import { join, relative } from "node:path";
 export type CommandOutcome =
   | { kind: "exit"; exitCode: number }
   | { kind: "signal"; signal: string }
-  | { kind: "timeout"; timeoutMs: number; finalSignal: string }
+  | { kind: "timeout"; timeoutMs: number }
   | { kind: "spawn-error"; message: string };
 
 export interface CommandResult {
@@ -103,7 +103,6 @@ export async function runCommand(
     const stderr: string[] = [];
     let settled = false;
     let timedOut = false;
-    let finalSignal = "";
     let deadline: ReturnType<typeof setTimeout> | undefined;
     let killer: ReturnType<typeof setTimeout> | undefined;
     let drainTimer: ReturnType<typeof setTimeout> | undefined;
@@ -130,11 +129,6 @@ export async function runCommand(
       if (pid === undefined) return;
       try {
         process.kill(-pid, signal);
-        // Recorded only once the signal is delivered. An escalation that finds
-        // the group already gone must not claim it sent SIGKILL: whether the
-        // escalation was needed is the fact a timeout diagnostic exists to
-        // report.
-        finalSignal = signal;
       } catch {
         // The group is already gone; nothing left to bound.
       }
@@ -171,7 +165,7 @@ export async function runCommand(
     });
 
     // Only the non-timeout paths reach this. A timeout finishes after its
-    // escalation, so the reported `finalSignal` is the last one actually sent.
+    // escalation instead.
     const settleExit = (
       code: number | null,
       signal: NodeJS.Signals | null,
@@ -195,9 +189,16 @@ export async function runCommand(
         // is not the question — a grandchild that ignores SIGTERM is, and it
         // is invisible from here. Sending SIGKILL to a group that is already
         // gone raises ESRCH, which signalGroup swallows.
+        //
+        // The outcome does not say which signal ended the tree. Deciding that
+        // needs a live-versus-zombie check: a dead grandchild stays in the
+        // group as a zombie until PID 1 reaps it, some container inits never
+        // do, and kill(-pgid, SIGKILL) succeeds against zombies. Reading
+        // /proc answers it, and that is more machinery than one word in a
+        // diagnostic is worth.
         signalGroup("SIGKILL");
         setTimeout(
-          () => finish({ kind: "timeout", timeoutMs, finalSignal }),
+          () => finish({ kind: "timeout", timeoutMs }),
           ESCALATION_SETTLE_MS,
         );
       }, graceMs);
@@ -212,7 +213,7 @@ export function describeOutcome(outcome: CommandOutcome): string {
     case "signal":
       return `killed by signal ${outcome.signal}`;
     case "timeout":
-      return `timed out after ${outcome.timeoutMs} ms (last signal sent to the process group: ${outcome.finalSignal})`;
+      return `timed out after ${outcome.timeoutMs} ms`;
     case "spawn-error":
       return `could not start the process: ${outcome.message}`;
   }
