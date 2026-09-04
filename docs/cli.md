@@ -230,7 +230,7 @@ registered.
 | `update [<item>...]` | bump content and declared-needs pins; needs-only changes do not reinstall unchanged content; `--merge` reconciles one explicit skill or Pi extension and pins upstream without publishing; `--local` selects clone-local scope; supports `--dry-run` and explicit drift overwrite consent with `--yes` | implemented |
 | `share [item]` | adopt a not-yet-shared on-disk item into the data repo and report the new item's runtime target coverage; subagents scan both runtime outputs by default and require `--target` with `--from`; with no item, opens the interactive picker over unmanaged config values and untracked skills, Pi extensions, and subagents (see The picker); pick-based fragment shares print and report the equivalent non-interactive command | implemented |
 | `move <item> --to <scope>` | move an already-tracked data item between local and project scope without changing data-repo content | implemented |
-| `promote [item]` | push edits for an already-tracked data item to the data repo; fragments promote canonical source files; `--local` selects clone-local copy items; `--stale-ok` is the intentional overwrite option; `--merge` is deprecated compatibility behavior; with no item, opens the interactive picker over the tracked items (see The picker) | implemented |
+| `promote [item]` | Push edits for a tracked data item to the data repo. Fragments promote canonical source files. `--local` selects clone-local copy items. `--stale-ok` permits an intentional overwrite. With no item, the command opens the tracked-item picker. See The picker. (`src/commands/promote.ts:144-169`) | implemented |
 | `keep-local <item>` | mark drifted copy-item content as intentional divergence; supports project and clone-local skills/Pi extensions, and rejects fragments; `--unset` is the only thing that clears the marker, and `promote` refuses a marked item | implemented |
 | `revert <item>` | restore one locked version; the lock is never rewritten, so a keep-local marker survives; discarding local state requires consent or `--yes`; supports `--local` | implemented |
 | `lock migrate` | convert this project's lock files to version 4 in one transaction; supports `--dry-run`, `--repin`, `--remove-item`, `--yes`, and `--json` | implemented |
@@ -514,7 +514,7 @@ guidance. The complete projected canonical target set is validated before any
 source is written.
 
 Subagents do not support local scope, partial `add --target`, `keep-local`,
-user-global installation, format translation, or `promote --merge`.
+user-global installation, or format translation.
 
 Claude sources require YAML frontmatter with non-empty `name` and
 `description`, plus a non-empty Markdown prompt body. Codex sources require
@@ -871,8 +871,8 @@ preview (`src/promote-preview.ts:83-91,95-120`,
 Both pickers re-read the project and the data repo after the prompt closes. A
 value that changed while the picker was open fails its own row instead of
 being committed from a stale read. With no item, `share` refuses `--json`,
-`--from`, `--pick`, `--target`, and `--to`, and `promote` refuses `--json`,
-`--stale-ok`, and `--merge`.
+`--from`, `--pick`, `--target`, and `--to`. With no item, `promote` refuses
+`--json` and `--stale-ok` (`src/commands/promote.ts:172-188`).
 
 ### search
 
@@ -1128,8 +1128,7 @@ selected lock. It preserves ignored/generated files outside its managed
 snapshot. The lock records the exact upstream pin. The installed copy can hold
 the merged result and report local drift until a later normal `promote`
 publishes it. The root `.capshelf.yml` remains outside content identity and is
-preserved byte-for-byte. `promote --merge` remains as a deprecated compatibility
-option for this release (`updateMergeTarget` in `src/commands/update.ts`,
+preserved byte-for-byte (`updateMergeTarget` in `src/commands/update.ts`,
 `src/promote-transaction.ts:76-124`).
 
 Two related behaviors:
@@ -1144,17 +1143,10 @@ Two related behaviors:
   included, is a clean no-op. It reports the action `"already-current"` and
   creates no commit.
 
-`promote --json` notes: `action` may be `"promoted"`, `"already-current"`,
-or `"already-upstream"` (consumers must tolerate new action values), and `staleOverride: true` appears only when
-`--stale-ok` actually bypassed a stale check (absent otherwise, including
-when the flag was passed but nothing was stale). An actual successful
-`--merge` adds `merged: true`, the full `mergeBase`, and the full
-`mergedUpstreamCommit`; those fields are absent when `--merge` was supplied
-but no stale merge was needed. If the merged tree already equals upstream,
-capshelf creates no data commit, reconciles the installed copy, and persists
-the new lock pin as one rollback-coordinated operation. Retrying after a
-post-commit lock persistence failure converges without creating a second
-content commit.
+`promote --json` can set `action` to `"promoted"`, `"already-current"`, or
+`"already-upstream"`. Consumers must accept new action values. The result has
+`staleOverride: true` only when `--stale-ok` bypasses a stale check. The field
+is absent when the flag is not necessary.
 
 ## Source pins and lock version 4
 

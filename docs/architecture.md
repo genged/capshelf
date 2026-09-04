@@ -90,8 +90,8 @@ Verbs map to this model:
   project metadata without changing data-repo content.
 - **`promote`** — flow edits for an already-tracked item the other direction:
   project → data repo, then update the spec. With no item, `promote` opens
-  the picker over the tracked items; `--json`, `--stale-ok`, and `--merge`
-  then require an item.
+  the picker over the tracked items. `--json` and `--stale-ok` then require an
+  item (`src/commands/promote.ts:172-188`).
 - **`keep-local`** — explicitly mark an item as intentionally diverged so
   reconciliation tolerates the drift.
 
@@ -692,7 +692,7 @@ repository's normal commit hooks:
 
 | operation | used by | owns | restores on failure |
 |---|---|---|---|
-| generated commit | share and promote of copy items and subagents, `promote --merge`, marketplace | the files it wrote | `HEAD`, those files, the index |
+| generated commit | share and promote of copy items and subagents, marketplace | the files it wrote | `HEAD`, those files, the index |
 | existing-worktree commit | fragment promote | nothing | `HEAD` and the index only |
 
 The difference is who authored the content. A generated commit builds a tree

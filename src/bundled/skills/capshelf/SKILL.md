@@ -240,8 +240,8 @@ under one lock. Use `show --target` or `get-path --target`; add never accepts a
 partial target. `share subagents/<name> --to project` adopts every matching
 unmanaged project runtime file, while `--from` requires `--target`.
 
-Subagents are project-scope only. Do not use `--local`, `keep-local`, or
-`promote --merge`; the supported stale overwrite escape hatch is
+Subagents are project-scope only. Do not use `--local` or `keep-local`.
+The supported stale overwrite escape hatch is
 `promote --stale-ok` with explicit user direction. Review subagents like
 privileged runtime policy because they can combine instructions with tools,
 models, permissions, MCP servers, and sandbox controls.

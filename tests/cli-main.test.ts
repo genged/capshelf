@@ -10,6 +10,32 @@ async function tempDir(prefix: string): Promise<string> {
 }
 
 describe("in-process CLI entry point", () => {
+  test("promote rejects the removed --merge option", async () => {
+    const cwd = await tempDir("capshelf-promote-option-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+    const help = Bun.spawnSync({
+      cmd: [process.execPath, cli, "promote", "--help"],
+      cwd,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(help.exitCode).toBe(0);
+    expect(help.stdout.toString()).not.toContain("--merge");
+
+    const removed = Bun.spawnSync({
+      cmd: [process.execPath, cli, "promote", "skills/hello", "--merge"],
+      cwd,
+      env: process.env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(removed.exitCode).toBe(1);
+    expect(removed.stderr.toString()).toContain("unknown option '--merge'");
+  });
+
   test("prepared data commands return usage exit codes without exiting", async () => {
     const exitSpy = spyOn(process, "exit").mockImplementation((code) => {
       throw new Error(`unexpected process.exit(${String(code)})`);

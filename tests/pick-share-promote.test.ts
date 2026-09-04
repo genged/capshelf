@@ -748,7 +748,9 @@ describe("promote with no item", () => {
       );
       const stale = await run(["promote", "--stale-ok"]);
       expect(stale.exitCode).toBe(3);
-      expect(stale.stderr.toString()).toContain("require an item");
+      expect(stale.stderr.toString()).toContain(
+        "promote --stale-ok requires an item",
+      );
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );

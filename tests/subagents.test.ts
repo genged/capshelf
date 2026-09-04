@@ -560,19 +560,6 @@ describe("subagent CLI lifecycle", () => {
       CLAUDE.replace("carefully", "with security focus"),
     );
     const codexBefore = await file(canonicalCodex).text();
-    const claudeBefore = await file(canonicalClaude).text();
-    const headBefore = (
-      await $`git -C ${dataRepo} rev-parse HEAD`.text()
-    ).trim();
-    expect(
-      (await run(["promote", "subagents/reviewer", "--merge", "-m", "no"]))
-        .exitCode,
-    ).toBe(3);
-    expect(await file(canonicalClaude).text()).toBe(claudeBefore);
-    expect((await $`git -C ${dataRepo} rev-parse HEAD`.text()).trim()).toBe(
-      headBefore,
-    );
-
     expect(
       (await run(["promote", "subagents/reviewer", "-m", "tighten reviewer"]))
         .exitCode,

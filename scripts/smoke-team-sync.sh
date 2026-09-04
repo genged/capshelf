@@ -240,7 +240,7 @@ configure_git_user "$TMP/fresh-2"
 (cd "$PB" && "${CLI[@]}" --data "$TMP/fresh-2" update skills/hello >/dev/null)
 (cd "$PB" && "${CLI[@]}" --data "$TMP/fresh-2" status --strict >/dev/null)
 
-# --- 13. stale promote merge: clean team merge, pinned peer, conflict -------
+# --- 13. update merge: clean team merge, pinned peer, conflict --------------
 MERGE_ORIGIN="$TMP/merge-origin.git"
 MERGE_SEED="$TMP/merge-seed"
 MERGE_A_DATA="$TMP/merge-a-data"
@@ -277,12 +277,17 @@ printf 'from alice\n' > "$MERGE_A/.agents/skills/merge-demo/upstream.txt"
 git -C "$MERGE_A_DATA" push -q
 (cd "$MERGE_B" && "${CLI[@]}" sync-data >/dev/null)
 printf 'from bob\n' > "$MERGE_B/.agents/skills/merge-demo/local.txt"
-(cd "$MERGE_B" && "${CLI[@]}" promote skills/merge-demo --merge -m 'merge disjoint edits' --json > "$TMP/promote-merge.json")
-assert_valid_json "$TMP/promote-merge.json"
-assert_fixed_contains '"merged": true' "$TMP/promote-merge.json"
-assert_fixed_contains '"mergeBase":' "$TMP/promote-merge.json"
-assert_fixed_contains '"mergedUpstreamCommit":' "$TMP/promote-merge.json"
+(cd "$MERGE_B" && "${CLI[@]}" update skills/merge-demo --merge --json > "$TMP/update-merge.json")
+assert_valid_json "$TMP/update-merge.json"
+assert_fixed_contains '"action": "merged"' "$TMP/update-merge.json"
+assert_fixed_contains '"merged": true' "$TMP/update-merge.json"
+assert_fixed_contains '"mergeBase":' "$TMP/update-merge.json"
+assert_fixed_contains '"mergedUpstreamCommit":' "$TMP/update-merge.json"
 assert_fixed_contains 'from alice' "$MERGE_B/.agents/skills/merge-demo/upstream.txt"
+test ! -e "$MERGE_B_DATA/skills/merge-demo/local.txt"
+(cd "$MERGE_B" && "${CLI[@]}" promote skills/merge-demo -m 'publish merged edits' --json > "$TMP/promote-merged.json")
+assert_valid_json "$TMP/promote-merged.json"
+assert_fixed_contains '"action": "promoted"' "$TMP/promote-merged.json"
 assert_fixed_contains 'from bob' "$MERGE_B_DATA/skills/merge-demo/local.txt"
 test ! -e "$MERGE_C/.agents/skills/merge-demo/upstream.txt"
 (cd "$MERGE_C" && "${CLI[@]}" status --json > "$TMP/merge-third-status.json")
@@ -300,10 +305,10 @@ MERGE_CONFLICT_HEAD="$(git -C "$MERGE_B_DATA" rev-parse HEAD)"
 MERGE_CONFLICT_LOCK="$(git hash-object "$MERGE_B/.capshelf/capshelf.lock.json")"
 MERGE_CONFLICT_LOCAL="$(git hash-object "$MERGE_B/.agents/skills/merge-demo/line.txt")"
 MERGE_CONFLICT_UPSTREAM="$(git hash-object "$MERGE_B_DATA/skills/merge-demo/line.txt")"
-run_expect_exit 3 "$TMP/promote-merge-conflict.txt" \
-  env -C "$MERGE_B" "${CLI[@]}" promote skills/merge-demo --merge -m 'bob conflict side'
-assert_fixed_contains 'merge conflicts' "$TMP/promote-merge-conflict.txt"
-assert_fixed_contains 'line.txt' "$TMP/promote-merge-conflict.txt"
+run_expect_exit 3 "$TMP/update-merge-conflict.txt" \
+  env -C "$MERGE_B" "${CLI[@]}" update skills/merge-demo --merge
+assert_fixed_contains 'merge conflicts' "$TMP/update-merge-conflict.txt"
+assert_fixed_contains 'line.txt' "$TMP/update-merge-conflict.txt"
 test "$(git -C "$MERGE_B_DATA" rev-parse HEAD)" = "$MERGE_CONFLICT_HEAD"
 test "$(git hash-object "$MERGE_B/.capshelf/capshelf.lock.json")" = "$MERGE_CONFLICT_LOCK"
 test "$(git hash-object "$MERGE_B/.agents/skills/merge-demo/line.txt")" = "$MERGE_CONFLICT_LOCAL"
