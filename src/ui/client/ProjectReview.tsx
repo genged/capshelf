@@ -1,3 +1,4 @@
+import type { ItemKind } from "../../master";
 import type {
   DiffViewName,
   UiDiffResponse,
@@ -6,12 +7,15 @@ import type {
 } from "../shared/api-types";
 import {
   filterItems,
+  groupByKind,
+  groupItems,
+  inTab,
   projectCounts,
   summaryLine,
   type FilterTab,
 } from "../shared/view-model";
 import type { ProjectLoad } from "./dashboard";
-import { EmptyState, Notice, Skeleton } from "./common";
+import { EmptyState, KindChips, Notice, Skeleton } from "./common";
 import { Icon } from "./icons";
 import { ItemPanel } from "./ItemPanel";
 
@@ -36,6 +40,8 @@ export function ProjectReview({
   load,
   tab,
   onTab,
+  kind,
+  onKind,
   query,
   isExpanded,
   onToggle,
@@ -47,6 +53,8 @@ export function ProjectReview({
   load: ProjectLoad;
   tab: FilterTab;
   onTab: (tab: FilterTab) => void;
+  kind: ItemKind | null;
+  onKind: (kind: ItemKind | null) => void;
   query: string;
   isExpanded: (itemId: string) => boolean;
   onToggle: (itemId: string) => void;
@@ -79,8 +87,24 @@ export function ProjectReview({
     );
   }
 
-  const counts = projectCounts(data.items);
-  const shown = filterItems(data.items, tab, query);
+  const total = projectCounts(data.items);
+  const kinds = groupByKind(data.items);
+  // A kind chosen in another project may be absent here; then no kind filters.
+  const activeKind = kinds.some((group) => group.kind === kind) ? kind : null;
+  const activeLabel = kinds.find((group) => group.kind === activeKind)?.label;
+  const where = activeLabel === undefined ? "" : ` in ${activeLabel}`;
+  const inKind =
+    activeKind === null
+      ? data.items
+      : data.items.filter((item) => item.kind === activeKind);
+  // The tabs count inside the chosen kind; the chips count inside the tab.
+  const counts = projectCounts(inKind);
+  const shown = filterItems(inKind, tab, query);
+  const chips = kinds.map((group) => ({
+    id: group.kind,
+    label: group.label,
+    count: group.rows.filter((item) => inTab(item, tab)).length,
+  }));
   const tabCount = (id: FilterTab): number =>
     id === "all"
       ? counts.items
@@ -138,12 +162,12 @@ export function ProjectReview({
         <Notice key={notice.message} notice={notice} />
       ))}
 
-      {counts.items > 0 && counts.attention === 0 ? (
+      {total.items > 0 && total.attention === 0 ? (
         <p class="all-clear" role="status">
           <Icon name="check" />
           <span>
-            All {counts.items} {counts.items === 1 ? "item is" : "items are"} up
-            to date{counts.kept > 0 ? `, ${counts.kept} kept local` : ""}.
+            All {total.items} {total.items === 1 ? "item is" : "items are"} up
+            to date{total.kept > 0 ? `, ${total.kept} kept local` : ""}.
           </span>
         </p>
       ) : null}
@@ -170,7 +194,14 @@ export function ProjectReview({
         ))}
       </div>
 
-      {counts.items === 0 ? (
+      <KindChips
+        label="Filter by kind"
+        chips={chips}
+        selected={activeKind}
+        onSelect={onKind}
+      />
+
+      {total.items === 0 ? (
         <EmptyState title="No items are tracked in this project">
           <p>
             <code>capshelf add</code> opens the shelf picker. Nothing here has a
@@ -180,23 +211,37 @@ export function ProjectReview({
       ) : shown.length === 0 ? (
         <p class="muted panels-empty">
           {query.trim().length > 0
-            ? `No item matches “${query}”.`
+            ? `Nothing matches “${query}”${where}.`
             : tab === "attention"
-              ? "Nothing needs attention."
-              : "No item is up to date."}
+              ? `Nothing needs attention${where}.`
+              : `Nothing is up to date${where}.`}
         </p>
       ) : (
         <div class="panels">
-          {shown.map((item) => (
-            <ItemPanel
-              key={item.id}
-              item={item}
-              expanded={isExpanded(item.id)}
-              changed={load.changed.has(item.id)}
-              onToggle={() => onToggle(item.id)}
-              loadDiff={(view) => loadDiff(item.id, view)}
-              domId={panelDomId(item.id)}
-            />
+          {groupItems(shown).map((group) => (
+            <section
+              key={group.kind}
+              class="kind-group"
+              aria-labelledby={`review-kind-${group.kind}`}
+            >
+              <h2 id={`review-kind-${group.kind}`} class="kind-heading">
+                <span>{group.label}</span>
+                <span class="kind-count">{group.rows.length}</span>
+              </h2>
+              <div class="kind-panels">
+                {group.rows.map((item) => (
+                  <ItemPanel
+                    key={item.id}
+                    item={item}
+                    expanded={isExpanded(item.id)}
+                    changed={load.changed.has(item.id)}
+                    onToggle={() => onToggle(item.id)}
+                    loadDiff={(view) => loadDiff(item.id, view)}
+                    domId={panelDomId(item.id)}
+                  />
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       )}

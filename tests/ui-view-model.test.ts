@@ -4,6 +4,9 @@ import { stateIcon, stateLabel, stateTone } from "../src/ui/shared/state-label";
 import {
   changedItemIds,
   filterItems,
+  groupByKind,
+  groupItems,
+  inTab,
   projectCounts,
   shortCommit,
   shortDigest,
@@ -12,6 +15,8 @@ import {
   sortTree,
   summaryLine,
 } from "../src/ui/shared/view-model";
+import { KIND_ORDER, kindLabel } from "../src/ui/shared/kind-label";
+import { ITEM_KINDS } from "../src/master";
 import type { State } from "../src/status-core";
 
 function item(
@@ -89,6 +94,69 @@ describe("view model", () => {
     expect(
       filterItems(items, "all", "SKILLS/").map((entry) => entry.ref),
     ).toEqual(["skills/alpha", "skills/beta", "skills/zeta"]);
+  });
+
+  test("filters by kind on top of the tab and the query", () => {
+    expect(
+      filterItems(items, "all", "", "skills").map((entry) => entry.ref),
+    ).toEqual(["skills/alpha", "skills/beta", "skills/zeta"]);
+    expect(
+      filterItems(items, "attention", "", "settings").map((entry) => entry.ref),
+    ).toEqual(["settings/base"]);
+    expect(filterItems(items, "attention", "", "mcp")).toEqual([]);
+    expect(
+      filterItems(items, "ok", "zeta", "skills").map((e) => e.ref),
+    ).toEqual(["skills/zeta"]);
+    const ok = item("skills/one", "ok");
+    expect(inTab(ok, "all")).toBe(true);
+    expect(inTab(ok, "ok")).toBe(true);
+    expect(inTab(ok, "attention")).toBe(false);
+    expect(inTab(item("skills/two", "drifted_local"), "attention")).toBe(true);
+  });
+
+  test("groups rows by kind in the order ls prints, skipping empty kinds", () => {
+    const groups = groupByKind([
+      { kind: "mcp", ref: "mcp/b" },
+      { kind: "skills", ref: "skills/z" },
+      { kind: "mcp", ref: "mcp/a" },
+      { kind: "settings", ref: "settings/base" },
+    ]);
+    expect(groups.map((group) => group.kind)).toEqual([
+      "skills",
+      "settings",
+      "mcp",
+    ]);
+    expect(groups.map((group) => group.label)).toEqual([
+      "Skills",
+      "Settings",
+      "MCP servers",
+    ]);
+    expect(groups[2]?.rows.map((row) => row.ref)).toEqual(["mcp/b", "mcp/a"]);
+    expect(groupByKind([])).toEqual([]);
+  });
+
+  test("puts a kind with a finding first, then keeps the ls order", () => {
+    const groups = groupItems(items);
+    expect(groups.map((group) => group.kind)).toEqual([
+      "skills",
+      "settings",
+      "mcp",
+    ]);
+    expect(groups[0]?.rows.map((row) => row.ref)).toEqual([
+      "skills/alpha",
+      "skills/beta",
+      "skills/zeta",
+    ]);
+    const settingsOnly = groupItems([
+      item("skills/zeta", "ok"),
+      item("mcp/context7", "ok"),
+      item("settings/base", "drifted_local"),
+    ]);
+    expect(settingsOnly.map((group) => group.kind)).toEqual([
+      "settings",
+      "skills",
+      "mcp",
+    ]);
   });
 
   test("writes the summary line the way the comp reads", () => {
@@ -187,5 +255,19 @@ describe("state labels", () => {
     expect(stateLabel("missing_upstream", "system")).toBe("Gone from this CLI");
     expect(stateIcon("drifted_and_update")).toBe("pencil");
     expect(stateIcon("missing_installed")).toBe("question");
+  });
+});
+
+describe("kind labels", () => {
+  test("the display order is the order ITEM_KINDS declares", () => {
+    expect([...KIND_ORDER]).toEqual([...ITEM_KINDS]);
+  });
+
+  test("every kind has a label", () => {
+    for (const kind of ITEM_KINDS) {
+      expect(kindLabel(kind).length).toBeGreaterThan(0);
+    }
+    expect(kindLabel("pi-extensions")).toBe("Pi extensions");
+    expect(kindLabel("codex-config")).toBe("Codex config");
   });
 });

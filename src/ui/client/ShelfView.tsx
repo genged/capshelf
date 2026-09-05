@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
+import type { ItemKind } from "../../master";
 import { rankRows } from "../../pick-rank";
 import type {
   UiOverview,
   UiShelf,
   UiShelfItemDetail,
 } from "../shared/api-types";
-import { shortCommit } from "../shared/view-model";
+import { groupByKind, shortCommit } from "../shared/view-model";
 import { ApiError, apiGet } from "./api";
-import { EmptyState, Skeleton, formatDay } from "./common";
+import { EmptyState, KindChips, Skeleton, formatDay } from "./common";
 import { highlightLine, languageForPath } from "./highlight";
 import { Icon } from "./icons";
 import { Markdown } from "./Markdown";
@@ -15,12 +16,21 @@ import type { Route } from "./router";
 
 interface ShelfRow {
   ref: string;
-  kind: string;
+  kind: ItemKind | "bundles";
   name: string;
   tags: string[];
   description?: string;
   source: "data" | "system" | "bundle";
   detail: string;
+}
+
+type ShelfKind = ItemKind | "bundles";
+
+/** Bundles first, then one section per kind, as `ls` prints them. */
+interface ShelfSection {
+  id: ShelfKind;
+  label: string;
+  rows: ShelfRow[];
 }
 
 type Load<T> =
@@ -45,6 +55,7 @@ export function ShelfView({
     state: "idle",
   });
   const [file, setFile] = useState<string | null>(null);
+  const [kind, setKind] = useState<ShelfKind | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -107,7 +118,7 @@ export function ShelfView({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const rows = useMemo<ShelfRow[]>(() => {
+  const sections = useMemo<ShelfSection[]>(() => {
     if (shelf.state !== "ready") return [];
     const bundles: ShelfRow[] = shelf.data.bundles.map((bundle) => ({
       ref: bundle.ref,
@@ -122,30 +133,62 @@ export function ShelfView({
         ? "malformed"
         : `${bundle.members.length} ${bundle.members.length === 1 ? "member" : "members"}`,
     }));
-    const items: ShelfRow[] = shelf.data.items.map((item) => ({
-      ref: item.ref,
-      kind: item.kind,
-      name: item.name,
-      tags: item.tags,
-      ...(item.description !== undefined && { description: item.description }),
-      source: item.source,
-      detail:
-        item.usage.length === 0
-          ? "not used"
-          : `${item.usage.length} ${item.usage.length === 1 ? "project" : "projects"}`,
-    }));
-    return [...bundles, ...items];
+    return [
+      ...(bundles.length > 0
+        ? [{ id: "bundles" as const, label: "Bundles", rows: bundles }]
+        : []),
+      ...groupByKind(shelf.data.items).map((group) => ({
+        id: group.kind,
+        label: group.label,
+        rows: group.rows.map(
+          (item): ShelfRow => ({
+            ref: item.ref,
+            kind: item.kind,
+            name: item.name,
+            tags: item.tags,
+            ...(item.description !== undefined && {
+              description: item.description,
+            }),
+            source: item.source,
+            detail:
+              item.usage.length === 0
+                ? "not used"
+                : `${item.usage.length} ${item.usage.length === 1 ? "project" : "projects"}`,
+          }),
+        ),
+      })),
+    ];
   }, [shelf]);
 
-  const ranked = useMemo(() => {
-    if (query.trim().length === 0) {
-      return rows.map((row) => ({ row, positions: [] as number[] }));
-    }
-    return rankRows(query, rows).map((entry) => ({
-      row: entry.row,
-      positions: entry.positions,
-    }));
-  }, [rows, query]);
+  // A kind chosen on another shelf may be absent here; then no kind filters.
+  const activeKind = sections.some((section) => section.id === kind)
+    ? kind
+    : null;
+  const activeLabel = sections.find(
+    (section) => section.id === activeKind,
+  )?.label;
+  const where = activeLabel === undefined ? "" : ` in ${activeLabel}`;
+  const visibleSections =
+    activeKind === null
+      ? sections
+      : sections.filter((section) => section.id === activeKind);
+
+  const rows = useMemo(
+    () => visibleSections.flatMap((section) => section.rows),
+    [visibleSections],
+  );
+
+  /** A search ranks across every shown section; the headings step aside. */
+  const ranked = useMemo(
+    () =>
+      query.trim().length === 0
+        ? []
+        : rankRows(query, rows).map((entry) => ({
+            row: entry.row,
+            positions: entry.positions,
+          })),
+    [rows, query],
+  );
 
   const select = (nextRef: string | null): void =>
     navigate({ view: "shelf", repo, ref: nextRef });
@@ -166,9 +209,6 @@ export function ShelfView({
       </main>
     );
   }
-
-  const grouped = query.trim().length === 0;
-  let lastGroup = "";
 
   return (
     <main class="shelf" aria-label="Shelf">
@@ -227,6 +267,16 @@ export function ShelfView({
             />
           </label>
         </div>
+        <KindChips
+          label="Filter by kind"
+          chips={sections.map((section) => ({
+            id: section.id,
+            label: section.label,
+            count: section.rows.length,
+          }))}
+          selected={activeKind}
+          onSelect={setKind}
+        />
         {shelf.state === "loading" || shelf.state === "idle" ? (
           <Skeleton lines={6} label="Loading the shelf" />
         ) : shelf.state === "error" ? (
@@ -234,52 +284,52 @@ export function ShelfView({
             <p>{shelf.error.message}</p>
             {shelf.error.hint ? <p class="muted">{shelf.error.hint}</p> : null}
           </EmptyState>
+        ) : sections.length === 0 ? (
+          <p class="muted shelf-empty">
+            The shelf holds no items or bundles yet.
+          </p>
+        ) : query.trim().length === 0 ? (
+          <ul class="shelf-sections">
+            {visibleSections.map((section) => (
+              <li key={section.id} class="shelf-section">
+                <h2 id={`shelf-kind-${section.id}`} class="kind-heading">
+                  <span>{section.label}</span>
+                  <span class="kind-count">{section.rows.length}</span>
+                </h2>
+                <ul
+                  class="shelf-rows"
+                  aria-labelledby={`shelf-kind-${section.id}`}
+                >
+                  {section.rows.map((row) => (
+                    <li key={row.ref}>
+                      <ShelfRowButton
+                        row={row}
+                        positions={[]}
+                        selected={ref === row.ref}
+                        onSelect={select}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
         ) : ranked.length === 0 ? (
           <p class="muted shelf-empty">
-            {rows.length === 0
-              ? "The shelf holds no items or bundles yet."
-              : `Nothing matches “${query}”.`}
+            Nothing matches “{query}”{where}.
           </p>
         ) : (
-          <ul class="shelf-rows">
-            {ranked.map(({ row, positions }) => {
-              const group = row.source === "bundle" ? "bundles" : row.kind;
-              const heading = grouped && group !== lastGroup ? group : null;
-              lastGroup = group;
-              return (
-                <li key={row.ref}>
-                  {heading ? <h2 class="shelf-group">{heading}</h2> : null}
-                  <button
-                    type="button"
-                    class={`shelf-row${ref === row.ref ? " is-selected" : ""}`}
-                    aria-current={ref === row.ref ? "true" : undefined}
-                    onClick={() => select(row.ref)}
-                  >
-                    <span class="shelf-row-ref mono">
-                      <HighlightedRef text={row.ref} positions={positions} />
-                      {row.source === "system" ? (
-                        <span class="chip chip-system">system</span>
-                      ) : null}
-                    </span>
-                    <span class="shelf-row-detail muted">{row.detail}</span>
-                    {row.description ? (
-                      <span class="shelf-row-desc muted">
-                        {row.description}
-                      </span>
-                    ) : null}
-                    {row.tags.length > 0 ? (
-                      <span class="shelf-row-tags">
-                        {row.tags.map((tag) => (
-                          <span key={tag} class="chip chip-tag">
-                            #{tag}
-                          </span>
-                        ))}
-                      </span>
-                    ) : null}
-                  </button>
-                </li>
-              );
-            })}
+          <ul class="shelf-rows" aria-label="Search results">
+            {ranked.map(({ row, positions }) => (
+              <li key={row.ref}>
+                <ShelfRowButton
+                  row={row}
+                  positions={positions}
+                  selected={ref === row.ref}
+                  onSelect={select}
+                />
+              </li>
+            ))}
           </ul>
         )}
         {shelf.state === "ready" && shelf.data.warnings.length > 0 ? (
@@ -324,6 +374,47 @@ export function ShelfView({
         )}
       </section>
     </main>
+  );
+}
+
+function ShelfRowButton({
+  row,
+  positions,
+  selected,
+  onSelect,
+}: {
+  row: ShelfRow;
+  positions: number[];
+  selected: boolean;
+  onSelect: (ref: string) => void;
+}): preact.JSX.Element {
+  return (
+    <button
+      type="button"
+      class={`shelf-row${selected ? " is-selected" : ""}`}
+      aria-current={selected ? "true" : undefined}
+      onClick={() => onSelect(row.ref)}
+    >
+      <span class="shelf-row-ref mono">
+        <HighlightedRef text={row.ref} positions={positions} />
+        {row.source === "system" ? (
+          <span class="chip chip-system">system</span>
+        ) : null}
+      </span>
+      <span class="shelf-row-detail muted">{row.detail}</span>
+      {row.description ? (
+        <span class="shelf-row-desc muted">{row.description}</span>
+      ) : null}
+      {row.tags.length > 0 ? (
+        <span class="shelf-row-tags">
+          {row.tags.map((tag) => (
+            <span key={tag} class="chip chip-tag">
+              #{tag}
+            </span>
+          ))}
+        </span>
+      ) : null}
+    </button>
   );
 }
 

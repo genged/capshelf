@@ -78,7 +78,10 @@ export function ItemPanel({
           onKeyDown={(event) => void onKeyDown(event)}
         >
           <Icon name="chevron" />
-          <span class="panel-ref">{item.ref}</span>
+          <span class="panel-ref">
+            <span class="panel-ref-kind">{item.kind}/</span>
+            {item.name}
+          </span>
           {item.scope === "local" ? (
             <span class="chip chip-scope">local</span>
           ) : null}

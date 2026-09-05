@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
 } from "preact/hooks";
+import type { ItemKind } from "../../master";
 import type {
   DiffViewName,
   UiDiffResponse,
@@ -51,6 +52,7 @@ export function Dashboard(): preact.JSX.Element {
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<FilterTab>("all");
+  const [kind, setKind] = useState<ItemKind | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
@@ -416,6 +418,8 @@ export function Dashboard(): preact.JSX.Element {
                 load={selectedLoad ?? EMPTY_LOAD}
                 tab={tab}
                 onTab={setTab}
+                kind={kind}
+                onKind={setKind}
                 query={query}
                 isExpanded={(itemId) => isExpanded(selectedPath, itemId)}
                 onToggle={(itemId) => toggleExpanded(selectedPath, itemId)}

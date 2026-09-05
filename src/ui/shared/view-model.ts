@@ -2,7 +2,9 @@
  * Pure helpers the dashboard uses to order, count, and filter the rows the
  * server sends. They carry no DOM, so they are unit tests.
  */
+import type { ItemKind } from "../../master";
 import type { UiItem } from "./api-types";
+import { KIND_ORDER, kindLabel } from "./kind-label";
 
 export type FilterTab = "all" | "attention" | "ok";
 
@@ -41,22 +43,60 @@ export function sortItems(items: readonly UiItem[]): UiItem[] {
   });
 }
 
+export interface KindGroup<Row extends { kind: ItemKind }> {
+  kind: ItemKind;
+  label: string;
+  rows: Row[];
+}
+
+/** One group per kind that has a row, in `KIND_ORDER`. Rows keep their order. */
+export function groupByKind<Row extends { kind: ItemKind }>(
+  rows: readonly Row[],
+): KindGroup<Row>[] {
+  const groups: KindGroup<Row>[] = [];
+  for (const kind of KIND_ORDER) {
+    const members = rows.filter((row) => row.kind === kind);
+    if (members.length > 0) {
+      groups.push({ kind, label: kindLabel(kind), rows: members });
+    }
+  }
+  return groups;
+}
+
+/**
+ * The kind groups a project shows. A kind with a finding comes first, as the
+ * tree orders projects; ties keep `KIND_ORDER`. Rows follow `sortItems`.
+ */
+export function groupItems(items: readonly UiItem[]): KindGroup<UiItem>[] {
+  const findings = (rows: readonly UiItem[]): number =>
+    rows.filter((row) => row.attention).length;
+  return groupByKind(sortItems(items)).sort(
+    (a, b) => findings(b.rows) - findings(a.rows),
+  );
+}
+
 export function matchesQuery(text: string, query: string): boolean {
   const needle = query.trim().toLowerCase();
   if (needle.length === 0) return true;
   return text.toLowerCase().includes(needle);
 }
 
+export function inTab(item: UiItem, tab: FilterTab): boolean {
+  return tab === "all" || (tab === "attention") === item.attention;
+}
+
 export function filterItems(
   items: readonly UiItem[],
   tab: FilterTab,
   query: string,
+  kind: ItemKind | null = null,
 ): UiItem[] {
-  return sortItems(items).filter((item) => {
-    if (tab === "attention" && !item.attention) return false;
-    if (tab === "ok" && item.attention) return false;
-    return matchesQuery(item.ref, query);
-  });
+  return sortItems(items).filter(
+    (item) =>
+      (kind === null || item.kind === kind) &&
+      inTab(item, tab) &&
+      matchesQuery(item.ref, query),
+  );
 }
 
 /** `5 items · 3 up to date · 1 update available · 1 drifted`. */

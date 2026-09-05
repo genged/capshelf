@@ -1378,14 +1378,22 @@ manifest stays in the list and is marked missing.
 ### What the dashboard shows
 
 - Left: every registered project, sorted by the number of items that need
-  attention, then by path.
-- Center: the selected project's items as panels. A panel opens in place to
-  its facts and its diff. Filter tabs select all items, items that need
-  attention, or items that are up to date.
+  attention, then by path. The selected project lists its items under one
+  heading per kind.
+- Center: the selected project's items as panels, in one group per kind. A
+  kind with an item that needs attention comes first. Kinds with the same
+  count follow the order `ls` prints. A panel opens in place to its facts
+  and its diff. Filter tabs select all items, items that need attention, or
+  items that are up to date. A chip row under the tabs selects one kind. The
+  tabs then count that kind only, and each chip counts the items the active
+  tab shows. A chip with no such item is disabled. A second click on the
+  active chip clears it.
 - Right: the commands that resolve each item, with copy buttons, and the
   data repo's recent commits.
-- Shelf: every item and bundle in the data repo, with the picker's search.
-  The reader shows an item's files and the projects that hold it.
+- Shelf: every item and bundle in the data repo, in one section per kind,
+  bundles first, with the picker's search. The same chip row selects one
+  section. A search ranks across every shown section. The reader shows an
+  item's files and the projects that hold it.
 
 An item needs attention when `status --strict` would fail on it
 (`rowFailsStrict` in `src/status-report.ts`). Requirement freshness and

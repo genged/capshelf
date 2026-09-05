@@ -1,6 +1,6 @@
 import { stateIcon } from "../shared/state-label";
 import type { TreeEntry } from "../shared/view-model";
-import { matchesQuery, sortItems } from "../shared/view-model";
+import { groupItems, matchesQuery } from "../shared/view-model";
 import type { ProjectLoad } from "./dashboard";
 import { Icon } from "./icons";
 
@@ -94,8 +94,16 @@ export function ProjectTree({
           {visible.map((entry, position) => {
             const selected = entry.path === selectedPath;
             const load = loads.get(entry.path);
-            const items =
-              selected && load?.data ? sortItems(load.data.items) : [];
+            const groups =
+              selected && load?.data
+                ? groupItems(
+                    load.data.items.filter(
+                      (item) =>
+                        matchesQuery(item.ref, query) ||
+                        matchesQuery(entry.display, query),
+                    ),
+                  )
+                : [];
             const focusable =
               selected || (selectedPath === null && position === 0);
             return (
@@ -118,38 +126,43 @@ export function ProjectTree({
                   <span class="tree-path">{entry.display}</span>
                   <TreeCounts entry={entry} />
                 </button>
-                {selected && items.length > 0 ? (
+                {groups.length > 0 ? (
                   <ul class="tree-items">
-                    {items
-                      .filter(
-                        (item) =>
-                          matchesQuery(item.ref, query) ||
-                          matchesQuery(entry.display, query),
-                      )
-                      .map((item) => (
-                        <li key={item.id}>
-                          <button
-                            type="button"
-                            data-tree-row
-                            data-kind="item"
-                            data-project={entry.path}
-                            class={`tree-row tree-item tone-${item.attention ? "attention" : item.tone}`}
-                            tabIndex={-1}
-                            onClick={() => onSelectItem(entry.path, item.id)}
-                            onKeyDown={onRowKeyDown}
-                            title={`${item.ref} · ${item.stateLabel}`}
-                          >
-                            <Icon
-                              name={stateIcon(item.row.state)}
-                              label={item.stateLabel}
-                            />
-                            <span class="tree-item-name">{item.name}</span>
-                            {item.scope === "local" ? (
-                              <span class="chip chip-scope">local</span>
-                            ) : null}
-                          </button>
-                        </li>
-                      ))}
+                    {groups.map((group) => (
+                      <li key={group.kind} class="tree-kind">
+                        <span class="tree-kind-label kind-heading">
+                          {group.label}
+                        </span>
+                        <ul class="tree-kind-items" aria-label={group.label}>
+                          {group.rows.map((item) => (
+                            <li key={item.id}>
+                              <button
+                                type="button"
+                                data-tree-row
+                                data-kind="item"
+                                data-project={entry.path}
+                                class={`tree-row tree-item tone-${item.attention ? "attention" : item.tone}`}
+                                tabIndex={-1}
+                                onClick={() =>
+                                  onSelectItem(entry.path, item.id)
+                                }
+                                onKeyDown={onRowKeyDown}
+                                title={`${item.ref} · ${item.stateLabel}`}
+                              >
+                                <Icon
+                                  name={stateIcon(item.row.state)}
+                                  label={item.stateLabel}
+                                />
+                                <span class="tree-item-name">{item.name}</span>
+                                {item.scope === "local" ? (
+                                  <span class="chip chip-scope">local</span>
+                                ) : null}
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      </li>
+                    ))}
                   </ul>
                 ) : null}
               </li>

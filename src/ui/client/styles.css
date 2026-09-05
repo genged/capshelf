@@ -646,6 +646,22 @@ code {
   padding: 2px 0 6px 22px;
 }
 
+.tree-kind + .tree-kind {
+  margin-top: 6px;
+}
+
+.tree-kind-label {
+  display: block;
+  padding: 4px 8px 2px;
+  font-size: 10px;
+}
+
+.tree-kind-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
 .tree-item {
   min-height: 28px;
   padding: 2px 8px;
@@ -798,7 +814,115 @@ code {
 .panels {
   display: flex;
   flex-direction: column;
+  gap: 24px;
+}
+
+/* ---------- kind groups ----------
+   One heading style for the three lists that group rows by kind: the review
+   panels, the tree, and the shelf. */
+
+.kind-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-2);
+}
+
+.kind-count {
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--ink-3);
+}
+
+.kind-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kind-group > .kind-heading {
+  position: sticky;
+  top: var(--top-bar);
+  z-index: 1;
+  padding: 6px 2px;
+  background: var(--bg);
+}
+
+.kind-panels {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
+}
+
+/* One toggle per kind. The active chip carries the selection green. */
+
+.kind-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.review-body .kind-chips {
+  padding: 2px 0 4px;
+}
+
+.kind-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 9px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--ink-2);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.kind-chip:hover {
+  color: var(--ink);
+  background: var(--bg-hover);
+}
+
+.kind-chip.is-active {
+  color: var(--green-ink);
+  background: var(--green-soft);
+  border-color: var(--green-line);
+}
+
+.kind-chip.is-empty:disabled {
+  color: var(--ink-3);
+  background: transparent;
+  border-color: var(--line-soft);
+  cursor: default;
+}
+
+.kind-chip-count {
+  color: var(--ink-3);
+}
+
+.kind-chip.is-active .kind-chip-count {
+  color: var(--green-ink);
+}
+
+.kind-chip .icon {
+  width: 12px;
+  height: 12px;
+  margin-right: -3px;
 }
 
 .panels-empty {
@@ -878,6 +1002,11 @@ code {
   font-weight: 600;
   font-family: var(--mono);
   font-size: 14px;
+}
+
+.panel-ref-kind {
+  font-weight: 400;
+  color: var(--ink-3);
 }
 
 .panel-pins {
@@ -1388,12 +1517,14 @@ code {
   gap: 2px;
 }
 
-.shelf-group {
+.shelf-sections {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shelf-section .kind-heading {
   padding: 12px 8px 4px;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--ink-2);
 }
 
 .shelf-row {

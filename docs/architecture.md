@@ -781,6 +781,9 @@ second implementation. The command starts a `Bun.serve` server on 127.0.0.1
 browser is the row `status --json` prints. The server adds display labels
 (`src/ui/shared/state-label.ts`) and the commands a state can be resolved
 with (`src/status-actions.ts`). It computes no new fact and writes no file.
+The client groups rows by kind (`src/ui/shared/kind-label.ts`). That file
+repeats the order of `ITEM_KINDS` in `src/master.ts`, because the browser
+bundle cannot import that module. A unit test holds the two lists equal.
 
 Projects come from a registry, `$XDG_CONFIG_HOME/capshelf/projects.json`
 (`src/project-registry.ts`), because no project discovery exists on the
