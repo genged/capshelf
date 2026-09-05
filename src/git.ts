@@ -271,7 +271,12 @@ async function runGit(
     ...(cwd !== undefined && { cwd }),
     stdout: "pipe",
     stderr: "pipe",
-    stdin: options.stdin === undefined ? "ignore" : new Blob([options.stdin]),
+    stdin:
+      options.stdin === undefined
+        ? "ignore"
+        : typeof options.stdin === "string"
+          ? new Blob([options.stdin])
+          : options.stdin,
   });
   const [stdout, stderr] = await Promise.all([
     new Response(proc.stdout).arrayBuffer().then((b) => Buffer.from(b)),

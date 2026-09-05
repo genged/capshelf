@@ -9,3 +9,4 @@ logs/
 .claude/settings.local.json
 .worktrees/
 tmp/
+src/ui/generated/

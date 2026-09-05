@@ -15,12 +15,16 @@ const SCRIPT = "package-homebrew-artifacts.sh";
 
 /**
  * A stand-in for `bun` that stubs only `bun build --compile` — the slow part —
- * and delegates every other call to the real binary. The script reads its
- * platform list through `bun -e`, so stubbing that too would leave the part
- * that decides which platforms ship untested.
+ * and the web UI bundle it inlines, and delegates every other call to the
+ * real binary. The script reads its platform list through `bun -e`, so
+ * stubbing that too would leave the part that decides which platforms ship
+ * untested.
  */
 const BUN_STUB = `#!/usr/bin/env bash
 set -euo pipefail
+if [ "\${1:-}" = "run" ] && [ "\${2:-}" = "build:ui" ]; then
+  exit 0
+fi
 if [ "\${1:-}" = "build" ]; then
   outfile=""
   for arg in "$@"; do

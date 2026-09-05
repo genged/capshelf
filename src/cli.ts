@@ -23,6 +23,7 @@ import { buildDataPath } from "./commands/data-path";
 import { buildSyncData } from "./commands/sync-data";
 import { registerSelfUpdate } from "./commands/self-update";
 import { registerMarketplace } from "./commands/marketplace";
+import { registerUi } from "./commands/ui";
 import { CliError } from "./errors";
 import { HOME_ENV, PRODUCT_NAME } from "./identity";
 import { runStartupSelfUpdate } from "./self-update";
@@ -64,6 +65,7 @@ export function createProgram(): Command {
   registerMove(program);
   registerSelfUpdate(program);
   registerMarketplace(program);
+  registerUi(program);
 
   // Data-repo commands are grouped under `capshelf data <sub>` for a
   // consistent, scannable surface. The original top-level names

@@ -235,6 +235,7 @@ registered.
 | `revert <item>` | restore one locked version; the lock is never rewritten, so a keep-local marker survives; discarding local state requires consent or `--yes`; supports `--local` | implemented |
 | `lock migrate` | convert this project's lock files to version 4 in one transaction; supports `--dry-run`, `--repin`, `--remove-item`, `--yes`, and `--json` | implemented |
 | `self-update` | check for and install a Homebrew update for the capshelf binary; supports `--check` and `--yes` | implemented |
+| `ui` | serve a read-only status dashboard for every registered project on localhost; `--port`, `--no-open`, and `--json` | implemented |
 | `marketplace ...` | author, validate, sync, rename/retire, and package independent Claude/Cowork and Codex plugin catalogs in the data repo | implemented |
 | `validate <name>` | lint an item (frontmatter, structure, broken refs) | roadmap |
 | `diff <name> [<ref>]` | show what would change on apply/update/promote | roadmap |
@@ -1334,6 +1335,76 @@ Source installs are not upgraded automatically. Update them manually:
 git pull
 make install
 ```
+
+## The web UI
+
+`capshelf ui` serves a read-only dashboard on localhost. It shows every
+registered project on this machine, the state of each item, the diff behind
+that state, and the exact command to run.
+
+```bash
+capshelf ui              # serve, print the URL, open a browser
+capshelf ui --no-open    # print the URL only
+capshelf ui --port 4917  # listen on a fixed port instead of a free one
+capshelf ui --json       # print one JSON line with the URL, then serve
+```
+
+The command runs until Ctrl-C, then exits 0. `--json` prints
+`{ url, port, registry, project, registered }` before it serves. `project`
+is the project the command ran inside, or `null`.
+
+### The project registry
+
+The dashboard lists projects from one file per machine:
+`$XDG_CONFIG_HOME/capshelf/projects.json`, or
+`~/.config/capshelf/projects.json` when the variable is unset or empty.
+
+```json
+{
+  "version": 1,
+  "projects": [
+    { "path": "/Users/mg/code/billing", "registeredAt": "2026-09-05T10:00:00.000Z" }
+  ]
+}
+```
+
+`capshelf init` adds the project it initializes and prints the registry
+path. `init --json` reports it as `registry.path`, with `registry.error`
+when the write failed. A registry failure never fails `init`.
+`capshelf ui` adds the project it runs inside. No command removes an entry.
+Edit the file to remove a project that moved. A registered path with no
+manifest stays in the list and is marked missing.
+
+### What the dashboard shows
+
+- Left: every registered project, sorted by the number of items that need
+  attention, then by path.
+- Center: the selected project's items as panels. A panel opens in place to
+  its facts and its diff. Filter tabs select all items, items that need
+  attention, or items that are up to date.
+- Right: the commands that resolve each item, with copy buttons, and the
+  data repo's recent commits.
+- Shelf: every item and bundle in the data repo, with the picker's search.
+  The reader shows an item's files and the projects that hold it.
+
+An item needs attention when `status --strict` would fail on it
+(`rowFailsStrict` in `src/status-report.ts`). Requirement freshness and
+target coverage gaps are shown as notes and are not counted.
+
+Every row is the row `status --json` prints, computed by the same function
+(`buildStatusReport` in `src/status-report.ts`). Every diff comes from the
+engine behind `status --diff` (`src/status-diff.ts`). The installed view
+compares the pin with the installed copy. The shelf view compares the pin
+with the committed upstream. Three-way mode shows both against the pinned
+lines. Every command is printed the way the CLI prints it and runs as printed
+from the project root. The dashboard changes no file.
+
+### Security
+
+The server binds 127.0.0.1 only. The printed URL carries a random token.
+Every `/api/` request must carry that token as a bearer header. The server
+refuses a request whose `Host` header is not its own address, serves GET
+only, sends no CORS headers, and marks every response `no-store`.
 
 ## Plugin marketplaces
 

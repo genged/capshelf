@@ -399,13 +399,18 @@ discovery loop; the interactive picker gives humans theirs.
 
 The verbs: `init`, `add`, `rm`, `status`, `apply`, `update`, `share`,
 `move`, `promote`, `keep-local`, `revert`, `get-path`, `ls`, `show`,
-`search`, `lock migrate`, `self-update`, the `data` subcommands, and the
-`marketplace` family. Commands support `--json` where useful for agent
+`search`, `lock migrate`, `self-update`, `ui`, the `data` subcommands, and
+the `marketplace` family. Commands support `--json` where useful for agent
 consumption, and exit codes are stable. The full table with flags, JSON
 shapes, and exit codes is in [`docs/cli.md`](docs/cli.md).
 
 Startup self-update prompts are best-effort, cached, and only shown for
 interactive Homebrew installs. Set `CAPSHELF_NO_SELF_UPDATE=1` to disable them.
+
+`capshelf ui` serves a read-only dashboard on localhost for every project
+on the machine. It shows which items are behind, drifted, or missing, the
+diff behind each state, and the command to run. See
+[the web UI](docs/cli.md#the-web-ui).
 
 ## Development
 
@@ -417,6 +422,7 @@ make smoke                         # smoke suites (4 workers)
 make e2e                           # build dist/capshelf, then run the e2e suite
 make check                         # typecheck, lint, docs freeze, tests, smoke, e2e
 make build                         # compile dist/capshelf
+bun run build:ui                   # bundle the web UI (bun install runs it too)
 ```
 
 The end-to-end suite, and therefore `make check`, also needs `python3` on

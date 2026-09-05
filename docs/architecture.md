@@ -763,6 +763,43 @@ identity, and a dangling plugin reference blocks every marketplace
 operation. The command surface, entry rules, packaging, and containment
 checks are in [`docs/marketplaces.md`](marketplaces.md).
 
+## The web UI
+
+`capshelf ui` is a second reader over the same functions the CLI runs, not a
+second implementation. The command starts a `Bun.serve` server on 127.0.0.1
+(`src/ui/server.ts`) and answers GET requests from `src/ui/api.ts`:
+
+| route | reads | CLI equivalent |
+|---|---|---|
+| `/api/overview` | the project registry | none |
+| `/api/project/status` | `buildStatusReport` (`src/status-report.ts`) | `status --json` |
+| `/api/project/diff` | `buildStatusDiff` (`src/status-diff.ts`) | `status --diff` |
+| `/api/shelf` | `listMasterItems`, `listBundles`, the locks of every bound project | `ls`, `show` |
+| `/api/shelf/item` | `findMasterItemByRef`, the item's files | `show` |
+
+`status` and the dashboard call one function for the rows, so a row in the
+browser is the row `status --json` prints. The server adds display labels
+(`src/ui/shared/state-label.ts`) and the commands a state can be resolved
+with (`src/status-actions.ts`). It computes no new fact and writes no file.
+
+Projects come from a registry, `$XDG_CONFIG_HOME/capshelf/projects.json`
+(`src/project-registry.ts`), because no project discovery exists on the
+machine otherwise. `init` and `ui` add entries. Nothing removes one.
+
+The client is a Preact application under `src/ui/client/`. `bun run
+build:ui` bundles it into `src/ui/generated/`. `src/ui/assets.ts` inlines
+the bundle and the logo into the binary with import attributes. The compiled
+executable therefore serves the dashboard from memory. Diff text is parsed in
+the browser (`src/ui/shared/diff-parse.ts`). Three-way mode aligns the
+installed and shelf comparisons on the pinned line numbers they share.
+
+The server trusts only the local user. It binds 127.0.0.1 and serves GET
+only. Every API request must carry the random token the command printed as
+a bearer header. The server checks the `Host` header and marks every
+response `no-store`. Version one is read-only. A future confirmed action would reuse
+the destructive-change planner (`src/destructive-change.ts`) and show its
+records before anything runs.
+
 ## Why no MCP server in v1
 
 An MCP server would let agents call `capshelf_add`, `capshelf_status`, and

@@ -51,6 +51,10 @@ if [ "${#targets[@]}" -ne "$declared_count" ]; then
   exit 1
 fi
 
+# The web UI is inlined into every binary, so it is built once, before
+# the per-platform compiles.
+bun run build:ui
+
 for target in "${targets[@]}"; do
   platform="${target%%:*}"
   bun_target="${target##*:}"

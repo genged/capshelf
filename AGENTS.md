@@ -48,15 +48,19 @@ More info: `docs/architecture.md`, `docs/cli.md`, `docs/testing.md`
 
 ## Development Commands
 
-- `bun run typecheck` runs `tsc --noEmit` (Bun does not type-check on its own).
+- `bun run typecheck` runs `tsc --noEmit` for the CLI and for the web UI
+  client (Bun does not type-check on its own).
+- `bun run build:ui` bundles the web UI client into `src/ui/generated/`.
+  `bun install`, `bun run build`, and `bun run test` run it first. A source
+  run needs the generated files, because `src/ui/assets.ts` imports them.
 - `bun run lint` checks formatting + lint with Biome; `bun run lint:fix` writes
   safe fixes and `bun run format` reformats only. Biome is provided in CI by the
   `biomejs/setup-biome` action; locally install it (`bunx @biomejs/biome`,
   Homebrew, or as a devDependency once the lockfile is regenerated).
 - `bun run test` runs the unit test suite with four worker processes.
 - `make smoke` runs all smoke tests with four worker processes.
-- `make smoke-modes`, `make smoke-skills`, and `make smoke-settings` run
-  focused smoke suites.
+- `make smoke-modes`, `make smoke-skills`, `make smoke-settings`, and
+  `make smoke-ui` run focused smoke suites.
 - `bun run e2e` builds `dist/capshelf` and runs the end-to-end scenarios
   against that compiled file; `make e2e` is the same. `bun run e2e:run`
   requires `CAPSHELF_E2E_BIN` and never builds, so a release lane can point it
@@ -114,6 +118,8 @@ If rebase conflicts occur:
   personal Claude skills as external state. Report or warn; do not co-manage.
 - Keep command output scriptable. Preserve `--json`, dry-run behavior, and
   documented exit codes when extending commands.
+- The web UI (`capshelf ui`) reads through the same functions the CLI runs
+  and writes nothing. Add a fact to `status` first, then show it.
 - When changing command behavior, update the living docs in `docs/` and the
   relevant tests or smoke scripts in the same change.
 - Version-specific release documentation is frozen: `docs/release-notes/*` and

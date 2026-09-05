@@ -10,6 +10,12 @@ layer replaces another.
 | Smoke | `scripts/smoke-*.sh` | `bun run src/cli.ts` | Command workflows from source |
 | End-to-end | `e2e/` | One compiled executable | The packaged program a user installs |
 
+Every layer needs the web UI bundle, because the CLI entry point imports it.
+`bun install` builds it, and `bun run test` and `bun run build` build it
+again before they run. `scripts/smoke-ui.sh` and `e2e/scenarios/ui.test.ts`
+cover `capshelf ui` with a headless fetch, which proves the served bytes and
+the API, not the rendering.
+
 The first three layers run from source. They are fast, and they can inject a
 fault at any boundary. They cannot find a build, entry-point, or packaging
 fault, because they never run the file the package installs. That is the gap
