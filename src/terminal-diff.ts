@@ -1,24 +1,7 @@
-import bash from "@speed-highlight/core/languages/bash.js";
-import c from "@speed-highlight/core/languages/c.js";
-import css from "@speed-highlight/core/languages/css.js";
-import docker from "@speed-highlight/core/languages/docker.js";
-import go from "@speed-highlight/core/languages/go.js";
-import html from "@speed-highlight/core/languages/html.js";
-import ini from "@speed-highlight/core/languages/ini.js";
-import js from "@speed-highlight/core/languages/js.js";
-import json from "@speed-highlight/core/languages/json.js";
-import make from "@speed-highlight/core/languages/make.js";
-import md from "@speed-highlight/core/languages/md.js";
-import py from "@speed-highlight/core/languages/py.js";
-import rs from "@speed-highlight/core/languages/rs.js";
-import sql from "@speed-highlight/core/languages/sql.js";
-import toml from "@speed-highlight/core/languages/toml.js";
-import ts from "@speed-highlight/core/languages/ts.js";
-import xml from "@speed-highlight/core/languages/xml.js";
-import yaml from "@speed-highlight/core/languages/yaml.js";
 import { tokenizeWith } from "@speed-highlight/core/tokenize";
 import type { ShjLanguageData, ShjToken } from "@speed-highlight/core/tokenize";
-import { basename, extname } from "node:path";
+import { basename } from "node:path";
+import { languageForFileName } from "./diff-languages";
 import { isTerminalControlCode } from "./assert";
 
 const RESET = "\x1b[0m";
@@ -49,41 +32,6 @@ const TOKEN_STYLE: Partial<Record<ShjToken, string>> = {
   oper: CYAN,
   str: GREEN,
   esc: YELLOW,
-};
-
-const LANGUAGE_BY_EXTENSION: Readonly<Record<string, ShjLanguageData>> = {
-  ".bash": bash,
-  ".c": c,
-  ".cc": c,
-  ".cjs": js,
-  ".cpp": c,
-  ".css": css,
-  ".cts": ts,
-  ".go": go,
-  ".h": c,
-  ".hpp": c,
-  ".htm": html,
-  ".html": html,
-  ".ini": ini,
-  ".js": js,
-  ".json": json,
-  ".jsx": js,
-  ".md": md,
-  ".mdx": md,
-  ".mjs": js,
-  ".mts": ts,
-  ".py": py,
-  ".pyi": py,
-  ".pyw": py,
-  ".rs": rs,
-  ".sh": bash,
-  ".sql": sql,
-  ".toml": toml,
-  ".ts": ts,
-  ".tsx": ts,
-  ".xml": xml,
-  ".yaml": yaml,
-  ".yml": yaml,
 };
 
 const MAX_RENDERED_LINES = 10_000;
@@ -172,10 +120,7 @@ export function truncateAnsiLine(text: string, width: number): string {
 
 function languageForPath(path: string | null): ShjLanguageData | undefined {
   if (path === null) return undefined;
-  const name = basename(path).toLowerCase();
-  if (name === "dockerfile") return docker;
-  if (name === "makefile") return make;
-  return LANGUAGE_BY_EXTENSION[extname(name)];
+  return languageForFileName(basename(path));
 }
 
 function highlightCode(
