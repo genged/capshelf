@@ -1379,7 +1379,10 @@ manifest stays in the list and is marked missing.
 
 - Left: every registered project, sorted by the number of items that need
   attention, then by path. The selected project lists its items under one
-  heading per kind.
+  heading per kind, with dimmed rows for skills.sh skills and for every
+  Claude plugin that loads in it, marked with its scope when it comes from
+  the home directory or from managed settings, and one row that jumps to
+  the project's user-level skills.
 - Center: the selected project's items as panels, in one group per kind. A
   kind with an item that needs attention comes first. Kinds with the same
   count follow the order `ls` prints. A panel opens in place to the commands
@@ -1392,6 +1395,24 @@ manifest stays in the list and is marked missing.
   A chip row under the tabs selects one kind. The tabs then count that kind
   only, and each chip counts the items the active tab shows. A chip with no
   such item is disabled. A second click on the active chip clears it.
+- External rows: everything a harness loads in this project that Capshelf
+  does not manage appears as a read-only row in the same groups, with an
+  "External" badge, no pin, no commands, and no diff. skills.sh skills sit
+  under Skills. Claude plugins from every settings scope form a "Claude
+  plugins" group. User-level skills from the home directory form a
+  "User-level skills" group, since every harness loads them in every
+  project. A user-level Claude skill with a managed skill's name says
+  `shadows` and links to that item. A Codex one says `same name as`, because
+  Codex offers both. External rows count under the All tab only.
+- Shadows: an item that is up to date but hidden from a harness carries the
+  warning as its badge, such as "Shadowed by a personal Claude skill" or
+  "Shadowed by a Pi project skill", in the tree and in the panel. The
+  warning's sentence and path are in the panel facts.
+- Machine: the host name in the top bar opens "This machine", the canonical
+  description of the home directory: each user-level skill with the projects
+  where it shadows or shares a name with a managed skill, and each user or
+  managed Claude plugin. The view is built from the project statuses the
+  dashboard has already loaded and needs no other request.
 - Shelf: every item and bundle in the data repo, in one section per kind,
   bundles first, with the picker's search. The same chip row selects one
   section. A search ranks across every shown section. Until an item is

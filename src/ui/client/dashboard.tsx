@@ -5,22 +5,24 @@ import {
   useRef,
   useState,
 } from "preact/hooks";
-import type { ItemKind } from "../../master";
 import type {
   DiffViewName,
   UiDiffResponse,
   UiOverview,
   UiProjectStatus,
 } from "../shared/api-types";
+import { homeDisplay } from "../shared/display";
 import {
   changedItemIds,
   projectCounts,
   sortTree,
   type FilterTab,
+  type ReviewKind,
   type TreeEntry,
 } from "../shared/view-model";
 import { ApiError, apiGet, hasToken } from "./api";
 import { EmptyState, KeyHelp } from "./common";
+import { MachineView } from "./MachineView";
 import { ProjectReview, ReviewLoading } from "./ProjectReview";
 import { ProjectTree } from "./ProjectTree";
 import { useRoute } from "./router";
@@ -51,7 +53,7 @@ export function Dashboard(): preact.JSX.Element {
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
   const [query, setQuery] = useState("");
   const [tab, setTab] = useState<FilterTab>("all");
-  const [kind, setKind] = useState<ItemKind | null>(null);
+  const [kind, setKind] = useState<ReviewKind | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
@@ -365,6 +367,8 @@ export function Dashboard(): preact.JSX.Element {
             </button>
           </EmptyState>
         </main>
+      ) : route.view === "machine" ? (
+        <MachineView overview={overview} loads={loads} />
       ) : route.view === "shelf" ? (
         <ShelfView overview={overview} route={route} navigate={navigate} />
       ) : (
@@ -429,6 +433,7 @@ export function Dashboard(): preact.JSX.Element {
                 kind={kind}
                 onKind={setKind}
                 query={query}
+                displayPath={(path) => homeDisplay(path, overview.home)}
                 isExpanded={(itemId) => isExpanded(selectedPath, itemId)}
                 onToggle={(itemId) => toggleExpanded(selectedPath, itemId)}
                 loadDiff={(itemId, view) =>

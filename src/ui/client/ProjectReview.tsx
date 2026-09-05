@@ -1,21 +1,24 @@
-import type { ItemKind } from "../../master";
 import type {
   DiffViewName,
   UiDiffResponse,
-  UiProjectStatus,
   UiRegisteredProject,
 } from "../shared/api-types";
+import { isKind, kindLabel } from "../shared/kind-label";
 import {
+  type FilterTab,
   filterItems,
   groupByKind,
   groupItems,
   inTab,
+  type KindChip,
+  matchesQuery,
   projectCounts,
+  type ReviewKind,
   summaryLine,
-  type FilterTab,
 } from "../shared/view-model";
-import type { ProjectLoad } from "./dashboard";
 import { CopyButton, EmptyState, KindChips, Notice, Skeleton } from "./common";
+import type { ProjectLoad } from "./dashboard";
+import { ExternalRow, shadowedItemId, shadowWording } from "./ExternalRow";
 import { Icon } from "./icons";
 import { ItemPanel } from "./ItemPanel";
 
@@ -43,6 +46,7 @@ export function ProjectReview({
   kind,
   onKind,
   query,
+  displayPath,
   isExpanded,
   onToggle,
   loadDiff,
@@ -53,9 +57,11 @@ export function ProjectReview({
   load: ProjectLoad;
   tab: FilterTab;
   onTab: (tab: FilterTab) => void;
-  kind: ItemKind | null;
-  onKind: (kind: ItemKind | null) => void;
+  kind: ReviewKind | null;
+  onKind: (kind: ReviewKind | null) => void;
   query: string;
+  /** Home-relative form of an absolute path, for rows that live outside. */
+  displayPath: (path: string) => string;
   isExpanded: (itemId: string) => boolean;
   onToggle: (itemId: string) => void;
   loadDiff: (itemId: string, view: DiffViewName) => Promise<UiDiffResponse>;
@@ -89,22 +95,84 @@ export function ProjectReview({
 
   const total = projectCounts(data.items);
   const kinds = groupByKind(data.items);
+  // What a harness loads here that Capshelf does not manage. These rows sit
+  // beside the panels, count under All only, and never need attention.
+  const externalSkills = data.external;
+  const plugins = data.externalClaudePlugins;
+  const userSkills = data.externalUserSkills;
+  const externalCount = (count: number): number => (tab === "all" ? count : 0);
+
+  const chips: Array<KindChip<ReviewKind>> = [];
+  if (externalSkills.length > 0 && !kinds.some((g) => g.kind === "skills")) {
+    chips.push({
+      id: "skills",
+      label: kindLabel("skills"),
+      count: externalCount(externalSkills.length),
+    });
+  }
+  for (const group of kinds) {
+    chips.push({
+      id: group.kind,
+      label: group.label,
+      count:
+        group.rows.filter((item) => inTab(item, tab)).length +
+        (group.kind === "skills" ? externalCount(externalSkills.length) : 0),
+    });
+  }
+  if (plugins.length > 0) {
+    chips.push({
+      id: "plugins",
+      label: "Claude plugins",
+      count: externalCount(plugins.length),
+    });
+  }
+  if (userSkills.length > 0) {
+    chips.push({
+      id: "user-skills",
+      label: "User-level skills",
+      count: externalCount(userSkills.length),
+    });
+  }
+
   // A kind chosen in another project may be absent here; then no kind filters.
-  const activeKind = kinds.some((group) => group.kind === kind) ? kind : null;
-  const activeLabel = kinds.find((group) => group.kind === activeKind)?.label;
+  const activeKind = chips.some((chip) => chip.id === kind) ? kind : null;
+  const activeLabel = chips.find((chip) => chip.id === activeKind)?.label;
   const where = activeLabel === undefined ? "" : ` in ${activeLabel}`;
   const inKind =
     activeKind === null
       ? data.items
-      : data.items.filter((item) => item.kind === activeKind);
+      : isKind(activeKind)
+        ? data.items.filter((item) => item.kind === activeKind)
+        : [];
   // The tabs count inside the chosen kind; the chips count inside the tab.
   const counts = projectCounts(inKind);
   const shown = filterItems(inKind, tab, query);
-  const chips = kinds.map((group) => ({
-    id: group.kind,
-    label: group.label,
-    count: group.rows.filter((item) => inTab(item, tab)).length,
-  }));
+  const showExternal = (id: ReviewKind): boolean =>
+    tab === "all" && (activeKind === null || activeKind === id);
+  const shownExternalSkills = showExternal("skills")
+    ? externalSkills.filter((skill) =>
+        matchesQuery(`skills/${skill.name}`, query),
+      )
+    : [];
+  const shownPlugins = showExternal("plugins")
+    ? plugins.filter((plugin) => matchesQuery(`plugins/${plugin.id}`, query))
+    : [];
+  const shownUserSkills = showExternal("user-skills")
+    ? userSkills.filter((skill) => matchesQuery(`skills/${skill.name}`, query))
+    : [];
+  const groups = groupItems(shown);
+  if (
+    shownExternalSkills.length > 0 &&
+    !groups.some((group) => group.kind === "skills")
+  ) {
+    groups.push({ kind: "skills", label: kindLabel("skills"), rows: [] });
+  }
+  const nothingShown =
+    shown.length === 0 &&
+    shownExternalSkills.length === 0 &&
+    shownPlugins.length === 0 &&
+    shownUserSkills.length === 0;
+
   const tabCount = (id: FilterTab): number =>
     id === "all"
       ? counts.items
@@ -220,24 +288,26 @@ export function ProjectReview({
         onSelect={onKind}
       />
 
-      {total.items === 0 ? (
+      {total.items === 0 && chips.length === 0 ? (
         <EmptyState title="No items are tracked in this project">
           <p>
             <code>capshelf add</code> opens the shelf picker. Nothing here has a
             lock entry yet.
           </p>
         </EmptyState>
-      ) : shown.length === 0 ? (
+      ) : nothingShown ? (
         <p class="muted panels-empty">
           {query.trim().length > 0
             ? `Nothing matches “${query}”${where}.`
             : tab === "attention"
               ? `Nothing needs attention${where}.`
-              : `Nothing is up to date${where}.`}
+              : tab === "ok"
+                ? `Nothing is up to date${where}.`
+                : `Nothing${where}.`}
         </p>
       ) : (
         <div class="panels">
-          {groupItems(shown).map((group) => (
+          {groups.map((group) => (
             <section
               key={group.kind}
               class="kind-group"
@@ -245,7 +315,10 @@ export function ProjectReview({
             >
               <h2 id={`review-kind-${group.kind}`} class="kind-heading">
                 <span>{group.label}</span>
-                <span class="kind-count">{group.rows.length}</span>
+                <span class="kind-count">
+                  {group.rows.length +
+                    (group.kind === "skills" ? shownExternalSkills.length : 0)}
+                </span>
               </h2>
               <div class="kind-panels">
                 {group.rows.map((item) => (
@@ -259,104 +332,96 @@ export function ProjectReview({
                     domId={panelDomId(item.id)}
                   />
                 ))}
+                {group.kind === "skills"
+                  ? shownExternalSkills.map((skill) => (
+                      <ExternalRow
+                        key={`skills.sh:${skill.name}`}
+                        domId={panelDomId(`external/skills/${skill.name}`)}
+                        itemRef={`skills/${skill.name}`}
+                        origin="skills.sh"
+                        detail={skill.source}
+                        note="Managed by skills.sh. Capshelf reports it and never edits it."
+                      />
+                    ))
+                  : null}
               </div>
             </section>
           ))}
+
+          {shownPlugins.length > 0 ? (
+            <section class="kind-group" aria-labelledby="review-kind-plugins">
+              <h2 id="review-kind-plugins" class="kind-heading">
+                <span>Claude plugins</span>
+                <span class="kind-count">{shownPlugins.length}</span>
+              </h2>
+              <div class="kind-panels">
+                {shownPlugins.map((plugin) => (
+                  <ExternalRow
+                    key={`${plugin.scope}:${plugin.id}`}
+                    domId={panelDomId(`plugin/${plugin.scope}/${plugin.id}`)}
+                    itemRef={`plugins/${plugin.id}`}
+                    origin="plugin"
+                    detail={`${plugin.enabled ? "enabled" : "disabled"} · ${plugin.scope} · ${displayPath(plugin.settingsPath)}`}
+                    note="Enabled in Claude settings. Capshelf reports it and never edits it."
+                    machineLink={
+                      plugin.scope === "user" || plugin.scope === "managed"
+                    }
+                  />
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {shownUserSkills.length > 0 ? (
+            <section
+              id={panelDomId("user-skills")}
+              class="kind-group"
+              aria-labelledby="review-kind-user-skills"
+            >
+              <h2 id="review-kind-user-skills" class="kind-heading">
+                <span>User-level skills</span>
+                <span class="kind-count">{shownUserSkills.length}</span>
+                <a class="kind-link" href="#/machine">
+                  This machine
+                </a>
+              </h2>
+              <div class="kind-panels">
+                {shownUserSkills.map((skill) => {
+                  const words = shadowWording(skill.surface);
+                  return (
+                    <ExternalRow
+                      key={`${skill.surface}:${skill.path}`}
+                      domId={panelDomId(`user/${skill.surface}/${skill.name}`)}
+                      itemRef={`skills/${skill.name}`}
+                      origin={skill.surface === "claude" ? "Claude" : "Codex"}
+                      detail={displayPath(skill.path)}
+                      note="A user-level skill from the home directory. Capshelf reports it and never edits it."
+                      machineLink
+                    >
+                      {skill.shadows.length > 0 ? (
+                        <span class={`external-finding tone-${words.tone}`}>
+                          {words.lead}{" "}
+                          {skill.shadows.map((shadow, index) => (
+                            <span key={shadowedItemId(skill, shadow)}>
+                              {index > 0 ? ", " : ""}
+                              <a
+                                href={`#/status/${encodeURIComponent(project)}/${encodeURIComponent(shadowedItemId(skill, shadow))}`}
+                              >
+                                {shadow.scope} skills/{skill.name}
+                              </a>
+                            </span>
+                          ))}
+                          {words.tail}
+                        </span>
+                      ) : null}
+                    </ExternalRow>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
         </div>
       )}
-
-      <ExternalState status={data} />
     </div>
-  );
-}
-
-function ExternalState({
-  status,
-}: {
-  status: UiProjectStatus;
-}): preact.JSX.Element | null {
-  const {
-    external,
-    externalClaudePlugins,
-    personalClaudeExternal,
-    externalUserSkills,
-  } = status;
-  if (
-    external.length === 0 &&
-    externalClaudePlugins.length === 0 &&
-    personalClaudeExternal.length === 0 &&
-    externalUserSkills.length === 0
-  ) {
-    return null;
-  }
-  return (
-    <section class="external" aria-labelledby="external-title">
-      <h2 id="external-title">External state</h2>
-      <p class="muted">Capshelf reports these and never edits them.</p>
-      {personalClaudeExternal.length > 0 ? (
-        <div class="external-group">
-          <h3>Personal Claude skills that shadow a project skill</h3>
-          <ul>
-            {personalClaudeExternal.map((skill) => (
-              <li key={skill.path}>
-                <Icon name="alert" label="Warning" />
-                <span class="mono">skills/{skill.name}</span>
-                <span class="muted"> · {skill.warning.message}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {external.length > 0 ? (
-        <div class="external-group">
-          <h3>Managed by skills.sh</h3>
-          <ul>
-            {external.map((skill) => (
-              <li key={skill.name}>
-                <span class="mono">skills/{skill.name}</span>
-                <span class="muted"> · {skill.source}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {externalClaudePlugins.length > 0 ? (
-        <div class="external-group">
-          <h3>Claude plugins</h3>
-          <ul>
-            {externalClaudePlugins.map((plugin) => (
-              <li key={`${plugin.scope}:${plugin.id}`}>
-                <span class="mono">plugins/{plugin.id}</span>
-                <span class="muted">
-                  {" "}
-                  · {plugin.enabled ? "enabled" : "disabled"} · {plugin.scope}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {externalUserSkills.length > 0 ? (
-        <div class="external-group">
-          <h3>User-level skills</h3>
-          <ul>
-            {externalUserSkills.map((skill) => (
-              <li key={`${skill.surface}:${skill.path}`}>
-                <span class="mono">skills/{skill.name}</span>
-                <span class="muted">
-                  {" "}
-                  · {skill.surface === "claude" ? "Claude" : "Codex"}
-                  {skill.shadows.length > 0
-                    ? ` · shadows ${skill.shadows
-                        .map((shadow) => `${shadow.scope}/${shadow.source}`)
-                        .join(", ")}`
-                    : ""}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-    </section>
   );
 }

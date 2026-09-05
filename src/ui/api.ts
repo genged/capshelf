@@ -4,7 +4,7 @@
  * `status`, `status --diff`, `ls`, and `show`. It adds display fields and the
  * commands a state can be resolved with; it computes no new fact.
  */
-import { hostname } from "node:os";
+import { homedir, hostname } from "node:os";
 import { readFile, stat } from "node:fs/promises";
 import { join, posix, relative } from "node:path";
 import { CLI_VERSION, SYSTEM_ITEMS, findSystemItem } from "../bundled";
@@ -72,7 +72,8 @@ import type {
   UiShelfItemMetadata,
   UiShelfRef,
 } from "./shared/api-types";
-import { stateLabel, stateTone } from "./shared/state-label";
+import { isStrictRuntimeWarning } from "../runtime-warnings";
+import { stateLabel, stateTone, warningLabel } from "./shared/state-label";
 
 export interface UiContext {
   registryPath: string;
@@ -226,6 +227,7 @@ export function createUiApi(ctx: UiContext): UiApi {
         currentProject: ctx.currentProject ?? null,
         registryPath: ctx.registryPath,
         registryDisplay: homeRelative(ctx.registryPath),
+        home: homedir(),
         dataOverride: ctx.dataOverride ?? null,
         projects,
         shelves: [...shelves.values()],
@@ -557,6 +559,12 @@ function toUiItem(
     // A subagent owns two output targets; `row.targets` names them.
     installed = null;
   }
+  // A row that is up to date but shadowed for a harness is hidden, not
+  // stale. Its badge and sentence come from the warning.
+  const hidden =
+    row.state === "ok" || row.state === "kept-local"
+      ? row.runtimeWarnings?.find(isStrictRuntimeWarning)
+      : undefined;
   return {
     id: itemId(row),
     ref: `${row.kind}/${row.name}`,
@@ -567,8 +575,10 @@ function toUiItem(
     row,
     attention: rowFailsStrict(row),
     tone: stateTone(row.state),
-    stateLabel: stateLabel(row.state, row.source),
-    stateDetail: describe(row),
+    stateLabel: hidden
+      ? warningLabel(hidden.type)
+      : stateLabel(row.state, row.source),
+    stateDetail: hidden ? hidden.message : describe(row),
     actions: actionsForRow(row, { dataOverride, dataRepo }),
     diffViews: statusDiffViews(row.state),
     installedPath: installed,

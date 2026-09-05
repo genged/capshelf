@@ -1,4 +1,4 @@
-import { stateIcon } from "../shared/state-label";
+import { itemIcon } from "../shared/state-label";
 import type { TreeEntry } from "../shared/view-model";
 import { groupItems, matchesQuery } from "../shared/view-model";
 import type { ProjectLoad } from "./dashboard";
@@ -94,18 +94,61 @@ export function ProjectTree({
           {visible.map((entry, position) => {
             const selected = entry.path === selectedPath;
             const load = loads.get(entry.path);
-            const groups =
-              selected && load?.data
-                ? groupItems(
-                    load.data.items.filter(
-                      (item) =>
-                        matchesQuery(item.ref, query) ||
-                        matchesQuery(entry.display, query),
-                    ),
-                  )
-                : [];
+            const data = selected ? load?.data : undefined;
+            const matches = (text: string): boolean =>
+              matchesQuery(text, query) || matchesQuery(entry.display, query);
+            const groups = data
+              ? groupItems(data.items.filter((item) => matches(item.ref)))
+              : [];
+            // Read-only rows for what a harness loads here but Capshelf
+            // does not manage: skills.sh skills under Skills, and every
+            // Claude plugin that loads in this project, whatever its scope.
+            const externalSkills = data
+              ? data.external.filter((skill) => matches(`skills/${skill.name}`))
+              : [];
+            const plugins = data
+              ? data.externalClaudePlugins.filter((plugin) =>
+                  matches(`plugins/${plugin.id}`),
+                )
+              : [];
+            // One row stands for the user-level skills; the page lists them.
+            const userSkills = data?.externalUserSkills ?? [];
+            const showUserSkills =
+              userSkills.length > 0 &&
+              (matches("user-level skills") ||
+                userSkills.some((skill) => matches(`skills/${skill.name}`)));
+            if (
+              externalSkills.length > 0 &&
+              !groups.some((group) => group.kind === "skills")
+            ) {
+              groups.push({ kind: "skills", label: "Skills", rows: [] });
+            }
             const focusable =
               selected || (selectedPath === null && position === 0);
+            const externalRow = (
+              id: string,
+              name: string,
+              title: string,
+              chip: string | null = null,
+            ): preact.JSX.Element => (
+              <li key={id}>
+                <button
+                  type="button"
+                  data-tree-row
+                  data-kind="item"
+                  data-project={entry.path}
+                  class="tree-row tree-item tone-external"
+                  tabIndex={-1}
+                  onClick={() => onSelectItem(entry.path, id)}
+                  onKeyDown={onRowKeyDown}
+                  title={title}
+                >
+                  <Icon name="notequal" label="External" />
+                  <span class="tree-item-name">{name}</span>
+                  {chip !== null ? <span class="chip">{chip}</span> : null}
+                </button>
+              </li>
+            );
             return (
               <li key={entry.path}>
                 <button
@@ -126,7 +169,7 @@ export function ProjectTree({
                   <span class="tree-path">{entry.display}</span>
                   <TreeCounts entry={entry} />
                 </button>
-                {groups.length > 0 ? (
+                {groups.length > 0 || plugins.length > 0 || showUserSkills ? (
                   <ul class="tree-items">
                     {groups.map((group) => (
                       <li key={group.kind} class="tree-kind">
@@ -150,7 +193,10 @@ export function ProjectTree({
                                 title={`${item.ref} · ${item.stateLabel}`}
                               >
                                 <Icon
-                                  name={stateIcon(item.row.state)}
+                                  name={itemIcon(
+                                    item.row.state,
+                                    item.attention,
+                                  )}
                                   label={item.stateLabel}
                                 />
                                 <span class="tree-item-name">{item.name}</span>
@@ -160,9 +206,50 @@ export function ProjectTree({
                               </button>
                             </li>
                           ))}
+                          {group.kind === "skills"
+                            ? externalSkills.map((skill) =>
+                                externalRow(
+                                  `external/skills/${skill.name}`,
+                                  skill.name,
+                                  `skills/${skill.name} · managed by skills.sh`,
+                                ),
+                              )
+                            : null}
                         </ul>
                       </li>
                     ))}
+                    {plugins.length > 0 ? (
+                      <li class="tree-kind">
+                        <span class="tree-kind-label kind-heading">
+                          Claude plugins
+                        </span>
+                        <ul class="tree-kind-items" aria-label="Claude plugins">
+                          {plugins.map((plugin) =>
+                            externalRow(
+                              `plugin/${plugin.scope}/${plugin.id}`,
+                              plugin.name,
+                              `plugins/${plugin.id} · ${plugin.enabled ? "enabled" : "disabled"} · ${plugin.scope}`,
+                              plugin.scope === "project" ? null : plugin.scope,
+                            ),
+                          )}
+                        </ul>
+                      </li>
+                    ) : null}
+                    {showUserSkills ? (
+                      <li class="tree-kind">
+                        <ul
+                          class="tree-kind-items"
+                          aria-label="User-level skills"
+                        >
+                          {externalRow(
+                            "user-skills",
+                            "User-level skills",
+                            `${userSkills.length} user-level ${userSkills.length === 1 ? "skill" : "skills"} from this machine`,
+                            String(userSkills.length),
+                          )}
+                        </ul>
+                      </li>
+                    ) : null}
                   </ul>
                 ) : null}
               </li>

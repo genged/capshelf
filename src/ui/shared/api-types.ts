@@ -47,6 +47,8 @@ export interface UiOverview {
   currentProject: string | null;
   registryPath: string;
   registryDisplay: string;
+  /** The home directory, so the client can shorten paths the way the CLI does. */
+  home: string;
   dataOverride: string | null;
   projects: UiRegisteredProject[];
   shelves: UiShelfRef[];

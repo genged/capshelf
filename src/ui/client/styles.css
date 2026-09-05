@@ -1453,41 +1453,7 @@ body.has-dialog {
 
 /* ---------- external ---------- */
 
-.external {
-  margin-top: 8px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.external h2 {
-  font-size: 15px;
-}
-
-.external-group h3 {
-  font-size: 13px;
-  color: var(--ink-2);
-  margin-top: 6px;
-}
-
-.external-group ul {
-  margin: 4px 0 0;
-  padding: 0;
-  list-style: none;
-  font-size: 13px;
-}
-
-.external-group li {
-  padding: 2px 0;
-}
-
-.external-group .icon {
-  color: var(--orange);
-}
-
-/* ---------- side rail cards ---------- */
+/* ---------- commands ---------- */
 
 .command-list {
   margin: 0;
@@ -2134,4 +2100,125 @@ kbd {
   .panel.is-changed {
     background-color: var(--orange-soft);
   }
+}
+
+/* ---------- external rows and the machine view ----------
+   Read-only rows for what a harness loads here that Capshelf does not
+   manage. They share the panel box, carry no chevron, and never open. */
+
+.panel-external {
+  background: var(--bg-rail);
+  border-color: var(--line-soft);
+}
+
+.panel-static {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  min-height: 44px;
+  padding: 8px 12px 8px 36px;
+}
+
+.panel-static .state-badge {
+  margin-left: auto;
+}
+
+.panel-detail {
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.external-finding {
+  font-size: 12.5px;
+}
+
+.external-finding.tone-attention {
+  color: var(--orange-ink);
+}
+
+.external-finding a,
+.machine-note a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.panel-link,
+.kind-link {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-2);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.kind-link {
+  margin-left: auto;
+}
+
+.state-badge.tone-external {
+  color: var(--ink-2);
+}
+
+.tree-item.tone-external {
+  color: var(--ink-2);
+}
+
+.tree-item.tone-external .icon {
+  color: var(--ink-3);
+}
+
+.context-host {
+  color: inherit;
+  text-decoration: none;
+}
+
+.context-host:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.machine {
+  flex: 1;
+  padding: 20px 28px 48px;
+}
+
+.machine .reader {
+  max-width: 960px;
+}
+
+.machine-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.machine-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 7px 0;
+  border-top: 1px solid var(--line-soft);
+  font-size: 13px;
+}
+
+.machine-ref {
+  font-weight: 600;
+}
+
+.machine-path {
+  font-size: 12px;
+}
+
+.machine-note {
+  font-size: 12.5px;
+}
+
+.machine-note.tone-attention {
+  color: var(--orange-ink);
 }

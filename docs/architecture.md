@@ -784,6 +784,10 @@ with (`src/status-actions.ts`). It computes no new fact and writes no file.
 The client groups rows by kind (`src/ui/shared/kind-label.ts`). That file
 repeats the order of `ITEM_KINDS` in `src/master.ts`, because the browser
 bundle cannot import that module. A unit test holds the two lists equal.
+External state travels in the same status response: skills.sh skills,
+Claude plugins, and user-level skills become read-only rows in the project
+view, and `#/machine` aggregates the user-level inventory across the
+statuses already loaded, so no route exists for it.
 
 Projects come from a registry, `$XDG_CONFIG_HOME/capshelf/projects.json`
 (`src/project-registry.ts`), because no project discovery exists on the

@@ -26,7 +26,7 @@ export function TopBar({
   query: string;
   onQuery: (query: string) => void;
   filterRef: RefObject<HTMLInputElement>;
-  view: "status" | "shelf";
+  view: "status" | "shelf" | "machine";
   onView: (view: "status" | "shelf") => void;
   drawerOpen: boolean;
   onToggleDrawer: () => void;
@@ -54,7 +54,9 @@ export function TopBar({
       <div class="context">
         {overview ? (
           <>
-            <span class="context-host">{overview.host}</span>
+            <a class="context-host" href="#/machine" title="This machine">
+              {overview.host}
+            </a>
             {shelf ? (
               <>
                 <span class="context-sep" aria-hidden="true">

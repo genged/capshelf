@@ -2,6 +2,7 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { UiAction, UiNotice } from "../shared/api-types";
 import type { StateIconName } from "../shared/state-label";
+import type { KindChip } from "../shared/view-model";
 import { copyText } from "./copy";
 import { Icon } from "./icons";
 
@@ -121,7 +122,7 @@ export function StateBadge({
   label,
 }: {
   icon: StateIconName;
-  tone: "ok" | "attention" | "kept";
+  tone: "ok" | "attention" | "kept" | "external";
   label: string;
 }): preact.JSX.Element {
   return (
@@ -130,13 +131,6 @@ export function StateBadge({
       <span>{label}</span>
     </span>
   );
-}
-
-export interface KindChip<Id extends string> {
-  id: Id;
-  label: string;
-  /** The rows the other filters leave for this kind. */
-  count: number;
 }
 
 /**

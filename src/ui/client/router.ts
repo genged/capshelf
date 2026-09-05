@@ -1,13 +1,14 @@
 /**
  * Hash routes, so the page needs no server route table and a reload keeps
- * the place. `#/status/<project>/<item>` and `#/shelf/<repo>/<ref>`; every
- * segment is URI-encoded.
+ * the place. `#/status/<project>/<item>`, `#/shelf/<repo>/<ref>`, and
+ * `#/machine`; every segment is URI-encoded.
  */
 import { useEffect, useState } from "preact/hooks";
 
 export type Route =
   | { view: "status"; project: string | null; item: string | null }
-  | { view: "shelf"; repo: string | null; ref: string | null };
+  | { view: "shelf"; repo: string | null; ref: string | null }
+  | { view: "machine" };
 
 export function parseRoute(hash: string): Route {
   const raw = hash.startsWith("#") ? hash.slice(1) : hash;
@@ -17,6 +18,9 @@ export function parseRoute(hash: string): Route {
     .map((part) => decodeURIComponent(part));
   if (parts[0] === "shelf") {
     return { view: "shelf", repo: parts[1] ?? null, ref: parts[2] ?? null };
+  }
+  if (parts[0] === "machine") {
+    return { view: "machine" };
   }
   return {
     view: "status",
@@ -29,7 +33,9 @@ export function routeHash(route: Route): string {
   const segments =
     route.view === "shelf"
       ? ["shelf", route.repo, route.ref]
-      : ["status", route.project, route.item];
+      : route.view === "machine"
+        ? ["machine"]
+        : ["status", route.project, route.item];
   const encoded: string[] = [];
   for (const segment of segments) {
     if (segment === null || segment === undefined) break;

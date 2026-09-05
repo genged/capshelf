@@ -15,6 +15,10 @@ export const KIND_ORDER: readonly ItemKind[] = [
   "codex-config",
 ];
 
+export function isKind(value: string): value is ItemKind {
+  return (KIND_ORDER as readonly string[]).includes(value);
+}
+
 export function kindLabel(kind: ItemKind): string {
   switch (kind) {
     case "skills":

@@ -8,6 +8,16 @@ import { KIND_ORDER, kindLabel } from "./kind-label";
 
 export type FilterTab = "all" | "attention" | "ok";
 
+/** What a kind chip can select: a kind, or one of the two external groups. */
+export type ReviewKind = ItemKind | "plugins" | "user-skills";
+
+export interface KindChip<Id extends string> {
+  id: Id;
+  label: string;
+  /** The rows the other filters leave for this kind. */
+  count: number;
+}
+
 export interface ProjectCounts {
   items: number;
   attention: number;
@@ -106,7 +116,8 @@ export function summaryLine(items: readonly UiItem[]): string {
   ];
   const counts = new Map<string, number>();
   for (const item of sortItems(items)) {
-    const label = item.stateLabel.toLowerCase();
+    const label =
+      item.stateLabel.charAt(0).toLowerCase() + item.stateLabel.slice(1);
     counts.set(label, (counts.get(label) ?? 0) + 1);
   }
   const ok = counts.get("up to date");

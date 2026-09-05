@@ -4,6 +4,7 @@
  * travels beside them as `stateDetail`; this file only shortens, it never
  * reinterprets.
  */
+import type { RuntimeWarningType } from "../../runtime-warnings";
 import type { State } from "../../status-core";
 import type { StateTone } from "./api-types";
 
@@ -50,6 +51,25 @@ export function stateLabel(state: State, source: "data" | "system"): string {
   }
 }
 
+/**
+ * A row whose content is fine but whose harness will load another copy is
+ * hidden, not stale. Its badge names the warning instead of the state.
+ */
+export function warningLabel(type: RuntimeWarningType): string {
+  switch (type) {
+    case "shadowed_by_personal_claude_skill":
+      return "Shadowed by a personal Claude skill";
+    case "shadowed_by_pi_project_skill":
+      return "Shadowed by a Pi project skill";
+    case "codex_project_untrusted":
+      return "Codex project not trusted";
+    case "pi_extension_executes_code":
+      return "Pi extension runs code";
+    case "pi_extension_dependencies_not_installed":
+      return "Pi extension dependencies not installed";
+  }
+}
+
 export function stateTone(state: State): StateTone {
   if (state === "ok") return "ok";
   if (state === "kept-local") return "kept";
@@ -81,4 +101,11 @@ export function stateIcon(state: State): StateIconName {
     case "kept-local":
       return "notequal";
   }
+}
+
+/** The tree and panel icon. A finding on an up-to-date row shows the alert. */
+export function itemIcon(state: State, attention: boolean): StateIconName {
+  return attention && (state === "ok" || state === "kept-local")
+    ? "alert"
+    : stateIcon(state);
 }

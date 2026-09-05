@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { DiffViewName, UiDiffResponse, UiItem } from "../shared/api-types";
-import { stateIcon } from "../shared/state-label";
+import { itemIcon } from "../shared/state-label";
 import { shortCommit, shortDigest, shortenDigests } from "../shared/view-model";
 import { CommandRow, StateBadge } from "./common";
 import { copyText } from "./copy";
@@ -99,7 +99,7 @@ export function ItemPanel({
             ) : null}
           </span>
           <StateBadge
-            icon={stateIcon(row.state)}
+            icon={itemIcon(row.state, item.attention)}
             tone={item.attention ? "attention" : item.tone}
             label={item.stateLabel}
           />

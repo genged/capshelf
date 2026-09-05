@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { UiItem } from "../src/ui/shared/api-types";
-import { stateIcon, stateLabel, stateTone } from "../src/ui/shared/state-label";
+import { homeDisplay } from "../src/ui/shared/display";
+import { isKind, KIND_ORDER, kindLabel } from "../src/ui/shared/kind-label";
+import {
+  itemIcon,
+  stateIcon,
+  stateLabel,
+  stateTone,
+  warningLabel,
+} from "../src/ui/shared/state-label";
 import {
   changedItemIds,
   filterItems,
@@ -15,7 +23,6 @@ import {
   sortTree,
   summaryLine,
 } from "../src/ui/shared/view-model";
-import { KIND_ORDER, kindLabel } from "../src/ui/shared/kind-label";
 import { ITEM_KINDS } from "../src/master";
 import type { State } from "../src/status-core";
 
@@ -269,5 +276,42 @@ describe("kind labels", () => {
     }
     expect(kindLabel("pi-extensions")).toBe("Pi extensions");
     expect(kindLabel("codex-config")).toBe("Codex config");
+  });
+});
+
+describe("hidden rows and external display", () => {
+  test("an up-to-date row with a finding shows the alert icon", () => {
+    expect(itemIcon("ok", true)).toBe("alert");
+    expect(itemIcon("kept-local", true)).toBe("alert");
+    expect(itemIcon("ok", false)).toBe("check");
+    expect(itemIcon("drifted_local", true)).toBe("pencil");
+  });
+
+  test("every runtime warning has a badge label", () => {
+    expect(warningLabel("shadowed_by_personal_claude_skill")).toBe(
+      "Shadowed by a personal Claude skill",
+    );
+    expect(warningLabel("shadowed_by_pi_project_skill")).toBe(
+      "Shadowed by a Pi project skill",
+    );
+    expect(warningLabel("codex_project_untrusted").length).toBeGreaterThan(0);
+  });
+
+  test("isKind accepts kinds and rejects the external group ids", () => {
+    expect(isKind("skills")).toBe(true);
+    expect(isKind("plugins")).toBe(false);
+    expect(isKind("user-skills")).toBe(false);
+  });
+
+  test("homeDisplay shortens paths under the home directory", () => {
+    expect(homeDisplay("/Users/mg/.claude/skills/x", "/Users/mg")).toBe(
+      "~/.claude/skills/x",
+    );
+    expect(homeDisplay("/Users/mg", "/Users/mg")).toBe("~");
+    expect(homeDisplay("/etc/codex/skills", "/Users/mg")).toBe(
+      "/etc/codex/skills",
+    );
+    expect(homeDisplay("/Users/mgx/y", "/Users/mg")).toBe("/Users/mgx/y");
+    expect(homeDisplay("/Users/mg/y", "")).toBe("/Users/mg/y");
   });
 });
