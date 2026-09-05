@@ -60,7 +60,11 @@ export function TopBar({
                 <span class="context-sep" aria-hidden="true">
                   ·
                 </span>
-                <span class="context-shelf">
+                <a
+                  class="context-shelf"
+                  href={`#/shelf/${encodeURIComponent(shelf.dataRepo)}`}
+                  title="Open the shelf"
+                >
                   shelf <span class="mono">{shelf.display}</span>
                   {shelf.headShort ? (
                     <>
@@ -71,7 +75,7 @@ export function TopBar({
                   {shelf.clean ? null : (
                     <span class="context-dirty"> · uncommitted changes</span>
                   )}
-                </span>
+                </a>
               </>
             ) : null}
             <span class="context-sep" aria-hidden="true">

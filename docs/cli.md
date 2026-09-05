@@ -1382,18 +1382,21 @@ manifest stays in the list and is marked missing.
   heading per kind.
 - Center: the selected project's items as panels, in one group per kind. A
   kind with an item that needs attention comes first. Kinds with the same
-  count follow the order `ls` prints. A panel opens in place to its facts
-  and its diff. Filter tabs select all items, items that need attention, or
-  items that are up to date. A chip row under the tabs selects one kind. The
-  tabs then count that kind only, and each chip counts the items the active
-  tab shows. A chip with no such item is disabled. A second click on the
-  active chip clears it.
-- Right: the commands that resolve each item, with copy buttons, and the
-  data repo's recent commits.
+  count follow the order `ls` prints. A panel opens in place to the commands
+  that resolve it, each with a copy button, then its facts and its diff. The
+  header carries the `cd` command for the project with a copy button. Filter
+  tabs select all items, items that need attention, or items that are up to
+  date. A chip row under the tabs selects one kind. The tabs then count that
+  kind only, and each chip counts the items the active tab shows. A chip
+  with no such item is disabled. A second click on the active chip clears
+  it.
 - Shelf: every item and bundle in the data repo, in one section per kind,
   bundles first, with the picker's search. The same chip row selects one
-  section. A search ranks across every shown section. The reader shows an
-  item's files and the projects that hold it.
+  section. A search ranks across every shown section. Until an item is
+  selected, the reader shows the shelf's head, branch, bound projects, and
+  recent commits. The shelf name in the top bar and in a project's header
+  opens this view. After a click, the reader shows the item's files and the
+  projects that hold it.
 
 An item needs attention when `status --strict` would fail on it
 (`rowFailsStrict` in `src/status-report.ts`). Requirement freshness and

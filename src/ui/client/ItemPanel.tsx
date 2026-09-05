@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { DiffViewName, UiDiffResponse, UiItem } from "../shared/api-types";
 import { stateIcon } from "../shared/state-label";
 import { shortCommit, shortDigest, shortenDigests } from "../shared/view-model";
-import { StateBadge } from "./common";
+import { CommandRow, StateBadge } from "./common";
 import { copyText } from "./copy";
 import { DiffView } from "./DiffView";
 import { Icon } from "./icons";
@@ -116,6 +116,18 @@ export function ItemPanel({
       </h3>
       {expanded ? (
         <div id={bodyId} class="panel-body">
+          {item.actions.length > 0 ? (
+            <section class="panel-resolve" aria-labelledby={`${domId}-resolve`}>
+              <h4 id={`${domId}-resolve`} class="panel-resolve-title">
+                {item.attention ? "Resolve" : "Commands"}
+              </h4>
+              <ul class="command-list">
+                {item.actions.map((action) => (
+                  <CommandRow key={action.command} action={action} />
+                ))}
+              </ul>
+            </section>
+          ) : null}
           <Facts item={item} />
           {item.diffViews.length > 0 ? (
             <DiffView item={item} loadDiff={loadDiff} />

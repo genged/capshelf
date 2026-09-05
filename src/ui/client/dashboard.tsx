@@ -19,7 +19,6 @@ import {
   type FilterTab,
   type TreeEntry,
 } from "../shared/view-model";
-import { ActionsCard, ActionsLoading, RevisionsCard } from "./ActionsCard";
 import { ApiError, apiGet, hasToken } from "./api";
 import { EmptyState, KeyHelp } from "./common";
 import { ProjectReview, ReviewLoading } from "./ProjectReview";
@@ -430,16 +429,6 @@ export function Dashboard(): preact.JSX.Element {
               />
             )}
           </main>
-          <aside class="side-rail" aria-label="Actions and shelf revisions">
-            {selectedLoad?.state === "ready" && selectedLoad.data ? (
-              <>
-                <ActionsCard status={selectedLoad.data} />
-                <RevisionsCard shelf={selectedLoad.data.shelf} />
-              </>
-            ) : selectedLoad?.state === "loading" ? (
-              <ActionsLoading />
-            ) : null}
-          </aside>
         </div>
       )}
       {helpOpen ? <KeyHelp onClose={() => setHelpOpen(false)} /> : null}

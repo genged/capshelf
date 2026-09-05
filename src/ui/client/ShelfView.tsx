@@ -347,12 +347,11 @@ export function ShelfView({
       </section>
       <section class="shelf-reader" aria-label="Item">
         {ref === null ? (
-          <EmptyState title="Select an item">
-            <p>
-              The reader shows the item's files, its metadata, and the projects
-              that hold it.
-            </p>
-          </EmptyState>
+          shelf.state === "ready" ? (
+            <ShelfOverview shelf={shelf.data} />
+          ) : shelf.state === "error" ? null : (
+            <Skeleton lines={6} label="Loading the shelf" />
+          )
         ) : ref.startsWith("bundles/") && shelf.state === "ready" ? (
           <BundleReader shelf={shelf.data} bundleRef={ref} onSelect={select} />
         ) : detail.state === "loading" || detail.state === "idle" ? (
@@ -374,6 +373,84 @@ export function ShelfView({
         )}
       </section>
     </main>
+  );
+}
+
+/** The reader before a click: the shelf itself, its projects, its commits. */
+function ShelfOverview({ shelf }: { shelf: UiShelf }): preact.JSX.Element {
+  const { facts, projects } = shelf;
+  return (
+    <article class="reader shelf-overview">
+      <header class="reader-head">
+        <h1 class="mono">{shelf.display}</h1>
+        <p class="muted reader-facts">
+          {facts.headShort ? (
+            <>
+              at <span class="mono">{facts.headShort}</span>
+            </>
+          ) : (
+            "no commits"
+          )}
+          {facts.branch ? (
+            <>
+              {" · "}
+              <span class="mono">{facts.branch}</span>
+            </>
+          ) : null}
+          {facts.clean ? null : (
+            <span class="tone-attention"> · uncommitted changes</span>
+          )}
+          {facts.origin ? (
+            <>
+              {" · origin "}
+              <span class="mono">{facts.origin}</span>
+            </>
+          ) : null}
+        </p>
+        <p>
+          Select an item to read its files, its metadata, and the projects that
+          hold it.
+        </p>
+      </header>
+      <section aria-labelledby="overview-projects">
+        <h2 id="overview-projects">
+          {projects.length === 1
+            ? "Bound to 1 project"
+            : `Bound to ${projects.length} projects`}
+        </h2>
+        <ul class="reader-list">
+          {projects.map((project) => (
+            <li key={project.path}>
+              <a
+                href={`#/status/${encodeURIComponent(project.path)}`}
+                class="mono"
+              >
+                {project.display}
+              </a>
+              {project.exists ? null : <span class="muted"> · missing</span>}
+            </li>
+          ))}
+        </ul>
+      </section>
+      <section aria-labelledby="overview-revisions">
+        <h2 id="overview-revisions">Recent commits</h2>
+        {facts.revisions.length === 0 ? (
+          <p class="muted">The data repo has no commits yet.</p>
+        ) : (
+          <ol class="revisions">
+            {facts.revisions.map((revision) => (
+              <li key={revision.sha} class="revision">
+                <span class="mono revision-sha">{revision.short}</span>
+                <span class="revision-subject">{revision.subject}</span>
+                <span class="muted revision-meta">
+                  {formatDay(revision.date)} · {revision.author}
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
+      </section>
+    </article>
   );
 }
 

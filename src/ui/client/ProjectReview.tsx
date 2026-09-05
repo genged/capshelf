@@ -15,7 +15,7 @@ import {
   type FilterTab,
 } from "../shared/view-model";
 import type { ProjectLoad } from "./dashboard";
-import { EmptyState, KindChips, Notice, Skeleton } from "./common";
+import { CopyButton, EmptyState, KindChips, Notice, Skeleton } from "./common";
 import { Icon } from "./icons";
 import { ItemPanel } from "./ItemPanel";
 
@@ -141,10 +141,16 @@ export function ProjectReview({
           {data.localLockVersion !== data.lockVersion
             ? ` (local v${data.localLockVersion})`
             : ""}
-          {data.dataRepoDisplay ? (
+          {data.dataRepo !== null && data.dataRepoDisplay ? (
             <>
               {" · shelf "}
-              <span class="mono">{data.dataRepoDisplay}</span>
+              <a
+                class="mono"
+                href={`#/shelf/${encodeURIComponent(data.dataRepo)}`}
+                title="Open the shelf"
+              >
+                {data.dataRepoDisplay}
+              </a>
             </>
           ) : (
             " · no data repo bound"
@@ -155,6 +161,19 @@ export function ProjectReview({
               · refresh failed: {load.error.message}
             </span>
           ) : null}
+        </p>
+        <p class="review-run">
+          <span>
+            Run from <span class="mono">{data.display}</span>
+          </span>
+          <CopyButton
+            text={data.cdCommand}
+            label={`Copy ${data.cdCommand}`}
+            compact
+          />
+          <span class="muted">
+            Read-only. Every command runs as printed from the project root.
+          </span>
         </p>
       </header>
 
