@@ -15,7 +15,6 @@ import {
 import {
   buildStatusDiff,
   currentCopyDirectoryItemSha,
-  shouldShowLocalDiff,
   unifiedDiff,
   unifiedDiffBytes,
 } from "../src/status-diff";
@@ -34,18 +33,6 @@ async function commitAll(repo: string, message: string): Promise<void> {
 }
 
 describe("status diff helpers", () => {
-  test("selects local drift states only", () => {
-    expect(shouldShowLocalDiff("drifted_local")).toBe(true);
-    expect(shouldShowLocalDiff("drifted_and_update")).toBe(true);
-    expect(shouldShowLocalDiff("missing_installed")).toBe(true);
-    expect(shouldShowLocalDiff("drifted_and_upstream_dirty")).toBe(true);
-    expect(shouldShowLocalDiff("output_drift")).toBe(true);
-    expect(shouldShowLocalDiff("missing_output")).toBe(true);
-    expect(shouldShowLocalDiff("update_available")).toBe(false);
-    expect(shouldShowLocalDiff("ok")).toBe(false);
-    expect(shouldShowLocalDiff("kept-local")).toBe(false);
-  });
-
   test("renders git-style context-limited unified diffs", async () => {
     const current = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`);
     const locked = [...current];

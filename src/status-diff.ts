@@ -45,17 +45,6 @@ import { subagentSourcesAtCommit } from "./subagents";
 import { lstatOrNull } from "./fs-utils";
 import { currentSourceCommit } from "./pin";
 
-type LocalDiffState =
-  | "drifted_local"
-  | "drifted_and_update"
-  | "missing_installed"
-  | "missing_output"
-  | "drifted_and_upstream_dirty"
-  | "output_drift"
-  | "source_dirty"
-  | "source_dirty_and_output_drift"
-  | "missing_source_commit";
-
 interface DiffableStatusRow {
   scope?: "project" | "local";
   source: ItemSource;
@@ -116,27 +105,12 @@ type FileMap = Map<string, FileSide>;
 /** The path git prints, and accepts, for a side that does not exist. */
 const DEV_NULL = "/dev/null";
 
-export function shouldShowLocalDiff(state: string): state is LocalDiffState {
-  return (
-    state === "drifted_local" ||
-    state === "drifted_and_update" ||
-    state === "missing_installed" ||
-    state === "missing_output" ||
-    state === "drifted_and_upstream_dirty" ||
-    state === "output_drift" ||
-    state === "source_dirty" ||
-    state === "source_dirty_and_output_drift" ||
-    state === "missing_source_commit"
-  );
-}
-
 export async function buildStatusDiff(
   opts: StatusDiffOptions,
 ): Promise<StatusDiff | null> {
   const { row } = opts;
   const view: "installed" | "upstream" =
     opts.view === "upstream" ? "upstream" : "installed";
-  if (view === "installed" && !shouldShowLocalDiff(row.state)) return null;
   if (
     view === "upstream" &&
     row.state !== "update_available" &&

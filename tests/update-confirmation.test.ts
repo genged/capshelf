@@ -256,6 +256,18 @@ describe("interactive destructive-change consent", () => {
     const installed = join(project, ".agents", "skills", "extra");
     const localPath = join(installed, "notes.txt");
     await writeFile(localPath, "unique notes\n");
+
+    const review = await run([
+      "status",
+      "skills/extra",
+      "--diff-view",
+      "installed",
+    ]);
+    expect(review.exitCode).toBe(0);
+    expect(review.stdout.toString()).toContain("+++ notes.txt (installed)");
+    expect(review.stdout.toString()).toContain("+unique notes");
+    expect(review.stdout.toString()).not.toContain("(no content differences)");
+
     await writeFile(join(skill, "SKILL.md"), "extra v2\n");
     await commitAll(dataRepo, "extra v2");
 
