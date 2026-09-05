@@ -4,13 +4,58 @@ import {
   chmod,
   mkdtemp,
   mkdir,
+  readdir,
+  rm,
   stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { beginInstalledReconciliation } from "../src/promote-transaction";
+import {
+  beginDirectoryReplacement,
+  beginInstalledReconciliation,
+} from "../src/promote-transaction";
+
+describe("beginDirectoryReplacement", () => {
+  test("retries transaction cleanup after a transient denial", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "capshelf-materialize-txn-"));
+    const target = join(parent, "hello");
+    await mkdir(target);
+    await writeFile(join(target, "SKILL.md"), "old\n");
+    const transaction = await beginDirectoryReplacement(
+      target,
+      async (replacement) => {
+        await mkdir(replacement);
+        await writeFile(join(replacement, "SKILL.md"), "new\n");
+      },
+    );
+
+    let transactionDirs: string[] = [];
+    let installedContent = "";
+    await chmod(parent, 0o555);
+    const unlock = (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      await chmod(parent, 0o755);
+    })();
+    try {
+      await transaction.commit();
+      await transaction.commit();
+      await unlock;
+      installedContent = await file(join(target, "SKILL.md")).text();
+      transactionDirs = (await readdir(parent)).filter((name) =>
+        name.startsWith(".capshelf-materialize-"),
+      );
+    } finally {
+      await chmod(parent, 0o755);
+      await unlock;
+      await rm(parent, { recursive: true, force: true });
+    }
+
+    expect(transactionDirs).toEqual([]);
+    expect(installedContent).toBe("new\n");
+  });
+});
 
 describe("beginInstalledReconciliation", () => {
   test("replaces the managed snapshot while preserving generated files", async () => {

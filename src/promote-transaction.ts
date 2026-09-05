@@ -13,6 +13,7 @@ import type { NamedFile } from "./merge-tree";
 import { inventoryLocalTree } from "./gitignore";
 import { findDestinationPathCollision } from "./path-collision";
 import { PreconditionError } from "./errors";
+import { rmTreeWithRetries } from "./fs-utils";
 
 export interface PromoteTransactionHooks {
   afterPrepared?: () => Promise<void>;
@@ -51,7 +52,7 @@ export async function beginDirectoryReplacement(
       throw error;
     }
   } catch (error) {
-    await rm(transactionDir, { recursive: true, force: true }).catch(() => {});
+    await rmTreeWithRetries(transactionDir).catch(() => {});
     throw error;
   }
 
@@ -60,18 +61,14 @@ export async function beginDirectoryReplacement(
     async commit() {
       if (finished) return;
       finished = true;
-      await rm(transactionDir, { recursive: true, force: true }).catch(
-        () => {},
-      );
+      await rmTreeWithRetries(transactionDir);
     },
     async rollback() {
       if (finished) return;
       finished = true;
-      await rm(target, { recursive: true, force: true });
+      await rmTreeWithRetries(target);
       if (hadOriginal) await rename(backup, target);
-      await rm(transactionDir, { recursive: true, force: true }).catch(
-        () => {},
-      );
+      await rmTreeWithRetries(transactionDir);
     },
   };
 }
@@ -113,9 +110,9 @@ export async function beginInstalledReconciliation(
       await chmod(path, file.mode === "100755" ? 0o755 : 0o644);
     }
   } catch (error) {
-    await rm(installedDir, { recursive: true, force: true });
+    await rmTreeWithRetries(installedDir);
     await rename(backup, installedDir);
-    await rm(backupDir, { recursive: true, force: true });
+    await rmTreeWithRetries(backupDir);
     throw error;
   }
 
@@ -124,14 +121,14 @@ export async function beginInstalledReconciliation(
     async commit() {
       if (finished) return;
       finished = true;
-      await rm(backupDir, { recursive: true, force: true }).catch(() => {});
+      await rmTreeWithRetries(backupDir);
     },
     async rollback() {
       if (finished) return;
       finished = true;
-      await rm(installedDir, { recursive: true, force: true });
+      await rmTreeWithRetries(installedDir);
       await rename(backup, installedDir);
-      await rm(backupDir, { recursive: true, force: true });
+      await rmTreeWithRetries(backupDir);
     },
   };
 }
