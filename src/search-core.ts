@@ -4,7 +4,7 @@
  * and deterministic result ordering. No fuzzy matching, no index, no
  * dependencies — predictable for agents and trivially testable.
  */
-import { METADATA_SIDECAR } from "./metadata";
+import { METADATA_SIDECAR } from "./identity";
 
 export type SearchFieldName = "name" | "tags" | "description" | "content";
 

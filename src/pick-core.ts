@@ -14,7 +14,8 @@
  * `pick.ts` is the shell that puts these rows on a terminal.
  */
 import { isTerminalControlCode } from "./assert";
-import { fuzzyMatchV1, fuzzyTerms } from "./fuzzy";
+import { fuzzyTerms } from "./fuzzy";
+import { compareRankedRows, scorePickRow } from "./pick-rank";
 import { ITEM_KINDS } from "./master";
 import type { ItemKind } from "./master";
 import { truncatedDescription } from "./metadata";
@@ -82,84 +83,13 @@ export interface PickFinder {
 }
 
 /**
- * Per-field multipliers, and the reason the picker does not match one
- * concatenated line.
- *
- * Joining the ref, tags, and description into a single haystack is what fzf
- * does, and it was wrong here. fzf matches lines where the line *is* the item;
- * these fields are parts of one item and are not equally important. Worse, the
- * concatenation actively inverted the ranking, because fzf scores a match
- * after whitespace higher than one after a delimiter
- * (`bonusBoundaryWhite` 10 against `bonusBoundaryDelimiter` 9). Every word in a
- * description follows a space, while an item's name follows the `/` in its
- * ref. So searching `you` put `skills/simple-english`, which matches `your
- * work` in its description, above `skills/youtube-summarizer`: 88 against 84.
- *
- * Scoring each field on its own and weighting it fixes that, and it restores
- * agreement with `capshelf search`, whose documented weights these are, minus
- * `content`, which the picker does not read.
+ * The ranking lives in `pick-rank.ts`, which is browser-safe; these names
+ * stay exported here so the picker's callers and tests read one module.
  */
-export const PICK_FIELD_WEIGHTS = {
-  ref: 8,
-  tags: 4,
-  description: 2,
-} as const;
-
-export type PickFieldName = keyof typeof PICK_FIELD_WEIGHTS;
-
-/**
- * Score one row against a whole query, or return null when it does not match.
- *
- * Every whitespace-separated term must match some field, which is the AND rule
- * `capshelf search` already defines. A term scores the best weighted field it
- * hits, and the term scores add. With a ref weight four times the description
- * weight, a name match beats a description match unless the name match is far
- * sloppier — which is the ordering a user expects when they type a name.
- */
-export function scorePickRow(
-  query: string,
-  row: PickRow,
-): { score: number; positions: number[] } | null {
-  const terms = fuzzyTerms(query);
-  if (terms.length === 0) return { score: 0, positions: [] };
-
-  let total = 0;
-  const positions = new Set<number>();
-  for (const term of terms) {
-    const best = bestFieldForTerm(term, row);
-    if (!best) return null;
-    total += best.score;
-    // Only the ref is rendered in full, so only its positions can be
-    // highlighted. A term won by a tag or a description highlights nothing.
-    if (best.field === "ref") {
-      for (const position of best.positions) positions.add(position);
-    }
-  }
-  return { score: total, positions: [...positions].sort((a, b) => a - b) };
-}
-
-function bestFieldForTerm(
-  term: string,
-  row: PickRow,
-): { field: PickFieldName; score: number; positions: number[] } | null {
-  let best: {
-    field: PickFieldName;
-    score: number;
-    positions: number[];
-  } | null = null;
-  const consider = (field: PickFieldName, text: string): void => {
-    const match = fuzzyMatchV1(term, text);
-    if (!match) return;
-    const weighted = match.score * PICK_FIELD_WEIGHTS[field];
-    if (best && best.score >= weighted) return;
-    best = { field, score: weighted, positions: match.positions };
-  };
-
-  consider("ref", row.ref);
-  for (const tag of row.tags) consider("tags", tag);
-  if (row.description !== undefined) consider("description", row.description);
-  return best;
-}
+export { PICK_FIELD_WEIGHTS, scorePickRow } from "./pick-rank";
+export type { PickFieldName } from "./pick-rank";
+export const comparePickRows: (a: RankedPickRow, b: RankedPickRow) => number =
+  compareRankedRows;
 
 /**
  * Order the catalog for an empty query: bundles first, then kind order, then
@@ -207,24 +137,6 @@ export function createPickFinder(
       return ranked.sort(comparePickRows);
     },
   };
-}
-
-/**
- * Score descending, then the shorter ref, then the ref itself.
- *
- * The length tiebreak is fzf's own default (`man fzf`: "Default is length"),
- * and it is load-bearing rather than cosmetic. The algorithm's published
- * example — `fuzzyfinder` preferred over `fuzzy-blurry-finder` on `ff` — is an
- * exact score tie that only the length criterion resolves. Measuring the ref
- * rather than the whole haystack keeps a long description from deciding it,
- * since that is not a property of the match.
- */
-export function comparePickRows(a: RankedPickRow, b: RankedPickRow): number {
-  if (b.score !== a.score) return b.score - a.score;
-  if (a.row.ref.length !== b.row.ref.length) {
-    return a.row.ref.length - b.row.ref.length;
-  }
-  return a.row.ref.localeCompare(b.row.ref);
 }
 
 /**
