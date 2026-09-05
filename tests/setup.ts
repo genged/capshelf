@@ -6,3 +6,13 @@
 // — reddening the bootstrap tests through no fault of the contributor.
 process.env.GIT_CONFIG_GLOBAL = "/dev/null";
 process.env.GIT_CONFIG_NOSYSTEM = "1";
+
+// The registry `init` and `ui` write lives under the XDG config home. Point
+// it at a throwaway directory so a test never registers a temporary project
+// on the contributor's machine.
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+process.env.XDG_CONFIG_HOME = mkdtempSync(
+  join(tmpdir(), "capshelf-test-config-"),
+);

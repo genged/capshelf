@@ -23,6 +23,7 @@ import {
 import { globalOpts } from "../global-options";
 import { PreconditionError, firstErrorLine } from "../errors";
 import { localConfigPath, saveLocalConfig } from "../local-config";
+import { projectRegistryPath, registerProject } from "../project-registry";
 import { UpstreamVerificationError } from "../upstream-check";
 import {
   printRuntimeWarnings,
@@ -252,6 +253,16 @@ export function registerInit(program: Command): void {
         settings: [],
         mcp: [],
       });
+      // The web UI lists projects from a machine-wide registry. A registry
+      // write failure must not fail an init that already succeeded, so it is
+      // reported and the project stays initialized.
+      const registryPath = projectRegistryPath();
+      let registryError: string | null = null;
+      try {
+        await registerProject(project, registryPath);
+      } catch (error) {
+        registryError = firstErrorLine(error);
+      }
 
       if (opts.json) {
         console.log(
@@ -270,11 +281,20 @@ export function registerInit(program: Command): void {
                 },
               }),
               installed,
+              registry: {
+                path: registryPath,
+                ...(registryError !== null && { error: registryError }),
+              },
             },
             null,
             2,
           ),
         );
+        if (registryError !== null) {
+          console.error(
+            `⚠ could not register the project for capshelf ui: ${registryError}`,
+          );
+        }
         return;
       }
       if (bootstrap) {
@@ -297,6 +317,15 @@ export function registerInit(program: Command): void {
         console.log(`✓ system/${i.kind}/${i.name} @ ${i.sha}`);
         console.log(`  ${i.dst}`);
         printRuntimeWarnings(i.runtimeWarnings);
+      }
+      if (registryError === null) {
+        console.log(
+          `  registered for capshelf ui: ${homeRelative(registryPath)}`,
+        );
+      } else {
+        console.error(
+          `⚠ could not register the project for capshelf ui: ${registryError}`,
+        );
       }
       if (bootstrap) {
         console.log("");
