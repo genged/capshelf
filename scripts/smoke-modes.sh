@@ -155,6 +155,20 @@ rm -rf "$HOME/.claude/skills/hello"
 assert_contains 'hello v1' "$SHADOW/.claude/skills/hello/SKILL.md"
 test ! -e "$SHADOW/.claude/skills/hello/stale.txt"
 
+# --- Pi project skill shadowing: .pi/skills ranks above .agents/skills in Pi ---
+mkdir -p "$SHADOW/.pi/skills/hello"
+printf '%s\n' 'pi copy shadows managed hello' > "$SHADOW/.pi/skills/hello/SKILL.md"
+(cd "$SHADOW" && "${CLI[@]}" status skills/hello --json > "$TMP/pi-shadow-status.json")
+assert_contains 'shadowed_by_pi_project_skill' "$TMP/pi-shadow-status.json"
+if (cd "$SHADOW" && "${CLI[@]}" status skills/hello --strict --json > "$TMP/pi-shadow-strict.json" 2>&1); then
+  echo "expected status --strict to fail on Pi project skill shadowing"
+  exit 1
+fi
+(cd "$SHADOW" && "${CLI[@]}" status skills/hello > "$TMP/pi-shadow-human.txt")
+assert_contains 'Pi project skill shadows this project skill' "$TMP/pi-shadow-human.txt"
+rm -rf "$SHADOW/.pi"
+(cd "$SHADOW" && "${CLI[@]}" status skills/hello --strict --json > /dev/null)
+
 # --- system item: apply self-heals; promote refuses ---
 printf '%s\n' 'broken system skill' > "$SHADOW/.claude/skills/capshelf/SKILL.md"
 (cd "$SHADOW" && "${CLI[@]}" apply skills/capshelf --yes --json >/dev/null)

@@ -230,13 +230,16 @@ export function formatUserSkillsHuman(
       const id = `skills/${skill.name}`.padEnd(34);
       lines.push(`  •   ${id} ${homeRelative(skill.path)}`);
       if (skill.shadows.length > 0) {
+        const refs = skill.shadows
+          .map(
+            (shadow) => `${shadow.scope}/${shadow.source}/skills/${skill.name}`,
+          )
+          .join(", ");
+        // Claude loads its personal skill first. Codex offers both skills.
         lines.push(
-          `      shadows ${skill.shadows
-            .map(
-              (shadow) =>
-                `${shadow.scope}/${shadow.source}/skills/${skill.name}`,
-            )
-            .join(", ")}`,
+          surface === "claude"
+            ? `      shadows ${refs}`
+            : `      same name as ${refs}; Codex offers both`,
         );
       }
     }

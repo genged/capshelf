@@ -1450,6 +1450,17 @@ and `status` warn with `shadowed_by_personal_claude_skill`, `status` lists
 the shadowing skill under `external/  (Personal Claude)`, and
 `status --strict` exits 4 while the shadow exists.
 
+### Pi project skills
+
+Pi ranks a project's `.pi/skills/` above its `.agents/skills/` and keeps the
+first skill it finds for a name. A `.pi/skills/<name>/SKILL.md` directory or a
+`.pi/skills/<name>.md` file therefore hides the managed skill for Pi. Capshelf
+does not manage `.pi/skills`. `status` and the other commands that report
+runtime warnings warn with `shadowed_by_pi_project_skill`, and `status
+--strict` exits 4 while the shadow exists. A `.pi/skills/<name>` symlink that
+resolves to the managed copy is not a shadow. The check is by name, as the
+personal Claude check is.
+
 ### User-level skills
 
 `capshelf ls` and `capshelf status` include a read-only inventory for skills
@@ -1468,8 +1479,11 @@ paths. Default JSON output includes the flat `externalUserSkills` row array;
 `ls --user --json` returns only that array, while `status --user --json`
 returns the normal status envelope with only user inventory populated. When
 the command runs from a capshelf project root, each row's `shadows` array names
-any project or local capshelf skill with the same name. The command never
-writes capshelf metadata and never adopts the user skill.
+any project or local capshelf skill with the same name. The human report words
+the row by harness. Claude loads its personal skill before the project skill,
+so a Claude row says `shadows`. Codex offers both skills, so a Codex row says
+`same name as … ; Codex offers both`. The command never writes capshelf
+metadata and never adopts the user skill.
 
 ## Exit codes
 

@@ -19,6 +19,7 @@ import {
 
 export type RuntimeWarningType =
   | "shadowed_by_personal_claude_skill"
+  | "shadowed_by_pi_project_skill"
   | "codex_project_untrusted"
   | "pi_extension_executes_code"
   | "pi_extension_dependencies_not_installed";
@@ -53,17 +54,47 @@ export function runtimeWarningsForItem(
   }
   if (kind !== "skills") return [];
 
+  const warnings: RuntimeWarning[] = [];
   const personalPath = opts.personalSkillPath ?? personalClaudeSkillPath(name);
-  if (!existsSync(personalPath)) return [];
-  if (isProjectSkillPath(project, name, personalPath)) return [];
-
-  return [
-    {
+  if (
+    existsSync(personalPath) &&
+    !isProjectSkillPath(project, name, personalPath)
+  ) {
+    warnings.push({
       type: "shadowed_by_personal_claude_skill",
       path: personalPath,
       message: `Claude will load ${homeRelative(personalPath)} before this project skill.`,
-    },
-  ];
+    });
+  }
+  const piSkill = piProjectSkill(project, name);
+  if (piSkill !== null && !isProjectSkillPath(project, name, piSkill.abs)) {
+    warnings.push({
+      type: "shadowed_by_pi_project_skill",
+      path: piSkill.rel,
+      message: `Pi will load ${piSkill.rel} before this project skill.`,
+    });
+  }
+  return warnings;
+}
+
+/**
+ * Pi ranks a project's `.pi/skills/` above its `.agents/skills/` and keeps
+ * the first skill it finds, so a same-name entry there hides the managed
+ * copy. Pi accepts a directory with `SKILL.md` or a bare Markdown file. The
+ * check is by name only, as the personal Claude check is.
+ */
+function piProjectSkill(
+  project: string,
+  name: string,
+): { abs: string; rel: string } | null {
+  const dir = join(project, ".pi", "skills", name);
+  if (existsSync(join(dir, "SKILL.md"))) {
+    return { abs: dir, rel: `.pi/skills/${name}` };
+  }
+  if (existsSync(`${dir}.md`)) {
+    return { abs: `${dir}.md`, rel: `.pi/skills/${name}.md` };
+  }
+  return null;
 }
 
 export function codexProjectTrustWarnings(project: string): RuntimeWarning[] {
@@ -90,6 +121,9 @@ export function formatRuntimeWarnings(
   for (const warning of warnings) {
     if (warning.type === "shadowed_by_personal_claude_skill") {
       lines.push(`${indent}⚠ personal Claude skill shadows this project skill`);
+      lines.push(`${indent}  ${warning.message}`);
+    } else if (warning.type === "shadowed_by_pi_project_skill") {
+      lines.push(`${indent}⚠ Pi project skill shadows this project skill`);
       lines.push(`${indent}  ${warning.message}`);
     } else if (warning.type === "codex_project_untrusted") {
       lines.push(`${indent}⚠ Codex project config may be ignored`);

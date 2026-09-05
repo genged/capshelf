@@ -242,7 +242,7 @@ describe("formatStatusHuman", () => {
         name: "beta",
         surface: "codex",
         path: codexPath,
-        shadows: [],
+        shadows: [{ scope: "local", source: "data" }],
       },
     ]);
 
@@ -264,5 +264,8 @@ describe("formatStatusHuman", () => {
       true,
     );
     expect(lines).toContain("      shadows project/data/skills/alpha");
+    expect(lines).toContain(
+      "      same name as local/data/skills/beta; Codex offers both",
+    );
   });
 });

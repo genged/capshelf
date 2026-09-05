@@ -185,3 +185,71 @@ describe("codexProjectTrustWarnings", () => {
     expect(warnings).toEqual(untrustedWarning(project));
   });
 });
+
+describe("Pi project skill shadows", () => {
+  test("warns when .pi/skills holds a same-name skill directory", async () => {
+    const project = await tempDir();
+    const piSkill = join(project, ".pi", "skills", "review");
+    await mkdir(piSkill, { recursive: true });
+    await writeFile(join(piSkill, "SKILL.md"), "pi copy\n");
+
+    expect(
+      runtimeWarningsForItem(project, "skills", "review", {
+        personalSkillPath: join(project, "missing"),
+      }),
+    ).toEqual([
+      {
+        type: "shadowed_by_pi_project_skill",
+        path: ".pi/skills/review",
+        message: "Pi will load .pi/skills/review before this project skill.",
+      },
+    ]);
+  });
+
+  test("warns for a bare Markdown skill file, which Pi also loads", async () => {
+    const project = await tempDir();
+    await mkdir(join(project, ".pi", "skills"), { recursive: true });
+    await writeFile(join(project, ".pi", "skills", "review.md"), "pi copy\n");
+
+    const warnings = runtimeWarningsForItem(project, "skills", "review", {
+      personalSkillPath: join(project, "missing"),
+    });
+    expect(warnings.map((warning) => warning.path)).toEqual([
+      ".pi/skills/review.md",
+    ]);
+  });
+
+  test("does not warn when .pi/skills links to the managed copy", async () => {
+    const project = await tempDir();
+    const managed = join(project, ".agents", "skills", "review");
+    await mkdir(managed, { recursive: true });
+    await writeFile(join(managed, "SKILL.md"), "managed\n");
+    await mkdir(join(project, ".pi", "skills"), { recursive: true });
+    await symlink(managed, join(project, ".pi", "skills", "review"), "dir");
+
+    expect(
+      runtimeWarningsForItem(project, "skills", "review", {
+        personalSkillPath: join(project, "missing"),
+      }),
+    ).toEqual([]);
+  });
+
+  test("reports the Claude and Pi shadows together", async () => {
+    const project = await tempDir();
+    const personal = await tempDir();
+    const personalSkill = join(personal, ".claude", "skills", "review");
+    await mkdir(personalSkill, { recursive: true });
+    await writeFile(join(personalSkill, "SKILL.md"), "personal\n");
+    const piSkill = join(project, ".pi", "skills", "review");
+    await mkdir(piSkill, { recursive: true });
+    await writeFile(join(piSkill, "SKILL.md"), "pi copy\n");
+
+    const types = runtimeWarningsForItem(project, "skills", "review", {
+      personalSkillPath: personalSkill,
+    }).map((warning) => warning.type);
+    expect(types).toEqual([
+      "shadowed_by_personal_claude_skill",
+      "shadowed_by_pi_project_skill",
+    ]);
+  });
+});
