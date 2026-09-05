@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   diffLineCount,
+  fileStats,
   parseDiffLabel,
   parseUnifiedDiff,
   sideBySideRows,
@@ -232,5 +233,52 @@ describe("threeWayRows", () => {
       locked: { no: 2, text: "second" },
       shelf: { kind: "del", text: "" },
     });
+  });
+});
+
+describe("fileStats", () => {
+  test("counts added and removed lines per file", () => {
+    expect(fileStats(parseUnifiedDiff(INSTALLED))).toEqual([
+      {
+        path: "SKILL.md",
+        added: 1,
+        removed: 1,
+        binary: false,
+        modeChange: null,
+      },
+    ]);
+    expect(fileStats(parseUnifiedDiff(UPSTREAM))).toEqual([
+      {
+        path: "SKILL.md",
+        added: 1,
+        removed: 0,
+        binary: false,
+        modeChange: null,
+      },
+    ]);
+  });
+
+  test("reports a mode change and a binary file without counting lines", () => {
+    const text = [
+      "--- logo.png (locked 7940223)",
+      "+++ logo.png (installed)",
+      "Binary files differ",
+      "old mode 100644",
+      "new mode 100755",
+      "--- run.sh (locked 7940223)",
+      "+++ run.sh (installed)",
+      "@@ -1 +1 @@",
+      "-echo one",
+      "+echo two",
+      "",
+    ].join("\n");
+    const stats = fileStats(parseUnifiedDiff(text));
+    const script = stats.find((stat) => stat.path === "run.sh");
+    expect(script?.added).toBe(1);
+    expect(script?.removed).toBe(1);
+    expect(script?.modeChange).toBe("100644 → 100755");
+    const image = stats.find((stat) => stat.binary);
+    expect(image?.added).toBe(0);
+    expect(image?.removed).toBe(0);
   });
 });

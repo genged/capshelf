@@ -370,3 +370,36 @@ export function diffLineCount(diff: ParsedDiff): number {
   }
   return count;
 }
+
+export interface DiffFileStat {
+  path: string;
+  added: number;
+  removed: number;
+  binary: boolean;
+  /** `100644 → 100755` when the mode changed, else null. */
+  modeChange: string | null;
+}
+
+/** One line per file for a summary: added and removed lines, binary, mode. */
+export function fileStats(parsed: ParsedDiff): DiffFileStat[] {
+  return parsed.files.map((file) => {
+    let added = 0;
+    let removed = 0;
+    for (const hunk of file.hunks) {
+      for (const line of hunk.lines) {
+        if (line.kind === "add") added += 1;
+        else if (line.kind === "del") removed += 1;
+      }
+    }
+    return {
+      path: file.path,
+      added,
+      removed,
+      binary: file.binary,
+      modeChange:
+        file.oldMode && file.newMode && file.oldMode !== file.newMode
+          ? `${file.oldMode} → ${file.newMode}`
+          : null,
+    };
+  });
+}

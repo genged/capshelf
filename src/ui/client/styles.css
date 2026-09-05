@@ -1114,6 +1114,65 @@ code {
   gap: 10px;
 }
 
+.diff-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.diff-bar .diff-caption {
+  margin: 0;
+}
+
+.diff-open {
+  margin-left: auto;
+}
+
+.diff-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.diff-summary-files {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.diff-summary-file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+  font-size: 13px;
+}
+
+.diff-summary-path {
+  font-weight: 600;
+}
+
+.diff-summary-stat {
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+.diff-summary-add {
+  color: var(--green-ink);
+}
+
+.diff-summary-del {
+  color: #8a1c0f;
+}
+
+.diff-summary-more {
+  font-size: 12px;
+}
+
 .diff-modes {
   display: inline-flex;
   gap: 2px;
@@ -1193,20 +1252,11 @@ code {
   border-left: 1px solid var(--line);
 }
 
-.diff-table.two th {
-  width: 50%;
-}
-
-.diff-table.three th {
-  width: 33.333%;
-}
-
-.diff-table.unified .diff-no {
-  width: 2.6em;
+.diff-col-no {
+  width: 4em;
 }
 
 .diff-no {
-  width: 3.6em;
   padding: 0 6px;
   text-align: right;
   color: var(--ink-3);
@@ -1291,6 +1341,74 @@ code {
   font-size: 12px;
   color: var(--ink-2);
   border-top: 1px solid var(--line-soft);
+}
+
+/* ---------- dialog ----------
+   Rendered at the body, above everything, with a scrim that closes it. */
+
+.dialog-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.dialog-scrim {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: rgba(31, 35, 40, 0.45);
+  cursor: default;
+}
+
+.dialog {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(1600px, 100%);
+  max-height: 100%;
+  background: var(--bg);
+  border: 1px solid var(--ink-3);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.dialog-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.dialog-title {
+  margin: 0 auto 0 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.dialog-subtitle {
+  font-weight: 400;
+}
+
+.dialog-caption {
+  margin: 0;
+  padding: 8px 14px 0;
+}
+
+.dialog-body {
+  overflow: auto;
+  padding: 10px 14px 16px;
+}
+
+body.has-dialog {
+  overflow: hidden;
 }
 
 /* syntax tokens, quiet */

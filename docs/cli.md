@@ -1383,13 +1383,15 @@ manifest stays in the list and is marked missing.
 - Center: the selected project's items as panels, in one group per kind. A
   kind with an item that needs attention comes first. Kinds with the same
   count follow the order `ls` prints. A panel opens in place to the commands
-  that resolve it, each with a copy button, then its facts and its diff. The
-  header carries the `cd` command for the project with a copy button. Filter
-  tabs select all items, items that need attention, or items that are up to
-  date. A chip row under the tabs selects one kind. The tabs then count that
-  kind only, and each chip counts the items the active tab shows. A chip
-  with no such item is disabled. A second click on the active chip clears
-  it.
+  that resolve it, each with a copy button, then its facts and a summary of
+  its diff: each changed file with its added and removed line counts. The
+  Open diff button shows the full diff in a dialog at the width of the
+  window, side by side or unified. Three-way has no unified form. The header
+  carries the `cd` command for the project with a copy button. Filter tabs
+  select all items, items that need attention, or items that are up to date.
+  A chip row under the tabs selects one kind. The tabs then count that kind
+  only, and each chip counts the items the active tab shows. A chip with no
+  such item is disabled. A second click on the active chip clears it.
 - Shelf: every item and bundle in the data repo, in one section per kind,
   bundles first, with the picker's search. The same chip row selects one
   section. A search ranks across every shown section. Until an item is

@@ -144,7 +144,16 @@ export function Dashboard(): preact.JSX.Element {
         setDrawerOpen(false);
         return;
       }
-      if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
+      // A dialog holds the keyboard; the page shortcuts wait for it to close.
+      const dialogOpen = document.body.classList.contains("has-dialog");
+      if (
+        typing ||
+        dialogOpen ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey
+      )
+        return;
       if (event.key === "r") {
         event.preventDefault();
         void refreshAll();

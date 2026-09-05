@@ -251,7 +251,7 @@ export function KeyHelp({
     ["c", "Copy the first command of the focused panel"],
     ["/", "Focus the filter"],
     ["r", "Refresh every project"],
-    ["Esc", "Close this help or the tree drawer"],
+    ["Esc", "Close this help, the diff dialog, or the tree drawer"],
   ];
   return (
     <div class="key-help" role="dialog" aria-label="Keyboard shortcuts">

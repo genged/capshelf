@@ -1,8 +1,11 @@
-import type { ComponentChildren } from "preact";
-import { useEffect, useState } from "preact/hooks";
+import type { ComponentChildren, RefObject } from "preact";
+import { createPortal } from "preact/compat";
+import { useCallback, useEffect, useRef, useState } from "preact/hooks";
 import type { DiffViewName, UiDiffResponse, UiItem } from "../shared/api-types";
 import {
   type DiffFile,
+  type DiffFileStat,
+  fileStats,
   type ParsedDiff,
   parseUnifiedDiff,
   type SideCell,
@@ -13,8 +16,11 @@ import {
 } from "../shared/diff-parse";
 import { ApiError } from "./api";
 import { highlightLine, languageForPath } from "./highlight";
+import { Icon } from "./icons";
 
 type Mode = DiffViewName | "three";
+
+type Layout = "split" | "unified";
 
 interface Loaded {
   state: "loading" | "ready" | "error";
@@ -22,10 +28,15 @@ interface Loaded {
   error: string | null;
 }
 
+type LoadedViews = Record<DiffViewName, Loaded | undefined>;
+
 /** Rows shown per file before the reader asks for more. */
 const ROW_STEP = 400;
 
 const NARROW = "(max-width: 800px)";
+
+const FOCUSABLE =
+  'button:not([disabled]):not([tabindex="-1"]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 /** Below the drawer breakpoint two code columns cannot hold a line. */
 function useNarrow(): boolean {
@@ -37,6 +48,16 @@ function useNarrow(): boolean {
     return () => query.removeEventListener("change", onChange);
   }, []);
   return narrow;
+}
+
+function caption(view: DiffViewName, unified: boolean): string {
+  const other =
+    view === "installed"
+      ? "the installed copy"
+      : "the shelf's committed version";
+  return unified
+    ? `Removed lines are the pin, added lines are ${other}.`
+    : `Locked content on the left, ${other} on the right.`;
 }
 
 export function DiffView({
@@ -51,17 +72,17 @@ export function DiffView({
   const [mode, setMode] = useState<Mode>(
     both ? "three" : (item.diffViews[0] ?? "installed"),
   );
-  const [loaded, setLoaded] = useState<
-    Record<DiffViewName, Loaded | undefined>
-  >({
+  const [loaded, setLoaded] = useState<LoadedViews>({
     installed: undefined,
     upstream: undefined,
   });
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const openerRef = useRef<HTMLButtonElement>(null);
   // A phone shows one comparison at a time; three columns do not fit.
   const effectiveMode: Mode = narrow && mode === "three" ? "installed" : mode;
 
-  const needed: DiffViewName[] =
-    effectiveMode === "three" ? ["installed", "upstream"] : [effectiveMode];
+  // The summary needs every comparison the CLI offers, so both load at once.
+  const needed: DiffViewName[] = item.diffViews;
 
   useEffect(() => {
     for (const view of needed) {
@@ -89,75 +110,437 @@ export function DiffView({
     }
   }, [needed, loaded, loadDiff]);
 
+  const closeDialog = useCallback((): void => {
+    setDialogOpen(false);
+    openerRef.current?.focus();
+  }, []);
+
+  const openDialog = (next: Mode): void => {
+    setMode(next);
+    setDialogOpen(true);
+  };
+
   return (
     <div class="diff">
-      {both ? (
-        <fieldset class="diff-modes">
-          <legend class="visually-hidden">Comparison</legend>
-          <ModeButton
-            mode="installed"
-            current={effectiveMode}
-            onSelect={setMode}
-          >
-            Installed
-          </ModeButton>
-          <ModeButton
-            mode="upstream"
-            current={effectiveMode}
-            onSelect={setMode}
-          >
-            Shelf
-          </ModeButton>
-          {narrow ? null : (
-            <ModeButton mode="three" current={effectiveMode} onSelect={setMode}>
-              Three-way
-            </ModeButton>
-          )}
-        </fieldset>
-      ) : (
-        <p class="diff-caption muted">
-          {effectiveMode === "installed"
-            ? narrow
-              ? "Removed lines are the pin, added lines are the installed copy."
-              : "Locked content on the left, the installed copy on the right."
-            : narrow
-              ? "Removed lines are the pin, added lines are the shelf's committed version."
-              : "Locked content on the left, the shelf's committed version on the right."}
-        </p>
-      )}
-      {effectiveMode === "three" ? (
-        <ThreeWay installed={loaded.installed} upstream={loaded.upstream} />
-      ) : (
-        <SingleView
-          view={effectiveMode}
-          loaded={loaded[effectiveMode]}
-          unified={narrow}
-        />
-      )}
+      <DiffSummary
+        views={item.diffViews}
+        loaded={loaded}
+        defaultMode={effectiveMode}
+        openerRef={openerRef}
+        onOpen={openDialog}
+      />
+      {dialogOpen
+        ? createPortal(
+            <DiffDialog
+              item={item}
+              both={both}
+              narrow={narrow}
+              mode={effectiveMode}
+              onMode={setMode}
+              loaded={loaded}
+              onClose={closeDialog}
+            />,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
 
-function ModeButton({
+function DiffBody({
   mode,
-  current,
-  onSelect,
-  children,
+  loaded,
+  unified,
 }: {
   mode: Mode;
+  loaded: LoadedViews;
+  unified: boolean;
+}): preact.JSX.Element {
+  return mode === "three" ? (
+    <ThreeWay installed={loaded.installed} upstream={loaded.upstream} />
+  ) : (
+    <SingleView view={mode} loaded={loaded[mode]} unified={unified} />
+  );
+}
+
+type Summary =
+  | { state: "loading" }
+  | { state: "error"; message: string }
+  | { state: "none"; message: string }
+  | {
+      state: "ready";
+      files: DiffFileStat[];
+      notes: string[];
+      note: string | null;
+    };
+
+function summarize(view: DiffViewName, loaded: Loaded | undefined): Summary {
+  if (!loaded || loaded.state === "loading") return { state: "loading" };
+  if (loaded.state === "error") {
+    return { state: "error", message: loaded.error ?? "unknown error" };
+  }
+  const diff = loaded.response?.diff ?? null;
+  if (diff === null) {
+    return {
+      state: "none",
+      message: `The CLI has no ${view === "installed" ? "installed" : "shelf"} comparison for this state.`,
+    };
+  }
+  if (diff.text === null) {
+    return {
+      state: "none",
+      message: `Comparison unavailable: ${diff.unavailableReason ?? "no reason given"}`,
+    };
+  }
+  const parsed = parseUnifiedDiff(diff.text);
+  return {
+    state: "ready",
+    files: fileStats(parsed),
+    notes: parsed.notes,
+    note: diff.note ?? null,
+  };
+}
+
+function viewLabel(view: DiffViewName): string {
+  return view === "installed" ? "Installed copy" : "Shelf";
+}
+
+/** Files listed in the panel before the dialog shows every line. */
+const FILE_LIMIT = 8;
+
+/**
+ * What changed, one line per file, in place of the diff itself. The full
+ * comparison waits behind the button, so a panel stays short.
+ */
+function DiffSummary({
+  views,
+  loaded,
+  defaultMode,
+  openerRef,
+  onOpen,
+}: {
+  views: DiffViewName[];
+  loaded: LoadedViews;
+  defaultMode: Mode;
+  openerRef: RefObject<HTMLButtonElement>;
+  onOpen: (mode: Mode) => void;
+}): preact.JSX.Element {
+  const summaries = views.map((view) => ({
+    view,
+    summary: summarize(view, loaded[view]),
+  }));
+  const ready = summaries.flatMap(({ view, summary }) =>
+    summary.state === "ready" ? [{ view, ...summary }] : [],
+  );
+  const paths = [
+    ...new Set(ready.flatMap((entry) => entry.files.map((file) => file.path))),
+  ].sort();
+  const shownPaths = paths.slice(0, FILE_LIMIT);
+  const single = ready.length === 1 && views.length === 1 ? ready[0] : null;
+  const added = single?.files.reduce((sum, file) => sum + file.added, 0) ?? 0;
+  const removed =
+    single?.files.reduce((sum, file) => sum + file.removed, 0) ?? 0;
+  const notes = ready.flatMap((entry) => entry.notes);
+  return (
+    <section class="diff-summary" aria-label="Diff summary">
+      <div class="diff-bar">
+        <p class="diff-caption muted">
+          {views.length === 2
+            ? "Installed copy and shelf compared with the pin."
+            : `${viewLabel(views[0] ?? "installed")} compared with the pin.`}
+          {single && single.files.length > 1 ? (
+            <>
+              {` ${single.files.length} files, `}
+              <span class="diff-summary-add">+{added}</span>{" "}
+              <span class="diff-summary-del">−{removed}</span>.
+            </>
+          ) : null}
+        </p>
+        <button
+          type="button"
+          class="button diff-open"
+          ref={openerRef}
+          aria-haspopup="dialog"
+          onClick={() => onOpen(defaultMode)}
+        >
+          <Icon name="expand" />
+          <span>Open diff</span>
+        </button>
+      </div>
+      {summaries.map(({ view, summary }) =>
+        summary.state === "ready" ? null : (
+          <p
+            key={view}
+            class={`diff-status ${summary.state === "error" ? "tone-attention" : "muted"}`}
+          >
+            {views.length === 2 ? `${viewLabel(view)}: ` : ""}
+            {summary.state === "loading"
+              ? "Comparing…"
+              : summary.state === "error"
+                ? `Comparison failed: ${summary.message}`
+                : summary.message}
+          </p>
+        ),
+      )}
+      {ready.map((entry) =>
+        entry.note ? (
+          <p key={`${entry.view}-note`} class="diff-note muted">
+            {entry.note}
+          </p>
+        ) : null,
+      )}
+      {ready.length > 0 && paths.length === 0 ? (
+        <p class="diff-status muted">No content differences.</p>
+      ) : null}
+      {paths.length > 0 ? (
+        <ul class="diff-summary-files">
+          {shownPaths.map((path) => (
+            <li key={path} class="diff-summary-file">
+              <span class="mono diff-summary-path">{path || "(new file)"}</span>
+              {ready.map((entry) => {
+                const file = entry.files.find((stat) => stat.path === path);
+                return (
+                  <span key={entry.view} class="diff-summary-stat">
+                    {ready.length === 2 ? (
+                      <span class="muted">
+                        {entry.view === "installed" ? "installed " : "shelf "}
+                      </span>
+                    ) : null}
+                    {file ? (
+                      <FileStatText stat={file} />
+                    ) : (
+                      <span class="muted">same</span>
+                    )}
+                  </span>
+                );
+              })}
+            </li>
+          ))}
+          {paths.length > shownPaths.length ? (
+            <li class="diff-summary-more muted">
+              and {paths.length - shownPaths.length} more files
+            </li>
+          ) : null}
+        </ul>
+      ) : null}
+      {notes.length > 0 ? (
+        <ul class="diff-notes">
+          {notes.map((note) => (
+            <li key={note} class="mono">
+              {note}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
+function FileStatText({ stat }: { stat: DiffFileStat }): preact.JSX.Element {
+  return (
+    <>
+      {stat.binary ? (
+        <span class="muted">binary</span>
+      ) : (
+        <>
+          <span class="diff-summary-add">+{stat.added}</span>{" "}
+          <span class="diff-summary-del">−{stat.removed}</span>
+        </>
+      )}
+      {stat.modeChange ? (
+        <span class="muted"> · mode {stat.modeChange}</span>
+      ) : null}
+    </>
+  );
+}
+
+function ComparisonModes({
+  current,
+  narrow,
+  onSelect,
+}: {
   current: Mode;
+  narrow: boolean;
   onSelect: (mode: Mode) => void;
+}): preact.JSX.Element {
+  return (
+    <fieldset class="diff-modes">
+      <legend class="visually-hidden">Comparison</legend>
+      <ModeButton value="installed" current={current} onSelect={onSelect}>
+        Installed
+      </ModeButton>
+      <ModeButton value="upstream" current={current} onSelect={onSelect}>
+        Shelf
+      </ModeButton>
+      {narrow ? null : (
+        <ModeButton value="three" current={current} onSelect={onSelect}>
+          Three-way
+        </ModeButton>
+      )}
+    </fieldset>
+  );
+}
+
+function ModeButton<Value extends string>({
+  value,
+  current,
+  onSelect,
+  disabled,
+  title,
+  children,
+}: {
+  value: Value;
+  current: Value;
+  onSelect: (value: Value) => void;
+  disabled?: boolean | undefined;
+  title?: string | undefined;
   children: ComponentChildren;
 }): preact.JSX.Element {
   return (
     <button
       type="button"
-      class={`mode-button${current === mode ? " is-active" : ""}`}
-      aria-pressed={current === mode}
-      onClick={() => onSelect(mode)}
+      class={`mode-button${current === value ? " is-active" : ""}`}
+      aria-pressed={current === value}
+      disabled={disabled}
+      title={title}
+      onClick={() => onSelect(value)}
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * The same comparison at the width of the window, with a layout choice.
+ * The dialog renders at the document body, so no panel animation or
+ * refresh fade can trap it, and it holds keyboard focus until it closes.
+ */
+function DiffDialog({
+  item,
+  both,
+  narrow,
+  mode,
+  onMode,
+  loaded,
+  onClose,
+}: {
+  item: UiItem;
+  both: boolean;
+  narrow: boolean;
+  mode: Mode;
+  onMode: (mode: Mode) => void;
+  loaded: LoadedViews;
+  onClose: () => void;
+}): preact.JSX.Element {
+  const [layout, setLayout] = useState<Layout>(narrow ? "unified" : "split");
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const titleId = "diff-dialog-title";
+
+  useEffect(() => {
+    closeRef.current?.focus();
+    document.body.classList.add("has-dialog");
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const focusable = Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE),
+      );
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!first || !last) return;
+      const active = document.activeElement;
+      const outside = !dialogRef.current.contains(active);
+      if (
+        event.shiftKey
+          ? active === first || outside
+          : active === last || outside
+      ) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.classList.remove("has-dialog");
+    };
+  }, [onClose]);
+
+  const shownLayout: Layout = narrow ? "unified" : layout;
+  const unified = shownLayout === "unified" && mode !== "three";
+
+  return (
+    <div class="dialog-layer">
+      <button
+        type="button"
+        class="dialog-scrim"
+        aria-label="Close the diff"
+        tabIndex={-1}
+        onClick={onClose}
+      />
+      <div
+        class="dialog diff-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        ref={dialogRef}
+      >
+        <header class="dialog-head">
+          <h2 id={titleId} class="dialog-title">
+            <span class="mono">{item.ref}</span>
+            <span class="muted dialog-subtitle"> · {item.stateLabel}</span>
+          </h2>
+          {both ? (
+            <ComparisonModes current={mode} narrow={narrow} onSelect={onMode} />
+          ) : null}
+          <fieldset class="diff-modes">
+            <legend class="visually-hidden">Layout</legend>
+            <ModeButton
+              value="split"
+              current={shownLayout}
+              onSelect={setLayout}
+              disabled={narrow}
+              title={narrow ? "Too narrow for two columns" : undefined}
+            >
+              Side by side
+            </ModeButton>
+            <ModeButton
+              value="unified"
+              current={shownLayout}
+              onSelect={setLayout}
+              disabled={mode === "three"}
+              title={
+                mode === "three" ? "Three-way has no unified form" : undefined
+              }
+            >
+              Unified
+            </ModeButton>
+          </fieldset>
+          <button
+            type="button"
+            class="icon-button"
+            ref={closeRef}
+            aria-label="Close the diff"
+            onClick={onClose}
+          >
+            <Icon name="close" />
+          </button>
+        </header>
+        <p class="diff-caption muted dialog-caption">
+          {mode === "three"
+            ? "Installed copy, locked content, and the shelf's committed version, aligned on the pinned lines."
+            : caption(mode, unified)}
+        </p>
+        <div class="dialog-body">
+          <DiffBody mode={mode} loaded={loaded} unified={unified} />
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -260,6 +643,25 @@ function MoreButton({
   );
 }
 
+/**
+ * The tables use a fixed layout, which takes column widths from the first
+ * row. That row holds the spanning headers, so without a column group the
+ * browser splits each header evenly and the number column grows to a
+ * quarter of the table. The group pins every number column narrow.
+ */
+function Columns({ pairs }: { pairs: number }): preact.JSX.Element {
+  return (
+    <colgroup>
+      {Array.from({ length: pairs }, (_, index) => (
+        <>
+          <col key={`n${index}`} class="diff-col-no" />
+          <col key={`t${index}`} />
+        </>
+      ))}
+    </colgroup>
+  );
+}
+
 function DiffFileView({
   file,
   unified,
@@ -317,6 +719,7 @@ function SideBySideTable({
 }): preact.JSX.Element {
   return (
     <table class="diff-table two">
+      <Columns pairs={2} />
       <thead>
         <tr>
           <th scope="col" colSpan={2}>
@@ -348,9 +751,9 @@ function SideBySideTable({
 }
 
 /**
- * One column for narrow screens: a changed pair becomes a removed line and
- * an added line, the way `status --diff` prints them. One number column:
- * the new line number, or the old one for a removed line.
+ * One column: a changed pair becomes a removed line and an added line, the
+ * way `status --diff` prints them. One number column: the new line number,
+ * or the old one for a removed line.
  */
 function UnifiedTable({
   file,
@@ -363,6 +766,7 @@ function UnifiedTable({
 }): preact.JSX.Element {
   return (
     <table class="diff-table unified">
+      <Columns pairs={1} />
       <thead>
         <tr>
           <th scope="col" colSpan={2}>
@@ -571,6 +975,7 @@ function ThreeWayFile({
       </div>
       {rows.length > 0 ? (
         <table class="diff-table three">
+          <Columns pairs={3} />
           <thead>
             <tr>
               <th scope="col" colSpan={2}>
