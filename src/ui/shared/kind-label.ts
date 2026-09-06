@@ -16,7 +16,7 @@ export const KIND_ORDER: readonly ItemKind[] = [
 ];
 
 export function isKind(value: string): value is ItemKind {
-  return (KIND_ORDER as readonly string[]).includes(value);
+  return KIND_ORDER.some((kind) => kind === value);
 }
 
 export function kindLabel(kind: ItemKind): string {

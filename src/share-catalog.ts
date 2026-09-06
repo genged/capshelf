@@ -43,7 +43,7 @@ import type { Lock } from "./lock";
 import type { Manifest } from "./manifest";
 import { ITEM_KINDS } from "./master";
 import type { FragmentItemKind } from "./master";
-import { sanitizeDisplayText } from "./pick-core";
+import { pickRowId, sanitizeDisplayText } from "./pick-core";
 import type { PickKind, PickRow } from "./pick-core";
 import { scanUntrackedShareItems } from "./share-scan";
 import type { ItemSharePick, ShareScanLocation } from "./share-scan";
@@ -239,7 +239,7 @@ export function shareCatalogRows(
   const picks = new Map<string, SharePick>();
   const add = (row: PickRow, pick: SharePick): void => {
     rows.push(row);
-    picks.set(row.id as string, pick);
+    picks.set(pickRowId(row), pick);
   };
 
   for (const output of outputs) {

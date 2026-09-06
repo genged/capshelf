@@ -23,7 +23,6 @@ import {
   saveLock,
   dataKey,
 } from "../lock";
-import type { ItemKind } from "../master";
 import { CliError, NotFoundError, PreconditionError } from "../errors";
 import {
   isCopyDirectoryItemKind,
@@ -170,7 +169,7 @@ export function registerRm(program: Command): void {
       }
 
       const parsed = parseLockKey(dataKeys[0]!);
-      const kind = parsed.kind as ItemKind;
+      const kind = parsed.kind;
       const name = parsed.name;
       const entry = oldLock.items[dataKey(kind, name)];
       if (entry?.source !== "data") {

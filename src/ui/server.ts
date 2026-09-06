@@ -10,7 +10,7 @@ import { CliError, NotFoundError, PreconditionError } from "../errors";
 import { UI_APP_CSS, UI_APP_JS, UI_INDEX_HTML, UI_LOGO_PATH } from "./assets";
 import { createUiApi } from "./api";
 import type { UiContext } from "./api";
-import type { DiffViewName, UiError } from "./shared/api-types";
+import type { UiError } from "./shared/api-types";
 
 export interface UiServerOptions extends UiContext {
   /** 0 or undefined picks a free port. */
@@ -92,11 +92,7 @@ export function startUiServer(options: UiServerOptions): UiServer {
             `invalid view ${view}; expected installed or upstream`,
           );
         }
-        return await api.projectDiff(
-          param("project"),
-          param("item"),
-          view as DiffViewName,
-        );
+        return await api.projectDiff(param("project"), param("item"), view);
       }
       case "/api/shelf":
         return await gate.run(() => api.shelf(param("repo")));

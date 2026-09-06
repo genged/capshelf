@@ -41,7 +41,7 @@ export interface SubagentValidation {
 }
 
 export function isSubagentTarget(value: string): value is SubagentTarget {
-  return (SUBAGENT_TARGETS as readonly string[]).includes(value);
+  return SUBAGENT_TARGETS.some((target) => target === value);
 }
 
 /**

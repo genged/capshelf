@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { lstat, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { Command } from "commander";
+import { z } from "zod";
 import {
   assertDestructivePlanUnchanged,
   confirmDestructiveChanges,
@@ -66,6 +67,15 @@ import {
 } from "../plugin-package";
 
 type Target = "claude" | "codex";
+
+const ALL_TARGETS: readonly Target[] = ["claude", "codex"];
+
+const InstallationPolicy = z.enum([
+  "NOT_AVAILABLE",
+  "AVAILABLE",
+  "INSTALLED_BY_DEFAULT",
+]);
+const AuthenticationPolicy = z.enum(["ON_INSTALL", "ON_USE"]);
 
 interface CommonOptions {
   target?: string;
@@ -306,9 +316,7 @@ export function registerMarketplace(program: Command): void {
     .option("--json")
     .action(async (opts: CommonOptions, cmd: Command) => {
       const dataRepo = await marketplaceDataRepo(cmd);
-      const targets = opts.target
-        ? [requireTarget(opts.target)]
-        : (["claude", "codex"] as Target[]);
+      const targets = opts.target ? [requireTarget(opts.target)] : ALL_TARGETS;
       const rows = [];
       for (const target of targets) {
         const row = await listTarget(dataRepo, target);
@@ -336,9 +344,7 @@ export function registerMarketplace(program: Command): void {
     .option("--json")
     .action(async (plugin: string, opts: CommonOptions, cmd: Command) => {
       const dataRepo = await marketplaceDataRepo(cmd);
-      const targets = opts.target
-        ? [requireTarget(opts.target)]
-        : (["claude", "codex"] as Target[]);
+      const targets = opts.target ? [requireTarget(opts.target)] : ALL_TARGETS;
       const matches = [];
       for (const target of targets) {
         const row = await showTarget(dataRepo, target, plugin);
@@ -1284,7 +1290,7 @@ async function validateAll(
       message: "data repo has uncommitted marketplace inputs",
     });
   }
-  const targets = target ? [target] : (["claude", "codex"] as Target[]);
+  const targets = target ? [target] : ALL_TARGETS;
   for (const current of targets) {
     try {
       if (current === "claude") {
@@ -1627,25 +1633,18 @@ function applyCodexPolicy(
   opts: PluginOptions,
 ): void {
   if (opts.installation) {
-    if (
-      !["NOT_AVAILABLE", "AVAILABLE", "INSTALLED_BY_DEFAULT"].includes(
-        opts.installation,
-      )
-    ) {
+    const installation = InstallationPolicy.safeParse(opts.installation);
+    if (!installation.success) {
       throw new PreconditionError("invalid Codex installation policy");
     }
-    definition.policy.installation = opts.installation as
-      | "NOT_AVAILABLE"
-      | "AVAILABLE"
-      | "INSTALLED_BY_DEFAULT";
+    definition.policy.installation = installation.data;
   }
   if (opts.authentication) {
-    if (!["ON_INSTALL", "ON_USE"].includes(opts.authentication)) {
+    const authentication = AuthenticationPolicy.safeParse(opts.authentication);
+    if (!authentication.success) {
       throw new PreconditionError("invalid Codex authentication policy");
     }
-    definition.policy.authentication = opts.authentication as
-      | "ON_INSTALL"
-      | "ON_USE";
+    definition.policy.authentication = authentication.data;
   }
 }
 

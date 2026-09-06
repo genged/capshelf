@@ -12,6 +12,7 @@ import {
   itemRepoRelPath,
   listMasterItems,
   ITEM_KINDS,
+  parseItemKind,
   shaOfGitVisibleItem,
 } from "../master";
 import { shaOfCurrentSubagent } from "../subagents";
@@ -72,12 +73,7 @@ export function registerLs(program: Command): void {
       [] as string[],
     )
     .action(async (opts: LsOptions, cmd: Command) => {
-      if (opts.kind && !ITEM_KINDS.includes(opts.kind as ItemKind)) {
-        throw new PreconditionError(
-          `invalid kind "${opts.kind}"; must be one of ${ITEM_KINDS.join(", ")}`,
-        );
-      }
-      const kindFilter = opts.kind as ItemKind | undefined;
+      const kindFilter = opts.kind ? parseItemKind(opts.kind) : undefined;
 
       if (opts.here && opts.user) {
         throw new PreconditionError(

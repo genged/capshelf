@@ -144,15 +144,14 @@ export function untrackedItemRows(
       kind: candidate.kind,
       name: candidate.name,
       target: candidate.target,
-      presentTargets: candidates
-        .filter(
-          (sibling) =>
-            sibling.kind === candidate.kind &&
-            sibling.name === candidate.name &&
-            sibling.refusal === null &&
-            sibling.target !== null,
-        )
-        .map((sibling) => sibling.target as SubagentTarget),
+      presentTargets: candidates.flatMap((sibling) =>
+        sibling.kind === candidate.kind &&
+        sibling.name === candidate.name &&
+        sibling.refusal === null &&
+        sibling.target !== null
+          ? [sibling.target]
+          : [],
+      ),
       digest: candidate.digest,
     });
   }

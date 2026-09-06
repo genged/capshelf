@@ -14,5 +14,5 @@ export function globalOpts(cmd: Command): GlobalOptions {
   // Global options live on the root command; walk up to it from any subcommand.
   let root: Command = cmd;
   while (root.parent) root = root.parent;
-  return root.opts() as GlobalOptions;
+  return root.opts<GlobalOptions>();
 }
