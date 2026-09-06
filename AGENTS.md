@@ -45,6 +45,9 @@ More info: `docs/architecture.md`, `docs/cli.md`, `docs/testing.md`
 - Always ask before removing functionality or code that appears intentional.
 - Do not turn this file into a formatter or style-guide replacement. Let tests, TypeScript, and the existing code shape enforce routine style.
 - Prefer zod schemas and existing helpers over ad hoc parsing or string manipulation for manifests, locks, item refs, paths, and settings JSON.
+- Parse external documents into `ConfigValue` at the read site and narrow
+  with the predicates in `src/config-values.ts`. A type assertion needs a
+  `SAFETY:` comment that names the invariant and the code enforcing it.
 
 ## Development Commands
 
@@ -61,8 +64,8 @@ More info: `docs/architecture.md`, `docs/cli.md`, `docs/testing.md`
   `tools/oxlint/anti-slop/`. The config is `.oxlintrc.json`. It also enables
   the native correctness category and a few import, equality, and assertion
   rules. The script runs Oxlint under Bun because the plugin is TypeScript.
-  This check is not part of `bun run lint` or CI until the existing findings
-  are fixed.
+  The plugin rules report zero findings. The check is not part of
+  `bun run lint` or CI until the native rule errors are fixed.
 - `bun run test` runs the unit test suite with four worker processes.
 - `make smoke` runs all smoke tests with four worker processes.
 - `make smoke-modes`, `make smoke-skills`, `make smoke-settings`, and
