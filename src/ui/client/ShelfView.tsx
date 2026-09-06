@@ -103,7 +103,7 @@ export function ShelfView({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      const target = event.target as HTMLElement | null;
+      const target = event.target instanceof HTMLElement ? event.target : null;
       if (
         target &&
         (target.tagName === "INPUT" || target.tagName === "TEXTAREA")

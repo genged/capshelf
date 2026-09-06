@@ -9,8 +9,11 @@
 import { CliError, NotFoundError, PreconditionError } from "../errors";
 import { UI_APP_CSS, UI_APP_JS, UI_INDEX_HTML, UI_LOGO_PATH } from "./assets";
 import { createUiApi } from "./api";
-import type { UiContext } from "./api";
+import type { UiApi, UiContext } from "./api";
 import type { UiError } from "./shared/api-types";
+
+/** Whatever one API route resolves to. */
+type UiPayload = Awaited<ReturnType<UiApi[keyof UiApi]>>;
 
 export interface UiServerOptions extends UiContext {
   /** 0 or undefined picks a free port. */
@@ -72,7 +75,7 @@ export function startUiServer(options: UiServerOptions): UiServer {
     },
   });
 
-  async function route(url: URL): Promise<unknown> {
+  async function route(url: URL): Promise<UiPayload> {
     const param = (name: string): string => {
       const value = url.searchParams.get(name);
       if (value === null || value.length === 0) {
@@ -185,7 +188,7 @@ function timingSafeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
-function json(value: unknown, status = 200): Response {
+function json(value: UiPayload | UiError, status = 200): Response {
   return new Response(JSON.stringify(value), {
     status,
     headers: {
