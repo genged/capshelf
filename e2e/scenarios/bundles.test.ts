@@ -28,7 +28,7 @@ includes:
   mcp:      [github]
 `;
 
-const SHELF_FILES: Record<string, string> = {
+const SHELF_FILES = {
   "skills/security-review/SKILL.md": "security review\n",
   "skills/go-test-writer/SKILL.md": "go test writer\n",
   "skills/incident-response/SKILL.md": "incident response\n",

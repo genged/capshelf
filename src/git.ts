@@ -148,7 +148,7 @@ export interface GitRunOptions {
    * `isolated-merge` use it — a transaction supplies its own `GIT_INDEX_FILE`,
    * and the merge sandbox supplies a whole neutral environment.
    */
-  env?: Record<string, string | undefined>;
+  env?: NodeJS.ProcessEnv;
   stdin?: string | Uint8Array;
 }
 
@@ -182,10 +182,10 @@ const DIFF_HELPER_ENV = [
 ] as const;
 
 function withoutVariables(
-  env: Record<string, string | undefined>,
+  env: NodeJS.ProcessEnv,
   names: readonly string[],
-): Record<string, string | undefined> {
-  const out: Record<string, string | undefined> = { ...env };
+): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env };
   for (const name of names) delete out[name];
   return out;
 }
@@ -193,7 +193,7 @@ function withoutVariables(
 function environmentFor(
   binding: GitBinding,
   options: GitRunOptions,
-): Record<string, string | undefined> {
+): NodeJS.ProcessEnv {
   if (options.env) return options.env;
   switch (binding.profile) {
     case "source-read":

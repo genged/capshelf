@@ -28,13 +28,13 @@ export interface UiServer {
 
 const HOSTNAME = "127.0.0.1";
 
-const BASE_HEADERS: Record<string, string> = {
+const BASE_HEADERS = {
   "Cache-Control": "no-store",
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "no-referrer",
   "Content-Security-Policy":
     "default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
-};
+} as const satisfies Record<string, string>;
 
 export function startUiServer(options: UiServerOptions): UiServer {
   const api = createUiApi(options);

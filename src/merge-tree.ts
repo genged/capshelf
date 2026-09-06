@@ -18,10 +18,15 @@ import { isolatedMerge, isolatedMergeText } from "./git";
  * it is bound instead to a disposable working directory and a neutral
  * environment (`isolatedGitEnv`).
  */
+/** The complete, fully defined environment the merge sandbox runs git in. */
+interface SpawnEnvironment {
+  [name: string]: string;
+}
+
 async function isolatedMergeStep(
   repo: string | null,
   args: string[],
-  env: Record<string, string>,
+  env: SpawnEnvironment,
 ): Promise<void> {
   const result = await isolatedMerge(
     repo === null ? { cwd: tmpdir() } : { repo },
@@ -222,7 +227,7 @@ async function writeNamedTree(repo: string, files: NamedFile[]): Promise<void> {
 
 async function readNamedTree(
   repo: string,
-  env: Record<string, string>,
+  env: SpawnEnvironment,
 ): Promise<NamedFile[]> {
   const output = await isolatedMergeText(
     { repo },
@@ -268,8 +273,8 @@ function validateNamedFiles(files: NamedFile[]): void {
 function isolatedGitEnv(
   globalConfig: string,
   xdgConfigHome: string,
-): Record<string, string> {
-  const env: Record<string, string> = {
+): SpawnEnvironment {
+  const env: SpawnEnvironment = {
     PATH: process.env.PATH ?? "",
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_GLOBAL: globalConfig,
