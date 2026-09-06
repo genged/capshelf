@@ -19,7 +19,7 @@ import { relative } from "node:path";
 import { isSystemItemName } from "./bundled";
 import { isAddressableItemName } from "./item-ref";
 import {
-  configShapeLabel,
+  configDetailLabel,
   dedupeAncestorPaths,
   isPickableKey,
   walkConfigPaths,
@@ -286,7 +286,7 @@ export function shareCatalogRows(outputs: ShareOutputRemainder[]): {
             name: node.path,
             tags: [],
             installed: false,
-            detail: node.shape,
+            detail: node.detail,
           },
           {
             id,
@@ -374,10 +374,10 @@ export function shareCatalogRows(outputs: ShareOutputRemainder[]): {
             installed: false,
             ...(unshareable && { disabled: true }),
             detail: malformed
-              ? `${output.label} · not a server definition (${configShapeLabel(server)})`
+              ? `${output.label} · not a server definition (${configDetailLabel(server)})`
               : unshareable
                 ? `${output.label} · name cannot become an item name`
-                : `${output.label} · ${configShapeLabel(server)}`,
+                : `${output.label} · ${configDetailLabel(server)}`,
           },
           {
             id,
