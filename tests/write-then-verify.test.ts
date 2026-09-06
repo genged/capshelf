@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { dataKey, loadLock, parseLock, serializeLock } from "../src/lock";
-import type { LockV4 } from "../src/lock";
+import type { LockEntryV4, LockV4 } from "../src/lock";
 import { materializeLockEntry } from "../src/materialize";
 import { materializeSubagent } from "../src/subagents";
 import { pinItemAtCommit } from "../src/pin";
@@ -155,13 +155,15 @@ describe("write-then-verify", () => {
     const entry = candidate.items[dataKey("skills", "hello")];
     if (entry?.source !== "data") throw new Error("expected a data entry");
     const { sourcePinDigest: _dropped, ...withoutDigest } = entry;
-    // SAFETY: the object omits sourcePinDigest on purpose. The test proves the
-    // writer refuses it. LockV4 is comparable to this literal, so one
-    // assertion states the intent.
-    const broken = {
+    const broken: LockV4 = {
       version: 4,
-      items: { [dataKey("skills", "hello")]: withoutDigest },
-    } as LockV4;
+      items: {
+        // SAFETY: the entry omits sourcePinDigest on purpose. The test proves
+        // the writer refuses it. LockEntryV4 is comparable to the narrowed
+        // entry, so one assertion states the intent.
+        [dataKey("skills", "hello")]: withoutDigest as LockEntryV4,
+      },
+    };
     expect(() => serializeLock(broken)).toThrow();
   });
 

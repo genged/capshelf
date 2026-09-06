@@ -22,7 +22,7 @@ export function parseJsonText(text: string, label: string): JsonValue {
     return JSON.parse(text);
   } catch (cause) {
     const detail = cause instanceof Error ? cause.message : String(cause);
-    throw new Error(`${label} is not JSON: ${detail}\n${text}`);
+    throw new Error(`${label} is not JSON: ${detail}\n${text}`, { cause });
   }
 }
 
