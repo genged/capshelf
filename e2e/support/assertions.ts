@@ -6,6 +6,7 @@ import {
   describeCommand,
   describeOutcome,
 } from "./command";
+import type { JsonValue } from "./json";
 import type { World } from "./world";
 
 function fail(message: string, result?: CommandResult): never {
@@ -55,12 +56,13 @@ export function expectRecovery(result: CommandResult, command: string): void {
   expectOutputContains(result, command);
 }
 
-export function parseJson(result: CommandResult): unknown {
+/** `JSON.parse` without a reviver yields exactly the members of `JsonValue`. */
+export function parseJson(result: CommandResult): JsonValue {
   try {
     return JSON.parse(result.stdout);
-  } catch (err) {
+  } catch (cause) {
     return fail(
-      `expected JSON on stdout: ${err instanceof Error ? err.message : String(err)}`,
+      `expected JSON on stdout: ${cause instanceof Error ? cause.message : String(cause)}`,
       result,
     );
   }
