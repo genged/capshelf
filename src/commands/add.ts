@@ -1567,10 +1567,18 @@ function itemRefLabel(item: MasterItem): string {
   return `${item.kind}/${item.name}`;
 }
 
+/** One row of `add --json`'s `sources` for a fragment item. */
+interface FragmentSourceJson {
+  target: string;
+  sourcePath: string;
+  outputPath: string;
+  outputAction: string;
+}
+
 function fragmentSourcesJson(
   project: string,
   result: InstallDataItemResult,
-): Array<Record<string, unknown>> {
+): FragmentSourceJson[] {
   return result.sources.map((source) => ({
     target: source.sourceTarget ?? source.target,
     sourcePath: source.relPath,

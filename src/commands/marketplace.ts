@@ -16,6 +16,7 @@ import {
   loadClaudeMarketplaceAtHead,
   serializeClaudeMarketplace,
   type ClaudeMarketplace,
+  type ClaudeOwner,
   type ClaudePlugin,
   validateClaudeMarketplace,
   validateClaudeMarketplaceDocument,
@@ -26,11 +27,15 @@ import {
   findCodexDefinition,
   loadCodexState,
   loadCodexStateAtHead,
+  type CodexMarketplaceSource,
   type CodexPluginDefinition,
   type CodexState,
   validateCodexStateDocument,
 } from "../codex-marketplace";
+import { isConfigString } from "../config-values";
+import type { ConfigObject } from "../config-values";
 import { resolveDataRepo } from "../data-repo";
+import type { DestructiveChange } from "../destructive-change";
 import { NotFoundError, PreconditionError, ResultExitError } from "../errors";
 import {
   assertIsGitRepo,
@@ -42,6 +47,7 @@ import {
 } from "../git";
 import { globalOpts } from "../global-options";
 import { PRODUCT_NAME } from "../identity";
+import { parseJsonConfigObject } from "../json-fragments";
 import { loadManifest } from "../manifest";
 import {
   CODEX_PROJECTION_ROOTS,
@@ -50,6 +56,7 @@ import {
   readFilesBelow,
   replaceOwnedFiles,
 } from "../marketplace-files";
+import type { FileSetDiff } from "../marketplace-files";
 import { findProjectRoot } from "../paths";
 import { assertNoSymlinkAncestors } from "../path-safety";
 import {
@@ -65,6 +72,7 @@ import {
   publishClaudePackage,
   publishCodexPackage,
 } from "../plugin-package";
+import type { PackageStats } from "../plugin-package";
 
 type Target = "claude" | "codex";
 
@@ -129,15 +137,106 @@ interface ValidateOptions extends CommonOptions {
 interface MutationContext {
   verb: string;
   plugin?: string;
-  fields?: Record<string, unknown>;
+  /** Extra `--json` fields the mutation reports, such as the skills it changed. */
+  fields?: ConfigObject;
 }
 
 interface MarketplaceIssue {
   code: string;
   message: string;
   target?: Target;
-  [key: string]: unknown;
+  skill?: string;
+  plugins?: string[];
+  plugin?: string;
+  url?: string;
 }
+
+/**
+ * The `--json` payload of one marketplace command. The human summary reads
+ * the same object, so the two cannot drift.
+ */
+interface MarketplaceResult
+  extends Partial<PackageStats>,
+    Partial<FileSetDiff> {
+  verb: string;
+  action: string;
+  target?: Target;
+  marketplace?: string;
+  plugin?: string;
+  dataRepo?: string;
+  dataRepoHasOrigin?: boolean;
+  committed?: boolean;
+  sourceCommit?: string;
+  dryRun?: boolean;
+  dirty?: boolean;
+  projection?: string;
+  changedPaths?: string[];
+  dirtyProjectionPaths?: string[];
+  destructiveChanges?: DestructiveChange[];
+  warnings?: string[];
+  artifactType?: string;
+  version?: string;
+  output?: string;
+  dirtyInputs?: string[];
+  fromHead?: boolean;
+}
+
+interface ClaudePluginStats {
+  name: string;
+  files: number;
+  bytes: number;
+}
+
+interface ClaudeTargetReport {
+  configured: boolean;
+  valid: boolean;
+  sourcePath: string;
+  limits: { maxFiles: number; maxUncompressedBytes: number };
+  repositoryFiles?: number;
+  repositoryBytes?: number;
+  plugins?: ClaudePluginStats[];
+}
+
+interface CodexTargetReport {
+  configured: boolean;
+  valid: boolean;
+  projection: string;
+  sourcePath: string;
+  nativeMarketplacePath: string;
+  canonicalFiles?: number;
+  canonicalBytes?: number;
+  generatedFiles?: number;
+  generatedBytes?: number;
+  projectionDuplicateBytes?: number;
+}
+
+interface TargetReports {
+  claude: ClaudeTargetReport;
+  codex: CodexTargetReport;
+}
+
+/** The `marketplace validate` report, printed as-is under `--json`. */
+interface MarketplaceValidationReport {
+  valid: boolean;
+  strict: boolean;
+  target: Target | null;
+  dataRepo: string;
+  targets: TargetReports;
+  coworkMarketplaceUrl: string | null;
+  distributionReady: boolean;
+  distributionSupport: "documented" | "user_asserted" | null;
+  errors: MarketplaceIssue[];
+  warnings: MarketplaceIssue[];
+}
+
+/** The documents `marketplace edit` and `plugin edit` write optional text into. */
+type EditableDocument =
+  | ClaudeMarketplace
+  | ClaudePlugin
+  | ClaudeOwner
+  | CodexMarketplaceSource
+  | CodexMarketplaceSource["owner"]
+  | CodexPluginDefinition;
 
 export function registerMarketplace(program: Command): void {
   const marketplace = program
@@ -836,17 +935,15 @@ export function registerMarketplace(program: Command): void {
           only: name,
           fromHead: opts.fromHead,
         });
-        const manifest = JSON.parse(
-          files
-            .find((file) => file.path.endsWith("/.codex-plugin/plugin.json"))!
-            .bytes.toString(),
-        ) as { version: string };
-        const manifestWithoutVersion = structuredClone(manifest) as Record<
-          string,
-          unknown
-        >;
-        delete manifestWithoutVersion.version;
         const pluginPrefix = `codex/generated/plugins/${name}/`;
+        const manifestPath = `${pluginPrefix}.codex-plugin/plugin.json`;
+        const { version, ...manifestWithoutVersion } = parseJsonConfigObject(
+          files.find((file) => file.path === manifestPath)!.bytes.toString(),
+          manifestPath,
+        );
+        if (!isConfigString(version)) {
+          throw new Error(`${manifestPath} has no version`);
+        }
         const pluginContentHash = logicalContentHash(
           manifestWithoutVersion,
           files
@@ -869,7 +966,7 @@ export function registerMarketplace(program: Command): void {
           plugin: name,
           target,
           artifactType: "directory",
-          version: manifest.version,
+          version,
           output,
           ...result.stats,
           contentSha256: pluginContentHash,
@@ -1055,7 +1152,7 @@ async function finishMutation(
 
 function printResult(
   opts: { json?: boolean },
-  result: Record<string, unknown>,
+  result: MarketplaceResult,
 ): void {
   if (opts.json) {
     console.log(JSON.stringify(result, null, 2));
@@ -1123,7 +1220,7 @@ async function listTarget(
         marketplace: { name: state.name },
         plugins: state.plugins.map((plugin) => ({
           name: plugin.name,
-          ...(typeof plugin.displayName === "string" && {
+          ...(isConfigString(plugin.displayName) && {
             displayName: plugin.displayName,
           }),
           managed: isManagedClaudePlugin(plugin),
@@ -1192,10 +1289,10 @@ async function showTarget(
         target,
         marketplace: state.name,
         name,
-        ...(typeof plugin.displayName === "string" && {
+        ...(isConfigString(plugin.displayName) && {
           displayName: plugin.displayName,
         }),
-        ...(typeof plugin.description === "string" && {
+        ...(isConfigString(plugin.description) && {
           description: plugin.description,
         }),
         managed: isManagedClaudePlugin(plugin),
@@ -1245,22 +1342,11 @@ async function codexProjectionState(
 async function validateAll(
   dataRepo: string,
   opts: ValidateOptions,
-): Promise<{
-  valid: boolean;
-  strict: boolean;
-  target: Target | null;
-  dataRepo: string;
-  targets: Record<Target, Record<string, unknown>>;
-  coworkMarketplaceUrl: string | null;
-  distributionReady: boolean;
-  distributionSupport: "documented" | "user_asserted" | null;
-  errors: MarketplaceIssue[];
-  warnings: MarketplaceIssue[];
-}> {
+): Promise<MarketplaceValidationReport> {
   const target = opts.target ? requireTarget(opts.target) : null;
   const errors: MarketplaceIssue[] = [];
   const warnings: MarketplaceIssue[] = [];
-  const targetReports: Record<Target, Record<string, unknown>> = {
+  const targetReports: TargetReports = {
     claude: {
       configured: false,
       valid: true,
@@ -1309,7 +1395,7 @@ async function validateAll(
           });
         }
         const repository = await gitVisibleStats(dataRepo, ".");
-        const plugins = [];
+        const plugins: ClaudePluginStats[] = [];
         for (const plugin of state.plugins.filter(isManagedClaudePlugin)) {
           const selected = await Promise.all(
             claudePluginSkills(plugin).map((skill) =>
@@ -1333,11 +1419,9 @@ async function validateAll(
             ),
           });
         }
-        Object.assign(targetReports.claude, {
-          repositoryFiles: repository.files,
-          repositoryBytes: repository.bytes,
-          plugins,
-        });
+        targetReports.claude.repositoryFiles = repository.files;
+        targetReports.claude.repositoryBytes = repository.bytes;
+        targetReports.claude.plugins = plugins;
       } else {
         const state = await loadCodexState(dataRepo);
         targetReports.codex.configured = true;
@@ -1370,33 +1454,31 @@ async function validateAll(
             ),
           ].map((skill) => collectSelectedSkill(dataRepo, skill)),
         );
-        Object.assign(targetReports.codex, {
-          canonicalFiles: selected.reduce(
-            (count, skill) => count + skill.files.length,
-            0,
-          ),
-          canonicalBytes: selected.reduce(
-            (bytes, skill) =>
-              bytes +
-              skill.files.reduce(
-                (skillBytes, file) => skillBytes + file.bytes.length,
-                0,
-              ),
-            0,
-          ),
-          generatedFiles: generated.length,
-          generatedBytes: generated.reduce(
-            (bytes, file) => bytes + file.bytes.length,
-            0,
-          ),
-          projectionDuplicateBytes: expected
-            .filter(
-              (file) =>
-                file.path.includes("/skills/") &&
-                file.path.startsWith("codex/generated/plugins/"),
-            )
-            .reduce((bytes, file) => bytes + file.bytes.length, 0),
-        });
+        targetReports.codex.canonicalFiles = selected.reduce(
+          (count, skill) => count + skill.files.length,
+          0,
+        );
+        targetReports.codex.canonicalBytes = selected.reduce(
+          (bytes, skill) =>
+            bytes +
+            skill.files.reduce(
+              (skillBytes, file) => skillBytes + file.bytes.length,
+              0,
+            ),
+          0,
+        );
+        targetReports.codex.generatedFiles = generated.length;
+        targetReports.codex.generatedBytes = generated.reduce(
+          (bytes, file) => bytes + file.bytes.length,
+          0,
+        );
+        targetReports.codex.projectionDuplicateBytes = expected
+          .filter(
+            (file) =>
+              file.path.includes("/skills/") &&
+              file.path.startsWith("codex/generated/plugins/"),
+          )
+          .reduce((bytes, file) => bytes + file.bytes.length, 0);
         if (projection !== "current") {
           errors.push({
             code: "projection_drift",
@@ -1675,7 +1757,7 @@ function changeMembership(
 }
 
 function applyPluginEdits(
-  entry: Record<string, unknown>,
+  entry: ClaudePlugin | CodexPluginDefinition,
   opts: PluginOptions,
 ): void {
   applyOptional(entry, "displayName", opts.displayName, opts.clearDisplayName);
@@ -1684,7 +1766,7 @@ function applyPluginEdits(
 }
 
 function applyOwnerEdits(
-  owner: Record<string, unknown>,
+  owner: ClaudeOwner | CodexMarketplaceSource["owner"],
   opts: EditOptions,
 ): void {
   if (opts.owner !== undefined) {
@@ -1696,8 +1778,8 @@ function applyOwnerEdits(
 }
 
 function applyOptional(
-  target: Record<string, unknown>,
-  key: string,
+  target: EditableDocument,
+  key: "displayName" | "description" | "category" | "email",
   value: string | undefined,
   clear: boolean | undefined,
 ): void {

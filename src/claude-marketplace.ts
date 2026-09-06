@@ -20,6 +20,8 @@ const ownerSchema = z
 const pluginSchema = z
   .object({
     name: z.string().min(1),
+    displayName: ConfigValueSchema.optional(),
+    description: ConfigValueSchema.optional(),
     source: ConfigValueSchema.optional(),
     strict: ConfigValueSchema.optional(),
     skills: ConfigValueSchema.optional(),
@@ -35,6 +37,7 @@ const marketplaceSchema = z
   })
   .passthrough();
 
+export type ClaudeOwner = z.infer<typeof ownerSchema>;
 export type ClaudePlugin = z.infer<typeof pluginSchema>;
 export type ClaudeMarketplace = z.infer<typeof marketplaceSchema>;
 
