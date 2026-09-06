@@ -318,10 +318,12 @@ function bundleMeta(bundle: Bundle): ItemMetadata {
   };
 }
 
-function metadataJsonFields(meta: ItemMetadata): {
+interface MetadataJsonFields {
   description?: string;
   tags?: string[];
-} {
+}
+
+function metadataJsonFields(meta: ItemMetadata): MetadataJsonFields {
   return {
     ...(meta.description !== undefined && { description: meta.description }),
     ...(meta.tags.length > 0 && { tags: meta.tags }),

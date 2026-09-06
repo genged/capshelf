@@ -328,11 +328,31 @@ export async function buildCodexProjection(
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
 
+interface CodexPluginInterface {
+  displayName: string;
+  shortDescription: string;
+  longDescription: string;
+  developerName: string;
+  category: string;
+  capabilities: string[];
+  defaultPrompt: string[];
+}
+
+/** The generated `.codex-plugin/plugin.json` document. */
+export interface CodexPluginManifest {
+  name: string;
+  version: string;
+  description: string;
+  author: CodexMarketplaceSource["owner"];
+  skills: string;
+  interface: CodexPluginInterface;
+}
+
 function codexPluginManifest(
   marketplace: CodexMarketplaceSource,
   definition: CodexPluginDefinition,
   version: string,
-): Record<string, unknown> {
+): CodexPluginManifest {
   const description =
     definition.description ?? definition.displayName ?? definition.name;
   return {

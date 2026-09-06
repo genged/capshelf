@@ -21,11 +21,13 @@ const first: DestructiveChange = {
   reviewCommand: "capshelf status skills/first --diff",
 };
 
-function confirmationContext(answer: string): {
+interface ConfirmationHarness {
   context: DestructiveConfirmationContext;
   prompts: string[];
   stderr: string[];
-} {
+}
+
+function confirmationContext(answer: string): ConfirmationHarness {
   const prompts: string[] = [];
   const stderr: string[] = [];
   return {

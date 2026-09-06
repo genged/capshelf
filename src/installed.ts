@@ -251,11 +251,13 @@ export async function shaOfInstalled(
 
 export type ItemSource = "data" | "system";
 
-export function parseLockKey(key: string): {
+export interface LockKeyParts {
   source: ItemSource;
   kind: ItemKind;
   name: string;
-} {
+}
+
+export function parseLockKey(key: string): LockKeyParts {
   const parts = key.split("/");
   if (parts.length < 3) {
     throw new Error(`invalid lock key: ${key} (expected source/kind/name)`);

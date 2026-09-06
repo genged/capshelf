@@ -32,8 +32,12 @@ function installPick(context: PickContext): void {
   installedPick = true;
 }
 
+interface PromptLog {
+  asked: string[];
+}
+
 /** A terminal-backed context that answers the name prompt from a queue. */
-function installNamePrompt(answers: string[]): { asked: string[] } {
+function installNamePrompt(answers: string[]): PromptLog {
   const asked: string[] = [];
   previousConfirmation = setDestructiveConfirmationContext({
     stdinIsTTY: true,
@@ -63,10 +67,12 @@ afterEach(() => {
   }
 });
 
-/** Install a picker that records the request and answers with row ids chosen by `select`. */
-function answerWith(select: (request: PickRequest) => string[]): {
+interface PickLog {
   seen: PickRequest[];
-} {
+}
+
+/** Install a picker that records the request and answers with row ids chosen by `select`. */
+function answerWith(select: (request: PickRequest) => string[]): PickLog {
   const seen: PickRequest[] = [];
   installPick({
     stdinIsTTY: true,

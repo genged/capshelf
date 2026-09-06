@@ -226,10 +226,15 @@ function sourceTargetOf(target: FragmentTarget): FragmentSourceTarget {
  * from files the user's tools wrote, and the frame is live. The row id keeps
  * the unsanitized path, so the mark still names the real value.
  */
-export function shareCatalogRows(outputs: ShareOutputRemainder[]): {
+/** The fragment rows of the share catalog and what each mark means. */
+export interface FragmentShareCatalog {
   rows: PickRow[];
   picks: Map<string, SharePick>;
-} {
+}
+
+export function shareCatalogRows(
+  outputs: ShareOutputRemainder[],
+): FragmentShareCatalog {
   const rows: PickRow[] = [];
   const picks = new Map<string, SharePick>();
   const add = (row: PickRow, pick: SharePick): void => {

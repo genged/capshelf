@@ -284,7 +284,12 @@ function defaultUserSkillRoots(): UserSkillRoot[] {
   ];
 }
 
-function splitPluginId(id: string): { name: string; marketplace?: string } {
+interface PluginIdParts {
+  name: string;
+  marketplace?: string;
+}
+
+function splitPluginId(id: string): PluginIdParts {
   const at = id.lastIndexOf("@");
   if (at <= 0 || at === id.length - 1) return { name: id };
   return {

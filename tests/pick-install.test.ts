@@ -50,8 +50,12 @@ function restorePick(): void {
 
 afterEach(restorePick);
 
+interface PickLog {
+  seen: PickRequest[];
+}
+
 /** Install a picker that records the rows it was offered and answers `refs`. */
-function answerWith(refs: string[]): { seen: PickRequest[] } {
+function answerWith(refs: string[]): PickLog {
   const seen: PickRequest[] = [];
   installPick({
     stdinIsTTY: true,

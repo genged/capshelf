@@ -87,7 +87,13 @@ async function run(
   };
 }
 
-function platform(name: string): Record<string, string> {
+interface PlatformRow {
+  platform: string;
+  bunTarget: string;
+  runner: string;
+}
+
+function platform(name: string): PlatformRow {
   return { platform: name, bunTarget: `bun-${name}`, runner: `runner-${name}` };
 }
 

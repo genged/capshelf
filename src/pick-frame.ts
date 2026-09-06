@@ -304,11 +304,17 @@ function truncateStart(text: string, limit: number): string {
  * counts one line where two were drawn, so the frame walks up the screen on
  * every keystroke. Losing the tail of a rare long name is the smaller cost.
  */
+interface ClampedRef {
+  text: string;
+  cells: number;
+  positions: number[];
+}
+
 function clampRef(
   ref: string,
   positions: readonly number[],
   limit: number,
-): { text: string; cells: number; positions: number[] } {
+): ClampedRef {
   const text = truncateEnd(ref, limit);
   return {
     text,
@@ -343,11 +349,16 @@ function hintTail(
  * Scrolls by whole steps at the edges rather than re-centring on every move,
  * so a list that fits does not shift under the cursor.
  */
+export interface VisibleWindow {
+  start: number;
+  end: number;
+}
+
 export function visibleWindow(
   total: number,
   cursor: number,
   height: number,
-): { start: number; end: number } {
+): VisibleWindow {
   if (height <= 0 || total <= 0) return { start: 0, end: 0 };
   if (total <= height) return { start: 0, end: total };
   const half = Math.floor(height / 2);

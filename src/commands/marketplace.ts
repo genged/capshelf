@@ -1649,11 +1649,16 @@ function applyCodexPolicy(
   }
 }
 
+interface MembershipChange {
+  next: string[];
+  changed: string[];
+}
+
 function changeMembership(
   current: string[],
   refs: string[],
   verb: "add-skill" | "remove-skill",
-): { next: string[]; changed: string[] } {
+): MembershipChange {
   const changed =
     verb === "add-skill"
       ? refs.filter((skill) => !current.includes(skill))

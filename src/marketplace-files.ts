@@ -83,10 +83,16 @@ async function walk(
   }
 }
 
+export interface FileSetDiff {
+  created: string[];
+  updated: string[];
+  deleted: string[];
+}
+
 export function diffFileSets(
   current: ProjectionFile[],
   expected: ProjectionFile[],
-): { created: string[]; updated: string[]; deleted: string[] } {
+): FileSetDiff {
   const currentMap = new Map(current.map((file) => [file.path, file]));
   const expectedMap = new Map(expected.map((file) => [file.path, file]));
   const created: string[] = [];

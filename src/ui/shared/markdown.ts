@@ -31,10 +31,12 @@ export interface MarkdownDocument {
  * `extractFrontmatter` in `src/metadata.ts`: a byte-order mark and CRLF line
  * endings do not hide it. An unclosed block is body text.
  */
-export function splitFrontmatter(text: string): {
+export interface FrontmatterSplit {
   frontmatter: string | null;
   body: string;
-} {
+}
+
+export function splitFrontmatter(text: string): FrontmatterSplit {
   const source = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
   const lines = source
     .split("\n")
