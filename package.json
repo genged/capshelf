@@ -18,6 +18,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p src/ui/client/tsconfig.json",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
+    "lint:anti-slop": "bun --bun oxlint",
     "format": "biome format --write .",
     "build": "bun run build:ui && mkdir -p dist && bun build --compile --minify --target=bun ./src/cli.ts --outfile=./dist/capshelf",
     "smoke": "make smoke",
@@ -36,7 +37,9 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
+    "@oxlint/plugins": "1.81.0",
     "@types/bun": "latest",
+    "oxlint": "1.81.0",
     "typescript": "^5.6.0"
   }
 }

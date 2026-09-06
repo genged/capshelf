@@ -57,6 +57,12 @@ More info: `docs/architecture.md`, `docs/cli.md`, `docs/testing.md`
   safe fixes and `bun run format` reformats only. Biome is provided in CI by the
   `biomejs/setup-biome` action; locally install it (`bunx @biomejs/biome`,
   Homebrew, or as a devDependency once the lockfile is regenerated).
+- `bun run lint:anti-slop` runs Oxlint with the anti-slop plugin in
+  `tools/oxlint/anti-slop/`. The config is `.oxlintrc.json`. It also enables
+  the native correctness category and a few import, equality, and assertion
+  rules. The script runs Oxlint under Bun because the plugin is TypeScript.
+  This check is not part of `bun run lint` or CI until the existing findings
+  are fixed.
 - `bun run test` runs the unit test suite with four worker processes.
 - `make smoke` runs all smoke tests with four worker processes.
 - `make smoke-modes`, `make smoke-skills`, `make smoke-settings`, and
