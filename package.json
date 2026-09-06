@@ -15,7 +15,7 @@
     "e2e": "./scripts/e2e.sh",
     "e2e:run": "./scripts/e2e.sh --no-build",
     "coverage": "bun test --coverage",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p src/ui/client/tsconfig.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p src/ui/client/tsconfig.json && tsc --noEmit -p tools/loc-dashboard/tsconfig.json",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "lint:anti-slop": "bun --bun oxlint",
@@ -23,6 +23,7 @@
     "build": "bun run build:ui && mkdir -p dist && bun build --compile --minify --target=bun ./src/cli.ts --outfile=./dist/capshelf",
     "smoke": "make smoke",
     "build:ui": "bun run scripts/build-ui.ts",
+    "loc-dashboard": "bun run tools/loc-dashboard/serve.ts",
     "postinstall": "bun run build:ui"
   },
   "dependencies": {
