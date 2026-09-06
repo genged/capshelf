@@ -1,8 +1,14 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { parse as parseToml } from "smol-toml";
+import { parse as parseToml, type TomlTable } from "smol-toml";
 import { parseDocument } from "yaml";
+import {
+  isConfigObject,
+  isConfigString,
+  isPlainConfigObject,
+} from "./config-values";
+import type { ConfigObject, ConfigValue } from "./config-values";
 import { hashNamedContents } from "./content-hash";
 import { PreconditionError } from "./errors";
 import { atomicWriteFile, lstatOrNull } from "./fs-utils";
@@ -597,8 +603,8 @@ function validateClaudeSubagent(
       `invalid Claude subagent subagents/${itemName}/claude.md: ${doc.errors[0]!.message}`,
     );
   }
-  const value = doc.toJS() as unknown;
-  if (!isRecord(value)) {
+  const value: ConfigValue | undefined = doc.toJS();
+  if (!isConfigObject(value)) {
     throw new PreconditionError(
       `invalid Claude subagent subagents/${itemName}/claude.md: frontmatter must be a mapping`,
     );
@@ -624,15 +630,17 @@ function validateCodexSubagent(
   itemName: string,
   raw: string,
 ): SubagentValidation {
-  let value: unknown;
+  let value: TomlTable;
   try {
-    value = parseToml(raw) as unknown;
-  } catch (error) {
+    value = parseToml(raw);
+  } catch (cause) {
     throw new PreconditionError(
-      `invalid Codex subagent subagents/${itemName}/codex.toml: ${error instanceof Error ? error.message : String(error)}`,
+      `invalid Codex subagent subagents/${itemName}/codex.toml: ${cause instanceof Error ? cause.message : String(cause)}`,
     );
   }
-  if (!isRecord(value)) {
+  // The boundary predicate, not `isConfigObject`: smol-toml's table type
+  // admits dates, which the JSON value model does not.
+  if (!isPlainConfigObject(value)) {
     throw new PreconditionError(
       `invalid Codex subagent subagents/${itemName}/codex.toml: root must be a table`,
     );
@@ -651,20 +659,16 @@ function validateCodexSubagent(
 }
 
 function requiredString(
-  value: Record<string, unknown>,
+  value: ConfigObject,
   field: string,
   runtime: string,
   itemName: string,
 ): string {
   const selected = value[field];
-  if (typeof selected !== "string" || selected.trim().length === 0) {
+  if (!isConfigString(selected) || selected.trim().length === 0) {
     throw new PreconditionError(
       `invalid ${runtime} subagent subagents/${itemName}/${runtime === "Claude" ? "claude.md" : "codex.toml"}: ${field} must be a non-empty string`,
     );
   }
   return selected;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
