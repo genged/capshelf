@@ -16,7 +16,8 @@ import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { isSafeItemName } from "./assert";
 import { NotFoundError, PreconditionError } from "./errors";
-import type { ConfigValue } from "./config-values";
+import { isConfigObject, isConfigString } from "./config-values";
+import type { ConfigObject, ConfigValue } from "./config-values";
 import { ITEM_KINDS, isItemKind } from "./master";
 import type { ItemKind } from "./master";
 import { yamlParseDetail } from "./yaml-document";
@@ -116,14 +117,14 @@ export function parseBundleText(
     );
   }
   if (value === null || value === undefined) return bundle;
-  if (typeof value !== "object" || Array.isArray(value)) {
+  if (!isConfigObject(value)) {
     return markMalformed(
       bundle,
       `${label}: invalid bundle file (expected a mapping)`,
     );
   }
 
-  const raw = value as Record<string, unknown>;
+  const raw = value;
   readBundleDescription(raw, bundle, label);
   readBundleTags(raw, bundle, label);
   readIncludes(raw, bundle, label);
@@ -261,13 +262,14 @@ function markMalformed(bundle: Bundle, message: string): Bundle {
 }
 
 function readBundleDescription(
-  raw: Record<string, unknown>,
+  raw: ConfigObject,
   bundle: Bundle,
   label: string,
 ): void {
   if (!("description" in raw)) return;
-  if (typeof raw.description === "string") {
-    bundle.description = raw.description;
+  const description = raw.description;
+  if (isConfigString(description)) {
+    bundle.description = description;
     return;
   }
   bundle.warnings.push(
@@ -276,19 +278,20 @@ function readBundleDescription(
 }
 
 function readBundleTags(
-  raw: Record<string, unknown>,
+  raw: ConfigObject,
   bundle: Bundle,
   label: string,
 ): void {
   if (!("tags" in raw)) return;
-  if (!Array.isArray(raw.tags)) {
+  const tags = raw.tags;
+  if (!Array.isArray(tags)) {
     bundle.warnings.push(
       `${label}: "tags" must be a list of strings — field ignored`,
     );
     return;
   }
-  for (const entry of raw.tags) {
-    if (typeof entry === "string" && entry.trim().length > 0) {
+  for (const entry of tags) {
+    if (isConfigString(entry) && entry.trim().length > 0) {
       bundle.tags.push(entry.trim());
     } else {
       bundle.warnings.push(
@@ -298,13 +301,10 @@ function readBundleTags(
   }
 }
 
-function readIncludes(
-  raw: Record<string, unknown>,
-  bundle: Bundle,
-  label: string,
-): void {
+function readIncludes(raw: ConfigObject, bundle: Bundle, label: string): void {
   if (!("includes" in raw) || raw.includes === null) return;
-  if (typeof raw.includes !== "object" || Array.isArray(raw.includes)) {
+  const includes = raw.includes;
+  if (!isConfigObject(includes)) {
     bundle.invalidIncludes.push("includes");
     bundle.warnings.push(
       `${label}: "includes" must be a mapping of item kinds to member lists — members ignored`,
@@ -312,7 +312,6 @@ function readIncludes(
     return;
   }
 
-  const includes = raw.includes as Record<string, unknown>;
   const seen = new Set<string>();
   for (const kind of ITEM_KINDS) {
     readMemberList(includes[kind], kind, bundle, seen, label);
@@ -330,7 +329,7 @@ function readIncludes(
 }
 
 function readMemberList(
-  value: unknown,
+  value: ConfigValue | undefined,
   kind: ItemKind,
   bundle: Bundle,
   seen: Set<string>,
@@ -345,7 +344,7 @@ function readMemberList(
     return;
   }
   for (const entry of value) {
-    if (typeof entry !== "string" || !isValidBundleName(entry)) {
+    if (!isConfigString(entry) || !isValidBundleName(entry)) {
       if (!bundle.invalidIncludes.includes(kind)) {
         bundle.invalidIncludes.push(kind);
       }
