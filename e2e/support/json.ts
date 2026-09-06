@@ -63,6 +63,27 @@ export function asString(value: JsonValue | undefined, label: string): string {
   return value;
 }
 
+export function isJsonNumber(value: JsonValue | undefined): value is number {
+  return typeof value === "number";
+}
+
+export function asNumber(value: JsonValue | undefined, label: string): number {
+  if (!isJsonNumber(value)) {
+    throw new Error(`${label} is not a number: ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
+export function asBoolean(
+  value: JsonValue | undefined,
+  label: string,
+): boolean {
+  if (value !== true && value !== false) {
+    throw new Error(`${label} is not a boolean: ${JSON.stringify(value)}`);
+  }
+  return value;
+}
+
 /** A field that must be present. `undefined` is absence; `null` is a value. */
 export function objectField(
   object: JsonObject,

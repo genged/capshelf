@@ -10,6 +10,7 @@ import {
   parseStatusRows,
 } from "../support/assertions";
 import { declareEvidence } from "../support/report";
+import { asArray, asObject, asString, parseJsonText } from "../support/json";
 import { E2E_TEST_TIMEOUT_MS, type World, withWorld } from "../support/world";
 
 const SCENARIO = "coexistence";
@@ -39,10 +40,40 @@ interface ExternalPayload {
 }
 
 function externalOf(stdout: string): ExternalPayload {
-  const parsed = JSON.parse(stdout) as Partial<ExternalPayload>;
+  const parsed = asObject(
+    parseJsonText(stdout, "status --json"),
+    "status --json",
+  );
   return {
-    external: parsed.external ?? [],
-    externalUserSkills: parsed.externalUserSkills ?? [],
+    external:
+      parsed.external === undefined
+        ? []
+        : asArray(parsed.external, "external").map((entry) => {
+            const row = asObject(entry, "external entry");
+            return {
+              name: asString(row.name, "external name"),
+              source: asString(row.source, "external source"),
+            };
+          }),
+    externalUserSkills:
+      parsed.externalUserSkills === undefined
+        ? []
+        : asArray(parsed.externalUserSkills, "externalUserSkills").map(
+            (entry) => {
+              const row = asObject(entry, "user skill");
+              return {
+                name: asString(row.name, "user skill name"),
+                surface: asString(row.surface, "user skill surface"),
+                shadows: asArray(row.shadows, "shadows").map((shadow) => {
+                  const item = asObject(shadow, "shadow");
+                  return {
+                    scope: asString(item.scope, "shadow scope"),
+                    source: asString(item.source, "shadow source"),
+                  };
+                }),
+              };
+            },
+          ),
   };
 }
 

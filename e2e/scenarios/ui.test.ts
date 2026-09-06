@@ -4,6 +4,14 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expectExit } from "../support/assertions";
 import { declareEvidence } from "../support/report";
+import {
+  asArray,
+  asBoolean,
+  asNumber,
+  asObject,
+  asString,
+  parseJsonText,
+} from "../support/json";
 import { E2E_TEST_TIMEOUT_MS, withWorld } from "../support/world";
 import type { World } from "../support/world";
 
@@ -15,6 +23,19 @@ interface UiInfo {
   registry: string;
   project: string | null;
   registered: boolean;
+}
+
+/** The one JSON line `capshelf ui --json` prints once it listens. */
+function parseUiInfo(line: string): UiInfo {
+  const info = asObject(parseJsonText(line, "capshelf ui --json"), "ui info");
+  const project = info.project;
+  return {
+    url: asString(info.url, "url"),
+    port: asNumber(info.port, "port"),
+    registry: asString(info.registry, "registry"),
+    project: project === null ? null : asString(project, "project"),
+    registered: asBoolean(info.registered, "registered"),
+  };
 }
 
 interface RunningUi {
@@ -49,7 +70,7 @@ async function startUi(world: World, cwd: string): Promise<RunningUi> {
       const line = stdout.split("\n").find((entry) => entry.startsWith("{"));
       if (!line) return;
       clearTimeout(deadline);
-      resolve(JSON.parse(line) as UiInfo);
+      resolve(parseUiInfo(line));
     });
     child.on("error", (error) => {
       clearTimeout(deadline);
@@ -138,35 +159,43 @@ test(
 
         // The API refuses without the token and answers with it.
         expect((await fetch(`${base}/api/overview`)).status).toBe(401);
-        const overview = (await (
-          await fetch(`${base}/api/overview`, { headers: auth })
-        ).json()) as {
-          projects: Array<{ path: string; exists: boolean }>;
-          currentProject: string | null;
-        };
-        expect(overview.projects).toHaveLength(1);
-        expect(overview.projects[0]?.exists).toBe(true);
-        expect(overview.currentProject).toBe(
-          overview.projects[0]?.path ?? null,
+        const overview = asObject(
+          parseJsonText(
+            await (
+              await fetch(`${base}/api/overview`, { headers: auth })
+            ).text(),
+            "overview",
+          ),
+          "overview",
         );
+        const projects = asArray(overview.projects, "projects").map((entry) =>
+          asObject(entry, "project"),
+        );
+        expect(projects).toHaveLength(1);
+        expect(projects[0]?.exists).toBe(true);
+        expect(overview.currentProject).toBe(projects[0]?.path ?? null);
+        const projectPath = asString(projects[0]?.path, "project path");
 
         const statusUrl = new URL(`${base}/api/project/status`);
-        statusUrl.searchParams.set("project", overview.projects[0]?.path ?? "");
-        const status = (await (
-          await fetch(statusUrl, { headers: auth })
-        ).json()) as {
-          items: Array<{
-            id: string;
-            ref: string;
-            attention: boolean;
-            row: { state: string };
-            actions: Array<{ command: string }>;
-          }>;
-        };
-        const hello = status.items.find((item) => item.ref === "skills/hello");
-        expect(hello?.row.state).toBe("drifted_local");
+        statusUrl.searchParams.set("project", projectPath);
+        const status = asObject(
+          parseJsonText(
+            await (await fetch(statusUrl, { headers: auth })).text(),
+            "status",
+          ),
+          "status",
+        );
+        const items = asArray(status.items, "items").map((item) =>
+          asObject(item, "item"),
+        );
+        const hello = items.find((item) => item.ref === "skills/hello");
+        expect(asObject(hello?.row, "row").state).toBe("drifted_local");
         expect(hello?.attention).toBe(true);
-        expect(hello?.actions.map((action) => action.command)).toEqual([
+        expect(
+          asArray(hello?.actions, "actions").map(
+            (action) => asObject(action, "action").command,
+          ),
+        ).toEqual([
           "capshelf promote skills/hello",
           "capshelf keep-local skills/hello",
           "capshelf revert skills/hello",
@@ -175,25 +204,31 @@ test(
         // The same state the CLI reports, from the same executable.
         const cli = await world.capshelf(project, ["status", "--json"]);
         expectExit(cli, 0);
-        const parsed = JSON.parse(cli.stdout) as {
-          items: Array<{ kind: string; name: string; state: string }>;
-        };
+        const parsed = asObject(
+          parseJsonText(cli.stdout, "status --json"),
+          "status --json",
+        );
         expect(
-          parsed.items.find(
-            (item) => item.kind === "skills" && item.name === "hello",
-          )?.state,
+          asArray(parsed.items, "items")
+            .map((item) => asObject(item, "item"))
+            .find((item) => item.kind === "skills" && item.name === "hello")
+            ?.state,
         ).toBe("drifted_local");
 
         const diffUrl = new URL(`${base}/api/project/diff`);
-        diffUrl.searchParams.set("project", overview.projects[0]?.path ?? "");
-        diffUrl.searchParams.set("item", hello?.id ?? "");
+        diffUrl.searchParams.set("project", projectPath);
+        diffUrl.searchParams.set("item", asString(hello?.id, "item id"));
         diffUrl.searchParams.set("view", "installed");
-        const diff = (await (
-          await fetch(diffUrl, { headers: auth })
-        ).json()) as {
-          diff: { text: string | null } | null;
-        };
-        expect(diff.diff?.text).toContain("+edited line");
+        const diff = asObject(
+          parseJsonText(
+            await (await fetch(diffUrl, { headers: auth })).text(),
+            "diff response",
+          ),
+          "diff response",
+        );
+        expect(asString(asObject(diff.diff, "diff").text, "text")).toContain(
+          "+edited line",
+        );
       } finally {
         const code = await ui.stop();
         expect(code).toBe(0);

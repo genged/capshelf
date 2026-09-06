@@ -9,6 +9,7 @@ import {
 } from "../support/assertions";
 import { runInPty } from "../support/pty";
 import { declareEvidence } from "../support/report";
+import { asObject, parseJsonText } from "../support/json";
 import { E2E_TEST_TIMEOUT_MS, withWorld } from "../support/world";
 
 const SCENARIO = "environment-cells";
@@ -73,13 +74,16 @@ test(
         answer: "y\n",
       });
       expectExit(accepted, 0);
-      const mcp = JSON.parse(
-        await Bun.file(join(project, ".mcp.json")).text(),
-      ) as { mcpServers: Record<string, unknown> };
-      expect(Object.keys(mcp.mcpServers).sort()).toEqual([
-        "github",
-        "internal-db",
-      ]);
+      const mcp = asObject(
+        parseJsonText(
+          await Bun.file(join(project, ".mcp.json")).text(),
+          ".mcp.json",
+        ),
+        ".mcp.json",
+      );
+      expect(
+        Object.keys(asObject(mcp.mcpServers, "mcpServers")).sort(),
+      ).toEqual(["github", "internal-db"]);
     });
   },
   E2E_TEST_TIMEOUT_MS,

@@ -24,7 +24,7 @@ const DENIED: EgressProbe = {
 
 test("the canary reports whether non-local egress is possible", async () => {
   const probe = await probeEgress(3_000);
-  expect(typeof probe.reachable).toBe("boolean");
+  expect([true, false]).toContain(probe.reachable);
   expect(probe.detail.length).toBeGreaterThan(0);
 });
 

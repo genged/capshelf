@@ -8,6 +8,7 @@ import {
   parseStatusRows,
 } from "../support/assertions";
 import { declareEvidence } from "../support/report";
+import { asObject, parseJsonText } from "../support/json";
 import { E2E_TEST_TIMEOUT_MS, withWorld } from "../support/world";
 
 const SCENARIO = "bundles";
@@ -40,10 +41,12 @@ const SHELF_FILES = {
 };
 
 async function lockKeys(project: string): Promise<string[]> {
-  const lock = JSON.parse(
-    await readFile(join(project, ".capshelf", "capshelf.lock.json"), "utf-8"),
-  ) as { items: Record<string, unknown> };
-  return Object.keys(lock.items).sort();
+  const path = join(project, ".capshelf", "capshelf.lock.json");
+  const lock = asObject(
+    parseJsonText(await readFile(path, "utf-8"), path),
+    path,
+  );
+  return Object.keys(asObject(lock.items, `${path} items`)).sort();
 }
 
 test(

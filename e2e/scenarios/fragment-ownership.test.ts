@@ -8,6 +8,8 @@ import {
   parseApplyRows,
 } from "../support/assertions";
 import { declareEvidence } from "../support/report";
+import { asArray, asObject, asString, parseJsonText } from "../support/json";
+import type { JsonObject } from "../support/json";
 import { E2E_TEST_TIMEOUT_MS, withWorld } from "../support/world";
 
 const SCENARIO = "fragment-ownership";
@@ -31,8 +33,19 @@ const PROJECT_MCP = JSON.stringify(
   2,
 );
 
-async function readJson(path: string): Promise<Record<string, unknown>> {
-  return JSON.parse(await readFile(path, "utf-8")) as Record<string, unknown>;
+async function readJson(path: string): Promise<JsonObject> {
+  return asObject(parseJsonText(await readFile(path, "utf-8"), path), path);
+}
+
+/** The server table of a `.mcp.json` document. */
+function servers(mcp: JsonObject): JsonObject {
+  return asObject(mcp.mcpServers, "mcpServers");
+}
+
+/** The `command` of one server in a `.mcp.json` document. */
+function serverCommand(mcp: JsonObject, name: string): string {
+  const server = asObject(servers(mcp)[name], `mcpServers.${name}`);
+  return asString(server.command, `mcpServers.${name}.command`);
 }
 
 test(
@@ -80,7 +93,7 @@ test(
       });
 
       const mcp = await readJson(join(project, ".mcp.json"));
-      expect(Object.keys(mcp.mcpServers as object).sort()).toEqual([
+      expect(Object.keys(servers(mcp)).sort()).toEqual([
         "github",
         "internal-db",
       ]);
@@ -96,15 +109,8 @@ test(
       );
       expectExit(await world.capshelf(project, ["update", "mcp/github"]), 0);
       const updated = await readJson(join(project, ".mcp.json"));
-      expect(
-        (updated.mcpServers as Record<string, { command: string }>).github
-          ?.command,
-      ).toBe("github-mcp-v2");
-      expect(
-        (updated.mcpServers as Record<string, { command: string }>)[
-          "internal-db"
-        ]?.command,
-      ).toBe("internal-db-mcp");
+      expect(serverCommand(updated, "github")).toBe("github-mcp-v2");
+      expect(serverCommand(updated, "internal-db")).toBe("internal-db-mcp");
 
       // Null second run: reconciling again changes nothing.
       const converged = await captureOwnedState(world, {
@@ -131,9 +137,7 @@ test(
         0,
       );
       const afterRemoval = await readJson(join(project, ".mcp.json"));
-      expect(Object.keys(afterRemoval.mcpServers as object)).toEqual([
-        "internal-db",
-      ]);
+      expect(Object.keys(servers(afterRemoval))).toEqual(["internal-db"]);
       const settingsAfter = await readJson(
         join(project, ".claude", "settings.json"),
       );
@@ -212,12 +216,18 @@ test(
           "--json",
         ]);
         expectExit(failed, 1);
-        const rows = JSON.parse(failed.stdout) as {
-          items: { key: string; action: string; error?: string }[];
-        };
-        const errored = rows.items.filter((row) => row.action === "error");
+        const payload = asObject(
+          parseJsonText(failed.stdout, "update --json"),
+          "update --json",
+        );
+        const rows = asArray(payload.items, "items").map((row) =>
+          asObject(row, "update row"),
+        );
+        const errored = rows.filter((row) => row.action === "error");
         expect(errored.length).toBe(1);
-        expect(errored[0]?.error ?? "").toContain(".codex/config.toml");
+        expect(asString(errored[0]?.error ?? "", "error")).toContain(
+          ".codex/config.toml",
+        );
         expectSameState(
           before,
           await captureOwnedState(world, {
@@ -239,13 +249,8 @@ test(
         0,
       );
       const mcp = await readJson(join(project, ".mcp.json"));
-      expect(
-        (mcp.mcpServers as Record<string, { command: string }>).github?.command,
-      ).toBe("github-mcp-v2");
-      expect(
-        (mcp.mcpServers as Record<string, { command: string }>)["internal-db"]
-          ?.command,
-      ).toBe("internal-db-mcp");
+      expect(serverCommand(mcp, "github")).toBe("github-mcp-v2");
+      expect(serverCommand(mcp, "internal-db")).toBe("internal-db-mcp");
       expect(
         await Bun.file(join(project, ".codex", "config.toml")).text(),
       ).toContain("github-mcp-v2");
@@ -340,7 +345,7 @@ test(
       // With the target writable again the same command converges.
       expectExit(await world.capshelf(project, ["apply", "--yes"]), 0);
       const mcp = await readJson(join(project, ".mcp.json"));
-      expect(Object.keys(mcp.mcpServers as object).sort()).toEqual([
+      expect(Object.keys(servers(mcp)).sort()).toEqual([
         "github",
         "internal-db",
       ]);

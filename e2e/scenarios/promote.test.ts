@@ -11,6 +11,7 @@ import {
   statusRow,
 } from "../support/assertions";
 import { declareEvidence } from "../support/report";
+import { asObject, parseJsonText } from "../support/json";
 import { E2E_TEST_TIMEOUT_MS, withWorld } from "../support/world";
 
 /**
@@ -96,11 +97,10 @@ test(
         "--json",
       ]);
       expectExit(promoted, 0);
-      const payload = JSON.parse(promoted.stdout) as {
-        action: string;
-        dataRepo: string;
-        dataRepoHasOrigin: boolean;
-      };
+      const payload = asObject(
+        parseJsonText(promoted.stdout, "promote --json"),
+        "promote --json",
+      );
       expect(payload.action).toBe("promoted");
       expect(payload.dataRepo).toBe(shelf);
       expect(payload.dataRepoHasOrigin).toBe(true);
@@ -156,9 +156,12 @@ test(
         "--json",
       ]);
       expectExit(second, 0);
-      expect((JSON.parse(second.stdout) as { action: string }).action).toBe(
-        "already-current",
-      );
+      expect(
+        asObject(
+          parseJsonText(second.stdout, "promote --json"),
+          "promote --json",
+        ).action,
+      ).toBe("already-current");
       expect(await world.git.head(shelf)).toBe(headAfterPromote);
       expectExit(await world.capshelf(atlas, ["status", "--strict"]), 0);
     });
@@ -279,10 +282,10 @@ test(
         "--json",
       ]);
       expectExit(quiet, 0);
-      const quietPayload = JSON.parse(quiet.stdout) as {
-        action: string;
-        staleOverride?: boolean;
-      };
+      const quietPayload = asObject(
+        parseJsonText(quiet.stdout, "promote --json"),
+        "promote --json",
+      );
       expect(quietPayload.action).toBe("promoted");
       expect(quietPayload.staleOverride).toBeUndefined();
 
@@ -307,10 +310,10 @@ test(
         "--json",
       ]);
       expectExit(overridden, 0);
-      const payload = JSON.parse(overridden.stdout) as {
-        action: string;
-        staleOverride?: boolean;
-      };
+      const payload = asObject(
+        parseJsonText(overridden.stdout, "promote --json"),
+        "promote --json",
+      );
       expect(payload.action).toBe("promoted");
       expect(payload.staleOverride).toBe(true);
 

@@ -10,6 +10,8 @@ import {
   statusRow,
 } from "../support/assertions";
 import { declareEvidence } from "../support/report";
+import { asNumber, asObject, asString, parseJsonText } from "../support/json";
+import type { JsonObject } from "../support/json";
 import { E2E_TEST_TIMEOUT_MS, type World } from "../support/world";
 import { withWorld } from "../support/world";
 
@@ -17,11 +19,18 @@ const SCENARIO = "lock-migration";
 
 interface LockFile {
   version: number;
-  items: Record<string, Record<string, unknown>>;
+  items: JsonObject;
 }
 
 async function readLock(path: string): Promise<LockFile> {
-  return JSON.parse(await readFile(path, "utf-8")) as LockFile;
+  const lock = asObject(
+    parseJsonText(await readFile(path, "utf-8"), path),
+    path,
+  );
+  return {
+    version: asNumber(lock.version, `${path} version`),
+    items: asObject(lock.items, `${path} items`),
+  };
 }
 
 /**
@@ -38,8 +47,9 @@ async function downgradeLockToV3(
   legacySha: string,
 ): Promise<void> {
   const lock = await readLock(path);
-  const items: Record<string, Record<string, unknown>> = {};
-  for (const [key, entry] of Object.entries(lock.items)) {
+  const items: JsonObject = {};
+  for (const [key, value] of Object.entries(lock.items)) {
+    const entry = asObject(value, key);
     if (entry.source !== "data") {
       items[key] = entry;
       continue;
@@ -122,9 +132,12 @@ test(
       const { project, projectLock, localLock } = await seedProject(world);
 
       const beforeV4 = await readLock(projectLock);
-      const markerBefore = beforeV4.items["data/skills/security-review"];
-      expect(markerBefore?.local).toBe(true);
-      expect(markerBefore?.localReason).toBe("platform is PCI-scoped");
+      const markerBefore = asObject(
+        beforeV4.items["data/skills/security-review"],
+        "v4 security-review entry",
+      );
+      expect(markerBefore.local).toBe(true);
+      expect(markerBefore.localReason).toBe("platform is PCI-scoped");
 
       await downgradeLockToV3(projectLock, "0123456789ab");
       await downgradeLockToV3(localLock, "0123456789ab");
@@ -191,17 +204,20 @@ test(
       expect(migrated.version).toBe(4);
       expect(migratedLocal.version).toBe(4);
 
-      const marker = migrated.items["data/skills/security-review"];
-      expect(marker?.local).toBe(true);
-      expect(marker?.localReason).toBe("platform is PCI-scoped");
-      expect(marker?.appliedAt).toBe(markerBefore?.appliedAt);
-      expect(marker?.sha).toBeUndefined();
-      expect(typeof marker?.sourcePinDigest).toBe("string");
+      const marker = asObject(
+        migrated.items["data/skills/security-review"],
+        "migrated security-review entry",
+      );
+      expect(marker.local).toBe(true);
+      expect(marker.localReason).toBe("platform is PCI-scoped");
+      expect(marker.appliedAt).toBe(markerBefore.appliedAt);
+      expect(marker.sha).toBeUndefined();
+      expect(asString(marker.sourcePinDigest, "sourcePinDigest")).toMatch(
+        /^[0-9a-f]{64}$/,
+      );
       // The migration selects no new content: the commit it resolves is the
       // one the legacy entry named.
-      expect(marker?.sourceCommit).toBe(
-        beforeV4.items["data/skills/security-review"]?.sourceCommit,
-      );
+      expect(marker.sourceCommit).toBe(markerBefore.sourceCommit);
 
       expectExit(await world.capshelf(project, ["status", "--strict"]), 0);
     });
@@ -233,10 +249,12 @@ test(
       const csv = lock.items["data/skills/csv-report"];
       const fragment = lock.items["data/settings/permissions"];
       if (!csv || !fragment) throw new Error("fixture lost an entry");
-      csv.sourceCommit = orphan;
-      csv.needsSourceCommit = orphan;
-      fragment.sourceCommit = orphan;
-      fragment.needsSourceCommit = orphan;
+      const csvEntry = asObject(csv, "csv-report entry");
+      const fragmentEntry = asObject(fragment, "permissions entry");
+      csvEntry.sourceCommit = orphan;
+      csvEntry.needsSourceCommit = orphan;
+      fragmentEntry.sourceCommit = orphan;
+      fragmentEntry.needsSourceCommit = orphan;
       await writeFile(projectLock, `${JSON.stringify(lock, null, 2)}\n`);
 
       const before = await captureOwnedState(world, {
@@ -296,8 +314,12 @@ test(
         "data/settings/permissions",
       );
       expect(
-        typeof migrated.items["data/skills/csv-report"]?.sourcePinDigest,
-      ).toBe("string");
+        asString(
+          asObject(migrated.items["data/skills/csv-report"], "csv-report entry")
+            .sourcePinDigest,
+          "sourcePinDigest",
+        ),
+      ).toMatch(/^[0-9a-f]{64}$/);
     });
   },
   E2E_TEST_TIMEOUT_MS,

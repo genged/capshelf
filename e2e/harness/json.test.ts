@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   asArray,
+  asBoolean,
+  asNumber,
   asObject,
   asString,
   objectField,
@@ -26,5 +28,12 @@ describe("json support", () => {
     expect(() => parseJsonText("not json", "stdout")).toThrow("stdout");
     expect(() => asObject([], "rows")).toThrow("rows");
     expect(() => asString(1, "key")).toThrow("key");
+    expect(() => asNumber("1", "port")).toThrow("port");
+    expect(() => asBoolean(null, "registered")).toThrow("registered");
+  });
+
+  test("reads numbers and booleans, and only those", () => {
+    expect(asNumber(8080, "port")).toBe(8080);
+    expect(asBoolean(false, "registered")).toBe(false);
   });
 });
