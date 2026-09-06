@@ -10,7 +10,7 @@
  * `2 keys` and `string` identify a row; the path does the rest.
  */
 import { isTerminalControlCode } from "./assert";
-import { isPlainConfigObject } from "./config-values";
+import { isConfigObject, isConfigString } from "./config-values";
 import type { ConfigObject, ConfigValue } from "./config-values";
 
 export interface ConfigPathRow {
@@ -29,10 +29,11 @@ export interface ConfigPathRow {
 export function configDetailLabel(value: ConfigValue): string {
   if (value === null) return "null";
   if (Array.isArray(value)) return countLabel(value.length, "entry", "entries");
-  if (isPlainConfigObject(value)) {
+  if (isConfigObject(value)) {
     return countLabel(Object.keys(value).length, "key", "keys");
   }
-  return typeof value;
+  if (value === true || value === false) return "boolean";
+  return isConfigString(value) ? "string" : "number";
 }
 
 /**
@@ -71,7 +72,7 @@ function walk(
       detail: configDetailLabel(child),
       value: child,
     });
-    if (isPlainConfigObject(child)) walk(child, segments, rows);
+    if (isConfigObject(child)) walk(child, segments, rows);
   }
 }
 
