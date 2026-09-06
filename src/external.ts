@@ -3,6 +3,12 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { z } from "zod";
+import {
+  ConfigValueSchema,
+  isConfigObject,
+  isConfigString,
+} from "./config-values";
+import type { ConfigValue } from "./config-values";
 import type { Lock } from "./lock";
 import { parseLockKey } from "./installed";
 import { parseJsonc } from "./json-fragments";
@@ -48,7 +54,7 @@ const SkillsShLockSchema = z.object({
 // parseEnabledPlugins below (it accepts both the array and object forms), so
 // the schema only needs to assert the top level is an object.
 const ClaudeSettingsSchema = z.object({
-  enabledPlugins: z.unknown().optional(),
+  enabledPlugins: ConfigValueSchema.optional(),
 });
 
 interface ClaudePluginSettingsPaths {
@@ -202,19 +208,21 @@ async function readClaudePluginsFromSettings(settings: {
 }
 
 function parseEnabledPlugins(
-  value: unknown,
+  value: ConfigValue | undefined,
 ): Array<{ id: string; enabled: boolean }> {
   if (Array.isArray(value)) {
-    return value
-      .filter((id): id is string => typeof id === "string" && id.length > 0)
-      .map((id) => ({ id, enabled: true }));
+    return value.flatMap((id) =>
+      isConfigString(id) && id.length > 0 ? [{ id, enabled: true }] : [],
+    );
   }
 
-  if (!value || typeof value !== "object") return [];
+  if (!isConfigObject(value)) return [];
 
-  return Object.entries(value)
-    .filter(([id, enabled]) => id.length > 0 && typeof enabled === "boolean")
-    .map(([id, enabled]) => ({ id, enabled }));
+  return Object.entries(value).flatMap(([id, enabled]) =>
+    id.length > 0 && (enabled === true || enabled === false)
+      ? [{ id, enabled }]
+      : [],
+  );
 }
 
 async function listUserSkillsInRoot(
