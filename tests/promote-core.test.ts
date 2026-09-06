@@ -41,6 +41,7 @@ import {
 } from "../src/fragments";
 import { emptyManifest } from "../src/manifest";
 import { PreconditionError } from "../src/errors";
+import { rejection } from "./cli-fixtures";
 import { upstreamFactsForItem } from "../src/upstream-facts";
 
 const dataEntry: DataLockEntry = {
@@ -723,29 +724,24 @@ describe("stale-promote guard (copy items)", () => {
     const headBefore = await $`git -C ${f.dataRepo} rev-parse HEAD`
       .quiet()
       .text();
-    let error: unknown;
-    try {
-      await syncTrackedIntoDataRepo(
+    const error = await rejection(
+      syncTrackedIntoDataRepo(
         f.project,
         f.dataRepo,
         "skills",
         "hello",
         f.lock,
         {},
-      );
-    } catch (err) {
-      error = err;
-    }
-    expect(error).toBeInstanceOf(PreconditionError);
-    expect((error as Error).message).toContain(
+      ),
+      PreconditionError,
+    );
+    expect(error.message).toContain(
       "changed in the data repo since this project last updated",
     );
-    expect((error as Error).message).toContain("--stale-ok");
-    expect((error as Error).message).toContain("capshelf update skills/hello");
-    expect((error as Error).message).toContain("status skills/hello --diff");
-    expect((error as Error).message).toContain(
-      "capshelf update skills/hello --merge",
-    );
+    expect(error.message).toContain("--stale-ok");
+    expect(error.message).toContain("capshelf update skills/hello");
+    expect(error.message).toContain("status skills/hello --diff");
+    expect(error.message).toContain("capshelf update skills/hello --merge");
     // Nothing was written or committed.
     expect(
       await file(join(f.dataRepo, "skills", "hello", "SKILL.md")).text(),
@@ -761,22 +757,18 @@ describe("stale-promote guard (copy items)", () => {
 
   test("local-scope refusals preserve scope and warn that update replaces untracked edits", async () => {
     const f = await staleFixture();
-    let error: unknown;
-    try {
-      await syncTrackedIntoDataRepo(
+    const error = await rejection(
+      syncTrackedIntoDataRepo(
         f.project,
         f.dataRepo,
         "skills",
         "hello",
         f.lock,
         { scope: "local" },
-      );
-    } catch (err) {
-      error = err;
-    }
-
-    expect(error).toBeInstanceOf(PreconditionError);
-    const message = (error as Error).message;
+      ),
+      PreconditionError,
+    );
+    const message = error.message;
     expect(message).toContain("capshelf status skills/hello --local --diff");
     expect(message).toContain("capshelf update skills/hello --local");
     expect(message).toContain(
@@ -791,22 +783,18 @@ describe("stale-promote guard (copy items)", () => {
 
   test("the refusal names merge first, then update, then --stale-ok", async () => {
     const f = await staleFixture();
-    let error: unknown;
-    try {
-      await syncTrackedIntoDataRepo(
+    const error = await rejection(
+      syncTrackedIntoDataRepo(
         f.project,
         f.dataRepo,
         "skills",
         "hello",
         f.lock,
         {},
-      );
-    } catch (err) {
-      error = err;
-    }
-
-    expect(error).toBeInstanceOf(PreconditionError);
-    const message = (error as Error).message;
+      ),
+      PreconditionError,
+    );
+    const message = error.message;
     expect(message).toContain("capshelf update skills/hello --merge");
     // Update-time merge keeps both sides, so it is the first choice.
     expect(message.indexOf("--merge")).toBeLessThan(
@@ -856,22 +844,18 @@ describe("stale-promote guard (copy items)", () => {
       },
     };
 
-    let error: unknown;
-    try {
-      await syncTrackedIntoDataRepo(
+    const error = await rejection(
+      syncTrackedIntoDataRepo(
         project,
         dataRepo,
         "pi-extensions",
         "guard",
         lock,
         { scope: "local" },
-      );
-    } catch (err) {
-      error = err;
-    }
-
-    expect(error).toBeInstanceOf(PreconditionError);
-    const message = (error as Error).message;
+      ),
+      PreconditionError,
+    );
+    const message = error.message;
     expect(message).toContain(
       "changed in the data repo since this project last updated",
     );
@@ -939,24 +923,19 @@ describe("stale-promote guard (copy items)", () => {
       "uncommitted upstream edit\n",
     );
     for (const options of [{}, { staleOk: true }]) {
-      let error: unknown;
-      try {
-        await syncTrackedIntoDataRepo(
+      const error = await rejection(
+        syncTrackedIntoDataRepo(
           f.project,
           f.dataRepo,
           "skills",
           "hello",
           f.lock,
           options,
-        );
-      } catch (err) {
-        error = err;
-      }
-      expect(error).toBeInstanceOf(PreconditionError);
-      expect((error as Error).message).toContain("uncommitted changes");
-      expect((error as Error).message).toContain(
-        "status --short -- skills/hello",
+        ),
+        PreconditionError,
       );
+      expect(error.message).toContain("uncommitted changes");
+      expect(error.message).toContain("status --short -- skills/hello");
     }
     // The uncommitted data-repo edit survives untouched.
     expect(
@@ -1056,9 +1035,8 @@ describe("stale-promote guard (fragments)", () => {
     const headBefore = await $`git -C ${f.dataRepo} rev-parse HEAD`
       .quiet()
       .text();
-    let error: unknown;
-    try {
-      await promoteFragmentSource(
+    const error = await rejection(
+      promoteFragmentSource(
         f.project,
         f.dataRepo,
         { ...emptyManifest(), settings: ["theme"] },
@@ -1066,12 +1044,10 @@ describe("stale-promote guard (fragments)", () => {
         "settings",
         "theme",
         {},
-      );
-    } catch (err) {
-      error = err;
-    }
-    expect(error).toBeInstanceOf(PreconditionError);
-    expect((error as Error).message).toContain(
+      ),
+      PreconditionError,
+    );
+    expect(error.message).toContain(
       "changed in the data repo since this project last updated",
     );
     expect(await $`git -C ${f.dataRepo} rev-parse HEAD`.quiet().text()).toBe(
@@ -1104,9 +1080,8 @@ describe("stale-promote guard (fragments)", () => {
     await commitAll(f.dataRepo, "theme v2 upstream");
     await writeFile(source, JSON.stringify({ theme: "v3-dirty" }));
 
-    let error: unknown;
-    try {
-      await promoteFragmentSource(
+    const error = await rejection(
+      promoteFragmentSource(
         f.project,
         f.dataRepo,
         { ...emptyManifest(), settings: ["theme"] },
@@ -1114,13 +1089,10 @@ describe("stale-promote guard (fragments)", () => {
         "settings",
         "theme",
         {},
-      );
-    } catch (err) {
-      error = err;
-    }
-
-    expect(error).toBeInstanceOf(PreconditionError);
-    const message = (error as Error).message;
+      ),
+      PreconditionError,
+    );
+    const message = error.message;
     expect(message).toContain("capshelf update settings/theme");
     expect(message).toContain("--stale-ok");
     // Update merge does not support fragments, so the refusal must not offer it.

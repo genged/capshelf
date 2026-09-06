@@ -39,6 +39,7 @@ import {
   statusPorcelainRecords,
   trackingRef,
 } from "../src/git";
+import { rejection } from "./cli-fixtures";
 
 async function tempRepo(): Promise<string> {
   const repo = await mkdtemp(join(tmpdir(), "capshelf-git-"));
@@ -60,12 +61,9 @@ describe("git cleanliness helpers", () => {
     const emptyPath = await mkdtemp(join(tmpdir(), "capshelf-empty-path-"));
     process.env.PATH = emptyPath;
     try {
-      await assertIsGitRepo(dir);
-      throw new Error("expected assertIsGitRepo to reject");
-    } catch (err) {
-      expect(err).toBeInstanceOf(GitUnavailableError);
-      expect((err as GitUnavailableError).exitCode).toBe(7);
-      expect((err as Error).message).toMatch(
+      const error = await rejection(assertIsGitRepo(dir), GitUnavailableError);
+      expect(error.exitCode).toBe(7);
+      expect(error.message).toMatch(
         /git is required but was not found on PATH/,
       );
     } finally {

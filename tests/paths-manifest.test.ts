@@ -1,5 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
+import { rejection } from "./cli-fixtures";
 import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -526,12 +527,9 @@ describe("manifest commands migration", () => {
       );
       // The error names the manifest path and is distinct from the legacy
       // dataRepo message.
-      const err = await loadManifest(project).then(
-        () => null,
-        (cause: unknown) => cause as Error,
-      );
-      expect(err?.message).toContain(manifestPath(project));
-      expect(err?.message).not.toMatch(/legacy dataRepo/);
+      const err = await rejection(loadManifest(project), Error);
+      expect(err.message).toContain(manifestPath(project));
+      expect(err.message).not.toMatch(/legacy dataRepo/);
       // Nothing was written: the file is byte-identical.
       expect(await readFile(manifestPath(project), "utf-8")).toBe(raw);
     }

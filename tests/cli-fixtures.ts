@@ -62,6 +62,28 @@ export async function commitAll(repo: string, message: string): Promise<void> {
   await $`git -C ${repo} commit -qm ${message}`.quiet();
 }
 
+const RESOLVED = Symbol("resolved");
+
+/** The typed error a promise rejects with. Any other outcome fails the test. */
+export async function rejection<T extends Error, R>(
+  promise: Promise<R>,
+  type: abstract new (...args: never[]) => T,
+): Promise<T> {
+  const outcome = await promise.then(
+    () => RESOLVED,
+    (cause: unknown) => cause,
+  );
+  if (outcome === RESOLVED) {
+    throw new Error(`expected ${type.name}, but the promise resolved`);
+  }
+  if (!(outcome instanceof type)) {
+    const name =
+      outcome instanceof Error ? outcome.constructor.name : String(outcome);
+    throw new Error(`expected ${type.name}, got ${name}`);
+  }
+  return outcome;
+}
+
 export function runIn(project: string) {
   const cli = join(import.meta.dir, "..", "src", "cli.ts");
   return (args: string[]) =>
