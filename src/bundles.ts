@@ -13,11 +13,13 @@
 import { existsSync } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { YAMLParseError, parse as parseYaml } from "yaml";
+import { parse as parseYaml } from "yaml";
 import { isSafeItemName } from "./assert";
 import { NotFoundError, PreconditionError } from "./errors";
+import type { ConfigValue } from "./config-values";
 import { ITEM_KINDS, isItemKind } from "./master";
 import type { ItemKind } from "./master";
+import { yamlParseDetail } from "./yaml-document";
 
 export const BUNDLES_DIR = "bundles";
 
@@ -104,15 +106,14 @@ export function parseBundleText(
     return markMalformed(bundle, `${label}: bundle file is larger than 64 KiB`);
   }
 
-  let value: unknown;
+  let value: ConfigValue | undefined;
   try {
     value = parseYaml(text);
-  } catch (err) {
-    const detail =
-      err instanceof YAMLParseError && err.linePos?.[0]
-        ? `line ${err.linePos[0].line}: ${firstLine(err.message)}`
-        : firstLine(err instanceof Error ? err.message : String(err));
-    return markMalformed(bundle, `${label}: invalid YAML (${detail})`);
+  } catch (cause) {
+    return markMalformed(
+      bundle,
+      `${label}: invalid YAML (${yamlParseDetail(cause)})`,
+    );
   }
   if (value === null || value === undefined) return bundle;
   if (typeof value !== "object" || Array.isArray(value)) {
@@ -257,10 +258,6 @@ function markMalformed(bundle: Bundle, message: string): Bundle {
   bundle.malformed = message;
   bundle.warnings.push(`${message} — bundle ignored`);
   return bundle;
-}
-
-function firstLine(text: string): string {
-  return text.split("\n")[0] ?? text;
 }
 
 function readBundleDescription(

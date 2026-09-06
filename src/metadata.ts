@@ -14,12 +14,12 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { atomicWriteFile } from "./fs-utils";
 import { join } from "node:path";
-import { YAMLParseError, parse as parseYaml } from "yaml";
 import { z } from "zod";
 import type { SystemItem } from "./bundled";
 import { headSha, sourceRead } from "./git";
 import { isItemKind, itemRepoRelPath } from "./master";
 import type { MasterItem } from "./master";
+import { parseYamlDocument } from "./yaml-document";
 
 // Defined in identity.ts (a leaf) to break the master.ts <-> metadata.ts
 // cycle; re-exported here so existing `from "./metadata"` importers still work.
@@ -340,35 +340,6 @@ function frontmatterMetadataFromText(
   }
   if (block.text === null) return emptyMetadata();
   return parseFrontmatter(block.text, itemLabel, expectedName);
-}
-
-type ParsedYaml =
-  | { ok: true; value: unknown }
-  | { ok: false; warnings: string[] };
-
-function parseYamlDocument(
-  text: string,
-  itemLabel: string,
-  sourceLabel: string,
-): ParsedYaml {
-  try {
-    return { ok: true, value: parseYaml(text) };
-  } catch (err) {
-    const detail =
-      err instanceof YAMLParseError && err.linePos?.[0]
-        ? `line ${err.linePos[0].line}: ${firstLine(err.message)}`
-        : firstLine(err instanceof Error ? err.message : String(err));
-    return {
-      ok: false,
-      warnings: [
-        `${itemLabel}: invalid ${sourceLabel} (${detail}) — metadata ignored`,
-      ],
-    };
-  }
-}
-
-function firstLine(text: string): string {
-  return text.split("\n")[0] ?? text;
 }
 
 function readDescription(
