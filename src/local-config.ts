@@ -5,6 +5,7 @@ import { z } from "zod";
 import { LOCAL_CONFIG_FILE, LOCAL_LOCK_FILE, METADATA_DIR } from "./identity";
 import { expandTilde } from "./paths";
 import { atomicWriteFile } from "./fs-utils";
+import type { ConfigValue } from "./config-values";
 import { hasShelvesKey } from "./manifest";
 import { PreconditionError } from "./errors";
 import { assertNever, isSafeItemName } from "./assert";
@@ -45,7 +46,7 @@ export async function loadLocalConfig(
 ): Promise<LocalConfig | null> {
   const path = localConfigPath(project);
   if (!existsSync(path)) return null;
-  const raw = JSON.parse(await readFile(path, "utf-8"));
+  const raw: ConfigValue = JSON.parse(await readFile(path, "utf-8"));
   // "shelves" is reserved for multi-shelf federation. Fail loudly before zod
   // strips it and a later saveLocalConfig silently deletes it.
   if (hasShelvesKey(raw)) {

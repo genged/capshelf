@@ -10,6 +10,8 @@ import {
   manifestReadPath,
 } from "./paths";
 import type { InstallMode } from "./paths";
+import { isConfigObject } from "./config-values";
+import type { ConfigValue } from "./config-values";
 import { normalizeRemoteUrl } from "./git";
 import { isSafeItemName } from "./assert";
 import { MANIFEST_FILE, METADATA_DIR, PRODUCT_NAME } from "./identity";
@@ -80,8 +82,7 @@ export function emptyManifest(): Manifest {
 export async function loadManifest(project: string): Promise<Manifest> {
   const p = manifestReadPath(project);
   if (!p) return emptyManifest();
-  const raw = await readFile(p, "utf-8");
-  const parsed = JSON.parse(raw);
+  const parsed: ConfigValue = JSON.parse(await readFile(p, "utf-8"));
   // "shelves" is reserved for multi-shelf federation. Detect it before zod
   // parsing: the non-strict schema would silently strip it and the next
   // saveManifest would delete the federation config with no error.
@@ -90,8 +91,8 @@ export async function loadManifest(project: string): Promise<Manifest> {
       `${p} declares "shelves": this project uses multi-shelf federation, which this capshelf version does not support; upgrade capshelf`,
     );
   }
-  if (hasLegacyDataRepo(parsed)) {
-    const legacyDataRepo = (parsed as { dataRepo: string }).dataRepo;
+  const legacyDataRepo = legacyDataRepoOf(parsed);
+  if (legacyDataRepo !== null) {
     throw new Error(
       `${p} uses the legacy dataRepo field.\n` +
         "  fix it manually, or migrate it directly with set-data:\n" +
@@ -113,22 +114,19 @@ export async function loadManifestForDataBinding(project: string): Promise<{
 }> {
   const p = manifestReadPath(project);
   if (!p) return { manifest: emptyManifest(), legacyManifestPath: null };
-  const parsed: unknown = JSON.parse(await readFile(p, "utf-8"));
+  const parsed: ConfigValue = JSON.parse(await readFile(p, "utf-8"));
   if (hasShelvesKey(parsed)) {
     throw new Error(
       `${p} declares "shelves": this project uses multi-shelf federation, which this capshelf version does not support; upgrade capshelf`,
     );
   }
-  if (!hasLegacyDataRepo(parsed)) {
+  if (!isConfigObject(parsed) || legacyDataRepoOf(parsed) === null) {
     return {
       manifest: ManifestSchema.parse(parsed),
       legacyManifestPath: null,
     };
   }
-  const { dataRepo: _dataRepo, ...portable } = parsed as Record<
-    string,
-    unknown
-  >;
+  const { dataRepo: _dataRepo, ...portable } = parsed;
   return {
     manifest: ManifestSchema.parse(portable),
     legacyManifestPath: p,
@@ -194,16 +192,17 @@ export function removeManifestName(
  * (including `null`). Reserved by the federation spec; see `loadManifest`.
  * Shared with local-config.ts, which enforces the same reservation.
  */
-export function hasShelvesKey(value: unknown): boolean {
-  return typeof value === "object" && value !== null && "shelves" in value;
+export function hasShelvesKey(value: ConfigValue): boolean {
+  return isConfigObject(value) && "shelves" in value;
 }
 
-function hasLegacyDataRepo(value: unknown): boolean {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "dataRepo" in value &&
-    typeof (value as { dataRepo?: unknown }).dataRepo === "string" &&
-    (value as { dataRepo: string }).dataRepo.length > 0
-  );
+/** The retired top-level `dataRepo` field, read before the schema strips it. */
+const LegacyDataRepoProbe = z.object({
+  dataRepo: z.string().min(1).optional(),
+});
+
+/** The legacy `dataRepo` path a manifest still carries, or null. */
+function legacyDataRepoOf(value: ConfigValue): string | null {
+  const probe = LegacyDataRepoProbe.safeParse(value);
+  return probe.success ? (probe.data.dataRepo ?? null) : null;
 }

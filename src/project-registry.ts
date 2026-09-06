@@ -15,6 +15,7 @@ import { mkdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
+import type { ConfigValue } from "./config-values";
 import { atomicWriteFile } from "./fs-utils";
 import { PRODUCT_NAME } from "./identity";
 
@@ -46,6 +47,9 @@ export function projectRegistryPath(
   return join(base, PRODUCT_NAME, PROJECT_REGISTRY_FILE);
 }
 
+/** The one field read before the version decides whether the file is ours. */
+const VersionProbe = z.object({ version: z.number().optional() });
+
 export function emptyProjectRegistry(): ProjectRegistry {
   return { version: PROJECT_REGISTRY_VERSION, projects: [] };
 }
@@ -54,12 +58,10 @@ export async function loadProjectRegistry(
   path: string = projectRegistryPath(),
 ): Promise<ProjectRegistry> {
   if (!existsSync(path)) return emptyProjectRegistry();
-  const raw: unknown = JSON.parse(await readFile(path, "utf-8"));
-  const version =
-    typeof raw === "object" && raw !== null && "version" in raw
-      ? (raw as { version?: unknown }).version
-      : undefined;
-  if (typeof version === "number" && version > PROJECT_REGISTRY_VERSION) {
+  const raw: ConfigValue = JSON.parse(await readFile(path, "utf-8"));
+  const probe = VersionProbe.safeParse(raw);
+  const version = probe.success ? probe.data.version : undefined;
+  if (version !== undefined && version > PROJECT_REGISTRY_VERSION) {
     throw new Error(
       `${path} is registry version ${version}, newer than this ${PRODUCT_NAME} supports — upgrade ${PRODUCT_NAME}`,
     );
