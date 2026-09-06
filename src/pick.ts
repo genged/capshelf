@@ -191,6 +191,16 @@ interface PickOption {
   label: string;
 }
 
+/** The Ctrl-V diff overlay: which row it shows and how far it has scrolled. */
+interface PreviewPane {
+  rowId: string;
+  ref: string;
+  query: string;
+  state: "loading" | "ready" | "error";
+  lines: string[];
+  scroll: number;
+}
+
 /** Members `@clack/core` 1.4.3 has at runtime but keeps out of its types. */
 interface ClackPromptInternals {
   rl?: { write(data: null, key: { ctrl: boolean; name: string }): void };
@@ -235,16 +245,7 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
   private action: string | undefined;
   /** The promote picker's on-demand diff provider. */
   private previewProvider: ((row: PickRow) => Promise<PickPreview>) | undefined;
-  private previewPane:
-    | {
-        rowId: string;
-        ref: string;
-        query: string;
-        state: "loading" | "ready" | "error";
-        lines: string[];
-        scroll: number;
-      }
-    | undefined;
+  private previewPane: PreviewPane | undefined;
   private previewVersions = new Map<string, string>();
   /** The query the option list was last built for; see `buildOptions`. */
   private renderedQuery: string | null = null;
@@ -292,9 +293,13 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
       // passes its result through untouched.
       filter: () => true,
       options(this: AutocompletePrompt<PickOption>) {
+        // SAFETY: `AutocompletePrompt` calls this hook with the prompt as its
+        // receiver, and `TypePickPrompt` is the only prompt built with these
+        // hooks (`defaultPickContext` below).
         return (this as TypePickPrompt).buildOptions();
       },
       render(this: AutocompletePrompt<PickOption>) {
+        // SAFETY: the same receiver contract as `options` above.
         return (this as TypePickPrompt).frame(opts.message);
       },
     });
@@ -511,7 +516,7 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
   }
 
   private frame(message: string): string {
-    if (this.previewPane) return this.previewFrame();
+    if (this.previewPane) return this.previewFrame(this.previewPane);
     const body = renderPickBody({
       tabs: this.tabs ?? [],
       activeTab: this.activeTab,
@@ -547,12 +552,12 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
       (entry) => pickRowId(entry.row) === rowId,
     )?.row;
     if (!row) return;
-    const pane = {
+    const pane: PreviewPane = {
       rowId,
       ref: row.ref,
       query: this.userInput ?? "",
-      state: "loading" as const,
-      lines: [] as string[],
+      state: "loading",
+      lines: [],
       scroll: 0,
     };
     this.previewPane = pane;
@@ -593,8 +598,7 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
     this.restoreInputState(pane.query);
   }
 
-  private previewFrame(): string {
-    const pane = this.previewPane as NonNullable<typeof this.previewPane>;
+  private previewFrame(pane: PreviewPane): string {
     this.clampPreviewScroll();
     const budget = bodyBudget(process.stderr.columns);
     const page = this.previewPageHeight();
@@ -663,6 +667,9 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
  * the width is borrowed instead, and only when stdout has none of its own.
  */
 export function borrowTerminalWidth(): () => void {
+  // SAFETY: Node declares `columns` on a tty `WriteStream` as a number, but a
+  // redirected stdout has none at runtime, and the undo below must put
+  // `undefined` back. The optional field is what the stream really carries.
   const stdout = process.stdout as { columns?: number };
   if (stdout.columns !== undefined) return () => {};
   const sync = (): void => {

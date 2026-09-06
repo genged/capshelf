@@ -275,9 +275,9 @@ async function runGit(
     stdin:
       options.stdin === undefined
         ? "ignore"
-        : typeof options.stdin === "string"
-          ? new Blob([options.stdin])
-          : options.stdin,
+        : options.stdin instanceof Uint8Array
+          ? options.stdin
+          : new Blob([options.stdin]),
   });
   const [stdout, stderr] = await Promise.all([
     new Response(proc.stdout).arrayBuffer().then((b) => Buffer.from(b)),
@@ -1144,7 +1144,7 @@ export async function indexEntryFlags(
   const entries = new Map<string, IndexEntryFlags>();
   for (const record of out.split("\0")) {
     if (record.length < 3) continue;
-    const tag = record[0] as string;
+    const tag = record.charAt(0);
     const assumeUnchanged = tag !== tag.toUpperCase();
     const path = record.slice(2);
     const existing = entries.get(path);

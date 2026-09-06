@@ -123,10 +123,10 @@ export function fuzzyMatchV1(
   let patternIndex = 0;
   let start = -1;
   let end = -1;
-  for (let index = 0; index < hay.length; index++) {
-    if (fold(hay[index] as string) !== fold(needle[patternIndex] as string)) {
-      continue;
-    }
+  for (const [index, char] of hay.entries()) {
+    // SAFETY: patternIndex < needle.length, because the loop breaks as soon
+    // as it reaches needle.length.
+    if (fold(char) !== fold(needle[patternIndex] as string)) continue;
     if (start < 0) start = index;
     patternIndex++;
     if (patternIndex === needle.length) {
@@ -141,6 +141,8 @@ export function fuzzyMatchV1(
   // `c`urity into the tight `sec` inside "security".
   patternIndex--;
   for (let index = end - 1; index >= start; index--) {
+    // SAFETY: pass 1 set 0 <= start < end <= hay.length, so hay[index] is in
+    // range, and patternIndex >= 0 because the loop breaks when it goes below.
     if (fold(hay[index] as string) !== fold(needle[patternIndex] as string)) {
       continue;
     }
@@ -178,11 +180,19 @@ function calculateScore(
   // The spec seeds this with `initialCharClass`, which is whitespace outside
   // path mode: index 0 of a string counts as a word boundary.
   let previousClass = CHAR_WHITE;
-  if (start > 0) previousClass = charClassOf(text[start - 1] as string);
+  if (start > 0) {
+    // SAFETY: pass 1 found the match inside text, so start <= text.length
+    // and text[start - 1] is in range.
+    previousClass = charClassOf(text[start - 1] as string);
+  }
 
   for (let index = start; index < end; index++) {
+    // SAFETY: pass 1 set end to one past a match inside text, so
+    // end <= text.length and text[index] is in range.
     const char = text[index] as string;
     const charClass = charClassOf(char);
+    // SAFETY: end is one past the match of the last pattern character, so
+    // patternIndex < pattern.length on every iteration.
     const matches = caseSensitive
       ? char === pattern[patternIndex]
       : char.toLowerCase() === (pattern[patternIndex] as string).toLowerCase();

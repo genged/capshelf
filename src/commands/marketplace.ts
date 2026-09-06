@@ -78,6 +78,9 @@ type Target = "claude" | "codex";
 
 const ALL_TARGETS: readonly Target[] = ["claude", "codex"];
 
+/** The `--skill` default. Never mutated: the collector copies it. */
+const NO_SKILLS: string[] = [];
+
 const InstallationPolicy = z.enum([
   "NOT_AVAILABLE",
   "AVAILABLE",
@@ -579,7 +582,7 @@ export function registerMarketplace(program: Command): void {
         "--skill <ref>",
         "selected skill (repeatable)",
         collectOption,
-        [] as string[],
+        NO_SKILLS,
       ),
   ).action(async (name: string, opts: PluginOptions, cmd: Command) => {
     const dataRepo = await marketplaceDataRepo(cmd);

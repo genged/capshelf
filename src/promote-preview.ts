@@ -130,10 +130,11 @@ export function decodePromotePreviewGuard(
   if (encoded === undefined) return undefined;
   const match = /^v1:([0-9a-f]{64}):([0-9a-f]{64})$/.exec(encoded);
   if (!match) throw new Error("invalid promote preview guard");
-  return {
-    baseDigest: match[1] as string,
-    candidateDigest: match[2] as string,
-  };
+  const [, baseDigest, candidateDigest] = match;
+  if (baseDigest === undefined || candidateDigest === undefined) {
+    throw new Error("invalid promote preview guard");
+  }
+  return { baseDigest, candidateDigest };
 }
 
 async function subagentCandidateFiles(

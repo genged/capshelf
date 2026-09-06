@@ -120,6 +120,8 @@ export function renderTabBar(
 ): string[] {
   if (tabs.length === 0) return [];
   const labels = tabs.map((tab) => tab.label);
+  // SAFETY: `active` is a tab index `stepTab` keeps inside [0, tabs.length),
+  // and tabs is non-empty here.
   const activeLabel = labels[active] as string;
 
   // Too narrow for every name: name the active one and say where it sits.
@@ -143,6 +145,7 @@ export function renderTabBar(
   // no width, so measuring the styled string puts the rule in the wrong place.
   let offset = 0;
   for (let index = 0; index < active; index++) {
+    // SAFETY: index < active < labels.length, the same bound as above.
     offset += (labels[index] as string).length + 3; // label + " │ "
   }
   const rule = `${" ".repeat(offset)}${"━".repeat(activeLabel.length)}`;

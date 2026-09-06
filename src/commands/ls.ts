@@ -52,6 +52,9 @@ interface LsOptions {
   tag: string[];
 }
 
+/** The `--tag` default. Never mutated: the collector copies it. */
+const NO_TAGS: string[] = [];
+
 export function registerLs(program: Command): void {
   program
     .command("ls")
@@ -70,7 +73,7 @@ export function registerLs(program: Command): void {
       "--tag <tag>",
       "filter by tag (repeatable; repeated tags narrow with AND)",
       (value: string, previous: string[]) => [...previous, value],
-      [] as string[],
+      NO_TAGS,
     )
     .action(async (opts: LsOptions, cmd: Command) => {
       const kindFilter = opts.kind ? parseItemKind(opts.kind) : undefined;

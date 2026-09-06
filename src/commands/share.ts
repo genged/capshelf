@@ -793,6 +793,9 @@ async function extractPickedSources(
   opts: PickExtractionOptions,
 ): Promise<PendingFragmentSource[]> {
   if (!opts.autoTarget) {
+    // SAFETY: the one caller refuses an empty candidate list before it calls
+    // this function (the `firstCandidate` check in `shareFragment`), so the
+    // first candidate exists.
     const source = opts.candidates[0] as FragmentSource;
     const remainder = await loadOutputRemainder(opts, source);
     if (remainder === null) {

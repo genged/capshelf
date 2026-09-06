@@ -158,8 +158,7 @@ export function highlightRef(
   const chars = [...ref];
   let out = "";
   let run = "";
-  for (let index = 0; index < chars.length; index++) {
-    const char = chars[index] as string;
+  for (const [index, char] of chars.entries()) {
     if (marked.has(index)) {
       run += char;
       continue;
