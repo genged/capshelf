@@ -51,7 +51,7 @@ describe("trust boundaries", () => {
 
       const error = await shaOfGitVisibleItem(repo, "skills/unsafe").then(
         () => null,
-        (thrown: unknown) => thrown,
+        (cause: unknown) => cause,
       );
       expect(error).toBeInstanceOf(PreconditionError);
       expect((error as PreconditionError).message).toMatch(

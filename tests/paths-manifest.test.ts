@@ -528,7 +528,7 @@ describe("manifest commands migration", () => {
       // dataRepo message.
       const err = await loadManifest(project).then(
         () => null,
-        (e: unknown) => e as Error,
+        (cause: unknown) => cause as Error,
       );
       expect(err?.message).toContain(manifestPath(project));
       expect(err?.message).not.toMatch(/legacy dataRepo/);

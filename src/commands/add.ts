@@ -1302,9 +1302,9 @@ async function approveFragmentPin(
  * A one-line reason for a per-item failure. `ResultExitError` carries no
  * message because the command that threw it already reported the detail.
  */
-function errorDetail(error: unknown): string {
-  if (error instanceof ResultExitError) return "";
-  return firstErrorLine(error);
+function errorDetail(cause: unknown): string {
+  if (cause instanceof ResultExitError) return "";
+  return firstErrorLine(cause);
 }
 
 function printInteractiveSummary(

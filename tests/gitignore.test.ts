@@ -67,7 +67,7 @@ describe("gitignoreVisibleFiles", () => {
     // move when ignored local state learns to carry symlinks across.
     const error = await gitignoreVisibleFiles(root).then(
       () => null,
-      (thrown: unknown) => thrown,
+      (cause: unknown) => cause,
     );
     expect(error).toBeInstanceOf(PreconditionError);
     expect((error as PreconditionError).message).toContain(

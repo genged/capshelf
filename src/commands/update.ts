@@ -1219,10 +1219,10 @@ async function updateDataTarget(
       parsed.name,
       entry,
       ctx.manifest,
-    ).catch((error: unknown) => {
+    ).catch((cause: unknown) => {
       throw new PreconditionError(
         `not updating ${parsed.kind}/${parsed.name} — its locked source commit ${entry.sourceCommit} cannot be resolved, and a fragment's contribution cannot be recovered from the merged output\n` +
-          `  ${error instanceof Error ? error.message : String(error)}\n` +
+          `  ${cause instanceof Error ? cause.message : String(cause)}\n` +
           "  remove and re-add the item instead:\n" +
           `    ${PRODUCT_NAME} rm ${parsed.kind}/${parsed.name}\n` +
           `    ${PRODUCT_NAME} add ${parsed.kind}/${parsed.name}`,

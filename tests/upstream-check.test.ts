@@ -67,7 +67,7 @@ describe("upstream verification", () => {
       () => {
         throw new Error("expected verifyDataRepoUpstream to reject");
       },
-      (e: unknown) => e as Error & { exitCode?: number },
+      (cause: unknown) => cause as Error & { exitCode?: number },
     );
 
     expect(error).toBeInstanceOf(UpstreamVerificationError);
@@ -91,7 +91,7 @@ describe("upstream verification", () => {
       () => {
         throw new Error("expected verifyDataRepoUpstream to reject");
       },
-      (e: unknown) => e as Error,
+      (cause: unknown) => cause as Error,
     );
 
     expect(error).toBeInstanceOf(Error);

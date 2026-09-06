@@ -204,14 +204,14 @@ function errorResponse(
   return json(body, status);
 }
 
-function errorFrom(error: unknown): Response {
-  if (error instanceof NotFoundError) {
-    return json(envelope(error), 404);
+function errorFrom(cause: unknown): Response {
+  if (cause instanceof NotFoundError) {
+    return json(envelope(cause), 404);
   }
-  if (error instanceof CliError) {
-    return json(envelope(error), 400);
+  if (cause instanceof CliError) {
+    return json(envelope(cause), 400);
   }
-  const message = error instanceof Error ? error.message : String(error);
+  const message = cause instanceof Error ? cause.message : String(cause);
   return errorResponse(500, message);
 }
 

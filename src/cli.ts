@@ -124,17 +124,17 @@ export async function main(argv: string[] = process.argv): Promise<number> {
   }
 }
 
-function reportError(err: unknown, json: boolean): number {
-  const exitCode = err instanceof CliError ? err.exitCode : 1;
+function reportError(cause: unknown, json: boolean): number {
+  const exitCode = cause instanceof CliError ? cause.exitCode : 1;
   // ResultExitError carries no message: the command already printed its own
   // report (its --json payload is on stdout), so the boundary prints nothing.
   const message =
-    err instanceof CliError
-      ? err.message
-      : err instanceof Error
-        ? err.message
-        : String(err);
-  const hint = err instanceof CliError ? err.hint : undefined;
+    cause instanceof CliError
+      ? cause.message
+      : cause instanceof Error
+        ? cause.message
+        : String(cause);
+  const hint = cause instanceof CliError ? cause.hint : undefined;
 
   if (json) {
     if (message) {
@@ -157,12 +157,12 @@ function reportError(err: unknown, json: boolean): number {
     if (hint) console.error(`  ${hint}`);
   }
   if (
-    !(err instanceof CliError) &&
+    !(cause instanceof CliError) &&
     process.env.CAPSHELF_DEBUG &&
-    err instanceof Error &&
-    err.stack
+    cause instanceof Error &&
+    cause.stack
   ) {
-    console.error(err.stack);
+    console.error(cause.stack);
   }
   return exitCode;
 }

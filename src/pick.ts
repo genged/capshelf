@@ -570,10 +570,10 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
         }
         this.forceRedraw();
       },
-      (error: unknown) => {
+      (cause: unknown) => {
         if (this.previewPane !== pane) return;
         const message =
-          error instanceof Error ? error.message : "diff preview failed";
+          cause instanceof Error ? cause.message : "diff preview failed";
         this.previewPane = {
           ...pane,
           state: "error",

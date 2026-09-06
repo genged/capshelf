@@ -689,7 +689,7 @@ function applyError(
   scope: "project" | "local",
   key: string,
   parsed: { source: string; kind: string; name: string },
-  error: unknown,
+  cause: unknown,
 ): ApplyError {
   return {
     scope,
@@ -698,13 +698,13 @@ function applyError(
     kind: parsed.kind,
     name: parsed.name,
     action: "error",
-    error: error instanceof Error ? error.message : String(error),
+    error: cause instanceof Error ? cause.message : String(cause),
   };
 }
 
 function fragmentApplyError(
   target: FragmentTarget,
-  error: unknown,
+  cause: unknown,
 ): ApplyError {
   return applyError(
     "project",
@@ -714,7 +714,7 @@ function fragmentApplyError(
       kind: fragmentKindForTarget(target),
       name: "(merged)",
     },
-    error,
+    cause,
   );
 }
 
