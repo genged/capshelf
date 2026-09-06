@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, delimiter, join, resolve } from "node:path";
 import { CliError, ExitCode, PreconditionError } from "./errors";
+import { isErrno } from "./fs-utils";
 
 const GIT_MISSING_MESSAGE =
   "git is required but was not found on PATH\n  install Git, then retry";
@@ -1017,7 +1018,7 @@ async function presentFilesRelativeTo(
             : {},
         );
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        if (isErrno(error, "ENOENT")) {
           return null;
         }
         throw error;
@@ -1435,7 +1436,7 @@ export async function commitExistingPaths(
   try {
     await copyFile(indexPath, backupIndex);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") hadIndex = false;
+    if (isErrno(error, "ENOENT")) hadIndex = false;
     else throw error;
   }
   let createdCommit: string | null = null;

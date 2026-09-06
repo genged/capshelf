@@ -2,6 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { NotFoundError, PreconditionError } from "./errors";
+import { isErrno } from "./fs-utils";
 import {
   canonicalSkillRef,
   collectSelectedSkill,
@@ -103,7 +104,7 @@ export async function loadCodexState(dataRepo: string): Promise<CodexState> {
   try {
     marketplaceRaw = await readFile(join(root, "marketplace.json"), "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if (!isErrno(error, "ENOENT")) throw error;
     throw new NotFoundError("Codex marketplace is not initialized");
   }
   const marketplace = parseJsonSchema(

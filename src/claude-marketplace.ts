@@ -2,6 +2,7 @@ import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { NotFoundError, PreconditionError } from "./errors";
+import { isErrno } from "./fs-utils";
 import { showAtCommit } from "./git";
 import {
   canonicalSkillRef,
@@ -88,7 +89,7 @@ export async function loadClaudeMarketplace(
   try {
     raw = await readFile(path, "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if (!isErrno(error, "ENOENT")) throw error;
     throw new NotFoundError("Claude marketplace is not initialized");
   }
   return parseClaudeMarketplace(raw);
@@ -154,7 +155,7 @@ export async function validateClaudeMarketplace(
         );
       }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (!isErrno(error, "ENOENT")) throw error;
     }
   }
   for (const plugin of marketplace.plugins) {

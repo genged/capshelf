@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PreconditionError } from "./errors";
+import { isErrno } from "./fs-utils";
 import {
   assertRegularBlobEntries,
   sourceVisibleFilesUnderPath,
@@ -179,7 +180,7 @@ async function collectWorkingFiles(
       throw new PreconditionError(`${ref} is not a directory`);
     }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+    if (isErrno(error, "ENOENT")) {
       throw new PreconditionError(`${ref} does not exist`);
     }
     throw error;

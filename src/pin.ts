@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { mkdtemp, open, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
 import { PreconditionError } from "./errors";
+import { isErrno } from "./fs-utils";
 import {
   assertRegularBlobEntries,
   literalPathspec,
@@ -491,7 +492,7 @@ export async function observeInstalledEntries(
     try {
       handle = await open(fullPath, constants.O_RDONLY | constants.O_NOFOLLOW);
     } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
+      const code = isErrno(error) ? error.code : undefined;
       if (code === "ENOENT" || code === "ENOTDIR") {
         out.push({ path: entry.path, missing: true });
         continue;

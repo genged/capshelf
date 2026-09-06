@@ -53,6 +53,7 @@ import { beginDirectoryReplacement } from "./promote-transaction";
 import { shaOfNamedFiles } from "./item-snapshot";
 import { PRODUCT_NAME } from "./identity";
 import { PreconditionError } from "./errors";
+import { isErrno } from "./fs-utils";
 import { findDestinationPathCollision } from "./path-collision";
 
 export type MaterializeAction =
@@ -896,7 +897,7 @@ async function lstatOrNullAsync(path: string): Promise<Stats | null> {
   try {
     return await lstat(path);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    if (isErrno(error, "ENOENT")) return null;
     throw error;
   }
 }

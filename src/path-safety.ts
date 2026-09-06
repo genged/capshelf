@@ -2,6 +2,7 @@ import { lstatSync, realpathSync } from "node:fs";
 import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { PreconditionError } from "./errors";
+import { isErrno } from "./fs-utils";
 
 export async function assertNoSymlinkAncestors(
   root: string,
@@ -28,7 +29,7 @@ export async function assertNoSymlinkAncestors(
         );
       }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      if (isErrno(error, "ENOENT")) return;
       throw error;
     }
   }
@@ -50,7 +51,7 @@ export function assertNoSymlinkAncestorsSync(
         );
       }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      if (isErrno(error, "ENOENT")) return;
       throw error;
     }
   }
@@ -77,7 +78,7 @@ async function resolveThroughNearestExisting(path: string): Promise<string> {
       const existing = await realpath(cursor);
       return resolve(existing, ...missing.reverse());
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (!isErrno(error, "ENOENT")) throw error;
       const parent = resolve(cursor, "..");
       if (parent === cursor) throw error;
       missing.push(
