@@ -12,7 +12,7 @@ describe("fuzzyMatchV1 against the published algo.go examples", () => {
   const scoreOf = (pattern: string, text: string): number => {
     const match = fuzzyMatchV1(pattern, text);
     expect(match).not.toBeNull();
-    return (match as { score: number }).score;
+    return match!.score;
   };
 
   test("prefers more characters at word boundaries", () => {

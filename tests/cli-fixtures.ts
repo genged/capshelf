@@ -240,7 +240,7 @@ export function runInProcess(project: string) {
     const stdoutSpy = spyOn(process.stdout, "write").mockImplementation(
       (chunk) => {
         stdout.push(
-          typeof chunk === "string" ? chunk : Buffer.from(chunk).toString(),
+          chunk instanceof Uint8Array ? Buffer.from(chunk).toString() : chunk,
         );
         return true;
       },
@@ -248,7 +248,7 @@ export function runInProcess(project: string) {
     const stderrSpy = spyOn(process.stderr, "write").mockImplementation(
       (chunk) => {
         stderr.push(
-          typeof chunk === "string" ? chunk : Buffer.from(chunk).toString(),
+          chunk instanceof Uint8Array ? Buffer.from(chunk).toString() : chunk,
         );
         return true;
       },

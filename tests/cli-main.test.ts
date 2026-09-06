@@ -92,7 +92,7 @@ describe("in-process CLI entry point", () => {
     const stderrSpy = spyOn(process.stderr, "write").mockImplementation(
       (chunk) => {
         stderr.push(
-          typeof chunk === "string" ? chunk : Buffer.from(chunk).toString(),
+          chunk instanceof Uint8Array ? Buffer.from(chunk).toString() : chunk,
         );
         return true;
       },
