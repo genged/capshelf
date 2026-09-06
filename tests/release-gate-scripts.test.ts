@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { ConfigValue } from "../src/config-values";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tempDir } from "./cli-fixtures";
@@ -32,7 +33,7 @@ interface Result {
   stderr: string;
 }
 
-async function withStub(payload: unknown): Promise<string> {
+async function withStub(payload: ConfigValue): Promise<string> {
   const dir = await tempDir("capshelf-gh-stub-");
   const bin = join(dir, "bin");
   await mkdir(bin, { recursive: true });
@@ -45,7 +46,7 @@ async function withStub(payload: unknown): Promise<string> {
 async function run(
   script: string,
   args: string[],
-  payload: unknown,
+  payload: ConfigValue,
 ): Promise<Result> {
   const dir = await withStub(payload);
   const result = Bun.spawnSync({

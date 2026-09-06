@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { parsePickKind } from "../src/pick-core";
 import {
   pickTabs,
   rowsForTab,
@@ -11,7 +12,7 @@ function row(ref: string, installed = false): PickRow {
   const [kind = "skills", ...rest] = ref.split("/");
   return {
     ref,
-    kind: kind as PickRow["kind"],
+    kind: parsePickKind(kind),
     name: rest.join("/"),
     tags: [],
     installed,

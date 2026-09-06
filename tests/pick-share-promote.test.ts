@@ -1,5 +1,6 @@
 import { $, file } from "bun";
 import { afterEach, describe, expect, test } from "bun:test";
+import { pickRowId } from "../src/pick-core";
 import { existsSync, writeFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -176,9 +177,7 @@ describe("share with no item — the picker flow", () => {
       );
       const { seen } = answerWith((request) => {
         const wanted = new Set(["permissions.allow", "permissions.deny"]);
-        return request.rows
-          .filter((row) => wanted.has(row.ref))
-          .map((row) => row.id as string);
+        return request.rows.filter((row) => wanted.has(row.ref)).map(pickRowId);
       });
       installNamePrompt(["perms"]);
 
@@ -243,9 +242,7 @@ describe("share with no item — the picker flow", () => {
         JSON.stringify(SETTINGS),
       );
       answerWith((request) =>
-        request.rows
-          .filter((row) => row.ref === "env")
-          .map((row) => row.id as string),
+        request.rows.filter((row) => row.ref === "env").map(pickRowId),
       );
       const { asked } = installNamePrompt(["capshelf", "taken", "fresh"]);
 
@@ -274,9 +271,7 @@ describe("share with no item — the picker flow", () => {
         JSON.stringify(SETTINGS),
       );
       answerWith((request) =>
-        request.rows
-          .filter((row) => row.ref === "env")
-          .map((row) => row.id as string),
+        request.rows.filter((row) => row.ref === "env").map(pickRowId),
       );
       installNamePrompt([""]);
 
@@ -309,7 +304,7 @@ describe("share with no item — the picker flow", () => {
         );
         return request.rows
           .filter((row) => row.ref === "env.FOO")
-          .map((row) => row.id as string);
+          .map(pickRowId);
       });
       installNamePrompt(["envs"]);
 
@@ -347,7 +342,7 @@ describe("share with no item — the picker flow", () => {
       const { seen } = answerWith((request) =>
         request.rows
           .filter((row) => row.ref === "github" || row.ref === "posthog")
-          .map((row) => row.id as string),
+          .map(pickRowId),
       );
 
       const result = await run(["share", "-m", "reviewed config"]);
@@ -431,9 +426,7 @@ describe("share with no item — the picker flow", () => {
       await mkdir(join(project, ".codex"), { recursive: true });
       await writeFile(join(project, ".codex", "config.toml"), "[[[not toml");
       const { seen } = answerWith((request) =>
-        request.rows
-          .filter((row) => row.ref === "env.FOO")
-          .map((row) => row.id as string),
+        request.rows.filter((row) => row.ref === "env.FOO").map(pickRowId),
       );
       installNamePrompt(["envs"]);
 
@@ -494,9 +487,7 @@ describe("share with no item — the picker flow", () => {
         join(project, ".mcp.json"),
         JSON.stringify({ mcpServers: { capshelf: { command: "x" } } }),
       );
-      const { seen } = answerWith((request) =>
-        request.rows.map((row) => row.id as string),
-      );
+      const { seen } = answerWith((request) => request.rows.map(pickRowId));
 
       const result = await run(["share"]);
       expect(result.exitCode).toBe(3);
@@ -519,7 +510,7 @@ describe("share with no item — the picker flow", () => {
       answerWith((request) =>
         request.rows
           .filter((row) => row.ref === "permissions.allow")
-          .map((row) => row.id as string),
+          .map(pickRowId),
       );
       installNamePrompt(["perms"]);
       const picked = await first.run(["share"]);
@@ -540,7 +531,7 @@ describe("share with no item — the picker flow", () => {
         join(second.project, ".claude", "settings.json"),
         JSON.stringify(SETTINGS),
       );
-      const args = (command as string).split(" ").slice(1);
+      const args = command!.split(" ").slice(1);
       const repeated = await second.run(args);
       expect(repeated.exitCode).toBe(0);
 
@@ -572,9 +563,7 @@ describe("share with no item — untracked items", () => {
         "hello\n",
       );
       const { seen } = answerWith((request) =>
-        request.rows
-          .filter((row) => row.ref === "hello")
-          .map((row) => row.id as string),
+        request.rows.filter((row) => row.ref === "hello").map(pickRowId),
       );
 
       const result = await run(["share"]);
@@ -638,7 +627,7 @@ describe("share with no item — untracked items", () => {
               (row.ref === "reviewer" &&
                 row.detail?.includes(".claude/agents/reviewer.md") === true),
           )
-          .map((row) => row.id as string),
+          .map(pickRowId),
       );
 
       const result = await run(["share"]);
@@ -726,9 +715,7 @@ describe("share with no item — untracked items", () => {
       await writeFile(skillFile, "hello\n");
       answerWith((request) => {
         writeFileSync(skillFile, "changed under the open frame\n");
-        return request.rows
-          .filter((row) => row.ref === "hello")
-          .map((row) => row.id as string);
+        return request.rows.filter((row) => row.ref === "hello").map(pickRowId);
       });
 
       const result = await run(["share"]);

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { parseItemKind } from "../src/master";
 import { $ } from "bun";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -14,7 +15,7 @@ import type { Bundle } from "../src/bundles";
 import { emptyLock } from "../src/lock";
 import type { Lock } from "../src/lock";
 import { emptyManifest } from "../src/manifest";
-import type { ItemKind, MasterItem } from "../src/master";
+import type { MasterItem } from "../src/master";
 import { emptyMetadata } from "../src/metadata";
 import type { ItemMetadata } from "../src/metadata";
 import type { ApplyFragmentOutputOptions } from "../src/fragments";
@@ -25,8 +26,8 @@ function bundleOf(refs: string[], name = "b"): Bundle {
     path: `/data/bundles/${name}.yml`,
     tags: [],
     members: refs.map((ref) => {
-      const [kind, memberName] = ref.split("/") as [ItemKind, string];
-      return { kind, name: memberName };
+      const [kind = "", memberName = ""] = ref.split("/");
+      return { kind: parseItemKind(kind), name: memberName };
     }),
     warnings: [],
     unknownKinds: [],
@@ -38,8 +39,8 @@ function masterOf(
   refs: string[],
 ): Pick<MasterItem, "kind" | "name" | "repoRelPath">[] {
   return refs.map((ref) => {
-    const [kind, name] = ref.split("/") as [ItemKind, string];
-    return { kind, name, repoRelPath: ref };
+    const [kind = "", name = ""] = ref.split("/");
+    return { kind: parseItemKind(kind), name, repoRelPath: ref };
   });
 }
 
@@ -298,10 +299,15 @@ describe("preflightBundleChecks fragment collisions", () => {
     const bundlePlan = plan({ bundle: bundleOf(refs), master: refs });
     const masterByRef = new Map<string, MasterItem>(
       refs.map((ref) => {
-        const [kind, name] = ref.split("/") as [ItemKind, string];
+        const [kind = "", name = ""] = ref.split("/");
         return [
           ref,
-          { kind, name, repoRelPath: ref, path: join(dataRepo, ref) },
+          {
+            kind: parseItemKind(kind),
+            name,
+            repoRelPath: ref,
+            path: join(dataRepo, ref),
+          },
         ];
       }),
     );
@@ -354,10 +360,15 @@ describe("preflightBundleChecks fragment collisions", () => {
     const bundlePlan = plan({ bundle: bundleOf(refs), master: refs });
     const masterByRef = new Map<string, MasterItem>(
       refs.map((ref) => {
-        const [kind, name] = ref.split("/") as [ItemKind, string];
+        const [kind = "", name = ""] = ref.split("/");
         return [
           ref,
-          { kind, name, repoRelPath: ref, path: join(dataRepo, ref) },
+          {
+            kind: parseItemKind(kind),
+            name,
+            repoRelPath: ref,
+            path: join(dataRepo, ref),
+          },
         ];
       }),
     );

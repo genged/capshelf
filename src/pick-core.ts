@@ -61,6 +61,16 @@ export interface PickRow {
   detail?: string;
 }
 
+export function isPickKind(value: string): value is PickKind {
+  return PICK_KIND_ORDER.some((kind) => kind === value);
+}
+
+/** The kind a fixture or a row id names, or a refusal. */
+export function parsePickKind(value: string): PickKind {
+  if (isPickKind(value)) return value;
+  throw new Error(`invalid pick kind "${value}"`);
+}
+
 /** The string marks and the picked result carry for a row. */
 export function pickRowId(row: PickRow): string {
   return row.id ?? row.ref;

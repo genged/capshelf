@@ -23,7 +23,7 @@ import {
   sortTree,
   summaryLine,
 } from "../src/ui/shared/view-model";
-import { ITEM_KINDS } from "../src/master";
+import { ITEM_KINDS, parseItemKind } from "../src/master";
 import type { State } from "../src/status-core";
 
 function item(
@@ -31,7 +31,8 @@ function item(
   state: State,
   overrides: Partial<UiItem> = {},
 ): UiItem {
-  const [kind, name] = ref.split("/") as [UiItem["kind"], string];
+  const [kindText = "", name = ""] = ref.split("/");
+  const kind = parseItemKind(kindText);
   const attention = state !== "ok" && state !== "kept-local";
   return {
     id: `project/data/${ref}`,

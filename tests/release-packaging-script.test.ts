@@ -51,7 +51,7 @@ interface Result {
  * `scripts/` directory keeps the run away from the repository's `dist/`.
  */
 async function run(
-  platforms: unknown,
+  platforms: PlatformRow[],
   version = "9.9.9",
 ): Promise<Result & { root: string }> {
   const root = await tempDir("capshelf-packaging-");

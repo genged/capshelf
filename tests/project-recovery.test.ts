@@ -305,12 +305,13 @@ describe("project recovery", () => {
       // `local.json` is init's last write, so every interruption leaves it
       // absent. Both prefixes below are reachable states; each must recover
       // by re-running init, with no new subcommand and no manual repair.
-      for (const leftover of [
+      const leftovers: string[][] = [
         // Interrupted after saveLock: manifest, lock, and files on disk.
-        [] as string[],
+        [],
         // Interrupted during the installs: files on disk, no lock entry.
         [join(".capshelf", "capshelf.lock.json")],
-      ]) {
+      ];
+      for (const leftover of leftovers) {
         const project = await tempRepo("capshelf-partial-init-project-", {
           origin: null,
         });

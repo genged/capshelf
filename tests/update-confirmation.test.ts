@@ -18,11 +18,17 @@ import {
  * `revert` actually call — with a scripted TTY, and restore the default
  * afterwards.
  */
+/** What the consent prompt asked and what it drew on stderr. */
+interface RecordedPrompts {
+  prompts: string[];
+  stderr: string[];
+}
+
 async function withTty<T>(
   answer: string,
-  body: (recorded: { prompts: string[]; stderr: string[] }) => Promise<T>,
+  body: (recorded: RecordedPrompts) => Promise<T>,
 ): Promise<T> {
-  const recorded = { prompts: [] as string[], stderr: [] as string[] };
+  const recorded: RecordedPrompts = { prompts: [], stderr: [] };
   setDestructiveConfirmationContext({
     stdinIsTTY: true,
     stderrIsTTY: true,

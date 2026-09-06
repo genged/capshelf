@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { pickRowId } from "../src/pick-core";
 import {
   plannedItemSharesFromMarks,
   untrackedItemRows,
@@ -44,7 +45,7 @@ describe("untrackedItemRows", () => {
     // Each pick knows every shareable output, so the mark grouping can tell
     // "all of them" from "one of them".
     for (const row of reviewer) {
-      expect(picks.get(row.id as string)?.presentTargets).toEqual([
+      expect(picks.get(pickRowId(row))?.presentTargets).toEqual([
         "claude",
         "codex",
       ]);
@@ -69,10 +70,10 @@ describe("untrackedItemRows", () => {
     const byRef = new Map(rows.map((row) => [row.ref, row]));
     expect(byRef.get("broken")?.disabled).toBe(true);
     expect(byRef.get("broken")?.detail).toContain("missing SKILL.md");
-    expect(picks.get(byRef.get("broken")?.id as string)).toBeUndefined();
+    expect(picks.get(pickRowId(byRef.get("broken")!))).toBeUndefined();
     expect(byRef.get("ok")?.disabled).toBeUndefined();
     expect(byRef.get("ok")?.detail).toBe(".agents/skills/ok · 2 files");
-    expect(picks.get(byRef.get("ok")?.id as string)).toMatchObject({
+    expect(picks.get(pickRowId(byRef.get("ok")!))).toMatchObject({
       kind: "skills",
       name: "ok",
       target: null,
@@ -92,9 +93,7 @@ describe("untrackedItemRows", () => {
       }),
     ]);
     const enabled = rows.find((row) => row.disabled !== true);
-    expect(picks.get(enabled?.id as string)?.presentTargets).toEqual([
-      "claude",
-    ]);
+    expect(picks.get(pickRowId(enabled!))?.presentTargets).toEqual(["claude"]);
   });
 
   test("labels and details are sanitized for the live frame", () => {
