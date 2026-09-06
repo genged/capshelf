@@ -1,6 +1,15 @@
 import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { ClaudeMarketplace } from "./claude-marketplace";
+import type {
+  CodexMarketplaceSource,
+  CodexNativeMarketplace,
+  CodexPluginDefinition,
+  CodexPluginManifest,
+} from "./codex-marketplace";
+import { defineConfigProperty, isConfigObject } from "./config-values";
+import type { ConfigObject, ConfigValue } from "./config-values";
 import { PreconditionError } from "./errors";
 import { isErrno } from "./fs-utils";
 import {
@@ -19,6 +28,15 @@ export interface ProjectionFile {
   bytes: Buffer;
   executable: boolean;
 }
+
+/** The JSON documents the projections write, one member per writer. */
+export type ProjectionJson =
+  | ClaudeMarketplace
+  | CodexMarketplaceSource
+  | CodexPluginDefinition
+  | CodexPluginManifest
+  | Omit<CodexPluginManifest, "version">
+  | CodexNativeMarketplace;
 
 export function validateProjectionFiles(files: ProjectionFile[]): void {
   const seen = new Set<string>();
@@ -229,11 +247,11 @@ async function collectHeadFiles(
 }
 
 export function logicalContentHash(
-  metadata: unknown,
+  metadata: ProjectionJson | ConfigValue,
   files: ProjectionFile[],
 ): string {
   const hash = createHash("sha256");
-  hash.update(`${JSON.stringify(canonicalizeJson(metadata))}\0`);
+  hash.update(`${JSON.stringify(canonicalizeJson(jsonValueOf(metadata)))}\0`);
   for (const file of [...files].sort((a, b) => a.path.localeCompare(b.path))) {
     hash.update(`${file.path}\0${file.executable ? "x" : "-"}\0`);
     hash.update(file.bytes);
@@ -265,19 +283,34 @@ async function trackedModesUnderPath(
   return modes;
 }
 
-function canonicalizeJson(value: unknown): unknown {
+/**
+ * A document as the JSON value model sees it. `JSON.parse` without a reviver
+ * yields exactly the members of `ConfigValue`, and the round trip drops the
+ * `undefined` properties `JSON.stringify` would drop anyway.
+ */
+function jsonValueOf(value: ProjectionJson | ConfigValue): ConfigValue {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function canonicalizeJson(value: ConfigValue): ConfigValue {
   if (Array.isArray(value)) return value.map(canonicalizeJson);
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, nested]) => [key, canonicalizeJson(nested)]),
+  if (isConfigObject(value)) {
+    const out: ConfigObject = {};
+    const entries = Object.entries(value).sort(([left], [right]) =>
+      left.localeCompare(right),
     );
+    for (const [key, nested] of entries) {
+      defineConfigProperty(out, key, canonicalizeJson(nested));
+    }
+    return out;
   }
   return value;
 }
 
-export function jsonFile(path: string, value: unknown): ProjectionFile {
+export function jsonFile(
+  path: string,
+  value: ProjectionJson | ConfigValue,
+): ProjectionFile {
   return {
     path,
     bytes: Buffer.from(`${JSON.stringify(value, null, 2)}\n`),

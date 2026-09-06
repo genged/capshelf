@@ -54,6 +54,21 @@ export interface CodexState {
   definitions: CodexPluginDefinition[];
 }
 
+/** One entry of the generated `.agents/plugins/marketplace.json`. */
+interface CodexNativePlugin {
+  name: string;
+  source: { source: "local"; path: string };
+  policy: CodexPluginDefinition["policy"];
+  category: string;
+}
+
+/** The generated `.agents/plugins/marketplace.json` document. */
+export interface CodexNativeMarketplace {
+  name: string;
+  interface?: { displayName: string };
+  plugins: CodexNativePlugin[];
+}
+
 export function validateCodexStateDocument(state: CodexState): CodexState {
   const marketplace = parseJsonSchema(
     JSON.stringify(state.marketplace),
@@ -269,7 +284,7 @@ export async function buildCodexProjection(
     .filter((definition) => !options.only || definition.name === options.only)
     .sort((a, b) => a.name.localeCompare(b.name));
   const files: ProjectionFile[] = [];
-  const nativePlugins: unknown[] = [];
+  const nativePlugins: CodexNativePlugin[] = [];
   for (const definition of definitions) {
     const selected = await Promise.all(
       definition.skills.map((skill) =>
@@ -282,12 +297,8 @@ export async function buildCodexProjection(
         path: `skills/${skill.name}/${file.path}`,
       })),
     );
-    const metadataWithoutVersion = codexPluginManifest(
-      state.marketplace,
-      definition,
-      "",
-    );
-    delete (metadataWithoutVersion as { version?: string }).version;
+    const { version: _version, ...metadataWithoutVersion } =
+      codexPluginManifest(state.marketplace, definition, "");
     const hash = logicalContentHash(metadataWithoutVersion, pluginFiles);
     const version = `0.0.0+codex.${hash.slice(0, 12)}`;
     const root = `codex/generated/plugins/${definition.name}`;
@@ -314,18 +325,16 @@ export async function buildCodexProjection(
   const displayName = options.only
     ? (definitions[0]?.displayName ?? definitions[0]?.name ?? marketplaceName)
     : state.marketplace.displayName;
-  files.push(
-    jsonFile(".agents/plugins/marketplace.json", {
-      name: marketplaceName,
-      ...(displayName && { interface: { displayName } }),
-      plugins: nativePlugins,
-    }),
-    {
-      path: "codex/generated/README.md",
-      bytes: Buffer.from(CODEX_README),
-      executable: false,
-    },
-  );
+  const nativeMarketplace: CodexNativeMarketplace = {
+    name: marketplaceName,
+    ...(displayName && { interface: { displayName } }),
+    plugins: nativePlugins,
+  };
+  files.push(jsonFile(".agents/plugins/marketplace.json", nativeMarketplace), {
+    path: "codex/generated/README.md",
+    bytes: Buffer.from(CODEX_README),
+    executable: false,
+  });
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
 

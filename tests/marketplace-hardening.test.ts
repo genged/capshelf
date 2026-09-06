@@ -46,6 +46,14 @@ describe("marketplace hardening", () => {
     expect(changed).not.toBe(first);
   });
 
+  test("the logical hash of a known manifest is stable", () => {
+    // Pinned on 33becb7, before the hash moved onto the JSON value model, so
+    // a drift in the canonical form is visible.
+    expect(logicalContentHash({ z: 1, nested: { b: 2, a: 1 } }, [])).toBe(
+      "df7303c1baa9589a3c1f2363e9ec72692a514745628c3b9acf157e797287ac94",
+    );
+  });
+
   test("Codex versions use tracked Git modes and untracked working modes", async () => {
     const repo = await tempRepo("capshelf-marketplace-modes-", {
       origin: null,

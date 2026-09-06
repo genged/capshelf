@@ -24,6 +24,12 @@ export const ConfigValueSchema: z.ZodType<ConfigValue> = z.lazy(() =>
   ]),
 );
 
+/** The object member of the JSON value model as a zod schema. */
+export const ConfigObjectSchema: z.ZodType<ConfigObject> = z.record(
+  z.string(),
+  ConfigValueSchema,
+);
+
 export function mergeConfigObjects(fragments: ConfigObject[]): ConfigObject {
   let merged: ConfigObject = {};
   for (const fragment of fragments) {

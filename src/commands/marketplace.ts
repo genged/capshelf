@@ -32,7 +32,7 @@ import {
   type CodexState,
   validateCodexStateDocument,
 } from "../codex-marketplace";
-import { isConfigString } from "../config-values";
+import { ConfigObjectSchema, isConfigString } from "../config-values";
 import type { ConfigObject } from "../config-values";
 import { resolveDataRepo } from "../data-repo";
 import type { DestructiveChange } from "../destructive-change";
@@ -872,8 +872,10 @@ export function registerMarketplace(program: Command): void {
             collectSelectedSkill(dataRepo, skill, opts.fromHead),
           ),
         );
+        // The entry is a parsed JSON document whose extra keys pass through
+        // untyped; the schema restates them as JSON values before the pick.
         const safeMetadata = Object.fromEntries(
-          Object.entries(entry).filter(([key]) =>
+          Object.entries(ConfigObjectSchema.parse(entry)).filter(([key]) =>
             [
               "name",
               "displayName",
