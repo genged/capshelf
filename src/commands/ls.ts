@@ -431,10 +431,9 @@ async function lsHere(
   if (json) {
     console.log(
       JSON.stringify(
-        rows.map(({ entry, meta }) => ({
-          ...entry,
-          ...(meta ? metadataJsonFields(meta) : {}),
-        })),
+        rows.map(({ entry, meta }) =>
+          meta ? { ...entry, ...metadataJsonFields(meta) } : { ...entry },
+        ),
         null,
         2,
       ),

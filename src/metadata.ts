@@ -162,17 +162,16 @@ export function mergeItemMetadata(
   sidecar: ItemMetadata,
   frontmatter: ItemMetadata,
 ): ItemMetadata {
-  return {
-    ...(sidecar.description !== undefined ||
-    frontmatter.description !== undefined
-      ? { description: sidecar.description ?? frontmatter.description }
-      : {}),
+  const merged: ItemMetadata = {
     tags: sidecar.tags,
     requires: sidecar.requires,
     conflictsWith: sidecar.conflictsWith,
     needs: sidecar.needs,
     warnings: [...sidecar.warnings, ...frontmatter.warnings],
   };
+  const description = sidecar.description ?? frontmatter.description;
+  if (description !== undefined) merged.description = description;
+  return merged;
 }
 
 /**

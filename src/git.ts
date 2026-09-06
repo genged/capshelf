@@ -1074,7 +1074,11 @@ export async function statusPorcelainRecords(
     if (code.includes("R") || code.includes("C")) {
       const origPath = fields[index + 1];
       index += 1;
-      records.push({ code, path, ...(origPath ? { origPath } : {}) });
+      const record: StatusPorcelainRecord = { code, path };
+      if (origPath !== undefined && origPath.length > 0) {
+        record.origPath = origPath;
+      }
+      records.push(record);
       continue;
     }
     records.push({ code, path });
