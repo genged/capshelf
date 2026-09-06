@@ -1,5 +1,7 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { parseJsonc } from "../src/json-fragments";
+import { isConfigObject } from "../src/config-values";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { registerProject } from "../src/project-registry";
@@ -20,6 +22,9 @@ import {
   runInProcess,
   tempDir,
   tempRepo,
+  objectField,
+  readJsonObject,
+  stringField,
 } from "./cli-fixtures";
 
 const TOKEN = "0123456789abcdef0123456789abcdef";
@@ -363,14 +368,15 @@ describe("capshelf ui server", () => {
 
   test("a legacy lock produces a migration notice", async () => {
     const lockPath = join(world.project, ".capshelf", "capshelf.lock.json");
-    const lock = JSON.parse(await Bun.file(lockPath).text());
+    const lock = await readJsonObject(lockPath);
     const legacy = {
       version: 3,
       items: Object.fromEntries(
-        Object.entries(lock.items).map(([key, entry]) => {
-          const value = entry as Record<string, unknown>;
-          if (value.source !== "data") return [key, value];
-          const { sourcePinDigest, ...rest } = value;
+        Object.entries(objectField(lock, "items")).map(([key, entry]) => {
+          if (!isConfigObject(entry) || entry.source !== "data") {
+            return [key, entry];
+          }
+          const { sourcePinDigest, ...rest } = entry;
           return [key, { ...rest, sha: String(sourcePinDigest).slice(0, 12) }];
         }),
       ),
@@ -407,8 +413,11 @@ describe("capshelf ui server", () => {
         headers: { Authorization: `Bearer ${TOKEN}` },
       });
       expect(response.status).toBe(200);
-      const body = (await response.json()) as UiDiffResponse;
-      expect(body.diff?.text).toContain("+edited line");
+      const body = parseJsonc(await response.text());
+      if (!isConfigObject(body)) throw new Error("diff response is not JSON");
+      expect(stringField(objectField(body, "diff"), "text")).toContain(
+        "+edited line",
+      );
     } finally {
       await server.stop();
     }

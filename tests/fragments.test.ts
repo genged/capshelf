@@ -1,5 +1,7 @@
 import { $, file } from "bun";
 import { describe, expect, test } from "bun:test";
+import { parseTomlConfigObject } from "../src/toml-fragments";
+import { objectField } from "./cli-fixtures";
 import { currentPin, pinDigestAtCommit } from "./pin-fixtures";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -438,11 +440,14 @@ describe("fragment output planning", () => {
 
     const claudeMcp = JSON.parse(await file(join(project, ".mcp.json")).text());
     expect(claudeMcp.mcpServers.github.command).toBe("github-mcp");
-    const codexConfig = Bun.TOML.parse(
+    const codexConfig = parseTomlConfigObject(
       await file(join(project, ".codex", "config.toml")).text(),
-    ) as { model?: string; mcp_servers?: { github?: { enabled?: boolean } } };
+      "config.toml",
+    );
     expect(codexConfig.model).toBe("gpt-5");
-    expect(codexConfig.mcp_servers?.github?.enabled).toBe(true);
+    expect(
+      objectField(objectField(codexConfig, "mcp_servers"), "github").enabled,
+    ).toBe(true);
     expect(
       await fragmentContributionState(
         project,

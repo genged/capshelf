@@ -3,12 +3,13 @@ import {
   cloneConfig,
   containsManagedValue,
   findUnmanagedCollision,
-  mergeConfigValues,
+  isConfigObject,
+  mergeConfigObject,
   removeManagedValue,
   stableStringifyConfig,
   stableSortConfig,
-  type ConfigObject,
 } from "../src/config-values";
+import { parseJsonc } from "../src/json-fragments";
 import { parseTomlConfigObject } from "../src/toml-fragments";
 
 describe("configuration safety", () => {
@@ -30,13 +31,14 @@ describe("configuration safety", () => {
   });
 
   test("configuration operations preserve special own keys safely", () => {
-    const value = JSON.parse(
+    const value = parseJsonc(
       '{"__proto__":{"enabled":true},"constructor":1,"toString":2,"valueOf":3,"hasOwnProperty":4,"prototype":5}',
-    ) as ConfigObject;
+    );
+    if (!isConfigObject(value)) throw new Error("the fixture is not an object");
     for (const result of [
       cloneConfig(value),
-      stableSortConfig(value) as ConfigObject,
-      mergeConfigValues({}, value) as ConfigObject,
+      stableSortConfig(value),
+      mergeConfigObject({}, value),
     ]) {
       expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
       for (const key of Object.keys(value))

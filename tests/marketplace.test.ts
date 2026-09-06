@@ -14,6 +14,10 @@ import {
   runInProcess,
   tempDir,
   tempRepo,
+  arrayField,
+  objectItems,
+  readJsonObject,
+  stringField,
 } from "./cli-fixtures";
 
 async function seedSkill(
@@ -157,16 +161,15 @@ describe("marketplace CLI", () => {
         "utf8",
       ),
     ).toContain("name: test");
-    const manifest = JSON.parse(
-      await readFile(
-        join(
-          repo,
-          "codex/generated/plugins/engineering/.codex-plugin/plugin.json",
-        ),
-        "utf8",
+    const manifest = await readJsonObject(
+      join(
+        repo,
+        "codex/generated/plugins/engineering/.codex-plugin/plugin.json",
       ),
-    ) as { version: string };
-    expect(manifest.version).toMatch(/^0\.0\.0\+codex\.[0-9a-f]{12}$/);
+    );
+    expect(stringField(manifest, "version")).toMatch(
+      /^0\.0\.0\+codex\.[0-9a-f]{12}$/,
+    );
 
     const validate = await run([
       "--data",
@@ -772,16 +775,14 @@ describe("marketplace CLI", () => {
       ).exitCode,
     ).toBe(0);
     const path = join(repo, ".claude-plugin/marketplace.json");
-    const marketplace = JSON.parse(await readFile(path, "utf8")) as {
-      plugins: unknown[];
-    };
+    const marketplace = await readJsonObject(path);
     const external = {
       name: "vendor",
       source: { source: "github", repo: "vendor/tool" },
       version: "1.2.3",
       future: { preserved: true },
     };
-    marketplace.plugins.push(external);
+    arrayField(marketplace, "plugins").push(external);
     await writeFile(path, `${JSON.stringify(marketplace, null, 2)}\n`);
     await commitAll(repo, "external entry");
 
@@ -852,13 +853,10 @@ describe("marketplace CLI", () => {
       ).exitCode,
     ).toBe(0);
 
-    const current = JSON.parse(await readFile(path, "utf8")) as {
-      plugins: Array<Record<string, unknown>>;
-      renames: Record<string, string | null>;
-    };
-    expect(current.plugins.find((entry) => entry.name === "vendor")).toEqual(
-      external,
-    );
+    const current = await readJsonObject(path);
+    expect(
+      objectItems(current, "plugins").find((entry) => entry.name === "vendor"),
+    ).toEqual(external);
     expect(current.renames).toEqual({
       engineering: "core",
       core: "platform",

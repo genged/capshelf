@@ -152,9 +152,9 @@ describe("write-then-verify", () => {
 
     // The `lock migrate` fault-injection case: a serializer that drops one
     // digest has to fail at the strict parse, not after a file is written.
-    const { sourcePinDigest: _dropped, ...withoutDigest } = candidate.items[
-      dataKey("skills", "hello")
-    ] as { sourcePinDigest: string };
+    const entry = candidate.items[dataKey("skills", "hello")];
+    if (entry?.source !== "data") throw new Error("expected a data entry");
+    const { sourcePinDigest: _dropped, ...withoutDigest } = entry;
     // SAFETY: the object omits sourcePinDigest on purpose. The test proves the
     // writer refuses it. LockV4 is comparable to this literal, so one
     // assertion states the intent.
@@ -178,9 +178,9 @@ describe("write-then-verify", () => {
     const raw = await file(path).json();
     // The one writer strict-parses on the way out; this proves the file it
     // produced strict-parses on the way back in, with the same value.
-    expect(parseLock(raw)).toEqual(await loadLock(project));
-    expect(serializeLock(parseLock(raw) as LockV4)).toBe(
-      await readFile(path, "utf-8"),
-    );
+    const parsed = parseLock(raw);
+    expect(parsed).toEqual(await loadLock(project));
+    if (parsed.version !== 4) throw new Error("expected a version 4 lock");
+    expect(serializeLock(parsed)).toBe(await readFile(path, "utf-8"));
   });
 });

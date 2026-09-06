@@ -1,5 +1,6 @@
 import { $, file } from "bun";
 import { describe, expect, test } from "bun:test";
+import { parseLock } from "../src/lock";
 import { existsSync, lstatSync } from "node:fs";
 import { chmod, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -304,11 +305,15 @@ async function runCell(cell: Cell, kind: "consumption" | "authoring") {
   // Row 5 of the object model: the sidecar never reaches a project.
   expect(existsSync(join(installedRoot, ".capshelf.yml"))).toBe(false);
 
-  const lock = await file(
-    join(project, ".capshelf", "capshelf.lock.json"),
-  ).json();
+  const lock = parseLock(
+    await file(join(project, ".capshelf", "capshelf.lock.json")).json(),
+  );
+  const entry = lock.items["data/skills/matrix"];
+  if (entry?.source !== "data" || entry.sourcePinDigest === undefined) {
+    throw new Error("the lock has no pinned entry for skills/matrix");
+  }
   return {
-    digest: lock.items["data/skills/matrix"].sourcePinDigest as string,
+    digest: entry.sourcePinDigest,
     installed: afterAdd,
     refusal: null,
   } satisfies CellResult;

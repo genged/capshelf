@@ -2,7 +2,13 @@ import { $, file } from "bun";
 import { describe, expect, test } from "bun:test";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { commitAll, runInProcess, tempDir, tempRepo } from "./cli-fixtures";
+import {
+  commitAll,
+  runInProcess,
+  tempDir,
+  tempRepo,
+  jsonRows,
+} from "./cli-fixtures";
 
 describe("cli integration", () => {
   test("add --local writes local manifest, lock, excludes, and status group", async () => {
@@ -64,11 +70,7 @@ describe("cli integration", () => {
 
     const lsHere = await run(["ls", "--here", "--json"]);
     expect(lsHere.exitCode).toBe(0);
-    const installedItems = JSON.parse(lsHere.stdout.toString()) as Array<{
-      scope?: string;
-      kind?: string;
-      name?: string;
-    }>;
+    const installedItems = jsonRows(lsHere);
     expect(
       installedItems.some(
         (item) =>

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { parseJsonConfigObject } from "../src/json-fragments";
 import { chmod, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -22,6 +23,7 @@ import {
   runInProcess,
   tempDir,
   tempRepo,
+  stringField,
 } from "./cli-fixtures";
 
 async function seedSkill(repo: string, name: string): Promise<void> {
@@ -87,8 +89,10 @@ describe("marketplace hardening", () => {
       const manifest = files.find((file) =>
         file.path.endsWith("/.codex-plugin/plugin.json"),
       );
-      return (JSON.parse(manifest!.bytes.toString()) as { version: string })
-        .version;
+      return stringField(
+        parseJsonConfigObject(manifest!.bytes.toString(), "plugin.json"),
+        "version",
+      );
     };
 
     const initial = await cacheVersion();
@@ -606,8 +610,10 @@ describe("marketplace hardening", () => {
       const manifest = files.find((file) =>
         file.path.endsWith("/.codex-plugin/plugin.json"),
       );
-      return (JSON.parse(manifest!.bytes.toString()) as { version: string })
-        .version;
+      return stringField(
+        parseJsonConfigObject(manifest!.bytes.toString(), "plugin.json"),
+        "version",
+      );
     };
     const first = await version(state);
     await writeFile(join(repo, "unrelated"), "unrelated");

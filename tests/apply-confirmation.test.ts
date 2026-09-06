@@ -8,6 +8,9 @@ import {
   commitAll,
   runInProcess,
   tempRepo,
+  jsonOutput,
+  objectItems,
+  stringField,
 } from "./cli-fixtures";
 
 describe("apply destructive-change preflight", () => {
@@ -27,16 +30,7 @@ describe("apply destructive-change preflight", () => {
 
     const dryRun = await run(["apply", "skills/hello", "--dry-run", "--json"]);
     expect(dryRun.exitCode).toBe(0);
-    const dryReport = JSON.parse(dryRun.stdout.toString()) as {
-      destructiveChanges: Array<{
-        scope: string;
-        item?: string;
-        path: string;
-        reason: string;
-        detail?: string;
-        reviewCommand?: string;
-      }>;
-    };
+    const dryReport = jsonOutput(dryRun);
     expect(dryReport.destructiveChanges).toContainEqual({
       scope: "project",
       item: "project/data/skills/hello",
@@ -169,17 +163,7 @@ describe("apply destructive-change preflight", () => {
         "--json",
       ]);
       expect(dryRun.exitCode).toBe(0);
-      const report = JSON.parse(dryRun.stdout.toString()) as {
-        items: Array<{ action: string }>;
-        destructiveChanges: Array<{
-          scope: string;
-          item?: string;
-          path: string;
-          reason: string;
-          detail?: string;
-          reviewCommand?: string;
-        }>;
-      };
+      const report = jsonOutput(dryRun);
       expect(report.destructiveChanges).toContainEqual({
         scope: "project",
         item: "project/data/skills/hello",
@@ -189,8 +173,8 @@ describe("apply destructive-change preflight", () => {
         reviewCommand: "capshelf status skills/hello --diff-view installed",
       });
       expect(
-        report.destructiveChanges.some((change) =>
-          change.path.endsWith(".capshelf.yml"),
+        objectItems(report, "destructiveChanges").some((change) =>
+          stringField(change, "path").endsWith(".capshelf.yml"),
         ),
       ).toBe(false);
 
@@ -254,14 +238,12 @@ describe("apply destructive-change preflight", () => {
       "--json",
     ]);
     expect(dryRun.exitCode).toBe(0);
-    const report = JSON.parse(dryRun.stdout.toString()) as {
-      destructiveChanges: Array<{ reason: string }>;
-    };
+    const report = jsonOutput(dryRun);
     // Comment loss in a strict-JSON target is repair, not destruction: only
     // the edited managed contribution reaches the consent boundary.
-    expect(report.destructiveChanges.map((change) => change.reason)).toEqual([
-      "fragment_contribution",
-    ]);
+    expect(
+      objectItems(report, "destructiveChanges").map((change) => change.reason),
+    ).toEqual(["fragment_contribution"]);
     expect((await run(["apply", "settings/security", "--json"])).exitCode).toBe(
       3,
     );
@@ -290,11 +272,11 @@ describe("apply destructive-change preflight", () => {
         "--json",
       ]);
       expect(dryRun.exitCode).toBe(0);
-      const report = JSON.parse(dryRun.stdout.toString()) as {
-        destructiveChanges: Array<{ reason: string }>;
-      };
+      const report = jsonOutput(dryRun);
       expect(
-        report.destructiveChanges.map((change) => change.reason),
+        objectItems(report, "destructiveChanges").map(
+          (change) => change.reason,
+        ),
       ).toContain("config_comments");
       expect(
         (await run(["apply", "codex-config/defaults", "--json"])).exitCode,
