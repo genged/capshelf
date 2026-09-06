@@ -155,10 +155,13 @@ describe("write-then-verify", () => {
     const { sourcePinDigest: _dropped, ...withoutDigest } = candidate.items[
       dataKey("skills", "hello")
     ] as { sourcePinDigest: string };
+    // SAFETY: the object omits sourcePinDigest on purpose. The test proves the
+    // writer refuses it. LockV4 is comparable to this literal, so one
+    // assertion states the intent.
     const broken = {
       version: 4,
       items: { [dataKey("skills", "hello")]: withoutDigest },
-    } as unknown as LockV4;
+    } as LockV4;
     expect(() => serializeLock(broken)).toThrow();
   });
 

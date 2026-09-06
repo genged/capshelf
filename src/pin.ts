@@ -58,7 +58,7 @@ import type { GitFileMode } from "./merge-tree";
  * under one name would produce comparisons that look valid and are not.
  */
 
-declare const PIN: unique symbol;
+const PIN: unique symbol = Symbol("capshelf.pin");
 
 export interface PinTreeEntry {
   /** Item-relative, POSIX-separated. */
@@ -78,7 +78,8 @@ export interface PinTreeEntry {
  * deserializer, or a second lock serializer can bypass it. What makes it hold
  * is that construction is module-private, the digest is computed inside this
  * module, the entries handed out are frozen, and lock mutation lives in one
- * place.
+ * place. The brand key is a module-private symbol, which `JSON.stringify`
+ * never writes, so the lock bytes do not carry it.
  */
 export interface PinnedSource {
   readonly [PIN]: true;
@@ -221,11 +222,13 @@ function itemRelativePath(
 /** Nothing outside this module may build a `PinnedSource`. */
 function brandPin(sourceCommit: string, entries: PinTreeEntry[]): PinnedSource {
   const frozen = Object.freeze(entries.map((entry) => Object.freeze(entry)));
-  return Object.freeze({
+  const pin: PinnedSource = {
+    [PIN]: true,
     sourcePinDigest: sourcePinDigest(frozen),
     sourceCommit,
     entries: frozen,
-  }) as unknown as PinnedSource;
+  };
+  return Object.freeze(pin);
 }
 
 export interface PinOptions {

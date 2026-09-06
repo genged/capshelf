@@ -191,6 +191,27 @@ interface PickOption {
   label: string;
 }
 
+/** Members `@clack/core` 1.4.3 has at runtime but keeps out of its types. */
+interface ClackPromptInternals {
+  rl?: { write(data: null, key: { ctrl: boolean; name: string }): void };
+  render?: () => void;
+}
+
+/**
+ * The one place this module reaches past clack's type surface. Both members
+ * are optional here, so a future clack release that drops one degrades to a
+ * no-op instead of a crash.
+ */
+function clackInternals(
+  prompt: AutocompletePrompt<PickOption> | ClackPromptInternals,
+): ClackPromptInternals {
+  // SAFETY: `Prompt` in @clack/core 1.4.3 declares `rl` and `render` as
+  // private instance members (dist/index.d.mts:215 and :263) and assigns both
+  // in its constructor and `prompt()` (dist/index.mjs). The private modifier
+  // hides them from the type, not from the object.
+  return prompt as ClackPromptInternals;
+}
+
 /**
  * The prompt: a type menu, a ranked list, and a caret that stays at the end.
  *
@@ -471,10 +492,7 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
    * does nothing if the shape ever changes.
    */
   private moveLineCursorToEnd(): void {
-    const host = this as unknown as {
-      rl?: { write(data: null, key: { ctrl: boolean; name: string }): void };
-    };
-    host.rl?.write(null, { ctrl: true, name: "e" });
+    clackInternals(this).rl?.write(null, { ctrl: true, name: "e" });
   }
 
   /**
@@ -622,11 +640,9 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
 
   /** Ask clack to draw after an asynchronous preview load finishes. */
   private forceRedraw(): void {
-    // `Prompt.render` is private in the type surface but is a normal method in
-    // @clack/core 1.4.3. The preview resolves after the keypress redraw, so it
-    // needs this narrow runtime seam to replace the loading pane.
-    const host = this as unknown as { render?: () => void };
-    host.render?.();
+    // The preview resolves after the keypress redraw, so it needs this narrow
+    // runtime seam to replace the loading pane.
+    clackInternals(this).render?.();
   }
 }
 

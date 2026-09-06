@@ -33,11 +33,17 @@ interface World {
 
 let world: World;
 
-async function get<T>(
+interface RequestOptions {
+  token?: string | null;
+  host?: string;
+  method?: string;
+}
+
+async function request(
   path: string,
-  params: Record<string, string> = {},
-  options: { token?: string | null; host?: string; method?: string } = {},
-): Promise<{ status: number; body: T }> {
+  params: Record<string, string>,
+  options: RequestOptions,
+): Promise<Response> {
   const url = new URL(path, world.server.url);
   for (const [key, value] of Object.entries(params)) {
     url.searchParams.set(key, value);
@@ -46,18 +52,29 @@ async function get<T>(
   const token = options.token === undefined ? TOKEN : options.token;
   if (token !== null) headers.Authorization = `Bearer ${token}`;
   if (options.host !== undefined) headers.Host = options.host;
-  const response = await fetch(url, {
-    headers,
-    method: options.method ?? "GET",
-  });
-  const text = await response.text();
-  let body: T;
-  try {
-    body = JSON.parse(text) as T;
-  } catch {
-    body = text as unknown as T;
-  }
-  return { status: response.status, body };
+  return await fetch(url, { headers, method: options.method ?? "GET" });
+}
+
+/** A JSON API response. Every `/api/` route and error answers JSON. */
+async function get<T>(
+  path: string,
+  params: Record<string, string> = {},
+  options: RequestOptions = {},
+): Promise<{ status: number; body: T }> {
+  const response = await request(path, params, options);
+  // SAFETY: every /api route is owned by src/ui/api.ts, which returns the
+  // payload type the caller names, and `errorResponse` in src/ui/server.ts
+  // answers every refusal with `UiError`. The server and this test are one
+  // build.
+  return { status: response.status, body: (await response.json()) as T };
+}
+
+/** A static asset: the shell, its script, or its stylesheet. */
+async function getText(
+  path: string,
+): Promise<{ status: number; body: string }> {
+  const response = await request(path, {}, { token: null });
+  return { status: response.status, body: await response.text() };
 }
 
 beforeAll(async () => {
@@ -90,14 +107,14 @@ afterAll(async () => {
 
 describe("capshelf ui server", () => {
   test("serves the shell and its assets without a token", async () => {
-    const shell = await get<string>("/", {}, { token: null });
+    const shell = await getText("/");
     expect(shell.status).toBe(200);
     expect(shell.body).toContain('<div id="app">');
     expect(shell.body).toContain('src="/app.js"');
-    const script = await get<string>("/app.js", {}, { token: null });
+    const script = await getText("/app.js");
     expect(script.status).toBe(200);
     expect(script.body.length).toBeGreaterThan(1000);
-    const css = await get<string>("/app.css", {}, { token: null });
+    const css = await getText("/app.css");
     expect(css.status).toBe(200);
     expect(css.body).toContain("--green");
     const logo = await fetch(`${world.server.url}/logo.png`);

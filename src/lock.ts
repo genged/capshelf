@@ -108,7 +108,9 @@ export const LockV2Schema = z.object({
   items: z.record(z.string(), LockEntryV2Schema).default({}),
 });
 
-function withNeedsPairing<T extends z.ZodTypeAny>(schema: T): T {
+function withNeedsPairing<T extends z.ZodTypeAny>(
+  schema: T,
+): z.ZodEffects<T, z.output<T>, z.input<T>> {
   return schema.superRefine(
     (
       lock: {
@@ -133,7 +135,7 @@ function withNeedsPairing<T extends z.ZodTypeAny>(schema: T): T {
         }
       }
     },
-  ) as unknown as T;
+  );
 }
 
 export const LockV3Schema = withNeedsPairing(
