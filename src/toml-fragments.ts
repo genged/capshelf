@@ -1,4 +1,6 @@
 import {
+  isConfigNumber,
+  isConfigObject,
   isPlainConfigObject,
   stableSortConfig,
   type ConfigObject,
@@ -14,7 +16,10 @@ export function parseTomlConfigObject(
   raw: string,
   label: string,
 ): ConfigObject {
-  const parsed = parseToml(raw) as unknown;
+  // The boundary predicate, not `isConfigObject`: smol-toml's table type
+  // admits dates, which the JSON value model does not. `validateTomlValue`
+  // rejects a date that reaches it.
+  const parsed = parseToml(raw);
   if (!isPlainConfigObject(parsed)) {
     throw new Error(`${label} must contain a TOML table`);
   }
@@ -135,7 +140,7 @@ function validateTomlValue(value: ConfigValue, label: string): void {
       `${label} contains a TOML date, which capshelf does not support in TOML fragments`,
     );
   }
-  if (typeof value === "number" && !Number.isFinite(value)) {
+  if (isConfigNumber(value) && !Number.isFinite(value)) {
     throw new Error(
       `${label} contains a non-finite number, which capshelf does not support in TOML fragments`,
     );
@@ -146,17 +151,16 @@ function validateTomlValue(value: ConfigValue, label: string): void {
     }
     return;
   }
-  if (isPlainConfigObject(value)) {
+  if (isConfigObject(value)) {
     for (const [key, entry] of Object.entries(value)) {
       validateTomlValue(entry, `${label}.${key}`);
     }
     return;
   }
-  if (
-    typeof value !== "boolean" &&
-    typeof value !== "number" &&
-    typeof value !== "string"
-  ) {
-    throw new Error(`${label} contains unsupported TOML value ${typeof value}`);
+  // smol-toml returns a bigint for an integer outside the safe range, which
+  // its table type does not say. Every other value left here is a boolean,
+  // a number, or a string.
+  if (Object(value) instanceof BigInt) {
+    throw new Error(`${label} contains unsupported TOML value bigint`);
   }
 }
