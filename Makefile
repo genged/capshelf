@@ -11,10 +11,15 @@ deps:
 build: deps
 	bun run build
 
+# Install copies to a temp name and renames it. A plain cp overwrites the old
+# file in place and keeps its inode. macOS then still holds the code-signature
+# verdict cached for the previous contents, so the kernel rejects the new
+# binary and kills it on exec. A rename gives the binary a fresh inode.
 install: build
 	mkdir -p $(BIN_DIR)
-	cp dist/capshelf $(BIN_DIR)/capshelf
-	chmod +x $(BIN_DIR)/capshelf
+	cp dist/capshelf $(BIN_DIR)/capshelf.new
+	chmod +x $(BIN_DIR)/capshelf.new
+	mv -f $(BIN_DIR)/capshelf.new $(BIN_DIR)/capshelf
 	@echo "✓ installed → $(BIN_DIR)/capshelf"
 	@echo "  ensure $(BIN_DIR) is on your PATH"
 
