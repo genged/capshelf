@@ -67,10 +67,12 @@ result. A fixture may construct a damaged state for a recovery test, and the
 test then says that the state was constructed: it proves recovery, not that an
 interruption produces the state.
 
-`e2e/` holds three directories. `e2e/harness/` self-tests the harness, so a
-harness fault names the harness instead of surfacing as a scenario that did
-not prompt. `e2e/environments/` holds terminal and user-level cells.
-`e2e/scenarios/` holds product workflows.
+`e2e/` holds four directories. `e2e/support/` is the harness library: the
+world, the command runner, the PTY driver, the network canary, and the
+evidence report. `e2e/harness/` self-tests it, so a harness fault names the
+harness instead of surfacing as a scenario that did not prompt.
+`e2e/environments/` holds terminal and user-level cells. `e2e/scenarios/`
+holds product workflows.
 
 Each scenario and environment test prints one `evidence:` line with its labels —
 `reproduced-user-workflow`, `modeled-external-step`,
@@ -180,13 +182,14 @@ prove behavior under per-keystroke timing.
 
 An asynchronous pane needs staged input. The PTY helper can wait for one output
 substring before it sends the next key group. The promote picker cell uses this
-mode to wait for the diff. It then closes the pane and promotes the row
-(`e2e/support/pty.ts:32-64`, `e2e/support/pty-driver.py:136-169`).
+mode to wait for the diff. It then closes the pane and promotes the row.
 
 ## Continuous integration
 
 The pull-request lane type-checks, runs the unit and smoke suites, builds
-`dist/capshelf`, and then runs the E2E suite against that exact file.
+`dist/capshelf`, and then runs the E2E suite against that exact file. A
+separate lint job in the same workflow runs Biome and the Oxlint anti-slop
+check.
 
 The release lane first requires that the tagged commit already has a green
 Test run from a `push` or `workflow_dispatch` event — work lands on `main`
@@ -226,13 +229,12 @@ the declared version, and a warning does not fail a job.
 One file declares the release platforms: `scripts/release-platforms.json`. The
 packaging script builds from it and the validation matrix is derived from it,
 so an archive cannot exist without a native runner to prove it works. The
-packaging script also counts what it built against what the file declares
-(`scripts/package-homebrew-artifacts.sh:24-27,48-52`), so a runner cannot exist
-without its archive either. The v0.10.0 release failed in that direction: a
-shell read loop dropped the last platform in the file, and the gap surfaced
-only as a validation job that could not find its candidate.
-`tests/release-packaging-script.test.ts` runs the real script with only
-`bun build --compile` stubbed, so the platform list stays under test.
+packaging script also counts what it built against what the file declares, so
+a runner cannot exist without its archive either. The v0.10.0 release failed
+in that direction: a shell read loop dropped the last platform in the file,
+and the gap surfaced only as a validation job that could not find its
+candidate. `tests/release-packaging-script.test.ts` runs the real script with
+only `bun build --compile` stubbed, so the platform list stays under test.
 
 The two release gates are shell scripts with their own tests
 (`tests/release-gate-scripts.test.ts`), not logic embedded in YAML:

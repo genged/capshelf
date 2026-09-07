@@ -91,7 +91,7 @@ Verbs map to this model:
 - **`promote`** — flow edits for an already-tracked item the other direction:
   project → data repo, then update the spec. With no item, `promote` opens
   the picker over the tracked items. `--json` and `--stale-ok` then require an
-  item (`src/commands/promote.ts:42-58`).
+  item.
 - **`keep-local`** — explicitly mark an item as intentionally diverged so
   reconciliation tolerates the drift.
 
@@ -295,9 +295,9 @@ Lock keys are prefixed, for example `data/skills/<name>`,
 - `local` / `localReason` — the `keep-local` marker and its recorded reason.
   `promote` reads them to refuse publishing an intentionally diverged item.
 
-CLI-only changes in the data repo (e.g. someone edits `src/foo.ts`) don't bump
-`sourceCommit` for unaffected data items — `lastTouchingCommit` is
-path-scoped.
+Unrelated changes in the data repo do not bump `sourceCommit` for unaffected
+data items. An edit to another item or to a top-level README is such a
+change. `lastTouchingCommit` is path-scoped.
 
 ### Item metadata
 
@@ -460,10 +460,9 @@ sourcePinDigest = sha256 over sorted (name, mode, blobId)     from one ls-tree
 One porcelain blind spot remains on the publishing side. A path that carries
 the `--assume-unchanged` or `--skip-worktree` index bit produces empty
 `git status` output, so a cleanliness check alone treats a hidden data-repo
-edit as no change. The interactive promote picker reads those bits
-(`indexEntryFlags` in `src/git.ts`) and disables the affected item with
-`git is not watching <paths>`. The named `promote` command does not run this
-check yet.
+edit as no change. The interactive promote picker reads those bits and
+disables the affected item with `git is not watching <paths>`. The named
+`promote` command does not run this check yet.
 
 ### Git execution profiles
 
@@ -682,8 +681,7 @@ inherits no system or global Git configuration, templates, hooks, filters,
 merge drivers, fsmonitor, or signing commands. Before writing, update
 revalidates data-repo HEAD and cleanliness, the upstream pin and needs, the
 selected lock entry, and the installed snapshot and sidecar. A lock-save
-failure restores the installed copy. Other projects remain unchanged
-(`src/commands/update.ts:606-635`).
+failure restores the installed copy. Other projects remain unchanged.
 
 ### Two commit operations, one hook policy
 

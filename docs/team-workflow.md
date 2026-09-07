@@ -204,8 +204,9 @@ jobs:
 
 Notes:
 
-- `status --strict` exits 4 when any item is neither `ok` nor `kept-local`.
-  As a PR gate this enforces three things at once:
+- `status --strict` exits 4 when any item is neither `ok` nor `kept-local`,
+  and when an `ok` item carries a shadow warning. As a PR gate this enforces
+  four things at once:
   1. **Installed files match the lock** — no unreconciled drift.
   2. **Every locked `sourceCommit` is reachable in the declared upstream**,
      via the `missing_source_commit` state. A lock pinning an unpushed or
@@ -219,6 +220,9 @@ Notes:
      `capshelf update` (or `keep-local`). Teams that want drift-only gating
      without the freshness ratchet need a future `status` flag; capshelf
      deliberately does not ship one yet.
+  4. **No shadowed skill.** A personal `~/.claude/skills/<name>` entry or a
+     committed `.pi/skills/<name>` entry that hides a managed skill also
+     fails `--strict`.
 - Homebrew is preinstalled on GitHub-hosted ubuntu runners, so
   `brew install genged/tap/capshelf` is an alternative install step.
 - Private data repos: clone with a token

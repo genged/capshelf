@@ -214,11 +214,11 @@ registered.
 
 | verb | purpose | availability |
 |---|---|---|
-| `init` | scaffold a new project or onboard a fresh clone without a local binding (manifest + lock, bundled system items, data repo), then offer the shelf in the interactive picker; refuses an already initialized machine; `--no-pick` skips the offer | implemented |
+| `init` | scaffold a new project or onboard a fresh clone without a local binding (manifest + lock, bundled system items, data repo), then offer the shelf in the interactive picker; registers the project for `capshelf ui`; refuses an already initialized machine; `--no-pick` skips the offer | implemented |
 | `data bind <path>` | bind this machine to the project's data repo clone via `.capshelf/local.json` (alias: `set-data`) | implemented |
 | `data upstream <url>` | write the committed `dataRepoUpstream` URL in `.capshelf/capshelf.json` (alias: `set-upstream`) | implemented |
 | `data path` | print the resolved local data repo path; `--json` includes the path and the normalized upstream (`null` when absent) (alias: `data-path`) | implemented |
-| `data sync` | explicitly fetch the bound data repo's `origin` and fast-forward the current branch when provably safe; the only capshelf command that performs network I/O besides the `init --data <url>` bootstrap clone and `self-update` (alias: `sync-data`) | implemented |
+| `data sync` | explicitly fetch the bound data repo's `origin` and fast-forward the current branch when provably safe; the only capshelf command that performs network I/O besides the clone `init` performs for a remote upstream and `self-update` (alias: `sync-data`) | implemented |
 | `ls` | list items in master plus user-level runtime skills by default, in this project (`--here`), or user-level runtime skills only (`--user`); master/project listings show descriptions and `#tags` from item metadata; `--tag` filters master/project listings; appends a `bundles/` section for data-repo bundles | implemented |
 | `show <item>` | print metadata + content for one item, including relations and current/locked declared needs, plus runtime target coverage for MCP and subagents; `--target` narrows to one runtime | implemented |
 | `search <query...>` | search available items (data repo + system) and bundles by name, tags, description, and content; supports `--kind` and `--json`; zero matches exit 0 | implemented |
@@ -230,7 +230,7 @@ registered.
 | `update [<item>...]` | bump content and declared-needs pins; needs-only changes do not reinstall unchanged content; `--merge` reconciles one explicit skill or Pi extension and pins upstream without publishing; `--local` selects clone-local scope; supports `--dry-run` and explicit drift overwrite consent with `--yes` | implemented |
 | `share [item]` | adopt a not-yet-shared on-disk item into the data repo and report the new item's runtime target coverage; subagents scan both runtime outputs by default and require `--target` with `--from`; with no item, opens the interactive picker over unmanaged config values and untracked skills, Pi extensions, and subagents (see The picker); pick-based fragment shares print and report the equivalent non-interactive command | implemented |
 | `move <item> --to <scope>` | move an already-tracked data item between local and project scope without changing data-repo content | implemented |
-| `promote [item]` | Push edits for a tracked data item to the data repo. Fragments promote canonical source files. `--local` selects clone-local copy items. `--stale-ok` permits an intentional overwrite. With no item, the command opens the tracked-item picker. See The picker. (`src/commands/promote.ts:14-39`) | implemented |
+| `promote [item]` | Push edits for a tracked data item to the data repo. Fragments promote canonical source files. `--local` selects clone-local copy items. `--stale-ok` permits an intentional overwrite. With no item, the command opens the tracked-item picker. See The picker. | implemented |
 | `keep-local <item>` | mark drifted copy-item content as intentional divergence; supports project and clone-local skills/Pi extensions, and rejects fragments; `--unset` is the only thing that clears the marker, and `promote` refuses a marked item | implemented |
 | `revert <item>` | restore one locked version; the lock is never rewritten, so a keep-local marker survives; discarding local state requires consent or `--yes`; supports `--local` | implemented |
 | `lock migrate` | convert this project's lock files to version 4 in one transaction; supports `--dry-run`, `--repin`, `--remove-item`, `--yes`, and `--json` | implemented |
@@ -849,31 +849,27 @@ repo:` block once when anything committed.
 
 Press Ctrl-V to open the focused item's diff. The overlay loads only that item.
 Use Up, Down, Page Up, or Page Down to scroll. Press Ctrl-V or q to close the
-overlay, or Esc to cancel the picker (`src/pick.ts:365-399,525-603`). Ctrl-D
-cannot carry this binding: the readline layer under the prompt reads `0x04`
-as end of input and stops key delivery.
+overlay, or Esc to cancel the picker. Ctrl-D cannot carry this binding: the
+readline layer under the prompt reads `0x04` as end of input and stops key
+delivery.
 
 The diff compares the item at data-repo HEAD with the candidate that promote
-would publish. It covers copy items, fragments, and subagents
-(`src/promote-preview.ts:44-93`). Syntax highlighting uses the file extension.
-It includes TypeScript, Python, Go, Rust, C, and Capshelf config formats.
-Unknown extensions stay plain (`src/terminal-diff.ts:54-87,91-129`). Source
-and file-name control characters are replaced before terminal output
-(`src/promote-preview.ts:179-224`, `src/terminal-diff.ts:201-211`). A binary
-change shows a summary. A preview over 10,000 lines points to
-`capshelf status --diff` for the full output
-(`src/terminal-diff.ts:89-95,131-135`).
+would publish. It covers copy items, fragments, and subagents. Syntax
+highlighting uses the file extension. It includes TypeScript, Python, Go,
+Rust, C, and Capshelf config formats. Unknown extensions stay plain. Source
+and file-name control characters are replaced before terminal output. A
+binary change shows a summary. A preview over 10,000 lines points to
+`capshelf status --diff` for the full output.
 
 A finished preview records the item base and candidate. Promote compares both
 values again before it writes. A change refuses that item and asks for a new
-preview (`src/promote-preview.ts:83-91,95-120`,
-`src/commands/promote-interactive.ts:135-150`).
+preview.
 
 Both pickers re-read the project and the data repo after the prompt closes. A
 value that changed while the picker was open fails its own row instead of
 being committed from a stale read. With no item, `share` refuses `--json`,
 `--from`, `--pick`, `--target`, and `--to`. With no item, `promote` refuses
-`--json` and `--stale-ok` (`src/commands/promote.ts:42-58`).
+`--json` and `--stale-ok`.
 
 ### search
 
@@ -1028,7 +1024,7 @@ paths are listed directly because status deliberately filters them. Use
 projection changes. Dry runs report `destructiveChanges` and never prompt.
 
 An `add` prompt names `capshelf status --diff` only when a tracked
-contribution to the target has drifted (`src/commands/add.ts:560-570`).
+contribution to the target has drifted.
 `status` reports lock entries, so a first fragment add gives it no row to
 diff. A comment does not change parsed values, so comment-only loss gives it
 no diff either. In both cases the prompt asks you to review the listed paths
@@ -1074,15 +1070,13 @@ installed` or `--diff-view upstream` to select one comparison. `--diff-view`
 implies `--diff`. JSON diff entries retain `item`, `path`, and `text`, and add
 `view`, `from`, and `to`. A path can now produce two entries. Consumers must
 not assume that each path occurs once. An unavailable comparison has `text:
-null` and an `unavailableReason` (`src/commands/status.ts:492-530`,
-`src/status-diff.ts:90-107`).
+null` and an `unavailableReason`.
 
 A managed file can be binary, for example a font inside a skill. The diff
 calls a file binary when a NUL byte appears in its first 8000 bytes, or when
 its bytes are not valid UTF-8. The NUL check is git's own heuristic. A binary
-file renders a three-line `Binary files differ` entry instead of its bytes
-(`src/status-diff.ts:824-848`). The promote picker preview applies the same
-rule.
+file renders a three-line `Binary files differ` entry instead of its bytes.
+The promote picker preview applies the same rule.
 
 ### The keep-local marker
 
@@ -1129,8 +1123,7 @@ selected lock. It preserves ignored/generated files outside its managed
 snapshot. The lock records the exact upstream pin. The installed copy can hold
 the merged result and report local drift until a later normal `promote`
 publishes it. The root `.capshelf.yml` remains outside content identity and is
-preserved byte-for-byte (`updateMergeTarget` in `src/commands/update.ts`,
-`src/promote-transaction.ts:76-124`).
+preserved byte-for-byte.
 
 Two related behaviors:
 
@@ -1270,7 +1263,7 @@ capshelf data sync [--json]
 
 A project command, run from the project root. `data sync` (legacy alias
 `sync-data`) is the only capshelf command that talks to the data repo's
-remote, and only when you run it. It resolves the
+remote after `init` has cloned it, and only when you run it. It resolves the
 data repo through the standard chain, runs the usual upstream verification
 when the manifest declares `dataRepoUpstream` (a declared upstream is *not*
 required — it syncs whatever `origin` is), fetches `origin`, and fast-forwards
@@ -1421,13 +1414,11 @@ manifest stays in the list and is marked missing.
   opens this view. After a click, the reader shows the item's files and the
   projects that hold it.
 
-An item needs attention when `status --strict` would fail on it
-(`rowFailsStrict` in `src/status-report.ts`). Requirement freshness and
-target coverage gaps are shown as notes and are not counted.
+An item needs attention when `status --strict` would fail on it. Requirement
+freshness and target coverage gaps are shown as notes and are not counted.
 
-Every row is the row `status --json` prints, computed by the same function
-(`buildStatusReport` in `src/status-report.ts`). Every diff comes from the
-engine behind `status --diff` (`src/status-diff.ts`). The installed view
+Every row is the row `status --json` prints, computed by the same function.
+Every diff comes from the engine behind `status --diff`. The installed view
 compares the pin with the installed copy. The shelf view compares the pin
 with the committed upstream. Three-way mode shows both against the pinned
 lines. Every command is printed the way the CLI prints it and runs as printed

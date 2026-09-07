@@ -101,6 +101,17 @@ project/
 
 Its files change only when someone runs `capshelf update` there.
 
+## The web UI
+
+`capshelf ui` shows the same facts for every project on the machine, in a
+read-only dashboard on localhost: which items are behind, drifted, or
+missing, the diff behind each state, and the command to run.
+
+<p align="center">
+  <img src="docs/screenshots/capshelf_ui.png" width="900"
+    alt="The capshelf ui dashboard. The left column lists three registered projects and the selected project's skills, Pi extensions, settings, MCP servers, and Claude plugins. The main panel reports that all 11 items are up to date and lists each item with its pinned digest." />
+</p>
+
 ## Quickstart
 
 ### 1. Install Capshelf
@@ -256,12 +267,21 @@ there for the first time.
 
 | Item kind | Claude Code | Codex CLI | Cowork / claude.ai | Pi |
 |---|:---:|:---:|:---:|:---:|
-| Skills | ✓ `.claude/skills/` ᵇ | ✓ `.agents/skills/` | ✓ ᵃ | ✗ |
+| Skills | ✓ `.claude/skills/` ᵇ | ✓ `.agents/skills/` | ✓ ᵃ | ✓ `.agents/skills/` ᵉ |
 | Subagents | ✓ `.claude/agents/` | ✓ `.codex/agents/` | ✗ | ✗ |
 | Settings | ✓ `.claude/settings.json` ᵈ | ✓ `.codex/config.toml` ᵈ | ✗ | ✗ |
 | MCP fragments | ✓ `.mcp.json` | ✓ `.codex/config.toml` | ✗ | ✗ |
 | Pi extensions | n/a | n/a | n/a | ✓ `.pi/extensions/` |
 | Plugin catalogs | ✓ authored ᶜ | ✓ generated projection | ✓ `.plugin` pack upload | ✗ |
+
+- ᵃ Cowork receives skills through a `.plugin` pack from `marketplace plugin
+  pack`, not through project files.
+- ᵇ In the default layout `.claude/skills/<name>` is a symlink to
+  `.agents/skills/<name>`. `init --claude-only` writes real directories there.
+- ᶜ Authored directly in the data repo's `.claude-plugin/marketplace.json`.
+- ᵈ Merged into the file. Project-local values are preserved.
+- ᵉ Pi reads `.agents/skills/` and ranks a same-name `.pi/skills/` entry above
+  it. `status` warns when that hides a managed skill.
 
 ## Examples
 
@@ -368,8 +388,12 @@ or with the runtime:
   and reloading Pi.
 - Registering, installing, refreshing, and removing runtime plugins. Capshelf
   creates and commits the catalog state those runtimes read.
-- Skills managed by `skills.sh`, Claude marketplace plugins, and personal
-  `~/.claude/skills/` entries. Capshelf reports them as external state.
+- Skills managed by `skills.sh`, Claude marketplace plugins, personal
+  `~/.claude/skills/` entries, and Pi project skills under `.pi/skills/`.
+  Capshelf never edits them. It lists the first three as external state.
+  A personal Claude skill or a Pi project skill with a managed skill's
+  name hides that skill for its harness. `status` warns and `--strict`
+  fails.
 
 ## Mental model
 
@@ -418,6 +442,7 @@ diff behind each state, and the command to run. See
 bun install
 bun run src/cli.ts <verb> [args]   # run from source
 bun run test                       # unit tests (4 workers)
+bun run lint                       # Biome, then Oxlint with the anti-slop plugin
 make smoke                         # smoke suites (4 workers)
 make e2e                           # build dist/capshelf, then run the e2e suite
 make check                         # typecheck, lint, docs freeze, tests, smoke, e2e
@@ -450,6 +475,7 @@ The capshelf source repository contains:
 ├── tests/                          unit tests
 ├── e2e/                            end-to-end suite
 ├── scripts/                        smoke tests and release scripts
+├── tools/                          tools and helpers
 ├── package.json
 ├── Makefile
 ├── docs/                           living docs

@@ -31,13 +31,29 @@ to the data repo the way you treat commit access to a shared library.
 What capshelf itself does on your machine is narrow: it reads the data repo
 clone you bound, writes managed files inside the current project, and commits
 to the data repo only on explicit `share`, `promote`, and `marketplace`
-catalog mutations. Each of these commits locally and never pushes. It does
-not execute item
-content. Execution happens later, in Claude, Codex, or Pi, when the agent loads
-what capshelf materialized — which is exactly why review has to happen before
-content reaches the data repo's default branch. For Pi extensions that boundary
-is explicit: capshelf warns, Pi asks for project trust, and then the extension
-runs without a capshelf sandbox or reviewed/trusted marker.
+catalog mutations. Each of these commits locally and never pushes. `init` and
+`ui` also write one file outside the project: the project registry at
+`$XDG_CONFIG_HOME/capshelf/projects.json`. It holds project paths and dates,
+and no command removes an entry.
+
+`capshelf ui` starts a local HTTP server and runs until Ctrl-C. The server
+binds 127.0.0.1 only, so no other machine can connect to it. It serves GET
+only and refuses a request whose `Host` header is not its own address. Every
+`/api/` request must carry the random token printed in the URL. The server
+sends no CORS headers and marks every response `no-store`. It reads the
+project registry, each project's manifest, locks, and managed files, and the
+data repo. It runs Git read queries in the data repo, including `git status`.
+It writes no file. The dashboard shows item text from the data repo. The page
+renders that text as text, not as HTML. The `Content-Security-Policy` header
+allows script from the server only. See [the web UI](cli.md#the-web-ui) for
+the routes it answers.
+
+Capshelf does not execute item content. Execution happens later, in Claude,
+Codex, or Pi, when the agent loads what capshelf materialized. That is why
+review must happen before content reaches the data repo's default branch.
+For Pi extensions that boundary is explicit. Capshelf warns, Pi asks for
+project trust, and then the extension runs without a capshelf sandbox or
+reviewed/trusted marker.
 
 The one thing capshelf does run is your data repo's own commit hooks, on every
 commit it makes there — your code, in a repository you control, and no
@@ -70,9 +86,11 @@ that boundary:
   point while allowing installed copy-item bytes to differ.
 - **No implicit network I/O.** Capshelf never pushes — `promote` commits to
   your local clone and prints the `git push` you may choose to run. It never
-  fetches behind your back either: the only network operations are the
-  one-time clone in `init --data <remote-url>`, the explicit `capshelf data
-  sync` command, and the Homebrew `self-update` command. `data sync` is the
+  fetches behind your back either. The only network operations are the clone
+  `init` performs for a remote upstream, the explicit `capshelf data sync`
+  command, and the Homebrew `self-update` command. `init` clones once, from
+  `--data <url>` or from a committed `dataRepoUpstream`. `capshelf ui`
+  listens on 127.0.0.1 and makes no outbound connection. `data sync` is the
   single verb that talks to the data repo's remote — it fetches and fast-forwards
   only when provably safe, and only when you run it. Nothing in
   `status`/`apply`/`add`/`update`/`promote` can be made to pull unreviewed
@@ -125,9 +143,11 @@ Explicitly out of scope, with the reasoning:
   judge whether a hook command or an MCP server is benign. Pretending to
   (a scanner, an allowlist) would convert human review into false confidence.
   Review on the data repo is the real control.
-- **Registries or central distribution.** There is no capshelf server to
-  compromise and no namespace to typosquat. A data repo is a git repo you
-  chose, with the access controls you configured.
+- **Registries or central distribution.** There is no hosted capshelf
+  service to compromise and no namespace to typosquat. A data repo is a git
+  repo you chose, with the access controls you configured. The `capshelf ui`
+  server is a local process on your machine. It distributes nothing and
+  shows what is already there.
 - **Runtime plugin installation.** Marketplace commands do not register a
   marketplace, upload a package, install or refresh a plugin, or edit Claude
   or Codex caches. Those actions remain explicit runtime operations.
@@ -195,8 +215,9 @@ Concretely, for a team or org data repo:
 ## Reporting vulnerabilities in capshelf
 
 If you find a security issue in capshelf itself (the CLI, its file handling,
-its git invocations), please report it privately rather than opening a
-public issue. Use GitHub's private vulnerability reporting on
+its git invocations, or the local `capshelf ui` server), please report it
+privately rather than opening a public issue. Use GitHub's private
+vulnerability reporting on
 [github.com/genged/capshelf](https://github.com/genged/capshelf)
 (Security tab → "Report a vulnerability"). That is the only reporting
 channel.
