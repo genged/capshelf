@@ -47,8 +47,13 @@ import {
   isFragmentItemKind,
   isFragmentKindName,
 } from "../master";
-import { assertRepoClean } from "../git";
-import { headSha, isAncestor, objectTypeAtCommit, resolveCommit } from "../git";
+import {
+  assertRepoClean,
+  headSha,
+  isAncestor,
+  objectTypeAtCommit,
+  resolveCommit,
+} from "../git";
 import { PRODUCT_NAME } from "../identity";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
 import { PreconditionError, ResultExitError } from "../errors";

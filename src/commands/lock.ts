@@ -29,7 +29,7 @@ import { loadManifest } from "../manifest";
 import type { Manifest } from "../manifest";
 import { itemRepoRelPath } from "../master";
 import { materializeLockEntry } from "../materialize";
-import { loadCommittedItemNeeds } from "../metadata";
+import { captureCommittedItemNeeds, loadCommittedItemNeeds } from "../metadata";
 import { localLockPath, lockPath, lockReadPath, projectRoot } from "../paths";
 import {
   filteredPathsAtCommit,
@@ -38,7 +38,6 @@ import {
   pinItemAtCommit,
   pinCurrentSource,
 } from "../pin";
-import { captureCommittedItemNeeds } from "../metadata";
 
 type MigrationScope = "project" | "local";
 
