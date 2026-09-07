@@ -857,7 +857,7 @@ export async function installDataItem(
 
   const outputResults: FragmentApplyResult[] = [];
   if (isFragmentItemKind(item.kind)) {
-    for (const target of [...new Set(sources.map((source) => source.target))]) {
+    for (const target of new Set(sources.map((source) => source.target))) {
       outputResults.push(
         await applyFragmentOutput({
           project,

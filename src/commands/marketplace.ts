@@ -786,7 +786,7 @@ export function registerMarketplace(program: Command): void {
           );
         }
         entry.name = newName;
-        state.renames = { ...(state.renames ?? {}), [oldName]: newName };
+        state.renames = { ...state.renames, [oldName]: newName };
         await mutateClaude(
           dataRepo,
           state,
@@ -833,7 +833,7 @@ export function registerMarketplace(program: Command): void {
       const state = await loadClaudeMarketplace(dataRepo);
       managedClaude(state, name);
       state.plugins = state.plugins.filter((entry) => entry.name !== name);
-      state.renames = { ...(state.renames ?? {}), [name]: null };
+      state.renames = { ...state.renames, [name]: null };
       await mutateClaude(
         dataRepo,
         state,

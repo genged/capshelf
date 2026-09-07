@@ -248,7 +248,7 @@ export function createGitWorld(runner: WorldRunner): GitWorld {
         origin: options.origin,
         branch: options.branch,
       });
-      const files: SeedFiles = { ...(options.files ?? {}) };
+      const files: SeedFiles = { ...options.files };
       for (const [skill, content] of Object.entries(options.skills ?? {})) {
         files[`skills/${skill}/SKILL.md`] = content;
       }

@@ -195,7 +195,7 @@ export async function createWorld(
 
   const env: WorldEnvironment = {
     ...baseEnvironment({ home, gitConfig, xdgConfig, xdgCache, xdgData }),
-    ...(options.env ?? {}),
+    ...options.env,
   };
   for (const [key, value] of Object.entries(options.env ?? {})) {
     if (isSecretEnvName(key)) registerSecret(value);

@@ -155,7 +155,9 @@ test(
         const logo = await fetch(`${base}/logo.png`);
         expect(logo.status).toBe(200);
         const png = new Uint8Array(await logo.arrayBuffer());
-        expect([...png.slice(0, 4)]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+        expect(Array.from(png.subarray(0, 4))).toEqual([
+          0x89, 0x50, 0x4e, 0x47,
+        ]);
 
         // The API refuses without the token and answers with it.
         expect((await fetch(`${base}/api/overview`)).status).toBe(401);

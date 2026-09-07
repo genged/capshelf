@@ -648,9 +648,9 @@ export async function shareFragment(
 
   const sources = await currentFragmentSourcesForItem(dataRepo, kind, name);
   const outputResults: Awaited<ReturnType<typeof applyFragmentOutput>>[] = [];
-  for (const target of [
-    ...new Set(sources.map((fragmentSource) => fragmentSource.target)),
-  ]) {
+  for (const target of new Set(
+    sources.map((fragmentSource) => fragmentSource.target),
+  )) {
     outputResults.push(
       await applyFragmentOutput({
         project,
