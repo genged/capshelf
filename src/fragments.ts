@@ -574,6 +574,7 @@ export async function applyFragmentOutputPlans(
       throw new AggregateError(
         [error, ...rollbackErrors],
         error instanceof Error ? error.message : String(error),
+        { cause: error },
       );
     }
     throw error;

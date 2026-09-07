@@ -20,7 +20,7 @@ export function parseJsonConfigObject(
     parsed = parseJsonc(raw);
   } catch (cause) {
     const reason = cause instanceof Error ? cause.message : String(cause);
-    throw new Error(`${label}: ${reason}`);
+    throw new Error(`${label}: ${reason}`, { cause });
   }
   if (!isConfigObject(parsed)) {
     throw new Error(`${label} must contain a JSON object`);
