@@ -23,9 +23,9 @@ import { capshelfCommandPrefix, shellArg } from "../paths";
 import { pickItems, pickTerminalUnavailable } from "../pick";
 import type { PickUnavailableReason } from "../pick";
 import { loadPromoteCatalog, unwatchedPathsForItem } from "../promote-catalog";
-import { printShareUpstreamGuidance } from "./share";
-import { promoteOne } from "./promote";
-import type { PromoteOptions } from "./promote";
+import { printShareUpstreamGuidance } from "./share-named";
+import { promoteOne } from "./promote-named";
+import type { PromoteOptions } from "./promote-named";
 import {
   decodePromotePreviewGuard,
   encodePromotePreviewGuard,

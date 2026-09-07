@@ -91,7 +91,7 @@ Verbs map to this model:
 - **`promote`** — flow edits for an already-tracked item the other direction:
   project → data repo, then update the spec. With no item, `promote` opens
   the picker over the tracked items. `--json` and `--stale-ok` then require an
-  item (`src/commands/promote.ts:172-188`).
+  item (`src/commands/promote.ts:42-58`).
 - **`keep-local`** — explicitly mark an item as intentionally diverged so
   reconciliation tolerates the drift.
 

@@ -33,7 +33,7 @@ import { currentPinDigest, installedPinDigestFor } from "./pin-fixtures";
 import {
   promoteFragmentSource,
   syncTrackedIntoDataRepo,
-} from "../src/commands/promote";
+} from "../src/commands/promote-named";
 import { adoptIntoDataRepo } from "../src/data-repo-adopt";
 import {
   lastTouchingFragmentCommit,

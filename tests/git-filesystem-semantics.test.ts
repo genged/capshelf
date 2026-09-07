@@ -19,7 +19,7 @@ import { shaOfGitVisibleItem } from "../src/master";
 import { materializeLockEntry } from "../src/materialize";
 import { dataKey, type Lock } from "../src/lock";
 import { copyDirectoryModeDrifted } from "../src/status-diff";
-import { syncTrackedIntoDataRepo } from "../src/commands/promote";
+import { syncTrackedIntoDataRepo } from "../src/commands/promote-named";
 import {
   addSkill,
   baselineRepo,
