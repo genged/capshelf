@@ -1,6 +1,6 @@
 import { posix } from "node:path";
 import { hashNamedContents } from "./content-hash";
-import { needsEqual } from "./lock";
+import { hasNeedsSnapshot, needsEqual } from "./lock";
 import type { Lock } from "./lock";
 import { parseLockKey } from "./installed";
 import {
@@ -72,7 +72,7 @@ export async function verifyDataLockEntries(
         );
       }
     }
-    if (entry.needs != null && entry.needsSourceCommit != null) {
+    if (hasNeedsSnapshot(entry)) {
       const needsSourceCommit = entry.needsSourceCommit;
       if (!(await commitExists(dataRepo, needsSourceCommit))) {
         throw new Error(

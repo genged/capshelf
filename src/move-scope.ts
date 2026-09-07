@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { isCopyDirectoryItemKind, itemRepoRelPath } from "./master";
 import type { ItemKind } from "./master";
-import { dataKey, entryIdentity } from "./lock";
+import { dataKey, entryIdentity, hasNeedsSnapshot } from "./lock";
 import { installedTreeIdentity } from "./install-identity";
 import type { DataLockEntry } from "./lock";
 import { CheckFailedError, NotFoundError, PreconditionError } from "./errors";
@@ -60,8 +60,11 @@ export async function moveScope(
     // A partial recovery can pair a migrated v2 entry (unknown needs) with
     // the same v3 content pin. Preserve the known snapshot when either side
     // has one instead of degrading it during the scope repair.
+    // Every loaded lock pairs `needs` with `needsSourceCommit`
+    // (`withNeedsPairing`, `src/lock.ts:112`), so the snapshot predicate asks
+    // the same question as a check on `needs` alone.
     sourceEntry =
-      fromEntry.needs == null && otherEntry.needs != null
+      !hasNeedsSnapshot(fromEntry) && hasNeedsSnapshot(otherEntry)
         ? otherEntry
         : fromEntry;
   } else {

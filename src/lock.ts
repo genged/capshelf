@@ -341,6 +341,18 @@ export function needsEqual(a: ItemNeeds, b: ItemNeeds): boolean {
   );
 }
 
+/** True when the entry carries a needs snapshot and the commit it came from. */
+export function hasNeedsSnapshot(
+  entry: DataLockEntry,
+): entry is DataLockEntry & { needs: ItemNeeds; needsSourceCommit: string } {
+  return (
+    entry.needs !== null &&
+    entry.needs !== undefined &&
+    entry.needsSourceCommit !== null &&
+    entry.needsSourceCommit !== undefined
+  );
+}
+
 function arraysEqual(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }

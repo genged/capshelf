@@ -22,6 +22,7 @@ import {
   serializeLock,
   needsEqual,
   createDataLockEntry,
+  hasNeedsSnapshot,
 } from "../lock";
 import type { DataLockEntry, LockEntryV4, Lock, LockV4 } from "../lock";
 import { legacyShaAtCommit } from "../lock-verify";
@@ -429,7 +430,7 @@ async function assertNeedsProvenance(
   parsed: ReturnType<typeof parseLockKey>,
   entry: DataLockEntry,
 ): Promise<void> {
-  if (entry.needs == null || entry.needsSourceCommit == null) return;
+  if (!hasNeedsSnapshot(entry)) return;
   const resolved = await resolveCommit(input.dataRepo, entry.needsSourceCommit);
   if (resolved === null) {
     throw new Error(
