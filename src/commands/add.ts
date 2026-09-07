@@ -10,9 +10,12 @@ import {
   type DestructiveChangePlan,
 } from "../destructive-change";
 import { planFragmentDestruction } from "../destructive-preflight";
-import { saveManifest } from "../manifest";
+import {
+  saveManifest,
+  addManifestName,
+  manifestNamesForKind,
+} from "../manifest";
 import type { Manifest } from "../manifest";
-import { addManifestName, manifestNamesForKind } from "../manifest";
 import {
   assertLockV4,
   createDataLockEntry,
@@ -854,7 +857,7 @@ export async function installDataItem(
 
   const outputResults: FragmentApplyResult[] = [];
   if (isFragmentItemKind(item.kind)) {
-    for (const target of [...new Set(sources.map((source) => source.target))]) {
+    for (const target of new Set(sources.map((source) => source.target))) {
       outputResults.push(
         await applyFragmentOutput({
           project,
@@ -1302,9 +1305,9 @@ async function approveFragmentPin(
  * A one-line reason for a per-item failure. `ResultExitError` carries no
  * message because the command that threw it already reported the detail.
  */
-function errorDetail(error: unknown): string {
-  if (error instanceof ResultExitError) return "";
-  return firstErrorLine(error);
+function errorDetail(cause: unknown): string {
+  if (cause instanceof ResultExitError) return "";
+  return firstErrorLine(cause);
 }
 
 function printInteractiveSummary(
@@ -1567,10 +1570,18 @@ function itemRefLabel(item: MasterItem): string {
   return `${item.kind}/${item.name}`;
 }
 
+/** One row of `add --json`'s `sources` for a fragment item. */
+interface FragmentSourceJson {
+  target: string;
+  sourcePath: string;
+  outputPath: string;
+  outputAction: string;
+}
+
 function fragmentSourcesJson(
   project: string,
   result: InstallDataItemResult,
-): Array<Record<string, unknown>> {
+): FragmentSourceJson[] {
   return result.sources.map((source) => ({
     target: source.sourceTarget ?? source.target,
     sourcePath: source.relPath,

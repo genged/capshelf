@@ -42,7 +42,8 @@ export function ItemPanel({
   const onKeyDown = async (event: KeyboardEvent): Promise<void> => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      const current = event.currentTarget as HTMLElement;
+      const current = event.currentTarget;
+      if (!(current instanceof HTMLElement)) return;
       const toggles = Array.from(
         current
           .closest(".panels")

@@ -6,6 +6,7 @@ import {
   pickRowHint,
   sanitizeDisplayText,
   scorePickRow,
+  parsePickKind,
 } from "../src/pick-core";
 import type { PickRow } from "../src/pick-core";
 
@@ -13,7 +14,7 @@ function row(ref: string, extra: Partial<PickRow> = {}): PickRow {
   const [kind = "skills", ...rest] = ref.split("/");
   return {
     ref,
-    kind: kind as PickRow["kind"],
+    kind: parsePickKind(kind),
     name: rest.join("/"),
     tags: [],
     installed: false,
@@ -88,7 +89,7 @@ describe("scorePickRow field weighting", () => {
 
   test("a description-only match is still found", () => {
     // Weighting must not make lower-weight fields unsearchable.
-    expect(scorePickRow("vulnerabilities", SHELF[0] as PickRow)).not.toBeNull();
+    expect(scorePickRow("vulnerabilities", SHELF[0]!)).not.toBeNull();
   });
 
   test("terms may be won by different fields", () => {
@@ -99,7 +100,7 @@ describe("scorePickRow field weighting", () => {
   });
 
   test("a term matching no field disqualifies the row", () => {
-    expect(scorePickRow("security zzzz", SHELF[0] as PickRow)).toBeNull();
+    expect(scorePickRow("security zzzz", SHELF[0]!)).toBeNull();
   });
 
   test("only ref matches produce highlight positions", () => {
@@ -109,7 +110,7 @@ describe("scorePickRow field weighting", () => {
   });
 
   test("an empty query scores every row zero", () => {
-    expect(scorePickRow("  ", SHELF[0] as PickRow)).toEqual({
+    expect(scorePickRow("  ", SHELF[0]!)).toEqual({
       score: 0,
       positions: [],
     });

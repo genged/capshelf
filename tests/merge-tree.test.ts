@@ -225,7 +225,7 @@ describe("mergeNamedTrees", () => {
       `[init]\n\ttemplateDir = ${join(hostile, "template")}\n[core]\n\thooksPath = ${configuredHooks}\n[filter "hostile"]\n\tclean = ${filter}\n\tsmudge = ${filter}\n[merge "hostile"]\n\tdriver = ${mergeDriver}\n`,
     );
     await writeFile(systemConfig, `[core]\n\tfsmonitor = ${fsmonitor}\n`);
-    const injectedEnv: Record<string, string> = {
+    const injectedEnv = {
       GIT_CONFIG_GLOBAL: globalConfig,
       GIT_CONFIG_SYSTEM: systemConfig,
       GIT_CONFIG_NOSYSTEM: "0",

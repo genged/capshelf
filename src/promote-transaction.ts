@@ -13,7 +13,7 @@ import type { NamedFile } from "./merge-tree";
 import { inventoryLocalTree } from "./gitignore";
 import { findDestinationPathCollision } from "./path-collision";
 import { PreconditionError } from "./errors";
-import { rmTreeWithRetries } from "./fs-utils";
+import { isErrno, rmTreeWithRetries } from "./fs-utils";
 
 export interface PromoteTransactionHooks {
   afterPrepared?: () => Promise<void>;
@@ -43,7 +43,7 @@ export async function beginDirectoryReplacement(
       await rename(target, backup);
       hadOriginal = true;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (!isErrno(error, "ENOENT")) throw error;
     }
     try {
       await rename(replacement, target);

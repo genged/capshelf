@@ -28,6 +28,10 @@ import {
   assertNoDestinationCollisions,
   pinCurrentSource,
   shortIdentity,
+  blobIdOf,
+  hashWidthOf,
+  itemTreeEntriesAtCommit,
+  sourcePinDigest,
 } from "../pin";
 import type {
   DataLockEntryV4,
@@ -42,9 +46,15 @@ import {
   isCopyTargetFileItemKind,
   isFragmentItemKind,
   isFragmentKindName,
+  itemRepoRelPath,
 } from "../master";
-import { assertRepoClean } from "../git";
-import { headSha, isAncestor, objectTypeAtCommit, resolveCommit } from "../git";
+import {
+  assertRepoClean,
+  headSha,
+  isAncestor,
+  objectTypeAtCommit,
+  resolveCommit,
+} from "../git";
 import { PRODUCT_NAME } from "../identity";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
 import { PreconditionError, ResultExitError } from "../errors";
@@ -89,13 +99,6 @@ import {
 } from "../item-snapshot";
 import { mergeNamedTrees, namedFilesEqual } from "../merge-tree";
 import { beginInstalledReconciliation } from "../promote-transaction";
-import { itemRepoRelPath } from "../master";
-import {
-  blobIdOf,
-  hashWidthOf,
-  itemTreeEntriesAtCommit,
-  sourcePinDigest,
-} from "../pin";
 
 interface UpdateOptions {
   json?: boolean;
@@ -1219,10 +1222,10 @@ async function updateDataTarget(
       parsed.name,
       entry,
       ctx.manifest,
-    ).catch((error: unknown) => {
+    ).catch((cause: unknown) => {
       throw new PreconditionError(
         `not updating ${parsed.kind}/${parsed.name} — its locked source commit ${entry.sourceCommit} cannot be resolved, and a fragment's contribution cannot be recovered from the merged output\n` +
-          `  ${error instanceof Error ? error.message : String(error)}\n` +
+          `  ${cause instanceof Error ? cause.message : String(cause)}\n` +
           "  remove and re-add the item instead:\n" +
           `    ${PRODUCT_NAME} rm ${parsed.kind}/${parsed.name}\n` +
           `    ${PRODUCT_NAME} add ${parsed.kind}/${parsed.name}`,

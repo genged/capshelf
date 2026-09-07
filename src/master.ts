@@ -38,23 +38,31 @@ export type MaterializedItemKind =
 export type ItemStrategy = "copy-directory" | "copy-target-file" | "fragment";
 
 export function isItemKind(value: string): value is ItemKind {
-  return (ITEM_KINDS as readonly string[]).includes(value);
+  return ITEM_KINDS.some((kind) => kind === value);
+}
+
+/** The kind a `--kind` option names, or the refusal `ls` and `search` print. */
+export function parseItemKind(value: string): ItemKind {
+  if (isItemKind(value)) return value;
+  throw new PreconditionError(
+    `invalid kind "${value}"; must be one of ${ITEM_KINDS.join(", ")}`,
+  );
 }
 
 export function isCopyDirectoryItemKind(
   value: ItemKind,
 ): value is CopyDirectoryItemKind {
-  return (COPY_DIRECTORY_ITEM_KINDS as readonly ItemKind[]).includes(value);
+  return COPY_DIRECTORY_ITEM_KINDS.some((kind) => kind === value);
 }
 
 export function isCopyTargetFileItemKind(
   value: ItemKind,
 ): value is CopyTargetFileItemKind {
-  return (COPY_TARGET_FILE_ITEM_KINDS as readonly ItemKind[]).includes(value);
+  return COPY_TARGET_FILE_ITEM_KINDS.some((kind) => kind === value);
 }
 
 export function isFragmentItemKind(value: ItemKind): value is FragmentItemKind {
-  return (FRAGMENT_ITEM_KINDS as readonly ItemKind[]).includes(value);
+  return FRAGMENT_ITEM_KINDS.some((kind) => kind === value);
 }
 
 /**
@@ -63,7 +71,7 @@ export function isFragmentItemKind(value: ItemKind): value is FragmentItemKind {
  * gate is scoped by it.
  */
 export function isFragmentKindName(value: string): value is FragmentItemKind {
-  return (FRAGMENT_ITEM_KINDS as readonly string[]).includes(value);
+  return FRAGMENT_ITEM_KINDS.some((kind) => kind === value);
 }
 
 export function isMaterializedItemKind(

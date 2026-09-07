@@ -13,7 +13,7 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { PreconditionError } from "./errors";
-import { atomicWriteFile } from "./fs-utils";
+import { atomicWriteFile, isErrno } from "./fs-utils";
 import {
   assertRepoClean,
   assertRepoCleanOutsidePaths,
@@ -58,7 +58,7 @@ async function walk(
   try {
     info = await lstat(path);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    if (isErrno(error, "ENOENT")) return;
     throw error;
   }
   if (info.isSymbolicLink()) {
@@ -83,10 +83,16 @@ async function walk(
   }
 }
 
+export interface FileSetDiff {
+  created: string[];
+  updated: string[];
+  deleted: string[];
+}
+
 export function diffFileSets(
   current: ProjectionFile[],
   expected: ProjectionFile[],
-): { created: string[]; updated: string[]; deleted: string[] } {
+): FileSetDiff {
   const currentMap = new Map(current.map((file) => [file.path, file]));
   const expectedMap = new Map(expected.map((file) => [file.path, file]));
   const created: string[] = [];
@@ -185,7 +191,7 @@ export async function commitDataRepoMutation(options: {
   try {
     await copyFile(indexPath, backupIndex);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") hadIndex = false;
+    if (isErrno(error, "ENOENT")) hadIndex = false;
     else throw error;
   }
   try {

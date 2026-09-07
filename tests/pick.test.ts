@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { parsePickKind } from "../src/pick-core";
 import {
   borrowTerminalWidth,
   pickItems,
@@ -13,7 +14,7 @@ function row(ref: string, extra: Partial<PickRow> = {}): PickRow {
   const [kind = "skills", ...rest] = ref.split("/");
   return {
     ref,
-    kind: kind as PickRow["kind"],
+    kind: parsePickKind(kind),
     name: rest.join("/"),
     tags: [],
     installed: false,
@@ -205,9 +206,12 @@ describe("borrowTerminalWidth", () => {
    */
   // Read and write through accessors: assigning `undefined` to a typed local
   // narrows it, and the assertions below compare against a number.
+  // SAFETY: Node declares `columns` on a tty stream as a number, but a
+  // redirected stdout has none, and this test puts `undefined` back.
   const columns = (): number | undefined =>
     (process.stdout as { columns?: number }).columns;
   const setColumns = (value: number | undefined): void => {
+    // SAFETY: the same seam as `columns` above.
     (process.stdout as { columns?: number }).columns = value;
   };
 

@@ -8,8 +8,8 @@ import {
   configPathLabel,
   findUnmanagedCollision,
   isPlainConfigObject,
+  mergeConfigObject,
   mergeConfigObjects,
-  mergeConfigValues,
   removeManagedValue,
   shaOfConfig,
   stableStringifyConfig,
@@ -489,9 +489,7 @@ export async function planFragmentOutput(
   assertNoFragmentConflicts(path, nextFragments);
   assertNoUnmanagedCollisions(path, base, nextFragments);
 
-  const planned = spec.normalizeOutput(
-    mergeConfigValues(base, rawNextManaged) as ConfigObject,
-  );
+  const planned = spec.normalizeOutput(mergeConfigObject(base, rawNextManaged));
   const plannedText = spec.isSyntheticOnly(planned)
     ? null
     : spec.stringify(planned);
@@ -576,6 +574,7 @@ export async function applyFragmentOutputPlans(
       throw new AggregateError(
         [error, ...rollbackErrors],
         error instanceof Error ? error.message : String(error),
+        { cause: error },
       );
     }
     throw error;
@@ -923,10 +922,7 @@ function assertNoFragmentConflicts(
       [],
       provenance,
     );
-    mergedSoFar = mergeConfigValues(
-      mergedSoFar,
-      fragment.value,
-    ) as ConfigObject;
+    mergedSoFar = mergeConfigObject(mergedSoFar, fragment.value);
   }
 }
 

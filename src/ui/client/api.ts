@@ -3,7 +3,8 @@
  * `capshelf ui` prints, moves into session storage on the first load, and
  * rides every API call as a bearer header.
  */
-import type { UiError } from "../shared/api-types";
+import { isJsonObject, isJsonString } from "../shared/json";
+import type { JsonValue } from "../shared/json";
 
 const TOKEN_KEY = "capshelf-ui-token";
 
@@ -37,6 +38,23 @@ export class ApiError extends Error {
   }
 }
 
+/** The two fields the client reads from a `UiError` envelope. */
+interface ApiErrorEnvelope {
+  message: string;
+  hint: string | undefined;
+}
+
+function errorEnvelope(body: JsonValue): ApiErrorEnvelope | null {
+  if (!isJsonObject(body)) return null;
+  const error = body.error;
+  if (!isJsonObject(error) || !isJsonString(error.message)) return null;
+  const hint = error.hint;
+  return {
+    message: error.message,
+    hint: isJsonString(hint) ? hint : undefined,
+  };
+}
+
 export async function apiGet<T>(
   path: string,
   params: Record<string, string> = {},
@@ -59,17 +77,20 @@ export async function apiGet<T>(
     );
   }
   if (!response.ok) {
-    let body: UiError | null = null;
+    let body: JsonValue | null = null;
     try {
-      body = (await response.json()) as UiError;
+      body = await response.json();
     } catch {
       body = null;
     }
+    const envelope = body === null ? null : errorEnvelope(body);
     throw new ApiError(
       response.status,
-      body?.error.message ?? `request failed with status ${response.status}`,
-      body?.error.hint,
+      envelope?.message ?? `request failed with status ${response.status}`,
+      envelope?.hint,
     );
   }
+  // SAFETY: every /api route is owned by src/ui/api.ts, which returns the
+  // type T the caller names. The server and the client are one build.
   return (await response.json()) as T;
 }

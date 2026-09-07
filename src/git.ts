@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, delimiter, join, resolve } from "node:path";
 import { CliError, ExitCode, PreconditionError } from "./errors";
+import { isErrno } from "./fs-utils";
 
 const GIT_MISSING_MESSAGE =
   "git is required but was not found on PATH\n  install Git, then retry";
@@ -148,7 +149,7 @@ export interface GitRunOptions {
    * `isolated-merge` use it — a transaction supplies its own `GIT_INDEX_FILE`,
    * and the merge sandbox supplies a whole neutral environment.
    */
-  env?: Record<string, string | undefined>;
+  env?: NodeJS.ProcessEnv;
   stdin?: string | Uint8Array;
 }
 
@@ -182,10 +183,10 @@ const DIFF_HELPER_ENV = [
 ] as const;
 
 function withoutVariables(
-  env: Record<string, string | undefined>,
+  env: NodeJS.ProcessEnv,
   names: readonly string[],
-): Record<string, string | undefined> {
-  const out: Record<string, string | undefined> = { ...env };
+): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env };
   for (const name of names) delete out[name];
   return out;
 }
@@ -193,7 +194,7 @@ function withoutVariables(
 function environmentFor(
   binding: GitBinding,
   options: GitRunOptions,
-): Record<string, string | undefined> {
+): NodeJS.ProcessEnv {
   if (options.env) return options.env;
   switch (binding.profile) {
     case "source-read":
@@ -274,9 +275,9 @@ async function runGit(
     stdin:
       options.stdin === undefined
         ? "ignore"
-        : typeof options.stdin === "string"
-          ? new Blob([options.stdin])
-          : options.stdin,
+        : options.stdin instanceof Uint8Array
+          ? options.stdin
+          : new Blob([options.stdin]),
   });
   const [stdout, stderr] = await Promise.all([
     new Response(proc.stdout).arrayBuffer().then((b) => Buffer.from(b)),
@@ -1017,7 +1018,7 @@ async function presentFilesRelativeTo(
             : {},
         );
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        if (isErrno(error, "ENOENT")) {
           return null;
         }
         throw error;
@@ -1074,7 +1075,11 @@ export async function statusPorcelainRecords(
     if (code.includes("R") || code.includes("C")) {
       const origPath = fields[index + 1];
       index += 1;
-      records.push({ code, path, ...(origPath ? { origPath } : {}) });
+      const record: StatusPorcelainRecord = { code, path };
+      if (origPath !== undefined && origPath.length > 0) {
+        record.origPath = origPath;
+      }
+      records.push(record);
       continue;
     }
     records.push({ code, path });
@@ -1139,7 +1144,7 @@ export async function indexEntryFlags(
   const entries = new Map<string, IndexEntryFlags>();
   for (const record of out.split("\0")) {
     if (record.length < 3) continue;
-    const tag = record[0] as string;
+    const tag = record.charAt(0);
     const assumeUnchanged = tag !== tag.toUpperCase();
     const path = record.slice(2);
     const existing = entries.get(path);
@@ -1431,7 +1436,7 @@ export async function commitExistingPaths(
   try {
     await copyFile(indexPath, backupIndex);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") hadIndex = false;
+    if (isErrno(error, "ENOENT")) hadIndex = false;
     else throw error;
   }
   let createdCommit: string | null = null;

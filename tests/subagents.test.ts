@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { lstat, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { promoteSubagent } from "../src/commands/promote";
+import { promoteSubagent } from "../src/commands/promote-named";
 import {
   lastTouchingSubagentCommit,
   materializeSubagent,

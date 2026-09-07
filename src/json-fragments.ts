@@ -1,5 +1,5 @@
 import {
-  isPlainConfigObject,
+  isConfigObject,
   stableSortConfig,
   type ConfigObject,
   type ConfigValue,
@@ -17,24 +17,27 @@ export function parseJsonConfigObject(
   if (raw.trim() === "") return {};
   let parsed: ConfigValue;
   try {
-    parsed = parseJsonc(raw) as ConfigValue;
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    throw new Error(`${label}: ${reason}`);
+    parsed = parseJsonc(raw);
+  } catch (cause) {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(`${label}: ${reason}`, { cause });
   }
-  if (!isPlainConfigObject(parsed)) {
+  if (!isConfigObject(parsed)) {
     throw new Error(`${label} must contain a JSON object`);
   }
   return parsed;
 }
 
 /**
- * Parse JSONC (JSON with // and block comments and trailing commas) into an
- * unknown value. Claude Code's settings.json / .mcp.json are JSONC, so tolerate
- * them on read everywhere capshelf inspects those files — otherwise a
- * legitimately-commented file the target tool accepts makes capshelf throw.
+ * Parse JSONC (JSON with // and block comments and trailing commas) into the
+ * JSON value model. Claude Code's settings.json / .mcp.json are JSONC, so
+ * tolerate them on read everywhere capshelf inspects those files — otherwise
+ * a legitimately-commented file the target tool accepts makes capshelf throw.
+ *
+ * `JSON.parse` without a reviver yields exactly the members of `ConfigValue`,
+ * so no assertion is needed.
  */
-export function parseJsonc(raw: string): unknown {
+export function parseJsonc(raw: string): ConfigValue {
   return JSON.parse(stripTrailingCommas(stripJsonComments(raw)));
 }
 
@@ -162,11 +165,11 @@ export function validateClaudeMcpFragment(
 ): ConfigObject {
   const servers = value.mcpServers;
   if (servers !== undefined) {
-    if (!isPlainConfigObject(servers)) {
+    if (!isConfigObject(servers)) {
       throw new Error(`${label}.mcpServers must be a JSON object`);
     }
     for (const [name, server] of Object.entries(servers)) {
-      if (!isPlainConfigObject(server)) {
+      if (!isConfigObject(server)) {
         throw new Error(`${label}.mcpServers.${name} must be a JSON object`);
       }
     }

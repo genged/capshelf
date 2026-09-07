@@ -11,6 +11,8 @@ import {
   commitAll,
   runInProcess,
   tempRepo,
+  jsonOutput,
+  objectItems,
 } from "./cli-fixtures";
 
 const BUNDLED_SKILL = findSystemItem("capshelf")!;
@@ -71,13 +73,12 @@ describe("update moves a system item off superseded bundled content", () => {
       // that the pristine rule fired.
       const updated = await run(["update", "skills/capshelf", "--json"]);
       expect(updated.exitCode).toBe(0);
-      const report = JSON.parse(updated.stdout.toString()) as {
-        items: Array<{ key: string; action: string }>;
-        destructiveChanges: unknown[];
-      };
+      const report = jsonOutput(updated);
       expect(report.destructiveChanges).toEqual([]);
       expect(
-        report.items.find((item) => item.key === "system/skills/capshelf"),
+        objectItems(report, "items").find(
+          (item) => item.key === "system/skills/capshelf",
+        ),
       ).toMatchObject({ action: "updated" });
 
       expect(await file(installed).text()).toBe(BUNDLED_CONTENT);
@@ -105,16 +106,7 @@ describe("update moves a system item off superseded bundled content", () => {
         "--json",
       ]);
       expect(dryRun.exitCode).toBe(0);
-      const report = JSON.parse(dryRun.stdout.toString()) as {
-        destructiveChanges: Array<{
-          scope: string;
-          item?: string;
-          path: string;
-          reason: string;
-          detail?: string;
-          reviewCommand?: string;
-        }>;
-      };
+      const report = jsonOutput(dryRun);
       expect(report.destructiveChanges).toContainEqual({
         scope: "project",
         item: "project/system/skills/capshelf",
@@ -184,12 +176,11 @@ describe("update moves a system item off superseded bundled content", () => {
         "--json",
       ]);
       expect(dryRun.exitCode).toBe(0);
-      const report = JSON.parse(dryRun.stdout.toString()) as {
-        items: Array<{ key: string; action: string; lockedSha?: string }>;
-        destructiveChanges: unknown[];
-      };
+      const report = jsonOutput(dryRun);
       expect(
-        report.items.find((item) => item.key === "system/skills/capshelf"),
+        objectItems(report, "items").find(
+          (item) => item.key === "system/skills/capshelf",
+        ),
       ).toMatchObject({ action: "would-update", lockedSha: supersededSha });
       expect(report.destructiveChanges).toEqual([]);
       expect(await file(lockPath).text()).toBe(lockBefore);
@@ -209,17 +200,16 @@ describe("apply still refuses content the binary no longer carries", () => {
 
       const applied = await run(["apply", "--json"]);
       expect(applied.exitCode).toBe(1);
-      const report = JSON.parse(applied.stdout.toString()) as {
-        items: Array<{ key: string; action: string; error?: string }>;
-      };
-      const system = report.items.find(
+      const report = jsonOutput(applied);
+      const items = objectItems(report, "items");
+      const system = items.find(
         (item) => item.key === "system/skills/capshelf",
       )!;
       expect(system.action).toBe("error");
       expect(system.error).toContain("superseded bundled content");
       expect(system.error).toContain("capshelf update skills/capshelf");
       expect(
-        report.items.find((item) => item.key === "data/skills/hello"),
+        items.find((item) => item.key === "data/skills/hello"),
       ).toMatchObject({ action: "already-current" });
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
@@ -243,11 +233,9 @@ describe("apply still refuses content the binary no longer carries", () => {
 
       const applied = await run(["apply", "skills/hello", "--json"]);
       expect(applied.exitCode).toBe(1);
-      const report = JSON.parse(applied.stdout.toString()) as {
-        items: Array<{ key: string; action: string; error?: string }>;
-      };
-      expect(report.items[0]!.action).toBe("error");
-      expect(report.items[0]!.error).toMatch(
+      const report = jsonOutput(applied);
+      expect(objectItems(report, "items")[0]!.action).toBe("error");
+      expect(objectItems(report, "items")[0]!.error).toMatch(
         /source skills\/hello at [0-9a-f]+ pins to [0-9a-f]+, but lock expects 000000000000/,
       );
     },

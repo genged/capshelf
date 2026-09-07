@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { readJsonObject } from "./cli-fixtures";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CLI_VERSION } from "../src/bundled";
@@ -355,10 +356,7 @@ describe("startup self-update prompt", () => {
     expect(exitCode).toBeNull();
     expect(prompts).toHaveLength(1);
     expect(runner.upgrades).toEqual([]);
-    const cache = JSON.parse(await readFile(cachePath, "utf-8")) as {
-      updateAvailable?: boolean;
-      installer?: string;
-    };
+    const cache = await readJsonObject(cachePath);
     expect(cache.updateAvailable).toBe(true);
     expect(cache.installer).toBe("homebrew");
   });

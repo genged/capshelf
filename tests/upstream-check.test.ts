@@ -1,5 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
+import { rejection } from "./cli-fixtures";
 import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -60,17 +61,13 @@ describe("upstream verification", () => {
     const repo = await tempRepo("capshelf-upstream-mismatch-");
     await $`git -C ${repo} remote add origin git@github.com:other/elsewhere.git`.quiet();
 
-    const error = await verifyDataRepoUpstream(
-      repo,
-      manifest("https://github.com/mg/agent-shared"),
-    ).then(
-      () => {
-        throw new Error("expected verifyDataRepoUpstream to reject");
-      },
-      (e: unknown) => e as Error & { exitCode?: number },
+    const error = await rejection(
+      verifyDataRepoUpstream(
+        repo,
+        manifest("https://github.com/mg/agent-shared"),
+      ),
+      UpstreamVerificationError,
     );
-
-    expect(error).toBeInstanceOf(UpstreamVerificationError);
     expect(error.exitCode).toBe(4);
     expect(error.message).toContain("bound to the wrong upstream");
     // Both sides of the mismatch must be named so the user can see the diff.
@@ -84,17 +81,13 @@ describe("upstream verification", () => {
     // The manifest value is config the user committed; the contract is a
     // plain Error naming the manifest file and the bad value (no exit-4
     // verification failure -- the manifest itself is broken).
-    const error = await verifyDataRepoUpstream(
-      "/nonexistent/never-read",
-      manifest("not a valid url"),
-    ).then(
-      () => {
-        throw new Error("expected verifyDataRepoUpstream to reject");
-      },
-      (e: unknown) => e as Error,
+    const error = await rejection(
+      verifyDataRepoUpstream(
+        "/nonexistent/never-read",
+        manifest("not a valid url"),
+      ),
+      Error,
     );
-
-    expect(error).toBeInstanceOf(Error);
     expect(error).not.toBeInstanceOf(UpstreamVerificationError);
     expect(error.message).toBe(
       "invalid dataRepoUpstream in .capshelf/capshelf.json: not a valid url",

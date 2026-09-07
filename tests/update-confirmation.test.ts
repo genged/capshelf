@@ -9,6 +9,8 @@ import {
   commitAll,
   runInProcess,
   tempRepo,
+  jsonOutput,
+  objectItems,
 } from "./cli-fixtures";
 
 /**
@@ -16,11 +18,17 @@ import {
  * `revert` actually call — with a scripted TTY, and restore the default
  * afterwards.
  */
+/** What the consent prompt asked and what it drew on stderr. */
+interface RecordedPrompts {
+  prompts: string[];
+  stderr: string[];
+}
+
 async function withTty<T>(
   answer: string,
-  body: (recorded: { prompts: string[]; stderr: string[] }) => Promise<T>,
+  body: (recorded: RecordedPrompts) => Promise<T>,
 ): Promise<T> {
-  const recorded = { prompts: [] as string[], stderr: [] as string[] };
+  const recorded: RecordedPrompts = { prompts: [], stderr: [] };
   setDestructiveConfirmationContext({
     stdinIsTTY: true,
     stderrIsTTY: true,
@@ -273,16 +281,7 @@ describe("interactive destructive-change consent", () => {
 
     const dryRun = await run(["update", "skills/extra", "--dry-run", "--json"]);
     expect(dryRun.exitCode).toBe(0);
-    const report = JSON.parse(dryRun.stdout.toString()) as {
-      destructiveChanges: Array<{
-        scope: string;
-        item?: string;
-        path: string;
-        reason: string;
-        detail?: string;
-        reviewCommand?: string;
-      }>;
-    };
+    const report = jsonOutput(dryRun);
     expect(report.destructiveChanges).toContainEqual({
       scope: "project",
       item: "project/data/skills/extra",
@@ -340,16 +339,7 @@ describe("interactive destructive-change consent", () => {
 
       const dryRun = await run(["update", "--dry-run", "--json"]);
       expect(dryRun.exitCode).toBe(0);
-      const report = JSON.parse(dryRun.stdout.toString()) as {
-        destructiveChanges: Array<{
-          scope: string;
-          item?: string;
-          path: string;
-          reason: string;
-          detail?: string;
-          reviewCommand?: string;
-        }>;
-      };
+      const report = jsonOutput(dryRun);
       // `#` is standard TOML and Codex reads it, so this is real loss.
       expect(report.destructiveChanges).toContainEqual({
         scope: "project",
@@ -361,7 +351,7 @@ describe("interactive destructive-change consent", () => {
       // Claude Code will not load a settings.json with comments, so removing
       // them repairs the file rather than destroying anything.
       expect(
-        report.destructiveChanges.filter(
+        objectItems(report, "destructiveChanges").filter(
           (change) =>
             change.path === ".claude/settings.json" &&
             change.reason === "config_comments",

@@ -669,16 +669,15 @@ function relationStates(refs: string[], locks: Lock[]): RelationState[] {
 }
 
 /** The always-present `metadata` JSON object appended to show --json. */
-function metadataJson(
-  meta: ItemMetadata,
-  locks: Lock[],
-): {
+interface MetadataJson {
   description?: string;
   tags: string[];
   requires: RelationState[];
   conflictsWith: RelationState[];
   needs: ItemNeeds;
-} {
+}
+
+function metadataJson(meta: ItemMetadata, locks: Lock[]): MetadataJson {
   return {
     ...(meta.description !== undefined && { description: meta.description }),
     tags: meta.tags,

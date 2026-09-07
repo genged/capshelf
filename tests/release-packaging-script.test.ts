@@ -51,7 +51,7 @@ interface Result {
  * `scripts/` directory keeps the run away from the repository's `dist/`.
  */
 async function run(
-  platforms: unknown,
+  platforms: PlatformRow[],
   version = "9.9.9",
 ): Promise<Result & { root: string }> {
   const root = await tempDir("capshelf-packaging-");
@@ -87,7 +87,13 @@ async function run(
   };
 }
 
-function platform(name: string): Record<string, string> {
+interface PlatformRow {
+  platform: string;
+  bunTarget: string;
+  runner: string;
+}
+
+function platform(name: string): PlatformRow {
   return { platform: name, bunTarget: `bun-${name}`, runner: `runner-${name}` };
 }
 

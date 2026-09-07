@@ -95,8 +95,8 @@ export class ResultExitError extends CliError {
  * per-item failure summaries) where a multi-line git message would break the
  * layout.
  */
-export function firstErrorLine(error: unknown): string {
-  return (error instanceof Error ? error.message : String(error)).split(
+export function firstErrorLine(cause: unknown): string {
+  return (cause instanceof Error ? cause.message : String(cause)).split(
     "\n",
   )[0]!;
 }

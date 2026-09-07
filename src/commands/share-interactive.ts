@@ -49,8 +49,8 @@ import {
   shareCopyItem,
   shareFragment,
   shareSubagent,
-} from "./share";
-import type { ShareOptions } from "./share";
+} from "./share-named";
+import type { ShareOptions } from "./share-named";
 
 export type InteractiveShareSummary =
   | { outcome: "unavailable"; reason: PickUnavailableReason }

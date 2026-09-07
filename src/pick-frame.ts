@@ -120,6 +120,8 @@ export function renderTabBar(
 ): string[] {
   if (tabs.length === 0) return [];
   const labels = tabs.map((tab) => tab.label);
+  // SAFETY: `active` is a tab index `stepTab` keeps inside [0, tabs.length),
+  // and tabs is non-empty here.
   const activeLabel = labels[active] as string;
 
   // Too narrow for every name: name the active one and say where it sits.
@@ -143,6 +145,7 @@ export function renderTabBar(
   // no width, so measuring the styled string puts the rule in the wrong place.
   let offset = 0;
   for (let index = 0; index < active; index++) {
+    // SAFETY: index < active < labels.length, the same bound as above.
     offset += (labels[index] as string).length + 3; // label + " │ "
   }
   const rule = `${" ".repeat(offset)}${"━".repeat(activeLabel.length)}`;
@@ -304,11 +307,17 @@ function truncateStart(text: string, limit: number): string {
  * counts one line where two were drawn, so the frame walks up the screen on
  * every keystroke. Losing the tail of a rare long name is the smaller cost.
  */
+interface ClampedRef {
+  text: string;
+  cells: number;
+  positions: number[];
+}
+
 function clampRef(
   ref: string,
   positions: readonly number[],
   limit: number,
-): { text: string; cells: number; positions: number[] } {
+): ClampedRef {
   const text = truncateEnd(ref, limit);
   return {
     text,
@@ -343,11 +352,16 @@ function hintTail(
  * Scrolls by whole steps at the edges rather than re-centring on every move,
  * so a list that fits does not shift under the cursor.
  */
+export interface VisibleWindow {
+  start: number;
+  end: number;
+}
+
 export function visibleWindow(
   total: number,
   cursor: number,
   height: number,
-): { start: number; end: number } {
+): VisibleWindow {
   if (height <= 0 || total <= 0) return { start: 0, end: 0 };
   if (total <= height) return { start: 0, end: total };
   const half = Math.floor(height / 2);

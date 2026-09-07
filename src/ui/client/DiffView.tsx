@@ -97,13 +97,13 @@ export function DiffView({
             ...previous,
             [view]: { state: "ready", response, error: null },
           })),
-        (error: unknown) =>
+        (cause: unknown) =>
           setLoaded((previous) => ({
             ...previous,
             [view]: {
               state: "error",
               response: null,
-              error: error instanceof ApiError ? error.message : String(error),
+              error: cause instanceof ApiError ? cause.message : String(cause),
             },
           })),
       );

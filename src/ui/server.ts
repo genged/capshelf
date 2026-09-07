@@ -9,8 +9,11 @@
 import { CliError, NotFoundError, PreconditionError } from "../errors";
 import { UI_APP_CSS, UI_APP_JS, UI_INDEX_HTML, UI_LOGO_PATH } from "./assets";
 import { createUiApi } from "./api";
-import type { UiContext } from "./api";
-import type { DiffViewName, UiError } from "./shared/api-types";
+import type { UiApi, UiContext } from "./api";
+import type { UiError } from "./shared/api-types";
+
+/** Whatever one API route resolves to. */
+type UiPayload = Awaited<ReturnType<UiApi[keyof UiApi]>>;
 
 export interface UiServerOptions extends UiContext {
   /** 0 or undefined picks a free port. */
@@ -28,13 +31,13 @@ export interface UiServer {
 
 const HOSTNAME = "127.0.0.1";
 
-const BASE_HEADERS: Record<string, string> = {
+const BASE_HEADERS = {
   "Cache-Control": "no-store",
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "no-referrer",
   "Content-Security-Policy":
     "default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
-};
+} as const satisfies Record<string, string>;
 
 export function startUiServer(options: UiServerOptions): UiServer {
   const api = createUiApi(options);
@@ -72,7 +75,7 @@ export function startUiServer(options: UiServerOptions): UiServer {
     },
   });
 
-  async function route(url: URL): Promise<unknown> {
+  async function route(url: URL): Promise<UiPayload> {
     const param = (name: string): string => {
       const value = url.searchParams.get(name);
       if (value === null || value.length === 0) {
@@ -92,11 +95,7 @@ export function startUiServer(options: UiServerOptions): UiServer {
             `invalid view ${view}; expected installed or upstream`,
           );
         }
-        return await api.projectDiff(
-          param("project"),
-          param("item"),
-          view as DiffViewName,
-        );
+        return await api.projectDiff(param("project"), param("item"), view);
       }
       case "/api/shelf":
         return await gate.run(() => api.shelf(param("repo")));
@@ -189,7 +188,7 @@ function timingSafeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
-function json(value: unknown, status = 200): Response {
+function json(value: UiPayload | UiError, status = 200): Response {
   return new Response(JSON.stringify(value), {
     status,
     headers: {
@@ -208,14 +207,14 @@ function errorResponse(
   return json(body, status);
 }
 
-function errorFrom(error: unknown): Response {
-  if (error instanceof NotFoundError) {
-    return json(envelope(error), 404);
+function errorFrom(cause: unknown): Response {
+  if (cause instanceof NotFoundError) {
+    return json(envelope(cause), 404);
   }
-  if (error instanceof CliError) {
-    return json(envelope(error), 400);
+  if (cause instanceof CliError) {
+    return json(envelope(cause), 400);
   }
-  const message = error instanceof Error ? error.message : String(error);
+  const message = cause instanceof Error ? cause.message : String(cause);
   return errorResponse(500, message);
 }
 
@@ -249,7 +248,9 @@ function createGate(limit: number): Gate {
   return {
     async run<T>(task: () => Promise<T>): Promise<T> {
       if (active >= limit) {
-        await new Promise<void>((resolve) => waiting.push(resolve));
+        await new Promise<void>((resolve) => {
+          waiting.push(resolve);
+        });
       }
       active += 1;
       try {

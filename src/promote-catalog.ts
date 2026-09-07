@@ -44,11 +44,10 @@ import { deriveState } from "./status-core";
 import type { State } from "./status-core";
 import { upstreamFactsForItem } from "./upstream-facts";
 
-export interface PromoteDisposition {
-  offered: boolean;
-  /** The disabled reason; absent exactly when the row is offered. */
-  reason?: string;
-}
+export type PromoteDisposition =
+  | { offered: true; reason?: undefined }
+  /** The disabled reason, present exactly when the row is not offered. */
+  | { offered: false; reason: string };
 
 /**
  * Whether one status state has something `promote` can publish.
@@ -197,20 +196,19 @@ async function catalogRow(
   } else if (disposition.offered) {
     detail = await offeredDetail(opts, kind, name, state);
   } else {
-    detail = disposition.reason as string;
+    detail = disposition.reason;
   }
 
-  return {
+  const row: PickRow = {
     ref: `${kind}/${name}`,
     kind,
     name,
     tags: [],
     installed: false,
-    ...(disposition.offered && unwatched.length === 0
-      ? {}
-      : { disabled: true }),
-    detail: sanitizeDisplayText(detail),
   };
+  if (!(disposition.offered && unwatched.length === 0)) row.disabled = true;
+  row.detail = sanitizeDisplayText(detail);
+  return row;
 }
 
 /**

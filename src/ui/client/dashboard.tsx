@@ -134,7 +134,7 @@ export function Dashboard(): preact.JSX.Element {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      const target = event.target as HTMLElement | null;
+      const target = event.target instanceof HTMLElement ? event.target : null;
       const typing =
         target !== null &&
         (target.tagName === "INPUT" ||

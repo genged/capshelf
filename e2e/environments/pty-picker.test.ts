@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { expectExit, expectOutputContains } from "../support/assertions";
 import { runInPty } from "../support/pty";
 import { declareEvidence } from "../support/report";
+import { asObject, parseJsonText } from "../support/json";
 import { E2E_TEST_TIMEOUT_MS, withWorld } from "../support/world";
 
 const SCENARIO = "environment-cells";
@@ -256,9 +257,13 @@ test(
       ).toBe(true);
       // The MCP item matches `git` just as well and sits on another tab, so
       // its absence is what shows the tab scoped the list.
-      const manifest = JSON.parse(
-        await Bun.file(join(project, ".capshelf", "capshelf.json")).text(),
-      ) as { mcp: string[]; skills: string[] };
+      const manifest = asObject(
+        parseJsonText(
+          await Bun.file(join(project, ".capshelf", "capshelf.json")).text(),
+          "capshelf.json",
+        ),
+        "capshelf.json",
+      );
       expect(manifest.skills).toEqual(["git-helper"]);
       expect(manifest.mcp).toEqual([]);
     });
@@ -387,9 +392,10 @@ test(
       expectExit(picked, 0);
       // One marked output file means the command carries its target.
       expectOutputContains(picked, "capshelf share mcp/github --target claude");
-      const fragment = JSON.parse(
+      const fragment = parseJsonText(
         await readFile(join(shelf, "mcp", "github", "claude.json"), "utf-8"),
-      ) as Record<string, unknown>;
+        "claude.json",
+      );
       expect(fragment).toEqual({
         mcpServers: { github: { command: "github-mcp" } },
       });

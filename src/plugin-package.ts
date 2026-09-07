@@ -10,6 +10,7 @@ import {
 } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { PreconditionError } from "./errors";
+import { isErrno } from "./fs-utils";
 import {
   diffFileSets,
   publishDirectoryAtomically,
@@ -251,7 +252,7 @@ async function lstatOrNull(
   try {
     return await lstat(path);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    if (isErrno(error, "ENOENT")) return null;
     throw error;
   }
 }

@@ -24,41 +24,41 @@ import xml from "@speed-highlight/core/languages/xml.js";
 import yaml from "@speed-highlight/core/languages/yaml.js";
 import type { ShjLanguageData } from "@speed-highlight/core/tokenize";
 
-export const LANGUAGE_BY_EXTENSION: Readonly<Record<string, ShjLanguageData>> =
-  {
-    ".bash": bash,
-    ".c": c,
-    ".cc": c,
-    ".cjs": js,
-    ".cpp": c,
-    ".css": css,
-    ".cts": ts,
-    ".go": go,
-    ".h": c,
-    ".hpp": c,
-    ".htm": html,
-    ".html": html,
-    ".ini": ini,
-    ".js": js,
-    ".json": json,
-    ".jsx": js,
-    ".md": md,
-    ".mdx": md,
-    ".mjs": js,
-    ".mts": ts,
-    ".py": py,
-    ".pyi": py,
-    ".pyw": py,
-    ".rs": rs,
-    ".sh": bash,
-    ".sql": sql,
-    ".toml": toml,
-    ".ts": ts,
-    ".tsx": ts,
-    ".xml": xml,
-    ".yaml": yaml,
-    ".yml": yaml,
-  };
+export const LANGUAGE_BY_EXTENSION: ReadonlyMap<string, ShjLanguageData> =
+  new Map<string, ShjLanguageData>([
+    [".bash", bash],
+    [".c", c],
+    [".cc", c],
+    [".cjs", js],
+    [".cpp", c],
+    [".css", css],
+    [".cts", ts],
+    [".go", go],
+    [".h", c],
+    [".hpp", c],
+    [".htm", html],
+    [".html", html],
+    [".ini", ini],
+    [".js", js],
+    [".json", json],
+    [".jsx", js],
+    [".md", md],
+    [".mdx", md],
+    [".mjs", js],
+    [".mts", ts],
+    [".py", py],
+    [".pyi", py],
+    [".pyw", py],
+    [".rs", rs],
+    [".sh", bash],
+    [".sql", sql],
+    [".toml", toml],
+    [".ts", ts],
+    [".tsx", ts],
+    [".xml", xml],
+    [".yaml", yaml],
+    [".yml", yaml],
+  ]);
 
 /** The language for a bare file name (no directory part), or undefined. */
 export function languageForFileName(name: string): ShjLanguageData | undefined {
@@ -68,5 +68,5 @@ export function languageForFileName(name: string): ShjLanguageData | undefined {
   const dot = lower.lastIndexOf(".");
   // A dotfile such as `.bashrc` has no extension, which matches `extname`.
   if (dot <= 0) return undefined;
-  return LANGUAGE_BY_EXTENSION[lower.slice(dot)];
+  return LANGUAGE_BY_EXTENSION.get(lower.slice(dot));
 }

@@ -18,20 +18,18 @@ import {
 } from "../src/fs-utils";
 
 describe("isErrno", () => {
-  test("matches a Node errno by code", () => {
-    expect(isErrno({ code: "ENOENT" }, "ENOENT")).toBe(true);
-    expect(isErrno({ code: "EACCES" }, "ENOENT")).toBe(false);
+  test("narrows a Node errno error and matches its code", () => {
+    const error = Object.assign(new Error("missing"), { code: "ENOENT" });
+    expect(isErrno(error)).toBe(true);
+    expect(isErrno(error, "ENOENT")).toBe(true);
+    expect(isErrno(error, "EACCES")).toBe(false);
   });
 
-  test("matches any errno when no code is given", () => {
-    expect(isErrno({ code: "EPERM" })).toBe(true);
-  });
-
-  test("rejects non-errno values", () => {
-    expect(isErrno(null, "ENOENT")).toBe(false);
-    expect(isErrno("ENOENT", "ENOENT")).toBe(false);
-    expect(isErrno(new Error("plain"), "ENOENT")).toBe(false);
-    expect(isErrno({}, "ENOENT")).toBe(false);
+  test("rejects values that are not errno errors", () => {
+    expect(isErrno(new Error("plain"))).toBe(false);
+    expect(isErrno({ code: "ENOENT" })).toBe(false);
+    expect(isErrno(null)).toBe(false);
+    expect(isErrno("ENOENT")).toBe(false);
   });
 });
 
@@ -73,7 +71,9 @@ describe("rmTreeWithRetries", () => {
     await writeFile(join(target, "f.txt"), "x");
     await chmod(dir, 0o555);
     const unlock = (async () => {
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await new Promise((resolve) => {
+        setTimeout(resolve, 200);
+      });
       await chmod(dir, 0o755);
     })();
     await rmTreeWithRetries(target);

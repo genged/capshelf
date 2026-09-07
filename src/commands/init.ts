@@ -409,7 +409,7 @@ function assertUpstreamFlagMatchesBootstrap(
   opts: InitOptions,
   bootstrapUpstream: string,
 ): void {
-  if (typeof opts.upstream !== "string") return;
+  if (opts.upstream === undefined || opts.upstream === false) return;
   const normalized = normalizeRemoteUrl(opts.upstream);
   if (!normalized) {
     throw new PreconditionError(`unsupported git remote URL: ${opts.upstream}`);

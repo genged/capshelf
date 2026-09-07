@@ -6,6 +6,7 @@ import { atomicWriteFile, isErrno } from "./fs-utils";
 import { PRODUCT_NAME } from "./identity";
 import { ItemNeedsSchema } from "./metadata";
 import type { ItemNeeds } from "./metadata";
+import type { ConfigValue } from "./config-values";
 import { PIN_DIGEST_PATTERN } from "./pin";
 import type { PinnedSource } from "./pin";
 import { PreconditionError } from "./errors";
@@ -108,7 +109,9 @@ export const LockV2Schema = z.object({
   items: z.record(z.string(), LockEntryV2Schema).default({}),
 });
 
-function withNeedsPairing<T extends z.ZodTypeAny>(schema: T): T {
+function withNeedsPairing<T extends z.ZodTypeAny>(
+  schema: T,
+): z.ZodEffects<T, z.output<T>, z.input<T>> {
   return schema.superRefine(
     (
       lock: {
@@ -133,7 +136,7 @@ function withNeedsPairing<T extends z.ZodTypeAny>(schema: T): T {
         }
       }
     },
-  ) as unknown as T;
+  );
 }
 
 export const LockV3Schema = withNeedsPairing(
@@ -253,8 +256,8 @@ export function entryIdentity(entry: LockEntry): string {
 export async function loadLock(project: string): Promise<Lock> {
   const p = lockReadPath(project);
   if (!p) return emptyLock();
-  const raw = await readFile(p, "utf-8");
-  return parseLock(JSON.parse(raw));
+  const document: ConfigValue = JSON.parse(await readFile(p, "utf-8"));
+  return parseLock(document);
 }
 
 export async function saveLock(project: string, lock: LockV4): Promise<void> {
@@ -266,8 +269,8 @@ export async function saveLock(project: string, lock: LockV4): Promise<void> {
 export async function loadLocalLock(project: string): Promise<Lock> {
   const p = localLockPath(project);
   try {
-    const raw = await readFile(p, "utf-8");
-    return parseLock(JSON.parse(raw));
+    const document: ConfigValue = JSON.parse(await readFile(p, "utf-8"));
+    return parseLock(document);
   } catch (err) {
     if (isErrno(err, "ENOENT")) {
       return emptyLock();
@@ -295,19 +298,20 @@ export function serializeLock(lock: LockV4): string {
   return `${JSON.stringify(parsed, null, 2)}\n`;
 }
 
-export function parseLock(value: unknown): Lock {
-  const version =
-    typeof value === "object" && value !== null && "version" in value
-      ? (value as { version?: unknown }).version
-      : undefined;
-  if (typeof version === "number" && version > LOCK_VERSION) {
+/** The one field read before the version decides which schema applies. */
+const VersionProbe = z.object({ version: z.number().optional() });
+
+export function parseLock(value: ConfigValue): Lock {
+  const probe = VersionProbe.safeParse(value);
+  const version = probe.success ? probe.data.version : undefined;
+  if (version !== undefined && version > LOCK_VERSION) {
     throw new Error(
       `lock version ${version} is newer than this ${PRODUCT_NAME} supports — upgrade ${PRODUCT_NAME}`,
     );
   }
-  if (version === LOCK_VERSION) return LockV4Schema.parse(value) as LockV4;
+  if (version === LOCK_VERSION) return LockV4Schema.parse(value);
   if (version === 2) return normalizeV2(LockV2Schema.parse(value));
-  return LockV3Schema.parse(value) as LockV3;
+  return LockV3Schema.parse(value);
 }
 
 /**
@@ -334,6 +338,18 @@ export function needsEqual(a: ItemNeeds, b: ItemNeeds): boolean {
     arraysEqual(a.network, b.network) &&
     arraysEqual(a.env, b.env) &&
     arraysEqual(a.bin, b.bin)
+  );
+}
+
+/** True when the entry carries a needs snapshot and the commit it came from. */
+export function hasNeedsSnapshot(
+  entry: DataLockEntry,
+): entry is DataLockEntry & { needs: ItemNeeds; needsSourceCommit: string } {
+  return (
+    entry.needs !== null &&
+    entry.needs !== undefined &&
+    entry.needsSourceCommit !== null &&
+    entry.needsSourceCommit !== undefined
   );
 }
 

@@ -11,6 +11,7 @@ import {
   statusRow,
 } from "../support/assertions";
 import { declareEvidence } from "../support/report";
+import { asBoolean, asObject, asString, parseJsonText } from "../support/json";
 import { E2E_TEST_TIMEOUT_MS, withWorld } from "../support/world";
 
 /**
@@ -34,11 +35,28 @@ interface MergeRow {
  * the shared status parser rejects them by design.
  */
 function mergeRow(stdout: string): MergeRow {
-  const items = (JSON.parse(stdout) as { items?: unknown }).items;
+  const payload = asObject(
+    parseJsonText(stdout, "update --json"),
+    "update --json",
+  );
+  const items = payload.items;
   if (!Array.isArray(items) || items.length === 0) {
     throw new Error(`update --json has no items: ${stdout}`);
   }
-  return items[0] as MergeRow;
+  const first = asObject(items[0], "update row");
+  const row: MergeRow = { action: asString(first.action, "action") };
+  if (first.merged !== undefined)
+    row.merged = asBoolean(first.merged, "merged");
+  if (first.mergeBase !== undefined) {
+    row.mergeBase = asString(first.mergeBase, "mergeBase");
+  }
+  if (first.mergedUpstreamCommit !== undefined) {
+    row.mergedUpstreamCommit = asString(
+      first.mergedUpstreamCommit,
+      "mergedUpstreamCommit",
+    );
+  }
+  return row;
 }
 
 const HEAD = "---\nname: hello\ndescription: Greet.\n---\n\n";

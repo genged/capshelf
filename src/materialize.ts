@@ -20,7 +20,7 @@ import {
   installedPath,
 } from "./installed";
 import type { ItemSource } from "./installed";
-import type { ItemKind } from "./master";
+import type { ItemKind, CopyDirectoryItemKind } from "./master";
 import {
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
@@ -28,7 +28,6 @@ import {
   isMetadataSidecarPath,
   itemRepoRelPath,
 } from "./master";
-import type { CopyDirectoryItemKind } from "./master";
 import { hashNamedContents } from "./content-hash";
 import type { Scope } from "./promote-core";
 import { findSystemItem, shaOfSystemItem } from "./bundled";
@@ -53,6 +52,7 @@ import { beginDirectoryReplacement } from "./promote-transaction";
 import { shaOfNamedFiles } from "./item-snapshot";
 import { PRODUCT_NAME } from "./identity";
 import { PreconditionError } from "./errors";
+import { isErrno } from "./fs-utils";
 import { findDestinationPathCollision } from "./path-collision";
 
 export type MaterializeAction =
@@ -896,7 +896,7 @@ async function lstatOrNullAsync(path: string): Promise<Stats | null> {
   try {
     return await lstat(path);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    if (isErrno(error, "ENOENT")) return null;
     throw error;
   }
 }

@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export type ConfigValue =
   | null
   | boolean
@@ -10,12 +12,47 @@ export interface ConfigObject {
   [key: string]: ConfigValue;
 }
 
+/** The JSON value model as a zod schema, for documents zod validates. */
+export const ConfigValueSchema: z.ZodType<ConfigValue> = z.lazy(() =>
+  z.union([
+    z.null(),
+    z.boolean(),
+    z.number(),
+    z.string(),
+    z.array(ConfigValueSchema),
+    z.record(z.string(), ConfigValueSchema),
+  ]),
+);
+
+/** The object member of the JSON value model as a zod schema. */
+export const ConfigObjectSchema: z.ZodType<ConfigObject> = z.record(
+  z.string(),
+  ConfigValueSchema,
+);
+
 export function mergeConfigObjects(fragments: ConfigObject[]): ConfigObject {
   let merged: ConfigObject = {};
   for (const fragment of fragments) {
-    merged = mergeConfigValues(merged, fragment) as ConfigObject;
+    merged = mergeConfigObject(merged, fragment);
   }
   return merged;
+}
+
+export function mergeConfigObject(
+  base: ConfigObject,
+  overlay: ConfigObject,
+): ConfigObject {
+  const out = cloneConfigObject(base);
+  for (const [key, value] of Object.entries(overlay)) {
+    defineConfigProperty(
+      out,
+      key,
+      Object.hasOwn(out, key)
+        ? mergeConfigValues(out[key], value)
+        : cloneConfig(value),
+    );
+  }
+  return out;
 }
 
 export function mergeConfigValues(
@@ -25,18 +62,8 @@ export function mergeConfigValues(
   if (Array.isArray(base) && Array.isArray(overlay)) {
     return dedupeArray([...base, ...overlay]);
   }
-  if (isPlainConfigObject(base) && isPlainConfigObject(overlay)) {
-    const out = cloneConfigObject(base);
-    for (const [key, value] of Object.entries(overlay)) {
-      defineConfigProperty(
-        out,
-        key,
-        Object.hasOwn(out, key)
-          ? mergeConfigValues(out[key], value)
-          : cloneConfig(value),
-      );
-    }
-    return out;
+  if (isConfigObject(base) && isConfigObject(overlay)) {
+    return mergeConfigObject(base, overlay);
   }
   return cloneConfig(overlay);
 }
@@ -56,7 +83,7 @@ export function removeManagedValue(
     return kept.length > 0 ? kept : undefined;
   }
 
-  if (isPlainConfigObject(current) && isPlainConfigObject(managed)) {
+  if (isConfigObject(current) && isConfigObject(managed)) {
     const out = cloneConfigObject(current);
     for (const key of Object.keys(managed)) {
       if (!Object.hasOwn(out, key)) continue;
@@ -82,8 +109,8 @@ export function containsManagedValue(
     );
   }
 
-  if (isPlainConfigObject(managed)) {
-    if (!isPlainConfigObject(current)) return false;
+  if (isConfigObject(managed)) {
+    if (!isConfigObject(current)) return false;
     return Object.entries(managed).every(
       ([key, value]) =>
         Object.hasOwn(current, key) &&
@@ -110,11 +137,11 @@ export function findUnmanagedCollision(
     return null;
   }
   if (Array.isArray(localBase) && Array.isArray(managed)) return null;
-  if (isPlainConfigObject(localBase) && isPlainConfigObject(managed)) {
-    for (const key of Object.keys(managed)) {
+  if (isConfigObject(localBase) && isConfigObject(managed)) {
+    for (const [key, value] of Object.entries(managed)) {
       const collision = findUnmanagedCollision(
         Object.hasOwn(localBase, key) ? localBase[key] : undefined,
-        managed[key] as ConfigValue,
+        value,
         [...path, key],
       );
       if (collision) return collision;
@@ -132,15 +159,26 @@ export function stableStringifyConfig(value: ConfigValue | undefined): string {
   return JSON.stringify(stableSortConfig(value));
 }
 
+export function stableSortConfig(value: ConfigObject): ConfigObject;
+export function stableSortConfig(value: ConfigValue): ConfigValue;
+export function stableSortConfig(
+  value: ConfigValue | undefined,
+): ConfigValue | undefined;
 export function stableSortConfig(
   value: ConfigValue | undefined,
 ): ConfigValue | undefined {
-  if (Array.isArray(value)) return value.map(stableSortConfig) as ConfigValue[];
-  if (!isPlainConfigObject(value)) return value;
+  if (value === undefined) return undefined;
+  if (Array.isArray(value))
+    return value.map((entry) => stableSortConfig(entry));
+  if (!isConfigObject(value)) return value;
 
   const out: ConfigObject = {};
-  for (const key of Object.keys(value).sort()) {
-    defineConfigProperty(out, key, stableSortConfig(value[key]) as ConfigValue);
+  // UTF-16 code-unit order, the same order the default `sort()` used.
+  const entries = Object.entries(value).sort(([left], [right]) =>
+    left < right ? -1 : left > right ? 1 : 0,
+  );
+  for (const [key, child] of entries) {
+    defineConfigProperty(out, key, stableSortConfig(child));
   }
   return out;
 }
@@ -151,13 +189,17 @@ export function shaOfConfig(value: ConfigValue): string {
   return hasher.digest("hex").slice(0, 12);
 }
 
-export function cloneConfig<T extends ConfigValue | undefined>(value: T): T {
-  if (Array.isArray(value)) {
-    return value.map((entry) => cloneConfig(entry)) as T;
-  }
-  if (isPlainConfigObject(value)) {
-    return cloneConfigObject(value) as T;
-  }
+export function cloneConfig(value: ConfigObject): ConfigObject;
+export function cloneConfig(value: ConfigValue): ConfigValue;
+export function cloneConfig(
+  value: ConfigValue | undefined,
+): ConfigValue | undefined;
+export function cloneConfig(
+  value: ConfigValue | undefined,
+): ConfigValue | undefined {
+  if (value === undefined) return undefined;
+  if (Array.isArray(value)) return value.map((entry) => cloneConfig(entry));
+  if (isConfigObject(value)) return cloneConfigObject(value);
   return value;
 }
 
@@ -174,12 +216,44 @@ export function defineConfigProperty(
   });
 }
 
+/**
+ * The boundary predicate: whether a value of unknown origin is a plain object
+ * (`Object.prototype` or a null prototype). Class instances, `Map`s, and
+ * `Date`s are not config objects even though they are objects.
+ */
 export function isPlainConfigObject(value: unknown): value is ConfigObject {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return false;
   }
   const prototype = Object.getPrototypeOf(value);
   return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * The object member of `ConfigValue`, for values already parsed. The body
+ * repeats the boundary predicate on purpose: a shared helper would take the
+ * broad `object` type, and a call into the `unknown` predicate would widen.
+ */
+export function isConfigObject(
+  value: ConfigValue | undefined,
+): value is ConfigObject {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+export function isConfigString(
+  value: ConfigValue | undefined,
+): value is string {
+  return typeof value === "string";
+}
+
+export function isConfigNumber(
+  value: ConfigValue | undefined,
+): value is number {
+  return typeof value === "number";
 }
 
 export function configPathLabel(path: string[]): string {
@@ -190,8 +264,9 @@ export function configValueKind(value: ConfigValue | undefined): string {
   if (value === undefined) return "missing";
   if (value === null) return "null";
   if (Array.isArray(value)) return "array";
-  if (isPlainConfigObject(value)) return "object";
-  return typeof value;
+  if (isConfigObject(value)) return "object";
+  if (value === true || value === false) return "boolean";
+  return isConfigString(value) ? "string" : "number";
 }
 
 function dedupeArray(values: ConfigValue[]): ConfigValue[] {

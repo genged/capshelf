@@ -14,12 +14,14 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { atomicWriteFile } from "./fs-utils";
 import { join } from "node:path";
-import { YAMLParseError, parse as parseYaml } from "yaml";
 import { z } from "zod";
 import type { SystemItem } from "./bundled";
+import { isConfigObject } from "./config-values";
+import type { ConfigObject } from "./config-values";
 import { headSha, sourceRead } from "./git";
 import { isItemKind, itemRepoRelPath } from "./master";
 import type { MasterItem } from "./master";
+import { parseYamlDocument } from "./yaml-document";
 
 // Defined in identity.ts (a leaf) to break the master.ts <-> metadata.ts
 // cycle; re-exported here so existing `from "./metadata"` importers still work.
@@ -82,13 +84,13 @@ export function parseSidecar(
   const doc = parseYamlDocument(text, itemLabel, METADATA_SIDECAR);
   if (!doc.ok) return emptyMetadata(doc.warnings);
   if (doc.value === null || doc.value === undefined) return emptyMetadata();
-  if (typeof doc.value !== "object" || Array.isArray(doc.value)) {
+  if (!isConfigObject(doc.value)) {
     return emptyMetadata([
       `${itemLabel}: invalid ${METADATA_SIDECAR} (expected a mapping) — metadata ignored`,
     ]);
   }
 
-  const raw = doc.value as Record<string, unknown>;
+  const raw = doc.value;
   const meta = emptyMetadata();
   readDescription(raw, meta, itemLabel, METADATA_SIDECAR);
   checkNameField(raw, meta, itemLabel, METADATA_SIDECAR, expectedName);
@@ -142,15 +144,8 @@ export function parseFrontmatter(
   }
   const doc = parseYamlDocument(text, itemLabel, "SKILL.md frontmatter");
   if (!doc.ok) return emptyMetadata(doc.warnings);
-  if (
-    doc.value === null ||
-    doc.value === undefined ||
-    typeof doc.value !== "object" ||
-    Array.isArray(doc.value)
-  ) {
-    return emptyMetadata();
-  }
-  const raw = doc.value as Record<string, unknown>;
+  if (!isConfigObject(doc.value)) return emptyMetadata();
+  const raw = doc.value;
   const meta = emptyMetadata();
   readDescription(raw, meta, itemLabel, "SKILL.md frontmatter");
   checkNameField(raw, meta, itemLabel, "SKILL.md frontmatter", expectedName);
@@ -162,17 +157,16 @@ export function mergeItemMetadata(
   sidecar: ItemMetadata,
   frontmatter: ItemMetadata,
 ): ItemMetadata {
-  return {
-    ...(sidecar.description !== undefined ||
-    frontmatter.description !== undefined
-      ? { description: sidecar.description ?? frontmatter.description }
-      : {}),
+  const merged: ItemMetadata = {
     tags: sidecar.tags,
     requires: sidecar.requires,
     conflictsWith: sidecar.conflictsWith,
     needs: sidecar.needs,
     warnings: [...sidecar.warnings, ...frontmatter.warnings],
   };
+  const description = sidecar.description ?? frontmatter.description;
+  if (description !== undefined) merged.description = description;
+  return merged;
 }
 
 /**
@@ -343,37 +337,8 @@ function frontmatterMetadataFromText(
   return parseFrontmatter(block.text, itemLabel, expectedName);
 }
 
-type ParsedYaml =
-  | { ok: true; value: unknown }
-  | { ok: false; warnings: string[] };
-
-function parseYamlDocument(
-  text: string,
-  itemLabel: string,
-  sourceLabel: string,
-): ParsedYaml {
-  try {
-    return { ok: true, value: parseYaml(text) };
-  } catch (err) {
-    const detail =
-      err instanceof YAMLParseError && err.linePos?.[0]
-        ? `line ${err.linePos[0].line}: ${firstLine(err.message)}`
-        : firstLine(err instanceof Error ? err.message : String(err));
-    return {
-      ok: false,
-      warnings: [
-        `${itemLabel}: invalid ${sourceLabel} (${detail}) — metadata ignored`,
-      ],
-    };
-  }
-}
-
-function firstLine(text: string): string {
-  return text.split("\n")[0] ?? text;
-}
-
 function readDescription(
-  raw: Record<string, unknown>,
+  raw: ConfigObject,
   meta: ItemMetadata,
   itemLabel: string,
   sourceLabel: string,
@@ -390,7 +355,7 @@ function readDescription(
 }
 
 function checkNameField(
-  raw: Record<string, unknown>,
+  raw: ConfigObject,
   meta: ItemMetadata,
   itemLabel: string,
   sourceLabel: string,
@@ -406,7 +371,7 @@ function checkNameField(
 }
 
 function readTags(
-  raw: Record<string, unknown>,
+  raw: ConfigObject,
   meta: ItemMetadata,
   itemLabel: string,
 ): void {
@@ -431,7 +396,7 @@ function readTags(
 }
 
 function readRefList(
-  raw: Record<string, unknown>,
+  raw: ConfigObject,
   field: "requires" | "conflicts-with",
   meta: ItemMetadata,
   itemLabel: string,
@@ -460,23 +425,19 @@ function readRefList(
 }
 
 function readNeeds(
-  raw: Record<string, unknown>,
+  raw: ConfigObject,
   meta: ItemMetadata,
   itemLabel: string,
 ): ItemNeeds {
   if (!("needs" in raw)) return emptyNeeds();
-  if (
-    raw.needs === null ||
-    typeof raw.needs !== "object" ||
-    Array.isArray(raw.needs)
-  ) {
+  const needs = raw.needs;
+  if (!isConfigObject(needs)) {
     meta.warnings.push(
       `${itemLabel}: ${METADATA_SIDECAR} "needs" must be a mapping — field ignored`,
     );
     return emptyNeeds();
   }
 
-  const needs = raw.needs as Record<string, unknown>;
   return {
     network: readNeedList(needs, "network", meta, itemLabel, (value) => {
       const lowered = value.toLowerCase();
@@ -492,7 +453,7 @@ function readNeeds(
 }
 
 function readNeedList(
-  raw: Record<string, unknown>,
+  raw: ConfigObject,
   field: keyof ItemNeeds,
   meta: ItemMetadata,
   itemLabel: string,

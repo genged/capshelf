@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { pickRowId } from "../src/pick-core";
 import {
   changedMarks,
   plannedSharesFromMarks,
@@ -29,7 +30,7 @@ describe("shareCatalogRows", () => {
       ["env", "settings", "1 key"],
       ["env.FOO", "settings", "string"],
     ]);
-    const mark = picks.get(rows[1]?.id as string);
+    const mark = picks.get(pickRowId(rows[1]!));
     expect(mark).toMatchObject({
       id: rows[1]?.id,
       kind: "settings",
@@ -54,8 +55,8 @@ describe("shareCatalogRows", () => {
     expect(github).toHaveLength(2);
     // Two rows, one label: the identity is the id, not the ref.
     expect(github[0]?.id).not.toBe(github[1]?.id);
-    expect(picks.get(github[0]?.id as string)?.sourceTarget).toBe("claude");
-    expect(picks.get(github[1]?.id as string)?.sourceTarget).toBe("codex");
+    expect(picks.get(pickRowId(github[0]!))?.sourceTarget).toBe("claude");
+    expect(picks.get(pickRowId(github[1]!))?.sourceTarget).toBe("codex");
     expect(rows.filter((row) => row.ref === "posthog")).toHaveLength(1);
     // The detail names the output file, because that is what distinguishes
     // the two rows.
@@ -186,9 +187,7 @@ describe("shareCatalogRows", () => {
     ]);
     // A disabled key is not a pick: a forged mark of its id resolves to
     // nothing.
-    const disabledIds = rows
-      .filter((row) => row.disabled)
-      .map((row) => row.id as string);
+    const disabledIds = rows.filter((row) => row.disabled).map(pickRowId);
     for (const id of disabledIds) expect(picks.get(id)).toBeUndefined();
   });
 });

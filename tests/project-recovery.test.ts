@@ -1,5 +1,6 @@
 import { $, file } from "bun";
 import { describe, expect, test } from "bun:test";
+import { ManifestSchema } from "../src/manifest";
 import { existsSync, lstatSync } from "node:fs";
 import {
   chmod,
@@ -25,6 +26,8 @@ import {
   runIn,
   tempDir,
   tempRepo,
+  jsonOutput,
+  objectItems,
 } from "./cli-fixtures";
 
 function executable(path: string): boolean {
@@ -73,10 +76,11 @@ describe("project recovery", () => {
       const run = runIn(project);
       expect(run(["init", "--data", dataRepo]).exitCode).toBe(0);
       expect(run(["add", "skills/csv-report"]).exitCode).toBe(0);
-      const manifest = await file(
-        join(project, ".capshelf", "capshelf.json"),
-      ).json();
-      const upstream = manifest.dataRepoUpstream as string;
+      const manifest = ManifestSchema.parse(
+        await file(join(project, ".capshelf", "capshelf.json")).json(),
+      );
+      const upstream = manifest.dataRepoUpstream;
+      if (upstream === undefined) throw new Error("init recorded no upstream");
 
       // The machine came back without the clone the binding names.
       const moved = `${dataRepo}-moved`;
@@ -86,13 +90,10 @@ describe("project recovery", () => {
       // source is unavailable and the exit stays 0.
       const status = run(["status", "--json"]);
       expect(status.exitCode).toBe(0);
-      const report = JSON.parse(status.stdout.toString()) as {
-        dataRepo: string | null;
-        items: { kind: string; name: string; state: string }[];
-      };
+      const report = jsonOutput(status);
       expect(report.dataRepo).toBeNull();
       expect(
-        report.items.find(
+        objectItems(report, "items").find(
           (row) => row.kind === "skills" && row.name === "csv-report",
         )?.state,
       ).toBe("missing_upstream");
@@ -304,12 +305,13 @@ describe("project recovery", () => {
       // `local.json` is init's last write, so every interruption leaves it
       // absent. Both prefixes below are reachable states; each must recover
       // by re-running init, with no new subcommand and no manual repair.
-      for (const leftover of [
+      const leftovers: string[][] = [
         // Interrupted after saveLock: manifest, lock, and files on disk.
-        [] as string[],
+        [],
         // Interrupted during the installs: files on disk, no lock entry.
         [join(".capshelf", "capshelf.lock.json")],
-      ]) {
+      ];
+      for (const leftover of leftovers) {
         const project = await tempRepo("capshelf-partial-init-project-", {
           origin: null,
         });

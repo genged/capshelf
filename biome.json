@@ -12,6 +12,8 @@
       "tests/**/*.ts",
       "e2e/**/*.ts",
       "scripts/**/*.ts",
+      "tools/loc-dashboard/**/*.ts",
+      "tools/loc-dashboard/**/*.tsx",
       "!src/ui/generated"
     ]
   },

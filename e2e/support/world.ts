@@ -45,6 +45,11 @@ export interface WorldOptions {
   timeoutMs?: number;
 }
 
+/** The complete child environment of one world: every variable is set. */
+export interface WorldEnvironment {
+  [name: string]: string;
+}
+
 export interface CommandOptions {
   timeoutMs?: number;
   stdin?: string;
@@ -118,7 +123,7 @@ function baseEnvironment(paths: {
   xdgConfig: string;
   xdgCache: string;
   xdgData: string;
-}): Record<string, string> {
+}): WorldEnvironment {
   return {
     PATH: process.env.PATH ?? "/usr/bin:/bin",
     HOME: paths.home,
@@ -188,9 +193,9 @@ export async function createWorld(
   // its own copy in its own world.
   await writeFile(gitConfig, renderGitConfig(options.gitConfig ?? {}));
 
-  const env: Record<string, string> = {
+  const env: WorldEnvironment = {
     ...baseEnvironment({ home, gitConfig, xdgConfig, xdgCache, xdgData }),
-    ...(options.env ?? {}),
+    ...options.env,
   };
   for (const [key, value] of Object.entries(options.env ?? {})) {
     if (isSecretEnvName(key)) registerSecret(value);

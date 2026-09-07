@@ -93,9 +93,13 @@ export interface ShareScanLocation {
   exists: boolean;
 }
 
-export interface UntrackedItemScan {
+/** The item rows of the share catalog and what each mark means. */
+export interface UntrackedItemCatalog {
   rows: PickRow[];
   picks: Map<string, ItemSharePick>;
+}
+
+export interface UntrackedItemScan extends UntrackedItemCatalog {
   scanned: ShareScanLocation[];
 }
 
@@ -106,10 +110,9 @@ export interface UntrackedItemScan {
  * the user's filesystem, not from a validated lock, and the frame is live. A
  * refused candidate keeps its row, disabled, with the refusal as the detail.
  */
-export function untrackedItemRows(candidates: UntrackedItemCandidate[]): {
-  rows: PickRow[];
-  picks: Map<string, ItemSharePick>;
-} {
+export function untrackedItemRows(
+  candidates: UntrackedItemCandidate[],
+): UntrackedItemCatalog {
   const rows: PickRow[] = [];
   const picks = new Map<string, ItemSharePick>();
   for (const candidate of candidates) {
@@ -141,15 +144,14 @@ export function untrackedItemRows(candidates: UntrackedItemCandidate[]): {
       kind: candidate.kind,
       name: candidate.name,
       target: candidate.target,
-      presentTargets: candidates
-        .filter(
-          (sibling) =>
-            sibling.kind === candidate.kind &&
-            sibling.name === candidate.name &&
-            sibling.refusal === null &&
-            sibling.target !== null,
-        )
-        .map((sibling) => sibling.target as SubagentTarget),
+      presentTargets: candidates.flatMap((sibling) =>
+        sibling.kind === candidate.kind &&
+        sibling.name === candidate.name &&
+        sibling.refusal === null &&
+        sibling.target !== null
+          ? [sibling.target]
+          : [],
+      ),
       digest: candidate.digest,
     });
   }

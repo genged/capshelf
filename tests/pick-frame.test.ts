@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { parsePickKind } from "../src/pick-core";
 import {
   GUTTER_WIDTH,
   MARKED,
@@ -21,7 +22,7 @@ function row(ref: string, extra: Partial<PickRow> = {}): PickRow {
   const [kind = "skills", ...rest] = ref.split("/");
   return {
     ref,
-    kind: kind as PickRow["kind"],
+    kind: parsePickKind(kind),
     name: rest.join("/"),
     tags: [],
     installed: false,
@@ -82,15 +83,13 @@ describe("renderTabBar", () => {
     // Measured from unstyled widths: an escape sequence has no width, so
     // measuring the styled string would put the rule in the wrong place.
     const [bar, rule] = renderTabBar(tabs, 2, PLAIN_PALETTE);
-    expect((rule as string).indexOf("━")).toBe(
-      (bar as string).indexOf("skills"),
-    );
-    expect((rule as string).trim().length).toBe("skills".length);
+    expect(rule!.indexOf("━")).toBe(bar!.indexOf("skills"));
+    expect(rule!.trim().length).toBe("skills".length);
   });
 
   test("the rule stays correct when the bar is styled", () => {
     const [, rule] = renderTabBar(tabs, 2, MARKUP);
-    expect((rule as string).indexOf("━")).toBe("All │ bundles │ ".length);
+    expect(rule!.indexOf("━")).toBe("All │ bundles │ ".length);
   });
 
   test("no tabs draws nothing", () => {
@@ -139,7 +138,7 @@ describe("renderRows", () => {
   test("draws the hint only for the focused row", () => {
     // Every row carrying its description would push the refs apart and turn
     // the list into prose.
-    const rows = [ranked(SHELF[2] as PickRow), ranked(SHELF[1] as PickRow)];
+    const rows = [ranked(SHELF[2]!), ranked(SHELF[1]!)];
     const focused = renderRows(frame({ query: "x", rows, cursor: 0 }));
     expect(focused[0]).toContain("Find flaws");
     const unfocused = renderRows(frame({ query: "x", rows, cursor: 1 }));
@@ -157,7 +156,7 @@ describe("renderRows", () => {
     const lines = renderRows(
       frame({
         query: "x",
-        rows: [ranked(SHELF[3] as PickRow)],
+        rows: [ranked(SHELF[3]!)],
         palette: MARKUP,
         marked: new Set(["mcp/github"]),
       }),
@@ -203,7 +202,7 @@ describe("renderRows", () => {
   });
 
   test("the hint follows its own ref rather than a shared column", () => {
-    const rows = [ranked(SHELF[2] as PickRow), ranked(SHELF[1] as PickRow)];
+    const rows = [ranked(SHELF[2]!), ranked(SHELF[1]!)];
     const [focused] = renderRows(frame({ query: "x", rows, cursor: 0 }));
     expect(focused).toBe(
       `${POINTER}${UNMARKED} skills/security-review  Find flaws`,
@@ -230,7 +229,7 @@ describe("renderRows", () => {
     const [line] = renderRows(
       frame({ query: "x", rows: [ranked(long)], cursor: -1, columns: 40 }),
     );
-    expect((line as string).length + GUTTER_WIDTH).toBeLessThan(40);
+    expect(line!.length + GUTTER_WIDTH).toBeLessThan(40);
     expect(line).toContain("…");
   });
 
@@ -238,13 +237,13 @@ describe("renderRows", () => {
     const [line] = renderRows(
       frame({
         query: "x",
-        rows: [ranked(SHELF[2] as PickRow)],
+        rows: [ranked(SHELF[2]!)],
         cursor: 0,
         columns: 34,
       }),
     );
     expect(line).not.toContain("Find flaws");
-    expect((line as string).length + GUTTER_WIDTH).toBeLessThan(34);
+    expect(line!.length + GUTTER_WIDTH).toBeLessThan(34);
   });
 
   test("a heading is never the last line of the window", () => {
@@ -381,7 +380,7 @@ describe("renderPickBody", () => {
     expect(lines[0]).toContain("skills");
     // Which of how many, since the other names no longer fit.
     expect(lines[0]).toContain("(3/4)");
-    expect((lines[0] as string).length + GUTTER_WIDTH).toBeLessThan(24);
+    expect(lines[0]!.length + GUTTER_WIDTH).toBeLessThan(24);
   });
 
   test("a bar that fits keeps every name and its underline", () => {

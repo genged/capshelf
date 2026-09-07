@@ -63,11 +63,11 @@ export function ShelfView({
     setShelf({ state: "loading" });
     apiGet<UiShelf>("/api/shelf", { repo }).then(
       (data) => setShelf({ state: "ready", data }),
-      (error: unknown) =>
+      (cause: unknown) =>
         setShelf({
           state: "error",
           error:
-            error instanceof ApiError ? error : new ApiError(0, String(error)),
+            cause instanceof ApiError ? cause : new ApiError(0, String(cause)),
         }),
     );
   }, [repo]);
@@ -92,18 +92,18 @@ export function ShelfView({
       ...(file !== null && { file }),
     }).then(
       (data) => setDetail({ state: "ready", data }),
-      (error: unknown) =>
+      (cause: unknown) =>
         setDetail({
           state: "error",
           error:
-            error instanceof ApiError ? error : new ApiError(0, String(error)),
+            cause instanceof ApiError ? cause : new ApiError(0, String(cause)),
         }),
     );
   }, [repo, ref, file]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      const target = event.target as HTMLElement | null;
+      const target = event.target instanceof HTMLElement ? event.target : null;
       if (
         target &&
         (target.tagName === "INPUT" || target.tagName === "TEXTAREA")

@@ -8,10 +8,12 @@ import {
   expectOutputExcludes,
   expectRecovery,
   expectSameState,
+  parseApplyRows,
   parseStatusRows,
   statusRow,
 } from "../support/assertions";
 import { declareEvidence } from "../support/report";
+import { asObject, asString, parseJsonText } from "../support/json";
 import { E2E_TEST_TIMEOUT_MS, withWorld } from "../support/world";
 
 const SCENARIO = "recovery";
@@ -220,9 +222,12 @@ test(
             `sync did not exit normally: ${world.describe(result)}`,
           );
         }
-        const payload = JSON.parse(result.stdout) as { state: string };
+        const payload = asObject(
+          parseJsonText(result.stdout, "sync --json"),
+          "sync --json",
+        );
         return {
-          state: payload.state,
+          state: asString(payload.state, "state"),
           exit: result.outcome.exitCode,
           stdout: result.stdout,
         };
@@ -434,10 +439,9 @@ test(
         "--yes",
       ]);
       expectExit(applied, 1);
-      const payload = JSON.parse(applied.stdout) as {
-        items: { key: string; action: string }[];
-      };
-      const byKey = new Map(payload.items.map((row) => [row.key, row.action]));
+      const byKey = new Map(
+        parseApplyRows(applied.stdout).map((row) => [row.key, row.action]),
+      );
       expect(byKey.get("data/skills/wedged")).toBe("error");
       expect(byKey.get("data/skills/healthy")).toBe("reconciled");
       expect(await readFile(healthyInstalled, "utf-8")).toBe("healthy\n");

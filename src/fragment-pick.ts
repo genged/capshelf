@@ -2,7 +2,7 @@ import {
   cloneConfig,
   configPathLabel,
   isPlainConfigObject,
-  mergeConfigValues,
+  mergeConfigObject,
   removeManagedValue,
   type ConfigObject,
   type ConfigValue,
@@ -79,10 +79,7 @@ export function extractPickedFragment(opts: {
     if (value === undefined) {
       throw pickNotFoundError(opts, segments);
     }
-    extracted = mergeConfigValues(
-      extracted,
-      nestAtPath(segments, value),
-    ) as ConfigObject;
+    extracted = mergeConfigObject(extracted, nestAtPath(segments, value));
   }
   return extracted;
 }
@@ -121,9 +118,14 @@ function valueAtPath(
 }
 
 function nestAtPath(segments: string[], value: ConfigValue): ConfigObject {
-  let out: ConfigValue = cloneConfig(value);
-  for (let index = segments.length - 1; index >= 0; index--) {
-    out = { [segments[index] as string]: out };
+  // `pickPathSegments` never yields an empty list, so the leaf always exists.
+  const leaf = segments.at(-1);
+  if (leaf === undefined) {
+    throw new Error("a pick path needs at least one segment");
   }
-  return out as ConfigObject;
+  let out: ConfigObject = { [leaf]: cloneConfig(value) };
+  for (const segment of segments.slice(0, -1).reverse()) {
+    out = { [segment]: out };
+  }
+  return out;
 }

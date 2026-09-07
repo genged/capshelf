@@ -19,7 +19,7 @@ import { relative } from "node:path";
 import { isSystemItemName } from "./bundled";
 import { isAddressableItemName } from "./item-ref";
 import {
-  configShapeLabel,
+  configDetailLabel,
   dedupeAncestorPaths,
   isPickableKey,
   walkConfigPaths,
@@ -43,7 +43,7 @@ import type { Lock } from "./lock";
 import type { Manifest } from "./manifest";
 import { ITEM_KINDS } from "./master";
 import type { FragmentItemKind } from "./master";
-import { sanitizeDisplayText } from "./pick-core";
+import { pickRowId, sanitizeDisplayText } from "./pick-core";
 import type { PickKind, PickRow } from "./pick-core";
 import { scanUntrackedShareItems } from "./share-scan";
 import type { ItemSharePick, ShareScanLocation } from "./share-scan";
@@ -226,15 +226,20 @@ function sourceTargetOf(target: FragmentTarget): FragmentSourceTarget {
  * from files the user's tools wrote, and the frame is live. The row id keeps
  * the unsanitized path, so the mark still names the real value.
  */
-export function shareCatalogRows(outputs: ShareOutputRemainder[]): {
+/** The fragment rows of the share catalog and what each mark means. */
+export interface FragmentShareCatalog {
   rows: PickRow[];
   picks: Map<string, SharePick>;
-} {
+}
+
+export function shareCatalogRows(
+  outputs: ShareOutputRemainder[],
+): FragmentShareCatalog {
   const rows: PickRow[] = [];
   const picks = new Map<string, SharePick>();
   const add = (row: PickRow, pick: SharePick): void => {
     rows.push(row);
-    picks.set(row.id as string, pick);
+    picks.set(pickRowId(row), pick);
   };
 
   for (const output of outputs) {
@@ -286,7 +291,7 @@ export function shareCatalogRows(outputs: ShareOutputRemainder[]): {
             name: node.path,
             tags: [],
             installed: false,
-            detail: node.shape,
+            detail: node.detail,
           },
           {
             id,
@@ -374,10 +379,10 @@ export function shareCatalogRows(outputs: ShareOutputRemainder[]): {
             installed: false,
             ...(unshareable && { disabled: true }),
             detail: malformed
-              ? `${output.label} · not a server definition (${configShapeLabel(server)})`
+              ? `${output.label} · not a server definition (${configDetailLabel(server)})`
               : unshareable
                 ? `${output.label} · name cannot become an item name`
-                : `${output.label} · ${configShapeLabel(server)}`,
+                : `${output.label} · ${configDetailLabel(server)}`,
           },
           {
             id,

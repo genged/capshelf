@@ -1,20 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import {
-  configShapeLabel,
+  configDetailLabel,
   dedupeAncestorPaths,
   walkConfigPaths,
 } from "../src/config-paths";
 
-describe("configShapeLabel", () => {
-  test("summarizes shape and never the value", () => {
-    expect(configShapeLabel({ a: 1, b: 2 })).toBe("2 keys");
-    expect(configShapeLabel({ a: 1 })).toBe("1 key");
-    expect(configShapeLabel(["x", "y", "z"])).toBe("3 entries");
-    expect(configShapeLabel(["x"])).toBe("1 entry");
-    expect(configShapeLabel("hunter2")).toBe("string");
-    expect(configShapeLabel(42)).toBe("number");
-    expect(configShapeLabel(true)).toBe("boolean");
-    expect(configShapeLabel(null)).toBe("null");
+describe("configDetailLabel", () => {
+  test("summarizes structure and never the value", () => {
+    expect(configDetailLabel({ a: 1, b: 2 })).toBe("2 keys");
+    expect(configDetailLabel({ a: 1 })).toBe("1 key");
+    expect(configDetailLabel(["x", "y", "z"])).toBe("3 entries");
+    expect(configDetailLabel(["x"])).toBe("1 entry");
+    expect(configDetailLabel("hunter2")).toBe("string");
+    expect(configDetailLabel(42)).toBe("number");
+    expect(configDetailLabel(true)).toBe("boolean");
+    expect(configDetailLabel(null)).toBe("null");
   });
 });
 
@@ -24,7 +24,7 @@ describe("walkConfigPaths", () => {
       permissions: { allow: ["a", "b", "c"], deny: ["x"] },
       env: { FOO: "bar" },
     });
-    expect(rows.map((row) => [row.path, row.shape])).toEqual([
+    expect(rows.map((row) => [row.path, row.detail])).toEqual([
       ["permissions", "2 keys"],
       ["permissions.allow", "3 entries"],
       ["permissions.deny", "1 entry"],

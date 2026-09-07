@@ -8,6 +8,7 @@ import {
   statusTargets,
   type StateFacts,
   type StatusRow,
+  type State,
 } from "../src/status-core";
 import type { LockEntry, LockEntryV4, LockV4 } from "../src/lock";
 import type { RuntimeWarning } from "../src/runtime-warnings";
@@ -185,7 +186,7 @@ describe("deriveState", () => {
   });
 
   test("present and unknown reachability leave every existing case unchanged", () => {
-    const cases: Array<[Partial<StateFacts>, string]> = [
+    const cases: Array<[Partial<StateFacts>, State]> = [
       [{}, "ok"],
       [{ upstreamSha: "U" }, "update_available"],
       [{ currentSha: "C" }, "drifted_local"],
@@ -220,13 +221,11 @@ describe("deriveState", () => {
     for (const [overrides, expected] of cases) {
       expect(
         deriveState(facts({ ...overrides, sourceCommitPresent: true })),
-      ).toBe(expected as ReturnType<typeof deriveState>);
+      ).toBe(expected);
       expect(
         deriveState(facts({ ...overrides, sourceCommitPresent: null })),
-      ).toBe(expected as ReturnType<typeof deriveState>);
-      expect(deriveState(facts(overrides))).toBe(
-        expected as ReturnType<typeof deriveState>,
-      );
+      ).toBe(expected);
+      expect(deriveState(facts(overrides))).toBe(expected);
     }
   });
 });

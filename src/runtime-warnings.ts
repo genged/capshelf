@@ -5,8 +5,7 @@ import {
   readFileSync,
   realpathSync,
 } from "node:fs";
-import { delimiter } from "node:path";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { z } from "zod";
 import type { ItemKind } from "./master";
 import {
@@ -231,24 +230,30 @@ function joinHomeCodex(): string {
   return join(process.env.HOME ?? "", ".codex");
 }
 
+/**
+ * The two levels of `~/.codex/config.toml` this check reads. Both objects
+ * pass unknown keys through, so a date or a table elsewhere in the file
+ * never makes the probe fail.
+ */
+const CodexTrustSchema = z
+  .object({ projects: z.object({}).passthrough().optional() })
+  .passthrough();
+const CodexTrustEntrySchema = z
+  .object({ trust_level: z.string().optional() })
+  .passthrough();
+
 function isCodexProjectTrusted(configPath: string, project: string): boolean {
   if (!existsSync(configPath)) return false;
-  let parsed: unknown;
+  let parsed: ReturnType<typeof Bun.TOML.parse>;
   try {
     parsed = Bun.TOML.parse(readFileSync(configPath, "utf-8"));
   } catch {
     return false;
   }
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    !("projects" in parsed)
-  ) {
-    return false;
-  }
-  const projects = (parsed as { projects?: unknown }).projects;
-  if (typeof projects !== "object" || projects === null) return false;
-  const exact = (projects as Record<string, unknown>)[resolve(project)];
-  if (typeof exact !== "object" || exact === null) return false;
-  return (exact as { trust_level?: unknown }).trust_level === "trusted";
+  const trust = CodexTrustSchema.safeParse(parsed);
+  if (!trust.success) return false;
+  const entry = CodexTrustEntrySchema.safeParse(
+    trust.data.projects?.[resolve(project)],
+  );
+  return entry.success && entry.data.trust_level === "trusted";
 }

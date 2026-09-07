@@ -12,6 +12,7 @@ import {
 } from "../src/data-bootstrap";
 import { CliError, PreconditionError } from "../src/errors";
 import { normalizeRemoteUrl } from "../src/git";
+import { rejection } from "./cli-fixtures";
 
 const env = { XDG_DATA_HOME: "/xdg" };
 
@@ -163,12 +164,11 @@ describe("resolveDataInput", () => {
     expect(() => resolveDataInput("owner/repo", { env, cwd })).toThrow(
       "data must be a local path or supported git remote URL: owner/repo",
     );
-    try {
-      resolveDataInput("owner/repo", { env, cwd });
-    } catch (err) {
-      expect(err).toBeInstanceOf(PreconditionError);
-      expect((err as PreconditionError).exitCode).toBe(3);
-    }
+    const error = await rejection(
+      (async () => resolveDataInput("owner/repo", { env, cwd }))(),
+      PreconditionError,
+    );
+    expect(error.exitCode).toBe(3);
   });
 
   test("rejects github:owner/repo shorthand", async () => {
@@ -293,21 +293,19 @@ describe("ensureClone", () => {
       normalizeRemoteUrl(other.url, { allowFileUrls: true })!,
     );
 
-    try {
-      await ensureClone(url, clonePath, upstream);
-      throw new Error("expected ensureClone to reject");
-    } catch (err) {
-      expect(err).toBeInstanceOf(PreconditionError);
-      const message = (err as Error).message;
-      expect(message).toContain(
-        "data repo cache path already exists but points at a different upstream.",
-      );
-      expect(message).toContain(`expected:\n  ${upstream}`);
-      expect(message).toContain(
-        `found:\n  ${normalizeRemoteUrl(other.url, { allowFileUrls: true })}`,
-      );
-      expect(message).toContain("capshelf init --data <local-path>");
-    }
+    const error = await rejection(
+      ensureClone(url, clonePath, upstream),
+      PreconditionError,
+    );
+    const message = error.message;
+    expect(message).toContain(
+      "data repo cache path already exists but points at a different upstream.",
+    );
+    expect(message).toContain(`expected:\n  ${upstream}`);
+    expect(message).toContain(
+      `found:\n  ${normalizeRemoteUrl(other.url, { allowFileUrls: true })}`,
+    );
+    expect(message).toContain("capshelf init --data <local-path>");
   });
 
   test("fails when the existing path is a non-empty non-git directory", async () => {
@@ -329,24 +327,22 @@ describe("ensureClone", () => {
     const missing = join(base, "no-such-repo");
     const url = `file://${missing}`;
 
-    try {
-      await ensureClone(
+    const error = await rejection(
+      ensureClone(
         url,
         clonePath,
         normalizeRemoteUrl(url, { allowFileUrls: true })!,
-      );
-      throw new Error("expected ensureClone to reject");
-    } catch (err) {
-      expect(err).toBeInstanceOf(CliError);
-      expect((err as CliError).exitCode).toBe(1);
-      const message = (err as Error).message;
-      expect(message).toContain(`failed to clone data repo:\n  ${url}`);
-      expect(message).toContain("git reported:");
-      expect(message).toContain(
-        "fix the URL, authenticate with Git, or clone manually and run:",
-      );
-      expect(message).toContain("capshelf init --data <local-path>");
-    }
+      ),
+      CliError,
+    );
+    expect(error.exitCode).toBe(1);
+    const message = error.message;
+    expect(message).toContain(`failed to clone data repo:\n  ${url}`);
+    expect(message).toContain("git reported:");
+    expect(message).toContain(
+      "fix the URL, authenticate with Git, or clone manually and run:",
+    );
+    expect(message).toContain("capshelf init --data <local-path>");
   });
 });
 

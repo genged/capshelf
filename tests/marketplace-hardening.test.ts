@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { parseJsonConfigObject } from "../src/json-fragments";
 import { chmod, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -22,6 +23,7 @@ import {
   runInProcess,
   tempDir,
   tempRepo,
+  stringField,
 } from "./cli-fixtures";
 
 async function seedSkill(repo: string, name: string): Promise<void> {
@@ -44,6 +46,14 @@ describe("marketplace hardening", () => {
     const changed = logicalContentHash({ nested: { a: 1, b: 3 }, z: 1 }, []);
     expect(first).toBe(second);
     expect(changed).not.toBe(first);
+  });
+
+  test("the logical hash of a known manifest is stable", () => {
+    // Pinned on 33becb7, before the hash moved onto the JSON value model, so
+    // a drift in the canonical form is visible.
+    expect(logicalContentHash({ z: 1, nested: { b: 2, a: 1 } }, [])).toBe(
+      "df7303c1baa9589a3c1f2363e9ec72692a514745628c3b9acf157e797287ac94",
+    );
   });
 
   test("Codex versions use tracked Git modes and untracked working modes", async () => {
@@ -79,8 +89,10 @@ describe("marketplace hardening", () => {
       const manifest = files.find((file) =>
         file.path.endsWith("/.codex-plugin/plugin.json"),
       );
-      return (JSON.parse(manifest!.bytes.toString()) as { version: string })
-        .version;
+      return stringField(
+        parseJsonConfigObject(manifest!.bytes.toString(), "plugin.json"),
+        "version",
+      );
     };
 
     const initial = await cacheVersion();
@@ -598,8 +610,10 @@ describe("marketplace hardening", () => {
       const manifest = files.find((file) =>
         file.path.endsWith("/.codex-plugin/plugin.json"),
       );
-      return (JSON.parse(manifest!.bytes.toString()) as { version: string })
-        .version;
+      return stringField(
+        parseJsonConfigObject(manifest!.bytes.toString(), "plugin.json"),
+        "version",
+      );
     };
     const first = await version(state);
     await writeFile(join(repo, "unrelated"), "unrelated");

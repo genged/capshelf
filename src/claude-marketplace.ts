@@ -1,7 +1,9 @@
 import { lstat, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import { ConfigValueSchema, isConfigString } from "./config-values";
 import { NotFoundError, PreconditionError } from "./errors";
+import { isErrno } from "./fs-utils";
 import { showAtCommit } from "./git";
 import {
   canonicalSkillRef,
@@ -13,12 +15,16 @@ import { assertNoSymlinkAncestors } from "./path-safety";
 const ownerSchema = z
   .object({ name: z.string().min(1), email: z.string().min(1).optional() })
   .passthrough();
+// Every field except the name stays a free JSON value: an external entry is
+// preserved, never validated, and the managed test below reads the fields.
 const pluginSchema = z
   .object({
     name: z.string().min(1),
-    source: z.unknown(),
-    strict: z.unknown().optional(),
-    skills: z.unknown().optional(),
+    displayName: ConfigValueSchema.optional(),
+    description: ConfigValueSchema.optional(),
+    source: ConfigValueSchema.optional(),
+    strict: ConfigValueSchema.optional(),
+    skills: ConfigValueSchema.optional(),
   })
   .passthrough();
 const marketplaceSchema = z
@@ -31,6 +37,7 @@ const marketplaceSchema = z
   })
   .passthrough();
 
+export type ClaudeOwner = z.infer<typeof ownerSchema>;
 export type ClaudePlugin = z.infer<typeof pluginSchema>;
 export type ClaudeMarketplace = z.infer<typeof marketplaceSchema>;
 
@@ -42,27 +49,37 @@ const COMPONENT_FIELDS = new Set([
   "lspServers",
 ]);
 
-export function isManagedClaudePlugin(plugin: ClaudePlugin): boolean {
+/**
+ * The canonical skill refs of a managed entry, or null when the entry is
+ * external: another source, a strict plugin, a version, a component field,
+ * or a skill list that is empty or not entirely `./skills/<name>` paths.
+ */
+function managedSkillRefs(plugin: ClaudePlugin): string[] | null {
   if (
     plugin.source !== "./" ||
     plugin.strict !== false ||
     "version" in plugin ||
-    [...COMPONENT_FIELDS].some((key) => key in plugin) ||
-    !Array.isArray(plugin.skills) ||
-    plugin.skills.length === 0
+    [...COMPONENT_FIELDS].some((key) => key in plugin)
   ) {
-    return false;
+    return null;
   }
-  try {
-    return plugin.skills.every(
-      (skill) =>
-        typeof skill === "string" &&
-        skill.startsWith("./") &&
-        skill === `./${canonicalSkillRef(skill.slice(2))}`,
-    );
-  } catch {
-    return false;
+  if (!Array.isArray(plugin.skills) || plugin.skills.length === 0) return null;
+  const refs: string[] = [];
+  for (const skill of plugin.skills) {
+    if (!isConfigString(skill) || !skill.startsWith("./")) return null;
+    const ref = skill.slice(2);
+    try {
+      if (skill !== `./${canonicalSkillRef(ref)}`) return null;
+    } catch {
+      return null;
+    }
+    refs.push(ref);
   }
+  return refs;
+}
+
+export function isManagedClaudePlugin(plugin: ClaudePlugin): boolean {
+  return managedSkillRefs(plugin) !== null;
 }
 
 function isAttemptedManagedClaudePlugin(plugin: ClaudePlugin): boolean {
@@ -75,8 +92,7 @@ function isAttemptedManagedClaudePlugin(plugin: ClaudePlugin): boolean {
 }
 
 export function claudePluginSkills(plugin: ClaudePlugin): string[] {
-  if (!isManagedClaudePlugin(plugin)) return [];
-  return (plugin.skills as string[]).map((skill) => skill.slice(2));
+  return managedSkillRefs(plugin) ?? [];
 }
 
 export async function loadClaudeMarketplace(
@@ -88,7 +104,7 @@ export async function loadClaudeMarketplace(
   try {
     raw = await readFile(path, "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if (!isErrno(error, "ENOENT")) throw error;
     throw new NotFoundError("Claude marketplace is not initialized");
   }
   return parseClaudeMarketplace(raw);
@@ -154,7 +170,7 @@ export async function validateClaudeMarketplace(
         );
       }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (!isErrno(error, "ENOENT")) throw error;
     }
   }
   for (const plugin of marketplace.plugins) {

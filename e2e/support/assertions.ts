@@ -6,6 +6,14 @@ import {
   describeCommand,
   describeOutcome,
 } from "./command";
+import {
+  asArray,
+  asObject,
+  asString,
+  isJsonObject,
+  isJsonString,
+} from "./json";
+import type { JsonValue } from "./json";
 import type { World } from "./world";
 
 function fail(message: string, result?: CommandResult): never {
@@ -55,12 +63,13 @@ export function expectRecovery(result: CommandResult, command: string): void {
   expectOutputContains(result, command);
 }
 
-export function parseJson(result: CommandResult): unknown {
+/** `JSON.parse` without a reviver yields exactly the members of `JsonValue`. */
+export function parseJson(result: CommandResult): JsonValue {
   try {
     return JSON.parse(result.stdout);
-  } catch (err) {
+  } catch (cause) {
     return fail(
-      `expected JSON on stdout: ${err instanceof Error ? err.message : String(err)}`,
+      `expected JSON on stdout: ${cause instanceof Error ? cause.message : String(cause)}`,
       result,
     );
   }
@@ -73,21 +82,45 @@ export interface ApplyRow {
 
 /** Semantic rows from `apply --json`, not a text snapshot of its output. */
 export function parseApplyRows(stdout: string): ApplyRow[] {
-  const payload: unknown = JSON.parse(stdout);
-  if (
-    typeof payload !== "object" ||
-    payload === null ||
-    !Array.isArray((payload as { items?: unknown }).items)
-  ) {
+  const payload: JsonValue = JSON.parse(stdout);
+  if (!isJsonObject(payload) || !Array.isArray(payload.items)) {
     throw new Error(`apply --json has no items array: ${stdout}`);
   }
-  const items = (payload as { items: unknown[] }).items;
-  return items.map((item) => {
-    const row = item as { key?: unknown; action?: unknown };
-    if (typeof row.key !== "string" || typeof row.action !== "string") {
+  return payload.items.map((item) => {
+    if (
+      !isJsonObject(item) ||
+      !isJsonString(item.key) ||
+      !isJsonString(item.action)
+    ) {
       throw new Error(`unexpected apply row: ${JSON.stringify(item)}`);
     }
-    return { key: row.key, action: row.action };
+    return { key: item.key, action: item.action };
+  });
+}
+
+/** One `targetCoverage` entry, as `docs/cli.md` documents it. */
+export interface TargetCoverage {
+  target: string;
+  present: boolean | null;
+  sourcePath: string;
+  outputPath: string;
+}
+
+export function parseCoverage(value: JsonValue): TargetCoverage[] {
+  return asArray(value, "targetCoverage").map((entry) => {
+    const row = asObject(entry, "targetCoverage entry");
+    const present = row.present;
+    if (present !== true && present !== false && present !== null) {
+      throw new Error(
+        `targetCoverage present is not a boolean or null: ${JSON.stringify(entry)}`,
+      );
+    }
+    return {
+      target: asString(row.target, "targetCoverage target"),
+      present,
+      sourcePath: asString(row.sourcePath, "targetCoverage sourcePath"),
+      outputPath: asString(row.outputPath, "targetCoverage outputPath"),
+    };
   });
 }
 
@@ -97,26 +130,48 @@ export interface StatusRow {
   kind: string;
   name: string;
   state: string;
-  [field: string]: unknown;
+  lockedSha?: string;
+  coverageState?: string;
+  targetCoverage?: TargetCoverage[];
+  runtimeWarnings?: JsonValue[];
 }
 
 /** Semantic rows from `status --json`. */
 export function parseStatusRows(stdout: string): StatusRow[] {
-  const payload: unknown = JSON.parse(stdout);
-  const items = (payload as { items?: unknown }).items;
+  const payload: JsonValue = JSON.parse(stdout);
+  const items = isJsonObject(payload) ? payload.items : undefined;
   if (!Array.isArray(items)) {
     throw new Error(`status --json has no items array: ${stdout}`);
   }
   return items.map((item) => {
-    const row = item as Partial<StatusRow>;
     if (
-      typeof row.kind !== "string" ||
-      typeof row.name !== "string" ||
-      typeof row.state !== "string"
+      !isJsonObject(item) ||
+      !isJsonString(item.kind) ||
+      !isJsonString(item.name) ||
+      !isJsonString(item.state)
     ) {
       throw new Error(`unexpected status row: ${JSON.stringify(item)}`);
     }
-    return row as StatusRow;
+    const row: StatusRow = {
+      scope: asString(item.scope, "status row scope"),
+      source: asString(item.source, "status row source"),
+      kind: item.kind,
+      name: item.name,
+      state: item.state,
+    };
+    if (item.lockedSha !== undefined) {
+      row.lockedSha = asString(item.lockedSha, "lockedSha");
+    }
+    if (item.coverageState !== undefined) {
+      row.coverageState = asString(item.coverageState, "coverageState");
+    }
+    if (item.targetCoverage !== undefined) {
+      row.targetCoverage = parseCoverage(item.targetCoverage);
+    }
+    if (item.runtimeWarnings !== undefined) {
+      row.runtimeWarnings = asArray(item.runtimeWarnings, "runtimeWarnings");
+    }
+    return row;
   });
 }
 
@@ -289,9 +344,29 @@ export interface FileEntry {
   target?: string;
 }
 
+/** A project root and the paths under it a snapshot covers. */
+export interface PathSelection {
+  path: string;
+  include: readonly string[];
+}
+
+function isPathSelection(
+  value: string | PathSelection,
+): value is PathSelection {
+  return typeof value !== "string";
+}
+
+const SELECTION_KEYS = [
+  "projectFiles",
+  "projectGit",
+  "dataRepo",
+  "bareRemote",
+  "requiredAbsent",
+] as const;
+
 export interface OwnedStateSelection {
   /** Project files: `.capshelf/**` plus managed runtime outputs. */
-  projectFiles?: string | { path: string; include: readonly string[] };
+  projectFiles?: string | PathSelection;
   /** Project Git: HEAD, refs, index bytes, porcelain status. */
   projectGit?: string;
   /**
@@ -339,9 +414,7 @@ export async function captureOwnedState(
   world: World,
   selection: OwnedStateSelection,
 ): Promise<OwnedState> {
-  const keys = Object.keys(selection).filter(
-    (key) => selection[key as keyof OwnedStateSelection] !== undefined,
-  );
+  const keys = SELECTION_KEYS.filter((key) => selection[key] !== undefined);
   if (keys.length === 0) {
     throw new Error(
       "captureOwnedState needs at least one selected snapshot: projectFiles, projectGit, dataRepo, bareRemote, or requiredAbsent",
@@ -350,10 +423,9 @@ export async function captureOwnedState(
 
   const state: OwnedState = {};
   if (selection.projectFiles !== undefined) {
-    const target =
-      typeof selection.projectFiles === "string"
-        ? { path: selection.projectFiles, include: OWNED_PROJECT_PATHS }
-        : selection.projectFiles;
+    const target = isPathSelection(selection.projectFiles)
+      ? selection.projectFiles
+      : { path: selection.projectFiles, include: OWNED_PROJECT_PATHS };
     state.projectFiles = await snapshotPaths(target.path, target.include);
   }
   if (selection.projectGit !== undefined) {

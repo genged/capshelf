@@ -21,6 +21,7 @@ import {
   runInProcess,
   tempDir,
   tempRepo,
+  rejection,
 } from "./cli-fixtures";
 
 describe("trust boundaries", () => {
@@ -49,17 +50,14 @@ describe("trust boundaries", () => {
       }
       await $`git -C ${repo} add -A`.quiet();
 
-      const error = await shaOfGitVisibleItem(repo, "skills/unsafe").then(
-        () => null,
-        (thrown: unknown) => thrown,
+      const error = await rejection(
+        shaOfGitVisibleItem(repo, "skills/unsafe"),
+        PreconditionError,
       );
-      expect(error).toBeInstanceOf(PreconditionError);
-      expect((error as PreconditionError).message).toMatch(
+      expect(error.message).toMatch(
         /unsupported symlink.*skills\/unsafe\/linked/u,
       );
-      expect((error as PreconditionError).hint).toContain(
-        "Dependency installs create symlinks",
-      );
+      expect(error.hint).toContain("Dependency installs create symlinks");
     }
   });
 

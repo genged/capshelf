@@ -11,6 +11,7 @@ import {
   normalizeDestructiveChanges,
 } from "../src/destructive-change";
 import { PreconditionError } from "../src/errors";
+import { rejection } from "./cli-fixtures";
 
 const first: DestructiveChange = {
   scope: "project",
@@ -21,11 +22,13 @@ const first: DestructiveChange = {
   reviewCommand: "capshelf status skills/first --diff",
 };
 
-function confirmationContext(answer: string): {
+interface ConfirmationHarness {
   context: DestructiveConfirmationContext;
   prompts: string[];
   stderr: string[];
-} {
+}
+
+function confirmationContext(answer: string): ConfirmationHarness {
   const prompts: string[] = [];
   const stderr: string[] = [];
   return {
@@ -148,25 +151,17 @@ describe("destructive change consent", () => {
       },
     ]) {
       const json = context.stdinIsTTY;
-      try {
-        await confirmDestructiveChanges(
+      const error = await rejection(
+        confirmDestructiveChanges(
           createDestructiveChangePlan([first]),
           options({ json }),
           context,
-        );
-        throw new Error("expected refusal");
-      } catch (error) {
-        expect(error).toBeInstanceOf(PreconditionError);
-        expect((error as PreconditionError).message).toContain(
-          ".agents/skills/first/SKILL.md",
-        );
-        expect((error as PreconditionError).hint).toContain(
-          "capshelf status skills/first --diff",
-        );
-        expect((error as PreconditionError).hint).toContain(
-          "capshelf apply --yes",
-        );
-      }
+        ),
+        PreconditionError,
+      );
+      expect(error.message).toContain(".agents/skills/first/SKILL.md");
+      expect(error.hint).toContain("capshelf status skills/first --diff");
+      expect(error.hint).toContain("capshelf apply --yes");
     }
   });
 

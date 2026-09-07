@@ -4,7 +4,12 @@ import { join } from "node:path";
 import { findProjectRoot, projectRoot, homeRelative } from "../paths";
 import { resolveDataRepo, resolveDataRepoOptional } from "../data-repo";
 import { PreconditionError } from "../errors";
-import { CLI_VERSION } from "../bundled";
+import {
+  CLI_VERSION,
+  SYSTEM_ITEMS,
+  findSystemItem,
+  shaOfSystemItem,
+} from "../bundled";
 import {
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
@@ -12,6 +17,7 @@ import {
   itemRepoRelPath,
   listMasterItems,
   ITEM_KINDS,
+  parseItemKind,
   shaOfGitVisibleItem,
 } from "../master";
 import { shaOfCurrentSubagent } from "../subagents";
@@ -20,7 +26,6 @@ import { entryIdentity, loadLocalLock, loadLock } from "../lock";
 import { loadManifest } from "../manifest";
 import { shortIdentity } from "../pin";
 import { parseLockKey } from "../installed";
-import { SYSTEM_ITEMS, findSystemItem, shaOfSystemItem } from "../bundled";
 import { assertIsGitRepo } from "../git";
 import { globalOpts } from "../global-options";
 import { shaOfFragmentItem } from "../fragments";
@@ -30,9 +35,9 @@ import {
   matchesTagFilter,
   metadataLineSuffix,
   printMetadataWarnings,
+  emptyNeeds,
 } from "../metadata";
 import type { ItemMetadata } from "../metadata";
-import { emptyNeeds } from "../metadata";
 import { assertNoScopeCollisions } from "../status-core";
 import { listBundles, memberCountSummary, memberRef } from "../bundles";
 import type { Bundle } from "../bundles";
@@ -50,6 +55,9 @@ interface LsOptions {
   kind?: string;
   tag: string[];
 }
+
+/** The `--tag` default. Never mutated: the collector copies it. */
+const NO_TAGS: string[] = [];
 
 export function registerLs(program: Command): void {
   program
@@ -69,15 +77,10 @@ export function registerLs(program: Command): void {
       "--tag <tag>",
       "filter by tag (repeatable; repeated tags narrow with AND)",
       (value: string, previous: string[]) => [...previous, value],
-      [] as string[],
+      NO_TAGS,
     )
     .action(async (opts: LsOptions, cmd: Command) => {
-      if (opts.kind && !ITEM_KINDS.includes(opts.kind as ItemKind)) {
-        throw new PreconditionError(
-          `invalid kind "${opts.kind}"; must be one of ${ITEM_KINDS.join(", ")}`,
-        );
-      }
-      const kindFilter = opts.kind as ItemKind | undefined;
+      const kindFilter = opts.kind ? parseItemKind(opts.kind) : undefined;
 
       if (opts.here && opts.user) {
         throw new PreconditionError(
@@ -318,10 +321,12 @@ function bundleMeta(bundle: Bundle): ItemMetadata {
   };
 }
 
-function metadataJsonFields(meta: ItemMetadata): {
+interface MetadataJsonFields {
   description?: string;
   tags?: string[];
-} {
+}
+
+function metadataJsonFields(meta: ItemMetadata): MetadataJsonFields {
   return {
     ...(meta.description !== undefined && { description: meta.description }),
     ...(meta.tags.length > 0 && { tags: meta.tags }),
@@ -431,10 +436,9 @@ async function lsHere(
   if (json) {
     console.log(
       JSON.stringify(
-        rows.map(({ entry, meta }) => ({
-          ...entry,
-          ...(meta ? metadataJsonFields(meta) : {}),
-        })),
+        rows.map(({ entry, meta }) =>
+          meta ? { ...entry, ...metadataJsonFields(meta) } : { ...entry },
+        ),
         null,
         2,
       ),

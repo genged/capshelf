@@ -42,7 +42,7 @@ import {
   planFragmentOutput,
 } from "./fragments";
 import { subagentSourcesAtCommit } from "./subagents";
-import { lstatOrNull } from "./fs-utils";
+import { isErrno, lstatOrNull } from "./fs-utils";
 import { currentSourceCommit } from "./pin";
 
 interface DiffableStatusRow {
@@ -396,7 +396,7 @@ export async function copyDirectoryModeDrifted(
     try {
       info = await lstat(path);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+      if (isErrno(error, "ENOENT")) return false;
       throw error;
     }
     if (!info.isFile()) return true;

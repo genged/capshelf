@@ -230,7 +230,7 @@ registered.
 | `update [<item>...]` | bump content and declared-needs pins; needs-only changes do not reinstall unchanged content; `--merge` reconciles one explicit skill or Pi extension and pins upstream without publishing; `--local` selects clone-local scope; supports `--dry-run` and explicit drift overwrite consent with `--yes` | implemented |
 | `share [item]` | adopt a not-yet-shared on-disk item into the data repo and report the new item's runtime target coverage; subagents scan both runtime outputs by default and require `--target` with `--from`; with no item, opens the interactive picker over unmanaged config values and untracked skills, Pi extensions, and subagents (see The picker); pick-based fragment shares print and report the equivalent non-interactive command | implemented |
 | `move <item> --to <scope>` | move an already-tracked data item between local and project scope without changing data-repo content | implemented |
-| `promote [item]` | Push edits for a tracked data item to the data repo. Fragments promote canonical source files. `--local` selects clone-local copy items. `--stale-ok` permits an intentional overwrite. With no item, the command opens the tracked-item picker. See The picker. (`src/commands/promote.ts:144-169`) | implemented |
+| `promote [item]` | Push edits for a tracked data item to the data repo. Fragments promote canonical source files. `--local` selects clone-local copy items. `--stale-ok` permits an intentional overwrite. With no item, the command opens the tracked-item picker. See The picker. (`src/commands/promote.ts:14-39`) | implemented |
 | `keep-local <item>` | mark drifted copy-item content as intentional divergence; supports project and clone-local skills/Pi extensions, and rejects fragments; `--unset` is the only thing that clears the marker, and `promote` refuses a marked item | implemented |
 | `revert <item>` | restore one locked version; the lock is never rewritten, so a keep-local marker survives; discarding local state requires consent or `--yes`; supports `--local` | implemented |
 | `lock migrate` | convert this project's lock files to version 4 in one transaction; supports `--dry-run`, `--repin`, `--remove-item`, `--yes`, and `--json` | implemented |
@@ -873,7 +873,7 @@ Both pickers re-read the project and the data repo after the prompt closes. A
 value that changed while the picker was open fails its own row instead of
 being committed from a stale read. With no item, `share` refuses `--json`,
 `--from`, `--pick`, `--target`, and `--to`. With no item, `promote` refuses
-`--json` and `--stale-ok` (`src/commands/promote.ts:172-188`).
+`--json` and `--stale-ok` (`src/commands/promote.ts:42-58`).
 
 ### search
 

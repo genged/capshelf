@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { parseLock } from "../src/lock";
+import { parseJsonc } from "../src/json-fragments";
+import { isConfigObject } from "../src/config-values";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -7,6 +10,8 @@ import {
   commitAll,
   runInProcess,
   tempRepo,
+  objectField,
+  readJsonObject,
 } from "./cli-fixtures";
 
 /**
@@ -33,11 +38,11 @@ async function breakSourceCommit(
   commit = ABSENT_COMMIT,
 ): Promise<void> {
   const path = lockFile(project);
-  const lock = JSON.parse(await readFile(path, "utf-8")) as {
-    items: Record<string, { sourceCommit: string }>;
-  };
-  const entry = lock.items[key];
-  if (!entry) throw new Error(`test fixture has no lock entry ${key}`);
+  const lock = await readJsonObject(path);
+  const entry = objectField(lock, "items")[key];
+  if (!isConfigObject(entry)) {
+    throw new Error(`test fixture has no lock entry ${key}`);
+  }
   entry.sourceCommit = commit;
   await writeFile(path, `${JSON.stringify(lock, null, 2)}\n`);
 }
@@ -85,12 +90,12 @@ describe("PIN-8 unprovable pin repair", () => {
         ),
       ).toBe("v2\n");
 
-      const lock = JSON.parse(await readFile(lockFile(project), "utf-8")) as {
-        items: Record<string, { sourceCommit: string }>;
-      };
-      expect(lock.items["data/skills/hello"]!.sourceCommit).not.toBe(
-        ABSENT_COMMIT,
+      const lock = parseLock(
+        parseJsonc(await readFile(lockFile(project), "utf-8")),
       );
+      const entry = lock.items["data/skills/hello"];
+      if (entry?.source !== "data") throw new Error("expected a data entry");
+      expect(entry.sourceCommit).not.toBe(ABSENT_COMMIT);
 
       const after = await run(["apply", "skills/hello"]);
       expect(after.exitCode).toBe(0);

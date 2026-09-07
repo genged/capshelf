@@ -45,6 +45,9 @@ More info: `docs/architecture.md`, `docs/cli.md`, `docs/testing.md`
 - Always ask before removing functionality or code that appears intentional.
 - Do not turn this file into a formatter or style-guide replacement. Let tests, TypeScript, and the existing code shape enforce routine style.
 - Prefer zod schemas and existing helpers over ad hoc parsing or string manipulation for manifests, locks, item refs, paths, and settings JSON.
+- Parse external documents into `ConfigValue` at the read site and narrow
+  with the predicates in `src/config-values.ts`. A type assertion needs a
+  `SAFETY:` comment that names the invariant and the code enforcing it.
 
 ## Development Commands
 
@@ -53,10 +56,16 @@ More info: `docs/architecture.md`, `docs/cli.md`, `docs/testing.md`
 - `bun run build:ui` bundles the web UI client into `src/ui/generated/`.
   `bun install`, `bun run build`, and `bun run test` run it first. A source
   run needs the generated files, because `src/ui/assets.ts` imports them.
-- `bun run lint` checks formatting + lint with Biome; `bun run lint:fix` writes
-  safe fixes and `bun run format` reformats only. Biome is provided in CI by the
+- `bun run lint` runs Biome, then Oxlint with the anti-slop plugin in
+  `tools/oxlint/anti-slop/`. `bun run lint:fix` writes safe Biome fixes and
+  `bun run format` reformats only. Biome is provided in CI by the
   `biomejs/setup-biome` action; locally install it (`bunx @biomejs/biome`,
   Homebrew, or as a devDependency once the lockfile is regenerated).
+- `bun run lint:anti-slop` runs only the Oxlint part. The config is
+  `.oxlintrc.json`. It also enables the native correctness category and a
+  few import, equality, and assertion rules at error, and five style rules
+  at warn. Oxlint runs under Bun because the plugin is TypeScript. The CI
+  lint job runs Biome and this check.
 - `bun run test` runs the unit test suite with four worker processes.
 - `make smoke` runs all smoke tests with four worker processes.
 - `make smoke-modes`, `make smoke-skills`, `make smoke-settings`, and

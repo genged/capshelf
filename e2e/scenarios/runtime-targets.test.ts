@@ -7,34 +7,31 @@ import {
   expectOutputContains,
   expectSameState,
   parseApplyRows,
+  parseCoverage,
   parseStatusRows,
   statusRow,
 } from "../support/assertions";
+import type { TargetCoverage } from "../support/assertions";
+import { asObject, parseJsonText } from "../support/json";
 import { declareEvidence } from "../support/report";
 import { E2E_TEST_TIMEOUT_MS, withWorld } from "../support/world";
 
 const SCENARIO = "runtime-targets";
 
-interface Coverage {
-  target: string;
-  present: boolean | null;
-  sourcePath: string;
-  outputPath: string;
-}
-
-function coverageOf(payload: string): Coverage[] {
-  const parsed: unknown = JSON.parse(payload);
-  const items = (parsed as { items?: unknown }).items;
-  const row = Array.isArray(items) ? items[0] : parsed;
-  const coverage = (row as { targetCoverage?: unknown }).targetCoverage;
+/** The coverage of the one item `add --json` reports, or of the payload itself. */
+function coverageOf(payload: string): TargetCoverage[] {
+  const parsed = asObject(parseJsonText(payload, "add --json"), "add --json");
+  const items = parsed.items;
+  const row = Array.isArray(items) ? asObject(items[0], "add row") : parsed;
+  const coverage = row.targetCoverage;
   if (!Array.isArray(coverage)) {
     throw new Error(`no targetCoverage in ${payload}`);
   }
-  return coverage as Coverage[];
+  return parseCoverage(coverage);
 }
 
 function presence(
-  coverage: readonly Coverage[],
+  coverage: readonly TargetCoverage[],
 ): Record<string, boolean | null> {
   return Object.fromEntries(coverage.map((row) => [row.target, row.present]));
 }
@@ -110,15 +107,10 @@ test(
         (await world.capshelf(project, ["status", "--json"])).stdout,
       );
       expect(
-        presence(
-          (statusRow(rows, "mcp", "deepwiki").targetCoverage ??
-            []) as Coverage[],
-        ),
+        presence(statusRow(rows, "mcp", "deepwiki").targetCoverage ?? []),
       ).toEqual({ claude: true, codex: false });
       expect(
-        presence(
-          (statusRow(rows, "mcp", "github").targetCoverage ?? []) as Coverage[],
-        ),
+        presence(statusRow(rows, "mcp", "github").targetCoverage ?? []),
       ).toEqual({ claude: true, codex: true });
 
       // Coverage is read at the locked commit. A new source upstream changes
@@ -140,8 +132,7 @@ test(
       );
       expect(
         presence(
-          (statusRow(stillPinned, "mcp", "deepwiki").targetCoverage ??
-            []) as Coverage[],
+          statusRow(stillPinned, "mcp", "deepwiki").targetCoverage ?? [],
         ),
       ).toEqual({ claude: true, codex: false });
       expectSameState(
@@ -162,8 +153,7 @@ test(
       );
       expect(
         presence(
-          (statusRow(afterUpdate, "mcp", "deepwiki").targetCoverage ??
-            []) as Coverage[],
+          statusRow(afterUpdate, "mcp", "deepwiki").targetCoverage ?? [],
         ),
       ).toEqual({ claude: true, codex: true });
 
@@ -233,7 +223,7 @@ test(
       );
       expect(row.state).toBe("missing_source_commit");
       expect(row.coverageState).toBe("unknown");
-      expect(presence((row.targetCoverage ?? []) as Coverage[])).toEqual({
+      expect(presence(row.targetCoverage ?? [])).toEqual({
         claude: null,
         codex: null,
       });

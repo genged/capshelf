@@ -105,9 +105,12 @@ test("a failing world is described before it is removed", async () => {
   let root = "";
   const written: string[] = [];
   const originalWrite = process.stderr.write.bind(process.stderr);
+  // SAFETY: the replacement implements the one overload the world writer
+  // calls, a string or byte chunk with no encoding and no callback. Node's
+  // type lists callback overloads the harness never uses.
   process.stderr.write = ((chunk: string | Uint8Array) => {
     written.push(
-      typeof chunk === "string" ? chunk : Buffer.from(chunk).toString(),
+      chunk instanceof Uint8Array ? Buffer.from(chunk).toString() : chunk,
     );
     return true;
   }) as typeof process.stderr.write;

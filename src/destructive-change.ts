@@ -43,7 +43,8 @@ export interface DestructiveConfirmationContext {
   stdinIsTTY: boolean;
   stderrIsTTY: boolean;
   prompt: (message: string) => Promise<string>;
-  stderr: { write(text: string): unknown };
+  /** Where the prompt draws. The return value is never read. */
+  stderr: { write(text: string): void };
 }
 
 interface DestructiveConfirmationOptions {

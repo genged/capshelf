@@ -1,5 +1,4 @@
-import type { Command } from "commander";
-import type { Command as CmdType } from "commander";
+import type { Command, Command as CmdType } from "commander";
 import { findProjectRoot, projectRoot } from "../paths";
 import { loadLocalLock, loadLock } from "../lock";
 import { loadManifest } from "../manifest";

@@ -1,10 +1,19 @@
 import { $ } from "bun";
 import { spyOn } from "bun:test";
 import { Buffer } from "node:buffer";
-import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { main } from "../src/cli";
+import { isConfigObject, isConfigString } from "../src/config-values";
+import type { ConfigObject, ConfigValue } from "../src/config-values";
+import { parseJsonConfigObject, parseJsonc } from "../src/json-fragments";
 import { setDestructiveConfirmationContext } from "../src/destructive-change";
 import type { DestructiveConfirmationContext } from "../src/destructive-change";
 import { setPickContext } from "../src/pick";
@@ -60,6 +69,89 @@ export async function addSkill(
 export async function commitAll(repo: string, message: string): Promise<void> {
   await $`git -C ${repo} add -A`.quiet();
   await $`git -C ${repo} commit -qm ${message}`.quiet();
+}
+
+/** The JSON object a command printed on stdout. Anything else fails the test. */
+export function jsonOutput(result: CliResult): ConfigObject {
+  const value = parseJsonc(result.stdout.toString());
+  if (!isConfigObject(value)) {
+    throw new Error(`stdout is not a JSON object: ${result.stdout.toString()}`);
+  }
+  return value;
+}
+
+/** The JSON array of objects a command printed on stdout. */
+export function jsonRows(result: CliResult): ConfigObject[] {
+  const value = parseJsonc(result.stdout.toString());
+  if (!Array.isArray(value)) {
+    throw new Error(`stdout is not a JSON array: ${result.stdout.toString()}`);
+  }
+  return value.map((item, index) => {
+    if (!isConfigObject(item)) {
+      throw new Error(`row ${index} is not an object: ${JSON.stringify(item)}`);
+    }
+    return item;
+  });
+}
+
+/** A JSON document on disk, as an object. The product parser reads it. */
+export async function readJsonObject(path: string): Promise<ConfigObject> {
+  return parseJsonConfigObject(await readFile(path, "utf-8"), path);
+}
+
+export function objectField(object: ConfigObject, key: string): ConfigObject {
+  const value = object[key];
+  if (!isConfigObject(value)) {
+    throw new Error(`"${key}" is not an object: ${JSON.stringify(object)}`);
+  }
+  return value;
+}
+
+export function arrayField(object: ConfigObject, key: string): ConfigValue[] {
+  const value = object[key];
+  if (!Array.isArray(value)) {
+    throw new Error(`"${key}" is not an array: ${JSON.stringify(object)}`);
+  }
+  return value;
+}
+
+export function stringField(object: ConfigObject, key: string): string {
+  const value = object[key];
+  if (!isConfigString(value)) {
+    throw new Error(`"${key}" is not a string: ${JSON.stringify(object)}`);
+  }
+  return value;
+}
+
+export function objectItems(object: ConfigObject, key: string): ConfigObject[] {
+  return arrayField(object, key).map((item, index) => {
+    if (!isConfigObject(item)) {
+      throw new Error(`"${key}"[${index}] is not an object`);
+    }
+    return item;
+  });
+}
+
+const RESOLVED = Symbol("resolved");
+
+/** The typed error a promise rejects with. Any other outcome fails the test. */
+export async function rejection<T extends Error, R>(
+  promise: Promise<R>,
+  type: abstract new (...args: never[]) => T,
+): Promise<T> {
+  const outcome = await promise.then(
+    () => RESOLVED,
+    (cause: unknown) => cause,
+  );
+  if (outcome === RESOLVED) {
+    throw new Error(`expected ${type.name}, but the promise resolved`);
+  }
+  if (!(outcome instanceof type)) {
+    const name =
+      outcome instanceof Error ? outcome.constructor.name : String(outcome);
+    throw new Error(`expected ${type.name}, got ${name}`);
+  }
+  return outcome;
 }
 
 export function runIn(project: string) {
@@ -148,7 +240,7 @@ export function runInProcess(project: string) {
     const stdoutSpy = spyOn(process.stdout, "write").mockImplementation(
       (chunk) => {
         stdout.push(
-          typeof chunk === "string" ? chunk : Buffer.from(chunk).toString(),
+          chunk instanceof Uint8Array ? Buffer.from(chunk).toString() : chunk,
         );
         return true;
       },
@@ -156,7 +248,7 @@ export function runInProcess(project: string) {
     const stderrSpy = spyOn(process.stderr, "write").mockImplementation(
       (chunk) => {
         stderr.push(
-          typeof chunk === "string" ? chunk : Buffer.from(chunk).toString(),
+          chunk instanceof Uint8Array ? Buffer.from(chunk).toString() : chunk,
         );
         return true;
       },

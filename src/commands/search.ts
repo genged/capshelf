@@ -3,7 +3,6 @@ import { readFile, stat } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { homeRelative, findProjectRoot } from "../paths";
 import { resolveDataRepo } from "../data-repo";
-import { PreconditionError } from "../errors";
 import { loadManifest } from "../manifest";
 import {
   ITEM_KINDS,
@@ -13,6 +12,7 @@ import {
   isFragmentItemKind,
   itemRepoRelPath,
   listMasterItems,
+  parseItemKind,
   shaOfGitVisibleItem,
 } from "../master";
 import { shaOfCurrentSubagent } from "../subagents";
@@ -27,6 +27,7 @@ import {
   loadSystemItemMetadata,
   metadataLineSuffix,
   printMetadataWarnings,
+  truncatedDescription,
 } from "../metadata";
 import type { ItemMetadata } from "../metadata";
 import {
@@ -40,7 +41,6 @@ import {
 import type { SearchContentFile, SearchMatch } from "../search-core";
 import { listBundles, memberCountSummary, memberRef } from "../bundles";
 import type { Bundle } from "../bundles";
-import { truncatedDescription } from "../metadata";
 
 interface SearchOptions {
   json?: boolean;
@@ -76,12 +76,7 @@ export function registerSearch(program: Command): void {
     )
     .option("--json", "output JSON")
     .action(async (queryParts: string[], opts: SearchOptions, cmd: Command) => {
-      if (opts.kind && !ITEM_KINDS.includes(opts.kind as ItemKind)) {
-        throw new PreconditionError(
-          `invalid kind "${opts.kind}"; must be one of ${ITEM_KINDS.join(", ")}`,
-        );
-      }
-      const kind = opts.kind as ItemKind | undefined;
+      const kind = opts.kind ? parseItemKind(opts.kind) : undefined;
       const query = queryParts.join(" ");
       const terms = splitTerms(query);
 

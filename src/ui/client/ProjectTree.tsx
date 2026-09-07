@@ -31,7 +31,8 @@ export function ProjectTree({
 
   // Roving focus over every row, project and item alike, in document order.
   const onRowKeyDown = (event: KeyboardEvent): void => {
-    const current = event.currentTarget as HTMLElement;
+    const current = event.currentTarget;
+    if (!(current instanceof HTMLElement)) return;
     const list = current.closest(".tree-list");
     if (!list) return;
     const all = Array.from(

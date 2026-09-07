@@ -20,6 +20,9 @@ import {
   loadLocalLock,
   loadLock,
   serializeLock,
+  needsEqual,
+  createDataLockEntry,
+  hasNeedsSnapshot,
 } from "../lock";
 import type { DataLockEntry, LockEntryV4, Lock, LockV4 } from "../lock";
 import { legacyShaAtCommit } from "../lock-verify";
@@ -27,7 +30,7 @@ import { loadManifest } from "../manifest";
 import type { Manifest } from "../manifest";
 import { itemRepoRelPath } from "../master";
 import { materializeLockEntry } from "../materialize";
-import { loadCommittedItemNeeds } from "../metadata";
+import { captureCommittedItemNeeds, loadCommittedItemNeeds } from "../metadata";
 import { localLockPath, lockPath, lockReadPath, projectRoot } from "../paths";
 import {
   filteredPathsAtCommit,
@@ -36,9 +39,6 @@ import {
   pinItemAtCommit,
   pinCurrentSource,
 } from "../pin";
-import { needsEqual } from "../lock";
-import { createDataLockEntry } from "../lock";
-import { captureCommittedItemNeeds } from "../metadata";
 
 type MigrationScope = "project" | "local";
 
@@ -430,7 +430,7 @@ async function assertNeedsProvenance(
   parsed: ReturnType<typeof parseLockKey>,
   entry: DataLockEntry,
 ): Promise<void> {
-  if (entry.needs == null || entry.needsSourceCommit == null) return;
+  if (!hasNeedsSnapshot(entry)) return;
   const resolved = await resolveCommit(input.dataRepo, entry.needsSourceCommit);
   if (resolved === null) {
     throw new Error(

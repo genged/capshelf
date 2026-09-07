@@ -30,7 +30,7 @@ describe("terminal diff syntax highlighting", () => {
       `--- a/${path}\n+++ b/${path}\n@@ -0,0 +1 @@\n+${source}\n`,
     );
 
-    expect(stripAnsi(lines[3] as string)).toBe(`+${source}`);
+    expect(stripAnsi(lines[3]!)).toBe(`+${source}`);
     expect(lines[3]).toContain(`\x1b[35m${keyword}\x1b[0m`);
   });
 

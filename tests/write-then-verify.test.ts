@@ -3,11 +3,10 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { dataKey, loadLock, parseLock, serializeLock } from "../src/lock";
-import type { LockV4 } from "../src/lock";
+import type { LockEntryV4, LockV4 } from "../src/lock";
 import { materializeLockEntry } from "../src/materialize";
 import { materializeSubagent } from "../src/subagents";
-import { pinItemAtCommit } from "../src/pin";
-import { currentSourceCommit } from "../src/pin";
+import { pinItemAtCommit, currentSourceCommit } from "../src/pin";
 import { addSkill, commitAll, runInProcess, tempRepo } from "./cli-fixtures";
 
 /**
@@ -152,13 +151,18 @@ describe("write-then-verify", () => {
 
     // The `lock migrate` fault-injection case: a serializer that drops one
     // digest has to fail at the strict parse, not after a file is written.
-    const { sourcePinDigest: _dropped, ...withoutDigest } = candidate.items[
-      dataKey("skills", "hello")
-    ] as { sourcePinDigest: string };
-    const broken = {
+    const entry = candidate.items[dataKey("skills", "hello")];
+    if (entry?.source !== "data") throw new Error("expected a data entry");
+    const { sourcePinDigest: _dropped, ...withoutDigest } = entry;
+    const broken: LockV4 = {
       version: 4,
-      items: { [dataKey("skills", "hello")]: withoutDigest },
-    } as unknown as LockV4;
+      items: {
+        // SAFETY: the entry omits sourcePinDigest on purpose. The test proves
+        // the writer refuses it. LockEntryV4 is comparable to the narrowed
+        // entry, so one assertion states the intent.
+        [dataKey("skills", "hello")]: withoutDigest as LockEntryV4,
+      },
+    };
     expect(() => serializeLock(broken)).toThrow();
   });
 
@@ -175,9 +179,9 @@ describe("write-then-verify", () => {
     const raw = await file(path).json();
     // The one writer strict-parses on the way out; this proves the file it
     // produced strict-parses on the way back in, with the same value.
-    expect(parseLock(raw)).toEqual(await loadLock(project));
-    expect(serializeLock(parseLock(raw) as LockV4)).toBe(
-      await readFile(path, "utf-8"),
-    );
+    const parsed = parseLock(raw);
+    expect(parsed).toEqual(await loadLock(project));
+    if (parsed.version !== 4) throw new Error("expected a version 4 lock");
+    expect(serializeLock(parsed)).toBe(await readFile(path, "utf-8"));
   });
 });

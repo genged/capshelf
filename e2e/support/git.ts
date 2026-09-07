@@ -17,6 +17,11 @@ export interface CommitOptions {
   paths?: readonly string[];
 }
 
+/** Repository-relative file contents, keyed by path. */
+export interface SeedFiles {
+  [relPath: string]: string;
+}
+
 export interface DataRepoOptions {
   name?: string;
   /** Portable upstream identity. `null` creates a repository with no origin. */
@@ -243,7 +248,7 @@ export function createGitWorld(runner: WorldRunner): GitWorld {
         origin: options.origin,
         branch: options.branch,
       });
-      const files: Record<string, string> = { ...(options.files ?? {}) };
+      const files: SeedFiles = { ...options.files };
       for (const [skill, content] of Object.entries(options.skills ?? {})) {
         files[`skills/${skill}/SKILL.md`] = content;
       }

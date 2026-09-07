@@ -25,6 +25,8 @@ import {
   runIn,
   tempDir,
   tempRepo,
+  jsonOutput,
+  objectItems,
 } from "./cli-fixtures";
 
 function fragmentPlan(
@@ -221,18 +223,17 @@ describe("materialization transactions", () => {
         // that must be undone when codex-config fails (docs/cli.md:449-457).
         const result = run(["apply", "--yes", "--json"]);
         expect(result.exitCode).toBe(1);
-        const payload = JSON.parse(result.stdout.toString()) as {
-          items: { key: string; action: string; error?: string }[];
-        };
-        const errored = payload.items.filter((row) => row.action === "error");
+        const payload = jsonOutput(result);
+        const items = objectItems(payload, "items");
+        const errored = items.filter((row) => row.action === "error");
         expect(errored.map((row) => row.key)).toEqual([
           "data/codex-config/(merged)",
         ]);
         expect(errored[0]?.error ?? "").toContain("config.toml");
         // No target reports an outcome, because none of them kept one.
-        expect(
-          payload.items.filter((row) => row.key === "data/mcp/(merged)"),
-        ).toEqual([]);
+        expect(items.filter((row) => row.key === "data/mcp/(merged)")).toEqual(
+          [],
+        );
         expect(
           await Promise.all(guardedPaths.map((path) => readFile(path))),
         ).toEqual(before);

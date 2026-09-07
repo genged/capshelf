@@ -1,9 +1,8 @@
 import { existsSync, readlinkSync } from "node:fs";
-import { assertSafeItemName } from "./assert";
+import { assertSafeItemName, assertNever } from "./assert";
 import { lstatOrNull } from "./fs-utils";
 import { mkdir, rm, symlink } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { assertNever } from "./assert";
 import {
   ITEM_KINDS,
   isItemKind,
@@ -11,8 +10,8 @@ import {
   itemRepoRelPath,
   type ItemKind,
   type MaterializedItemKind,
+  shaOfItem,
 } from "./master";
-import { shaOfItem } from "./master";
 import {
   claudeDir,
   codexProjectConfigDir,
@@ -251,11 +250,13 @@ export async function shaOfInstalled(
 
 export type ItemSource = "data" | "system";
 
-export function parseLockKey(key: string): {
+export interface LockKeyParts {
   source: ItemSource;
   kind: ItemKind;
   name: string;
-} {
+}
+
+export function parseLockKey(key: string): LockKeyParts {
   const parts = key.split("/");
   if (parts.length < 3) {
     throw new Error(`invalid lock key: ${key} (expected source/kind/name)`);

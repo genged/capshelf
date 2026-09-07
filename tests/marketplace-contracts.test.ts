@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { isConfigObject } from "../src/config-values";
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -13,6 +14,12 @@ import {
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
   tempDir,
   tempRepo,
+  arrayField,
+  jsonOutput,
+  objectField,
+  objectItems,
+  readJsonObject,
+  stringField,
 } from "./cli-fixtures";
 
 async function seedSkill(repo: string, name: string): Promise<void> {
@@ -35,10 +42,6 @@ async function fixture(): Promise<{
   await seedSkill(repo, "testing");
   await commitAll(repo, "skills");
   return { repo, run: runInProcess(repo) };
-}
-
-function json(result: CliResult): Record<string, unknown> {
-  return JSON.parse(result.stdout.toString()) as Record<string, unknown>;
 }
 
 async function init(
@@ -111,7 +114,7 @@ describe("marketplace observable contracts", () => {
     for (const target of ["claude", "codex"] as const) {
       const result = await init(run, repo, target);
       expect(result.exitCode).toBe(0);
-      expect(json(result)).toMatchObject({
+      expect(jsonOutput(result)).toMatchObject({
         verb: "marketplace-init",
         action: "updated",
         target,
@@ -127,7 +130,7 @@ describe("marketplace observable contracts", () => {
 
     const listing = await run(["--data", repo, "marketplace", "ls", "--json"]);
     expect(listing.exitCode).toBe(0);
-    const targets = json(listing).targets as Array<Record<string, unknown>>;
+    const targets = objectItems(jsonOutput(listing), "targets");
     expect(targets).toHaveLength(2);
     expect(targets[0]).toMatchObject({
       target: "claude",
@@ -148,7 +151,7 @@ describe("marketplace observable contracts", () => {
       "engineering",
       "--json",
     ]);
-    const matches = json(shown).plugins as Array<Record<string, unknown>>;
+    const matches = objectItems(jsonOutput(shown), "plugins");
     expect(matches.map((entry) => [entry.target, entry.skills])).toEqual([
       ["claude", ["skills/review"]],
       ["codex", ["skills/testing"]],
@@ -166,7 +169,7 @@ describe("marketplace observable contracts", () => {
       "codex",
       "--json",
     ]);
-    expect(json(added)).toMatchObject({
+    expect(jsonOutput(added)).toMatchObject({
       verb: "marketplace-plugin-add-skill",
       action: "updated",
       target: "codex",
@@ -186,7 +189,7 @@ describe("marketplace observable contracts", () => {
       "codex",
       "--json",
     ]);
-    expect(json(noOp)).toMatchObject({
+    expect(jsonOutput(noOp)).toMatchObject({
       verb: "marketplace-plugin-add-skill",
       action: "unchanged",
       skillsAdded: [],
@@ -204,7 +207,7 @@ describe("marketplace observable contracts", () => {
       "codex",
       "--json",
     ]);
-    expect(json(removed)).toMatchObject({
+    expect(jsonOutput(removed)).toMatchObject({
       verb: "marketplace-plugin-remove-skill",
       skillsRemoved: ["skills/testing"],
     });
@@ -241,7 +244,7 @@ describe("marketplace observable contracts", () => {
       "--json",
     ]);
     expect(result.exitCode).toBe(0);
-    expect(json(result)).toMatchObject({
+    expect(jsonOutput(result)).toMatchObject({
       valid: true,
       target: "codex",
       targets: {
@@ -255,9 +258,10 @@ describe("marketplace observable contracts", () => {
         },
       },
     });
-    const codex = (
-      json(result).targets as Record<string, Record<string, unknown>>
-    ).codex!;
+    const codex = objectField(
+      objectField(jsonOutput(result), "targets"),
+      "codex",
+    );
     expect(Number(codex.canonicalFiles)).toBeGreaterThan(0);
     expect(Number(codex.canonicalBytes)).toBeGreaterThan(0);
     expect(Number(codex.generatedFiles)).toBeGreaterThan(0);
@@ -275,7 +279,7 @@ describe("marketplace observable contracts", () => {
       "--json",
     ]);
     expect(missingClaude.exitCode).toBe(4);
-    expect(json(missingClaude)).toMatchObject({
+    expect(jsonOutput(missingClaude)).toMatchObject({
       distributionReady: true,
       distributionSupport: "user_asserted",
       targets: { claude: { configured: false, valid: false } },
@@ -305,7 +309,7 @@ describe("marketplace observable contracts", () => {
       "--json",
     ]);
     expect(distribution.exitCode).toBe(0);
-    expect(json(distribution)).toMatchObject({
+    expect(jsonOutput(distribution)).toMatchObject({
       coworkMarketplaceUrl: "https://git.example.test/company/plugins",
       distributionReady: true,
       distributionSupport: "user_asserted",
@@ -316,18 +320,20 @@ describe("marketplace observable contracts", () => {
         },
       },
     });
-    const claude = (
-      json(distribution).targets as Record<string, Record<string, unknown>>
-    ).claude!;
+    const claude = objectField(
+      objectField(jsonOutput(distribution), "targets"),
+      "claude",
+    );
     expect(Number(claude.repositoryFiles)).toBeGreaterThan(0);
     expect(Number(claude.repositoryBytes)).toBeGreaterThan(0);
     expect(claude.limits).toEqual({
       maxFiles: 5000,
       maxUncompressedBytes: 200 * 1024 * 1024,
     });
-    const distributionWarnings = json(distribution).warnings as Array<
-      Record<string, unknown>
-    >;
+    const distributionWarnings = objectItems(
+      jsonOutput(distribution),
+      "warnings",
+    );
     expect(
       distributionWarnings.find(
         (warning) => warning.code === "distribution_support_user_asserted",
@@ -349,7 +355,7 @@ describe("marketplace observable contracts", () => {
       "--json",
     ]);
     expect(strictDistribution.exitCode).toBe(4);
-    expect(json(strictDistribution)).toMatchObject({
+    expect(jsonOutput(strictDistribution)).toMatchObject({
       valid: true,
       strict: true,
       warnings: [
@@ -391,7 +397,7 @@ describe("marketplace observable contracts", () => {
       "--json",
     ]);
     expect(claudeOnlyDistribution.exitCode).toBe(0);
-    expect(json(claudeOnlyDistribution)).toMatchObject({
+    expect(jsonOutput(claudeOnlyDistribution)).toMatchObject({
       targets: {
         claude: { configured: true, valid: true },
         codex: { configured: false, valid: true },
@@ -409,7 +415,7 @@ describe("marketplace observable contracts", () => {
       "--json",
     ]);
     expect(invalidUrl.exitCode).toBe(4);
-    expect(json(invalidUrl)).toMatchObject({
+    expect(jsonOutput(invalidUrl)).toMatchObject({
       valid: false,
       targets: {
         claude: { configured: true, valid: true },
@@ -445,9 +451,9 @@ describe("marketplace observable contracts", () => {
       "--json",
     ]);
     expect(validation.exitCode).toBe(0);
-    const overlaps = (
-      json(validation).warnings as Array<Record<string, unknown>>
-    ).filter((warning) => warning.code === "skill_in_multiple_plugins");
+    const overlaps = objectItems(jsonOutput(validation), "warnings").filter(
+      (warning) => warning.code === "skill_in_multiple_plugins",
+    );
     expect(overlaps).toEqual([
       {
         code: "skill_in_multiple_plugins",
@@ -499,10 +505,8 @@ describe("marketplace observable contracts", () => {
     ]);
     expect(validation.exitCode).toBe(4);
     expect(
-      (
-        (json(validation).targets as Record<string, Record<string, unknown>>)
-          .codex as Record<string, unknown>
-      ).projection,
+      objectField(objectField(jsonOutput(validation), "targets"), "codex")
+        .projection,
     ).toBe("drifted");
 
     const beforeHead = (
@@ -519,14 +523,14 @@ describe("marketplace observable contracts", () => {
       "--json",
     ]);
     expect(dryRun.exitCode).toBe(0);
-    expect(json(dryRun)).toMatchObject({
+    expect(jsonOutput(dryRun)).toMatchObject({
       verb: "marketplace-sync",
       action: "updated",
       projection: "drifted",
       committed: false,
       dryRun: true,
     });
-    expect(json(dryRun).dirtyProjectionPaths).toEqual([
+    expect(jsonOutput(dryRun).dirtyProjectionPaths).toEqual([
       "codex/generated/README.md",
       "codex/generated/plugins/engineering/.codex-plugin/plugin.json",
       "codex/generated/plugins/engineering/extra.txt",
@@ -546,7 +550,7 @@ describe("marketplace observable contracts", () => {
       "--json",
     ]);
     expect(synced.exitCode).toBe(0);
-    expect(json(synced)).toMatchObject({
+    expect(jsonOutput(synced)).toMatchObject({
       action: "updated",
       projection: "current",
       committed: false,
@@ -602,7 +606,9 @@ describe("marketplace observable contracts", () => {
     ]);
     expect(current.exitCode).toBe(0);
     expect(fromHead.exitCode).toBe(0);
-    expect(json(current).contentSha256).not.toBe(json(fromHead).contentSha256);
+    expect(jsonOutput(current).contentSha256).not.toBe(
+      jsonOutput(fromHead).contentSha256,
+    );
     const identical = await run([
       "--data",
       repo,
@@ -616,7 +622,7 @@ describe("marketplace observable contracts", () => {
       currentOutput,
       "--json",
     ]);
-    expect(json(identical).action).toBe("already-built");
+    expect(jsonOutput(identical).action).toBe("already-built");
     expect(
       (
         await run([
@@ -678,7 +684,7 @@ describe("marketplace observable contracts", () => {
       "--dry-run",
       "--json",
     ]);
-    expect(json(dryRun)).toMatchObject({
+    expect(jsonOutput(dryRun)).toMatchObject({
       action: "planned",
       dryRun: true,
       dirty: true,
@@ -752,7 +758,7 @@ describe("marketplace observable contracts", () => {
       "codex",
       "--json",
     ]);
-    expect(json(renamed)).toMatchObject({
+    expect(jsonOutput(renamed)).toMatchObject({
       verb: "marketplace-plugin-rename",
       oldName: "engineering",
       newName: "core-engineering",
@@ -782,7 +788,7 @@ describe("marketplace observable contracts", () => {
       "codex",
       "--json",
     ]);
-    expect(json(deleted)).toMatchObject({
+    expect(jsonOutput(deleted)).toMatchObject({
       verb: "marketplace-plugin-delete",
       action: "updated",
     });
@@ -891,10 +897,8 @@ describe("marketplace observable contracts", () => {
     const { repo, run } = await fixture();
     expect((await init(run, repo, "claude")).exitCode).toBe(0);
     const path = join(repo, ".claude-plugin/marketplace.json");
-    const marketplace = JSON.parse(await readFile(path, "utf8")) as {
-      plugins: unknown[];
-    };
-    marketplace.plugins.push(
+    const marketplace = await readJsonObject(path);
+    arrayField(marketplace, "plugins").push(
       {
         name: "broken-managed",
         source: "./",
@@ -923,9 +927,10 @@ describe("marketplace observable contracts", () => {
       "claude",
       "--json",
     ]);
-    const plugins = (
-      json(listing).targets as Array<Record<string, unknown>>
-    )[0]!.plugins as Array<Record<string, unknown>>;
+    const plugins = objectItems(
+      objectItems(jsonOutput(listing), "targets")[0]!,
+      "plugins",
+    );
     expect(
       plugins.find((plugin) => plugin.name === "vendor-tool"),
     ).toMatchObject({ managed: false });
@@ -942,7 +947,7 @@ describe("marketplace observable contracts", () => {
       "--json",
     ]);
     expect(result.exitCode).toBe(4);
-    expect(json(result)).toMatchObject({
+    expect(jsonOutput(result)).toMatchObject({
       valid: false,
       targets: { claude: { configured: true, valid: false } },
       errors: [
@@ -953,12 +958,11 @@ describe("marketplace observable contracts", () => {
       ],
     });
     expect(
-      (json(result).errors as Array<Record<string, unknown>>)[0]!
-        .message as string,
+      stringField(objectItems(jsonOutput(result), "errors")[0]!, "message"),
     ).toContain("non-empty array");
 
-    marketplace.plugins = marketplace.plugins.filter(
-      (plugin) => (plugin as { name?: string }).name !== "broken-managed",
+    marketplace.plugins = arrayField(marketplace, "plugins").filter(
+      (plugin) => !(isConfigObject(plugin) && plugin.name === "broken-managed"),
     );
     await writeFile(path, `${JSON.stringify(marketplace, null, 2)}\n`);
     const externalOnly = await run([
@@ -971,9 +975,10 @@ describe("marketplace observable contracts", () => {
       "--json",
     ]);
     expect(externalOnly.exitCode).toBe(0);
-    expect(json(externalOnly)).toMatchObject({ valid: true });
-    const externalWarnings = (
-      json(externalOnly).warnings as Array<Record<string, unknown>>
+    expect(jsonOutput(externalOnly)).toMatchObject({ valid: true });
+    const externalWarnings = objectItems(
+      jsonOutput(externalOnly),
+      "warnings",
     ).filter((warning) => warning.code === "external_plugin");
     expect(externalWarnings.map((warning) => warning.plugin)).toEqual([
       "vendor-tool",

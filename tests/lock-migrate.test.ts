@@ -1,5 +1,6 @@
 import { $, file } from "bun";
 import { describe, expect, test } from "bun:test";
+import type { ConfigObject } from "../src/config-values";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { shaOfGitVisibleItem } from "../src/master";
@@ -9,6 +10,9 @@ import {
   commitAll,
   runInProcess,
   tempRepo,
+  objectField,
+  readJsonObject,
+  stringField,
 } from "./cli-fixtures";
 
 /**
@@ -44,22 +48,20 @@ async function downgradeToV3(
     repoRelPath: string;
   }>,
 ): Promise<void> {
-  const byFile = new Map<string, Record<string, unknown>>();
+  const byFile = new Map<string, ConfigObject>();
   for (const ref of refs) {
     const path = join(project, ref.file);
-    const lock =
-      byFile.get(path) ??
-      (JSON.parse(await readFile(path, "utf-8")) as Record<string, unknown>);
+    const lock = byFile.get(path) ?? (await readJsonObject(path));
     byFile.set(path, lock);
-    const items = lock.items as Record<string, Record<string, unknown>>;
+    const items = objectField(lock, "items");
     const key = `data/${ref.kind}/${ref.name}`;
-    const entry = items[key]!;
+    const entry = objectField(items, key);
     const legacy: LegacyEntry = {
       source: "data",
       sha: await shaOfGitVisibleItem(dataRepo, ref.repoRelPath),
-      sourceCommit: entry.sourceCommit as string,
-      appliedAt: entry.appliedAt as string,
-      ...(entry.label !== undefined && { label: entry.label as string }),
+      sourceCommit: stringField(entry, "sourceCommit"),
+      appliedAt: stringField(entry, "appliedAt"),
+      ...(entry.label !== undefined && { label: stringField(entry, "label") }),
     };
     items[key] = {
       ...legacy,
