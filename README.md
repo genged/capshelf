@@ -534,6 +534,7 @@ records each member on its own.
 
 ### Release history
 
+- [`docs/whats-new-0.12.md`](docs/whats-new-0.12.md) - the `capshelf ui` dashboard, the project registry, Pi shadow warnings, no more `promote --merge`
 - [`docs/whats-new-0.11.md`](docs/whats-new-0.11.md) - interactive pickers for setup, sharing, and promotion, plus publication previews
 - [`docs/whats-new-0.10.md`](docs/whats-new-0.10.md) - `update --merge`, both diff views in `status --diff`, complete file-tree diffs, end-to-end suite
 - [`docs/whats-new-0.9.md`](docs/whats-new-0.9.md) - runtime target coverage for mcp and subagents, pin-sourced fragment installs, gated Codex trust warning
