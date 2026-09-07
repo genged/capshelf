@@ -77,10 +77,10 @@
     "typescript/consistent-type-imports": "error",
     "unicorn/prefer-node-protocol": "error",
 
-    "no-nested-ternary": "warn",
-    "no-shadow": "warn",
-    "oxc/no-map-spread": "warn",
-    "unicorn/consistent-function-scoping": "warn",
-    "unicorn/no-array-reduce": "warn"
+    "no-nested-ternary": "off",
+    "no-shadow": "off",
+    "oxc/no-map-spread": "off",
+    "unicorn/consistent-function-scoping": "off",
+    "unicorn/no-array-reduce": "off"
   }
 }
