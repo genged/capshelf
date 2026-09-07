@@ -10,9 +10,12 @@ import {
   type DestructiveChangePlan,
 } from "../destructive-change";
 import { planFragmentDestruction } from "../destructive-preflight";
-import { saveManifest } from "../manifest";
+import {
+  saveManifest,
+  addManifestName,
+  manifestNamesForKind,
+} from "../manifest";
 import type { Manifest } from "../manifest";
-import { addManifestName, manifestNamesForKind } from "../manifest";
 import {
   assertLockV4,
   createDataLockEntry,

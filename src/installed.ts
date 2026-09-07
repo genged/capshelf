@@ -1,9 +1,8 @@
 import { existsSync, readlinkSync } from "node:fs";
-import { assertSafeItemName } from "./assert";
+import { assertSafeItemName, assertNever } from "./assert";
 import { lstatOrNull } from "./fs-utils";
 import { mkdir, rm, symlink } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { assertNever } from "./assert";
 import {
   ITEM_KINDS,
   isItemKind,
@@ -11,8 +10,8 @@ import {
   itemRepoRelPath,
   type ItemKind,
   type MaterializedItemKind,
+  shaOfItem,
 } from "./master";
-import { shaOfItem } from "./master";
 import {
   claudeDir,
   codexProjectConfigDir,

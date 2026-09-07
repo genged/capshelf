@@ -28,6 +28,10 @@ import {
   assertNoDestinationCollisions,
   pinCurrentSource,
   shortIdentity,
+  blobIdOf,
+  hashWidthOf,
+  itemTreeEntriesAtCommit,
+  sourcePinDigest,
 } from "../pin";
 import type {
   DataLockEntryV4,
@@ -90,12 +94,6 @@ import {
 import { mergeNamedTrees, namedFilesEqual } from "../merge-tree";
 import { beginInstalledReconciliation } from "../promote-transaction";
 import { itemRepoRelPath } from "../master";
-import {
-  blobIdOf,
-  hashWidthOf,
-  itemTreeEntriesAtCommit,
-  sourcePinDigest,
-} from "../pin";
 
 interface UpdateOptions {
   json?: boolean;

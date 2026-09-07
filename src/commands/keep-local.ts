@@ -6,11 +6,11 @@ import {
   loadLock,
   saveLocalLock,
   saveLock,
+  entryIdentity,
 } from "../lock";
 import { parseLockKey } from "../installed";
 import { shaOfInstalledForScope } from "../item-snapshot";
 import { installedTreeIdentity } from "../install-identity";
-import { entryIdentity } from "../lock";
 import { loadManifest } from "../manifest";
 import { resolveProjectDataRepo } from "../command-context";
 import { lockKeysForRef, parseItemRef } from "../item-ref";

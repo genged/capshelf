@@ -5,8 +5,7 @@ import {
   readFileSync,
   realpathSync,
 } from "node:fs";
-import { delimiter } from "node:path";
-import { join, resolve } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { z } from "zod";
 import type { ItemKind } from "./master";
 import {

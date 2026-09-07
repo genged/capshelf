@@ -4,7 +4,12 @@ import { join } from "node:path";
 import { findProjectRoot, projectRoot, homeRelative } from "../paths";
 import { resolveDataRepo, resolveDataRepoOptional } from "../data-repo";
 import { PreconditionError } from "../errors";
-import { CLI_VERSION } from "../bundled";
+import {
+  CLI_VERSION,
+  SYSTEM_ITEMS,
+  findSystemItem,
+  shaOfSystemItem,
+} from "../bundled";
 import {
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
@@ -21,7 +26,6 @@ import { entryIdentity, loadLocalLock, loadLock } from "../lock";
 import { loadManifest } from "../manifest";
 import { shortIdentity } from "../pin";
 import { parseLockKey } from "../installed";
-import { SYSTEM_ITEMS, findSystemItem, shaOfSystemItem } from "../bundled";
 import { assertIsGitRepo } from "../git";
 import { globalOpts } from "../global-options";
 import { shaOfFragmentItem } from "../fragments";
@@ -31,9 +35,9 @@ import {
   matchesTagFilter,
   metadataLineSuffix,
   printMetadataWarnings,
+  emptyNeeds,
 } from "../metadata";
 import type { ItemMetadata } from "../metadata";
-import { emptyNeeds } from "../metadata";
 import { assertNoScopeCollisions } from "../status-core";
 import { listBundles, memberCountSummary, memberRef } from "../bundles";
 import type { Bundle } from "../bundles";

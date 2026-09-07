@@ -20,7 +20,7 @@ import {
   installedPath,
 } from "./installed";
 import type { ItemSource } from "./installed";
-import type { ItemKind } from "./master";
+import type { ItemKind, CopyDirectoryItemKind } from "./master";
 import {
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
@@ -28,7 +28,6 @@ import {
   isMetadataSidecarPath,
   itemRepoRelPath,
 } from "./master";
-import type { CopyDirectoryItemKind } from "./master";
 import { hashNamedContents } from "./content-hash";
 import type { Scope } from "./promote-core";
 import { findSystemItem, shaOfSystemItem } from "./bundled";

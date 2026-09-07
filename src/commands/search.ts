@@ -27,6 +27,7 @@ import {
   loadSystemItemMetadata,
   metadataLineSuffix,
   printMetadataWarnings,
+  truncatedDescription,
 } from "../metadata";
 import type { ItemMetadata } from "../metadata";
 import {
@@ -40,7 +41,6 @@ import {
 import type { SearchContentFile, SearchMatch } from "../search-core";
 import { listBundles, memberCountSummary, memberRef } from "../bundles";
 import type { Bundle } from "../bundles";
-import { truncatedDescription } from "../metadata";
 
 interface SearchOptions {
   json?: boolean;

@@ -20,6 +20,8 @@ import {
   loadLocalLock,
   loadLock,
   serializeLock,
+  needsEqual,
+  createDataLockEntry,
 } from "../lock";
 import type { DataLockEntry, LockEntryV4, Lock, LockV4 } from "../lock";
 import { legacyShaAtCommit } from "../lock-verify";
@@ -36,8 +38,6 @@ import {
   pinItemAtCommit,
   pinCurrentSource,
 } from "../pin";
-import { needsEqual } from "../lock";
-import { createDataLockEntry } from "../lock";
 import { captureCommittedItemNeeds } from "../metadata";
 
 type MigrationScope = "project" | "local";

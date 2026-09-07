@@ -11,8 +11,12 @@ import {
 } from "../paths";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import { globalOpts } from "../global-options";
-import { loadManifest, saveManifest, type Manifest } from "../manifest";
-import { addManifestName } from "../manifest";
+import {
+  loadManifest,
+  saveManifest,
+  type Manifest,
+  addManifestName,
+} from "../manifest";
 import {
   assertLockV4,
   createDataLockEntry,

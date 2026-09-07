@@ -6,6 +6,8 @@ import {
   assertRegularBlobEntries,
   lsTreeEntriesAtCommit,
   showAtCommit,
+  isProjectWorkTreeRoot,
+  projectVisibleFilesUnderPath,
 } from "./git";
 import type { GitFileMode, NamedFile } from "./merge-tree";
 import { METADATA_SIDECAR } from "./metadata";
@@ -16,7 +18,6 @@ import {
   shaOfItemFiles,
 } from "./master";
 import { installedPath } from "./installed";
-import { isProjectWorkTreeRoot, projectVisibleFilesUnderPath } from "./git";
 import { gitignoreVisibleFiles } from "./gitignore";
 import type { ItemSnapshot, Scope } from "./promote-core";
 import { PreconditionError } from "./errors";

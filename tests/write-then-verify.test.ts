@@ -6,8 +6,7 @@ import { dataKey, loadLock, parseLock, serializeLock } from "../src/lock";
 import type { LockEntryV4, LockV4 } from "../src/lock";
 import { materializeLockEntry } from "../src/materialize";
 import { materializeSubagent } from "../src/subagents";
-import { pinItemAtCommit } from "../src/pin";
-import { currentSourceCommit } from "../src/pin";
+import { pinItemAtCommit, currentSourceCommit } from "../src/pin";
 import { addSkill, commitAll, runInProcess, tempRepo } from "./cli-fixtures";
 
 /**

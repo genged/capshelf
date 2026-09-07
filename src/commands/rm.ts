@@ -13,8 +13,12 @@ import {
 import { rmTreeWithRetries } from "../fs-utils";
 import { projectRoot } from "../paths";
 import { resolveProjectDataRepo } from "../command-context";
-import { loadManifest, saveManifest } from "../manifest";
-import { manifestNamesForKind, removeManifestName } from "../manifest";
+import {
+  loadManifest,
+  saveManifest,
+  manifestNamesForKind,
+  removeManifestName,
+} from "../manifest";
 import {
   assertLockV4,
   loadLocalLock,

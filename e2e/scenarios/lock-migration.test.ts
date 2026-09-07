@@ -12,8 +12,7 @@ import {
 import { declareEvidence } from "../support/report";
 import { asNumber, asObject, asString, parseJsonText } from "../support/json";
 import type { JsonObject } from "../support/json";
-import { E2E_TEST_TIMEOUT_MS, type World } from "../support/world";
-import { withWorld } from "../support/world";
+import { E2E_TEST_TIMEOUT_MS, type World, withWorld } from "../support/world";
 
 const SCENARIO = "lock-migration";
 
