@@ -46,6 +46,7 @@ import {
   isCopyTargetFileItemKind,
   isFragmentItemKind,
   isFragmentKindName,
+  itemRepoRelPath,
 } from "../master";
 import {
   assertRepoClean,
@@ -98,7 +99,6 @@ import {
 } from "../item-snapshot";
 import { mergeNamedTrees, namedFilesEqual } from "../merge-tree";
 import { beginInstalledReconciliation } from "../promote-transaction";
-import { itemRepoRelPath } from "../master";
 
 interface UpdateOptions {
   json?: boolean;
