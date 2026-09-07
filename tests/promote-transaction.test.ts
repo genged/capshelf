@@ -35,7 +35,9 @@ describe("beginDirectoryReplacement", () => {
     let installedContent = "";
     await chmod(parent, 0o555);
     const unlock = (async () => {
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await new Promise((resolve) => {
+        setTimeout(resolve, 200);
+      });
       await chmod(parent, 0o755);
     })();
     try {

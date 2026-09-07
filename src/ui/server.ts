@@ -248,7 +248,9 @@ function createGate(limit: number): Gate {
   return {
     async run<T>(task: () => Promise<T>): Promise<T> {
       if (active >= limit) {
-        await new Promise<void>((resolve) => waiting.push(resolve));
+        await new Promise<void>((resolve) => {
+          waiting.push(resolve);
+        });
       }
       active += 1;
       try {

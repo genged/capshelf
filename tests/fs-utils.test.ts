@@ -71,7 +71,9 @@ describe("rmTreeWithRetries", () => {
     await writeFile(join(target, "f.txt"), "x");
     await chmod(dir, 0o555);
     const unlock = (async () => {
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await new Promise((resolve) => {
+        setTimeout(resolve, 200);
+      });
       await chmod(dir, 0o755);
     })();
     await rmTreeWithRetries(target);

@@ -162,7 +162,9 @@ describe("cli integration", () => {
     ).toBe(before);
 
     // …and standalone add of the same installed item is also a stable no-op.
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await new Promise((resolve) => {
+      setTimeout(resolve, 5);
+    });
     const single = await run(["add", "skills/security-review"]);
     expect(single.exitCode).toBe(0);
     expect(single.stdout.toString()).toContain("already installed");

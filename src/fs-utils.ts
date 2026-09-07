@@ -47,7 +47,9 @@ export async function rmTreeWithRetries(path: string): Promise<void> {
       ) {
         throw err;
       }
-      await new Promise((resolve) => setTimeout(resolve, delay));
+      await new Promise((resolve) => {
+        setTimeout(resolve, delay);
+      });
     }
   }
   await rm(path, { recursive: true, force: true });
