@@ -191,30 +191,64 @@ The pull-request lane type-checks, runs the unit and smoke suites, builds
 separate lint job in the same workflow runs Biome and the Oxlint anti-slop
 check.
 
-The release lane first requires that the tagged commit already has a green
-Test run from a `push` or `workflow_dispatch` event — work lands on `main`
-directly, so a commit can be tagged before anyone knows whether it passed. A
-pull-request run does not count: it carries the head SHA but checks out the
-commit merged into its base, so it says nothing about the commit a tag points
-at. Every job then checks out that resolved
-commit rather than the tag, which can be moved after the check.
+A release needs a version tag and a successful Test run for the same commit.
+Only same-repository `push` and `workflow_dispatch` runs count.
+Pull-request results cannot authorize publication.
+See `scripts/require-green-test-run.sh:27`.
 
-It builds every candidate archive once, uploads them, and validates each
-archive on a matching native runner: verify the checksum, extract the
-executable, check `capshelf --version`, and run the E2E suite against the
-extracted file. Each validation records that it happened, and the publish job
-requires one record per archive it is about to upload — so removing a platform
-from the matrix stops the release instead of quietly shipping an unvalidated
-binary. Publishing also re-checks that the tag still points at the validated
-commit. Only that job can write releases.
+The Release workflow responds to tag pushes, manual requests, and successful
+Test completion events. Either event order works:
+
+```text
+Tag first  -> defer -> Test completes -> release
+Test first -> no tag -> tag arrives   -> release
+```
+
+The completion event supplies the tested SHA. Discovery selects version tags
+that point to that SHA, including tags from later API pages.
+Failed Test runs and runs from forks skip discovery.
+See `.github/workflows/release.yml:7` and
+`scripts/resolve-release-request.sh:7`.
+
+The previous gate failed when Test was still running. The gate now defers
+without keeping a runner active. Successful Test completion starts a new
+Release run. Short coordination jobs still consume runner time.
+A missing Test run also defers. Push that commit to `main` or start Test
+manually on a ref that points to it.
+See `scripts/require-green-test-run.sh:40` and
+`scripts/prepare-release.sh:26`.
+
+Release jobs use a concurrency group for each resolved tag. The group covers
+the reusable release workflow, including publication.
+After entering the group, a request checks whether its tag is already published.
+Published releases skip validation and packaging. Draft releases can resume.
+See `.github/workflows/release.yml:50`,
+`.github/workflows/release-lane.yml:17`, and `scripts/prepare-release.sh:18`.
+
+An eligible release repeats the source tests and builds each candidate archive.
+It validates those archives on matching native runners before publication.
+The checks include checksums, the executable version, and the E2E suite.
+Build and validation jobs check out the pinned SHA. Publication checks the tag
+again and uses the validated archives.
+See `.github/workflows/release-lane.yml:39`, `:47`, `:101`, and `:156`.
+
+The caller grants write permission to the reusable release job. The called
+workflow limits its default permission to read. Its publish job can write releases.
+See `.github/workflows/release.yml:53` and
+`.github/workflows/release-lane.yml:13`, `:160`.
+
+GitHub requires the completion-triggered workflow on the default branch.
+Merge the workflow change into `main` before relying on automatic resumption.
+See [GitHub workflow_run documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run).
 
 A run on `main` is never cancelled by a later push: pushes group by commit,
 so each one is independent. Grouping them by branch would not be enough,
 because a *queued* run is cancelled when a newer run joins its group — rapid
 pushes would keep the first and the last and discard everything between. Note
 that one push carrying several commits is still one run, on the tip: the
-commits under it are never tested, and a tag pointing at one of them is
-refused by the release gate.
+commits under it receive no Test run from that push. A release for one of
+those commits defers until it has a successful eligible run
+(`scripts/require-green-test-run.sh:40`).
 
 One lane defines "does this commit work": `.github/workflows/test-lane.yml`.
 The pull-request lane calls it, the release calls it before packaging, and a
@@ -239,3 +273,8 @@ only `bun build --compile` stubbed, so the platform list stays under test.
 The two release gates are shell scripts with their own tests
 (`tests/release-gate-scripts.test.ts`), not logic embedded in YAML:
 `require-green-test-run.sh` and `require-unmoved-tag.sh`.
+
+Release coordination tests execute the shell scripts with GitHub API fixtures.
+They cover both event orders, duplicate requests, pagination, and API failures.
+These tests do not exercise GitHub event delivery or its concurrency scheduler.
+See `tests/release-coordination.test.ts:1`.

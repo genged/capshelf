@@ -14,19 +14,23 @@ set -euo pipefail
 # what a tag points at.
 #
 # Usage: require-green-test-run.sh <repository> <sha> [workflow-file]
+# Exit codes: 0 passed, 1 failed, 2 deferred (no run or unfinished run).
 
 repository="${1:?repository is required, for example owner/name}"
 sha="${2:?commit sha is required}"
 workflow="${3:-test.yml}"
 
-state="$(gh api \
-  "repos/${repository}/actions/workflows/${workflow}/runs?head_sha=${sha}&per_page=20" \
-  --jq '[.workflow_runs[]
+pages="$(gh api \
+  "repos/${repository}/actions/workflows/${workflow}/runs?head_sha=${sha}&per_page=100" \
+  --paginate --slurp)" || exit 1
+state="$(jq -r --arg sha "${sha}" --arg repository "${repository}" '
+        [.[] | .workflow_runs[]
+         | select(.head_sha == $sha and .head_repository.full_name == $repository)
          | select(.event == "push" or .event == "workflow_dispatch")]
         | if length == 0 then "none"
-          elif any(.[]; .conclusion == "success") then "success"
+          elif any(.[]; .status == "completed" and .conclusion == "success") then "success"
           elif all(.[]; .status == "completed") then "failed"
-          else "pending" end')"
+          else "pending" end' <<< "${pages}")" || exit 1
 
 case "${state}" in
   success)
@@ -34,8 +38,8 @@ case "${state}" in
     ;;
   none)
     printf 'no Test run exists for %s.\n' "${sha}" >&2
-    printf 'Push the commit to a branch that runs the Test workflow, wait for it to pass, then re-run this release.\n' >&2
-    exit 1
+    printf 'Push this commit to main or start Test manually. A successful Test completion will check its release tags.\n' >&2
+    exit 2
     ;;
   failed)
     printf 'every Test run for %s finished without success.\n' "${sha}" >&2
@@ -44,8 +48,8 @@ case "${state}" in
     ;;
   pending)
     printf 'the Test run for %s has not finished.\n' "${sha}" >&2
-    printf 'Wait for the Test run, then re-run this release.\n' >&2
-    exit 1
+    printf 'A successful Test completion will check its release tags.\n' >&2
+    exit 2
     ;;
   *)
     printf 'unexpected run state for %s: %s\n' "${sha}" "${state}" >&2

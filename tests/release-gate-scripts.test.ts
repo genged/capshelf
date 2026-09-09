@@ -14,13 +14,17 @@ const SCRIPTS = join(import.meta.dir, "..", "scripts");
 const GH_STUB = `#!/usr/bin/env bash
 set -euo pipefail
 expression=""
+slurp=false
 while [ $# -gt 0 ]; do
   case "$1" in
     --jq) expression="$2"; shift 2 ;;
+    --slurp) slurp=true; shift ;;
     *) shift ;;
   esac
 done
-if [ -n "$expression" ]; then
+if [ "$slurp" = true ]; then
+  jq -s '.' "$GH_STUB_PAYLOAD"
+elif [ -n "$expression" ]; then
   jq -r "$expression" "$GH_STUB_PAYLOAD"
 else
   cat "$GH_STUB_PAYLOAD"
@@ -68,7 +72,13 @@ async function run(
 
 const runs = (
   entries: { event: string; status: string; conclusion: string | null }[],
-) => ({ workflow_runs: entries });
+) => ({
+  workflow_runs: entries.map((entry) => ({
+    ...entry,
+    head_sha: "abc123",
+    head_repository: { full_name: "owner/repo" },
+  })),
+});
 
 describe("require-green-test-run.sh", () => {
   test("a successful push run releases the commit", async () => {
@@ -108,7 +118,7 @@ describe("require-green-test-run.sh", () => {
         { event: "pull_request", status: "completed", conclusion: "success" },
       ]),
     );
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("no Test run exists");
   });
 
@@ -125,14 +135,14 @@ describe("require-green-test-run.sh", () => {
     expect(result.stderr).toContain("finished without success");
   });
 
-  test("an unfinished run refuses and says to wait", async () => {
+  test("an unfinished run defers until Test completes", async () => {
     const result = await run(
       "require-green-test-run.sh",
       ["owner/repo", "abc123"],
       runs([{ event: "push", status: "in_progress", conclusion: null }]),
     );
-    expect(result.exitCode).toBe(1);
-    expect(result.stderr).toContain("Wait for the Test run");
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain("Test completion");
   });
 
   /** A re-run in flight beside a failure is not yet a verdict. */
@@ -145,7 +155,7 @@ describe("require-green-test-run.sh", () => {
         { event: "push", status: "queued", conclusion: null },
       ]),
     );
-    expect(result.exitCode).toBe(1);
+    expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain("has not finished");
   });
 });

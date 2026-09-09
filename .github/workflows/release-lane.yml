@@ -1,0 +1,203 @@
+name: Release lane
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  resolve:
+    name: Check release eligibility
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      tag: ${{ inputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      sha: ${{ inputs.sha }}
+      ready: ${{ steps.release.outputs.ready }}
+    steps:
+      - name: Check out the gate scripts
+        uses: actions/checkout@v4
+      - name: Check the tag, publication, and Test result
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          SHA: ${{ inputs.sha }}
+        run: bash scripts/prepare-release.sh "${GITHUB_REPOSITORY}" "${TAG}" "${SHA}"
+
+  test:
+    name: Verify
+    needs: resolve
+    if: needs.resolve.outputs.ready == 'true'
+    uses: ./.github/workflows/test-lane.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
+
+  package:
+    name: Build release candidates
+    needs: [resolve, test]
+    runs-on: ubuntu-latest
+    outputs:
+      platforms: ${{ steps.platforms.outputs.json }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - name: Set up Bun
+        uses: ./.github/actions/bun-toolchain
+
+      - name: Check package version matches tag
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          package_version="$(bun -e 'const pkg = await Bun.file("package.json").json(); process.stdout.write(pkg.version);')"
+          test "${package_version}" = "${VERSION}"
+
+      - name: Resolve release notes
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: test -f "docs/release-notes/release-notes-${VERSION}.md"
+
+      - name: Build every candidate archive and its checksum manifest
+        run: scripts/package-homebrew-artifacts.sh
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+
+      # The matrix comes from the same file the packaging script just built
+      # from, so every archive produced has a native runner to prove it works.
+      # Publishing an unvalidated archive is not guarded against here — it
+      # cannot be expressed.
+      - name: Derive the validation matrix from the platform list
+        id: platforms
+        run: |
+          printf 'json=%s\n' \
+            "$(jq -c '[.[] | {os: .runner, platform}]' scripts/release-platforms.json)" \
+            >> "${GITHUB_OUTPUT}"
+
+      - name: Upload the candidates
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-candidates-${{ needs.resolve.outputs.tag }}
+          path: |
+            dist/homebrew/capshelf-${{ needs.resolve.outputs.version }}-*.tar.gz
+            dist/homebrew/capshelf-${{ needs.resolve.outputs.version }}.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  validate:
+    name: Validate ${{ matrix.platform }} on ${{ matrix.os }}
+    needs: [resolve, package]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.package.outputs.platforms) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - name: Set up Bun
+        uses: ./.github/actions/bun-toolchain
+
+      - name: Download the candidates
+        uses: actions/download-artifact@v4
+        with:
+          name: release-candidates-${{ needs.resolve.outputs.tag }}
+          path: candidates
+
+      - name: Verify this platform's checksum and extract it
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          cd candidates
+          archive="capshelf-${VERSION}-${PLATFORM}.tar.gz"
+          grep -E "  ${archive}\$" "capshelf-${VERSION}.sha256" > this.sha256
+          test -s this.sha256
+          if command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 -c this.sha256
+          else
+            sha256sum -c this.sha256
+          fi
+          tar -xzf "${archive}"
+          chmod +x capshelf
+
+      - name: Check the candidate reports the release version
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          git --version
+          test "$(./candidates/capshelf --version)" = "${VERSION}"
+
+      # The extracted candidate is the executable under test. `e2e:run` never
+      # builds, so this job cannot substitute a different binary.
+      - name: Run end-to-end scenarios against the extracted candidate
+        env:
+          CAPSHELF_E2E_BIN: ${{ github.workspace }}/candidates/capshelf
+        run: bun run e2e:run
+
+  publish:
+    name: Publish validated candidates
+    needs: [resolve, package, validate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+
+      - name: Download the validated candidates
+        uses: actions/download-artifact@v4
+        with:
+          name: release-candidates-${{ needs.resolve.outputs.tag }}
+          path: candidates
+
+      - name: Check the tag still points at the validated commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          SHA: ${{ needs.resolve.outputs.sha }}
+        run: scripts/require-unmoved-tag.sh "${GITHUB_REPOSITORY}" "${TAG}" "${SHA}"
+
+      - name: Publish GitHub release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          notes_file="docs/release-notes/release-notes-${VERSION}.md"
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release edit "${TAG}" --notes-file "${notes_file}"
+            gh release upload "${TAG}" \
+              "candidates/capshelf-${VERSION}-"*.tar.gz \
+              "candidates/capshelf-${VERSION}.sha256" \
+              --clobber
+            gh release edit "${TAG}" --draft=false
+          else
+            gh release create "${TAG}" \
+              "candidates/capshelf-${VERSION}-"*.tar.gz \
+              "candidates/capshelf-${VERSION}.sha256" \
+              --verify-tag \
+              --notes-file "${notes_file}"
+          fi

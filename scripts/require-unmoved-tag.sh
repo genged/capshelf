@@ -13,7 +13,7 @@ repository="${1:?repository is required, for example owner/name}"
 tag="${2:?tag is required}"
 validated="${3:?validated sha is required}"
 
-current="$(gh api "repos/${repository}/commits/${tag}" --jq .sha)"
+current="$(gh api "repos/${repository}/commits/refs/tags/${tag}" --jq .sha)"
 
 if [ "${current}" != "${validated}" ]; then
   printf '%s moved: validated %s, now %s\n' "${tag}" "${validated}" "${current}" >&2
