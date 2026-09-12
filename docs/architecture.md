@@ -623,7 +623,7 @@ creates a fresh memo (`src/commands/apply.ts:156`, `src/commands/update.ts:272`)
 An object removed after a successful read can remain available in that memo
 (`src/git.ts:818`).
 Deletion between commands causes a fresh read and refusal
-(`tests/writer-read-memo.test.ts:151`).
+(`tests/writer-read-memo.test.ts:158`).
 Callers that omit the optional memo keep independent reads
 (`src/fragments.ts:133`, `src/pin.ts:254`).
 
