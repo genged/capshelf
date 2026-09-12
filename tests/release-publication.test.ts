@@ -7,15 +7,25 @@ import type { ConfigValue } from "../src/config-values";
 import { tempDir } from "./cli-fixtures";
 
 const workflow: ConfigValue = parse(
-  await readFile(join(import.meta.dir, "../.github/workflows/release-lane.yml"), "utf8"),
+  await readFile(
+    join(import.meta.dir, "../.github/workflows/release-lane.yml"),
+    "utf8",
+  ),
 );
-const publication = z.object({
-  jobs: z.object({
-    publish: z.object({
-      steps: z.array(z.object({ name: z.string(), run: z.string().optional() })),
+const publication = z
+  .object({
+    jobs: z.object({
+      publish: z.object({
+        steps: z.array(
+          z.object({ name: z.string(), run: z.string().optional() }),
+        ),
+      }),
     }),
-  }),
-}).parse(workflow).jobs.publish.steps.find((step) => step.name === "Publish GitHub release assets");
+  })
+  .parse(workflow)
+  .jobs.publish.steps.find(
+    (step) => step.name === "Publish GitHub release assets",
+  );
 const publishScript = z.string().parse(publication?.run);
 
 const GH_STUB = `#!/usr/bin/env bash
@@ -30,7 +40,9 @@ esac
 `;
 
 describe("release publication", () => {
-  test.each([0, 1])("a draft is published only after upload succeeds (exit %s)", async (uploadExitCode) => {
+  test.each([
+    0, 1,
+  ])("a draft is published only after upload succeeds (exit %s)", async (uploadExitCode) => {
     const dir = await tempDir("capshelf-release-publication-");
     const bin = join(dir, "bin");
     await mkdir(bin);
@@ -54,7 +66,9 @@ describe("release publication", () => {
     expect(result.exitCode).toBe(uploadExitCode);
     const calls = await readFile(callsFile, "utf8");
     if (uploadExitCode === 0) {
-      expect(calls.trim().split("\n").at(-1)).toBe("release edit v1.2.3 --draft=false");
+      expect(calls.trim().split("\n").at(-1)).toBe(
+        "release edit v1.2.3 --draft=false",
+      );
     } else {
       expect(calls).not.toContain("--draft=false");
     }

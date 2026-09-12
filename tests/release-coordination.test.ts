@@ -123,17 +123,17 @@ function testRun(overrides: ConfigObject = {}): ConfigValue {
   };
 }
 
-function eligibilityRoutes(runs: ConfigValue[] = [testRun()]): Routes {
+function eligibilityRoutes(runs: ConfigValue[] = [testRun()]) {
   return {
     [COMMIT_ENDPOINT]: { pages: [{ sha: SHA }] },
     [RELEASES_ENDPOINT]: { pages: [[]] },
     [TEST_ENDPOINT]: { pages: [{ workflow_runs: runs }] },
-  };
+  } satisfies Routes;
 }
 
-const tagRoutes: Routes = {
+const tagRoutes = {
   [TAGS_ENDPOINT]: { pages: [[{ name: TAG, commit: { sha: SHA } }]] },
-};
+} satisfies Routes;
 
 function parseTargets(outputs: Record<string, string>): ConfigValue {
   const targets = outputs.targets;
@@ -212,7 +212,9 @@ describe("release event coordination", () => {
     expect(request.outputs.targets).toContain(TAG);
   });
 
-  test.each(ineligibleCompletions)("ignores an ineligible completion: %j", async (overrides) => {
+  test.each(
+    ineligibleCompletions,
+  )("ignores an ineligible completion: %j", async (overrides) => {
     const result = await runScript(
       "resolve-release-request.sh",
       {},
@@ -273,19 +275,22 @@ describe("release event coordination", () => {
     expect(result.outputs.ready).toBe("false");
   });
 
-  test.each(["failure", "cancelled", "timed_out"])(
-    "a completed %s blocks release",
-    async (conclusion) => {
-      const result = await runScript(
-        "prepare-release.sh",
-        eligibilityRoutes([testRun({ conclusion })]),
-      );
-      expect(result.exitCode).toBe(1);
-      expect(result.outputs.ready).toBe("false");
-    },
-  );
+  test.each([
+    "failure",
+    "cancelled",
+    "timed_out",
+  ])("a completed %s blocks release", async (conclusion) => {
+    const result = await runScript(
+      "prepare-release.sh",
+      eligibilityRoutes([testRun({ conclusion })]),
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.outputs.ready).toBe("false");
+  });
 
-  test.each(unrelatedRuns)("another green run cannot authorize release: %j", async (overrides) => {
+  test.each(
+    unrelatedRuns,
+  )("another green run cannot authorize release: %j", async (overrides) => {
     const result = await runScript(
       "prepare-release.sh",
       eligibilityRoutes([testRun(overrides)]),
@@ -317,18 +322,19 @@ describe("release event coordination", () => {
     expect(result.stderr).toContain("moved");
   });
 
-  test.each([COMMIT_ENDPOINT, RELEASES_ENDPOINT, TEST_ENDPOINT])(
-    "an API error at %s is not a deferral",
-    async (endpoint) => {
-      const result = await runScript("prepare-release.sh", {
-        ...eligibilityRoutes(),
-        [endpoint]: { exitCode: 2 },
-      });
-      expect(result.exitCode).not.toBe(0);
-      expect(result.outputs.ready).toBe("false");
-      expect(result.stdout).not.toContain("Deferred");
-    },
-  );
+  test.each([
+    COMMIT_ENDPOINT,
+    RELEASES_ENDPOINT,
+    TEST_ENDPOINT,
+  ])("an API error at %s is not a deferral", async (endpoint) => {
+    const result = await runScript("prepare-release.sh", {
+      ...eligibilityRoutes(),
+      [endpoint]: { exitCode: 2 },
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.outputs.ready).toBe("false");
+    expect(result.stdout).not.toContain("Deferred");
+  });
 
   test("a tag discovery API error cannot look like no tags", async () => {
     const result = await runScript(
