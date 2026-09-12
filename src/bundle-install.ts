@@ -22,6 +22,7 @@ import {
 } from "./fragments";
 import type { FragmentTarget } from "./fragments";
 import { assertPathClean } from "./git";
+import type { GitReadMemo } from "./git-read-memo";
 import { findInstallConflict } from "./installed";
 import { assertLocalInstallPathsUntracked } from "./local-config";
 import { assertLockV4, createDataLockEntry, dataKey } from "./lock";
@@ -230,6 +231,7 @@ export function planBundleInstall(opts: PlanBundleInstallOptions): BundlePlan {
 }
 
 export interface BundlePreflightContext {
+  memo?: GitReadMemo;
   project: string;
   dataRepo: string;
   manifest: Manifest;
@@ -340,7 +342,9 @@ async function preflightFragmentCollisions(
     if (!item || !isFragmentItemKind(item.kind)) continue;
     addManifestName(nextManifest, item.kind, item.name);
     nextLock.items[dataKey(item.kind, item.name)] = createDataLockEntry({
-      pin: await pinCurrentSource(ctx.dataRepo, item.kind, item.name),
+      pin: await pinCurrentSource(ctx.dataRepo, item.kind, item.name, {
+        memo: ctx.memo,
+      }),
       ...(await captureCommittedItemNeeds(ctx.dataRepo, item)),
     });
     targetsByRef.set(
@@ -361,6 +365,7 @@ async function preflightFragmentCollisions(
         nextLock,
         target,
         dryRun: true,
+        memo: ctx.memo,
       });
     } catch (err) {
       const wrapped =

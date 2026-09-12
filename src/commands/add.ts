@@ -61,6 +61,7 @@ import { targetDir } from "../sync";
 import { findInstallConflict, installedPath, parseLockKey } from "../installed";
 import { isSystemItemName } from "../bundled";
 import { assertPathClean } from "../git";
+import { GitReadMemo } from "../git-read-memo";
 import { findMasterItemByRef, lockKeyForRef, parseItemRef } from "../item-ref";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import {
@@ -142,6 +143,7 @@ export interface AddContext {
   localLock: Lock;
   localConfig: LocalConfig | null;
   local: boolean;
+  memo: GitReadMemo;
 }
 
 export interface InstallDataItemResult {
@@ -279,6 +281,7 @@ async function addOne(
   if (!consent.proceed) return;
 
   const result = await installDataItem(ctx, item, {
+    memo: ctx.memo,
     ...(consent.pin && { pin: consent.pin }),
   });
 
@@ -345,6 +348,7 @@ async function loadAddContext(
   opts: AddOptions,
   cmd: Command,
   dataRepo?: string,
+  memo = new GitReadMemo(),
 ): Promise<AddContext> {
   const base = await loadProjectContext({
     cmd,
@@ -357,6 +361,7 @@ async function loadAddContext(
     dataRepo: dataRepo ?? base.dataRepo!,
     localConfig,
     local: opts.local ?? false,
+    memo,
   };
 }
 
@@ -501,7 +506,7 @@ async function planStandaloneFragmentAdd(
   }
   await assertFragmentSourcesClean(ctx.dataRepo, item.kind, item.name);
   const [pin, snapshot] = await Promise.all([
-    pinCurrentSource(ctx.dataRepo, item.kind, item.name),
+    pinCurrentSource(ctx.dataRepo, item.kind, item.name, { memo: ctx.memo }),
     captureCommittedItemNeeds(ctx.dataRepo, item),
   ]);
   const nextManifest = structuredClone(ctx.manifest);
@@ -529,6 +534,7 @@ async function planStandaloneFragmentAdd(
     name: item.name,
     commit: pin.sourceCommit,
     manifest: ctx.manifest,
+    memo: ctx.memo,
   });
   const targets = [
     ...new Set(
@@ -558,6 +564,7 @@ async function planStandaloneFragmentAdd(
         oldLock: ctx.projectLock,
         nextLock,
         target,
+        memo: ctx.memo,
       }),
     );
     const contributionState = await fragmentContributionState(
@@ -566,6 +573,7 @@ async function planStandaloneFragmentAdd(
       ctx.manifest,
       ctx.projectLock,
       target,
+      ctx.memo,
     );
     contributionStates.set(target, contributionState);
     // A review command only when `status --diff` can display the loss. Status
@@ -595,6 +603,7 @@ async function planStandaloneFragmentAdd(
 }
 
 export interface InstallDataItemOptions {
+  memo?: GitReadMemo;
   /**
    * Sidecar relations (`requires`/`conflicts-with`) enforcement. The bundle
    * executor disables it: bundle preflight already ran the symmetric
@@ -624,6 +633,7 @@ export async function installDataItem(
   item: MasterItem,
   opts: InstallDataItemOptions = {},
 ): Promise<InstallDataItemResult> {
+  const memo = opts.memo ?? new GitReadMemo();
   const { project, dataRepo, manifest, projectLock, localLock, localConfig } =
     ctx;
   const lock = ctx.local ? localLock : projectLock;
@@ -722,7 +732,8 @@ export async function installDataItem(
   // refusals it carries — an external filter driver (PIN-9), a symlink or
   // gitlink in the tree — happen here, before any manifest or lock mutation.
   const pin =
-    opts.pin ?? (await pinCurrentSource(dataRepo, item.kind, item.name));
+    opts.pin ??
+    (await pinCurrentSource(dataRepo, item.kind, item.name, { memo }));
   // PIN-3 for fragments: the target set comes from the tree this install pins,
   // exactly as `apply` derives it from the lock. A worktree read made `add` and
   // `apply` disagree about one lock entry — a dirty-deleted
@@ -750,7 +761,7 @@ export async function installDataItem(
     );
   }
   // A supplied pin passed source validation during planning
-  // (src/commands/add.ts:526). Validate pins created here before mutation.
+  // (src/commands/add.ts:531). Validate pins created here before mutation.
   if (opts.pin === undefined && isFragmentItemKind(item.kind)) {
     await loadFragmentSourcesAtCommit({
       dataRepo,
@@ -758,6 +769,7 @@ export async function installDataItem(
       name: item.name,
       commit: pin.sourceCommit,
       manifest,
+      memo,
     });
   }
   const dst = isFragmentItemKind(item.kind)
@@ -821,6 +833,7 @@ export async function installDataItem(
           oldLock,
           nextLock: writableLock,
           target,
+          memo,
         }),
       );
     }
@@ -911,8 +924,9 @@ async function addBundle(
   opts: AddOptions,
   cmd: Command,
   dataRepo?: string,
+  memo?: GitReadMemo,
 ): Promise<void> {
-  const ctx = await loadAddContext(opts, cmd, dataRepo);
+  const ctx = await loadAddContext(opts, cmd, dataRepo, memo);
   const bundle = await loadBundleStrict(ctx.dataRepo, name);
   for (const warning of new Set(bundle.warnings)) {
     console.error(`⚠ ${warning}`);
@@ -949,6 +963,7 @@ async function addBundle(
     manifest: ctx.manifest,
     lock: ctx.local ? ctx.localLock : ctx.projectLock,
     masterByRef,
+    memo: ctx.memo,
   });
 
   const failures = planFailures(plan);
@@ -1012,6 +1027,7 @@ async function addBundle(
       const approved = revalidated.pins.get(member.ref);
       return installDataItem(ctx, item, {
         enforceRelations: false,
+        memo: ctx.memo,
         ...(approved && { pin: approved }),
       });
     },
@@ -1084,8 +1100,9 @@ export async function runInteractiveAdd(request: {
   // remembered. A reload added later cannot re-resolve the binding by
   // forgetting to pass it.
   const boundRepo = ctx.dataRepo;
+  const memo = ctx.memo;
   const reload = (): Promise<AddContext> =>
-    loadAddContext(opts, cmd, boundRepo);
+    loadAddContext(opts, cmd, boundRepo, memo);
   const catalog = await loadPickCatalog({
     dataRepo: boundRepo,
     projectLock: ctx.projectLock,
@@ -1127,7 +1144,7 @@ export async function runInteractiveAdd(request: {
     .filter((name): name is string => name !== null);
   for (const name of bundleNames) {
     try {
-      await addBundle(name, opts, cmd, boundRepo);
+      await addBundle(name, opts, cmd, boundRepo, memo);
       added.push(`bundles/${name}`);
     } catch (error) {
       // `addBundle` prints its own refusal before throwing ResultExitError, so
@@ -1187,6 +1204,7 @@ export async function runInteractiveAdd(request: {
       }
 
       const result = await installDataItem(ctx, item, {
+        memo: ctx.memo,
         ...(consent.pin && { pin: consent.pin }),
       });
       added.push(itemRef);

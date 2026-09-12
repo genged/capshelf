@@ -2,6 +2,13 @@ import { expect, spyOn, test } from "bun:test";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import * as git from "../src/git";
+import { installDataItem } from "../src/commands/add";
+import { GitReadMemo } from "../src/git-read-memo";
+import { loadManifest } from "../src/manifest";
+import { loadLock, loadLocalLock } from "../src/lock";
+import { loadLocalConfig } from "../src/local-config";
+import { findMasterItemByRef } from "../src/item-ref";
+import { setPickContext } from "../src/pick";
 import * as fsUtils from "../src/fs-utils";
 import * as materialization from "../src/materialize";
 import { setDestructiveConfirmationContext } from "../src/destructive-change";
@@ -399,3 +406,164 @@ test(
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
+
+async function addFragmentSources(dataRepo: string) {
+  for (const name of ["third", "fourth", "fifth"]) {
+    await mkdir(join(dataRepo, "settings", name), { recursive: true });
+    await writeFile(
+      join(dataRepo, "settings", name, "settings.json"),
+      JSON.stringify({ permissions: { deny: [`Bash(${name} *)`] } }),
+    );
+    await commitAll(dataRepo, name);
+  }
+}
+
+for (const route of ["standalone", "bundle", "interactive"] as const) {
+  test(
+    `fragment add ${route} shares successful immutable reads across its invocation`,
+    async () => {
+      const fixture = await fragmentProject();
+      try {
+        await addFragmentSources(fixture.dataRepo);
+        await mkdir(join(fixture.dataRepo, "bundles"), { recursive: true });
+        await writeFile(
+          join(fixture.dataRepo, "bundles", "extra.yml"),
+          "includes:\n  settings: [third, fourth]\n",
+        );
+        const counts = new Map<string, number>();
+        const sourceRead = git.sourceRead;
+        const read = spyOn(git, "sourceRead").mockImplementation(
+          async (repo, args, options) => {
+            const result = await sourceRead(repo, args, options);
+            const key = immutableTreeOrBlobRequest(repo, args, options?.stdin);
+            if (result.exitCode === 0 && key !== null)
+              counts.set(key, (counts.get(key) ?? 0) + 1);
+            return result;
+          },
+        );
+        const previousPick = setPickContext({
+          stdinIsTTY: true,
+          stderrIsTTY: true,
+          prompt: async () => ({
+            kind: "picked",
+            refs: ["bundles/extra", "settings/fourth", "settings/fifth"],
+          }),
+        });
+        try {
+          const args =
+            route === "standalone"
+              ? ["add", "settings/third", "--json"]
+              : route === "bundle"
+                ? ["add", "bundles/extra", "--json"]
+                : ["add"];
+          const result = await fixture.run(args);
+          expect(result.exitCode, result.stderr.toString()).toBe(0);
+          const names =
+            route === "standalone"
+              ? ["first", "second", "third"]
+              : route === "bundle"
+                ? ["first", "second", "third", "fourth"]
+                : ["first", "second", "third", "fourth", "fifth"];
+          expect(await readJsonObject(fixture.output)).toMatchObject({
+            model: "local-model",
+            permissions: { deny: names.map((name) => `Bash(${name} *)`) },
+          });
+          expect((await loadManifest(fixture.project)).settings).toEqual(names);
+          const lock = await loadLock(fixture.project);
+          for (const name of names)
+            expect(lock.items[`data/settings/${name}`]?.source).toBe("data");
+          if (route === "interactive")
+            expect(result.stdout.toString()).toContain("already installed");
+          expect(counts.size).toBeGreaterThan(0);
+          expect(
+            [...counts].filter(([, count]) => count !== 1),
+            `repeated immutable requests through ${route}`,
+          ).toEqual([]);
+        } finally {
+          setPickContext(previousPick);
+          read.mockRestore();
+        }
+      } finally {
+        await removeProject(fixture);
+      }
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+}
+
+for (const route of ["command", "exported install"] as const) {
+  test(
+    `fragment add ${route} refuses a removed contributor on its next invocation`,
+    async () => {
+      const fixture = await fragmentProject();
+      try {
+        await addFragmentSources(fixture.dataRepo);
+        const ctx = {
+          project: fixture.project,
+          dataRepo: fixture.dataRepo,
+          manifest: await loadManifest(fixture.project),
+          projectLock: await loadLock(fixture.project),
+          localLock: await loadLocalLock(fixture.project),
+          localConfig: await loadLocalConfig(fixture.project),
+          local: false,
+          memo: new GitReadMemo(),
+        };
+        const third = await findMasterItemByRef(fixture.dataRepo, {
+          kind: "settings",
+          name: "third",
+        });
+        const fourth = await findMasterItemByRef(fixture.dataRepo, {
+          kind: "settings",
+          name: "fourth",
+        });
+        if (!third || !fourth) throw new Error("missing fixture fragments");
+        if (route === "command") {
+          expect(
+            (await fixture.run(["add", "settings/third", "--json"])).exitCode,
+          ).toBe(0);
+        } else {
+          await installDataItem(ctx, third);
+        }
+        const source = "settings/first/settings.json";
+        const commit = await git.headSha(fixture.dataRepo);
+        const blob = (
+          await git.sourceReadText(fixture.dataRepo, [
+            "rev-parse",
+            `${commit}:${source}`,
+          ])
+        ).trim();
+        const before = await Promise.all(
+          fixture.guarded.map((path) => readFile(path)),
+        );
+        await rm(
+          join(
+            fixture.dataRepo,
+            ".git",
+            "objects",
+            blob.slice(0, 2),
+            blob.slice(2),
+          ),
+        );
+        if (route === "command") {
+          const result = await fixture.run([
+            "add",
+            "settings/fourth",
+            "--json",
+          ]);
+          expect(result.exitCode).not.toBe(0);
+          expect(result.stdout.toString() + result.stderr.toString()).toContain(
+            source,
+          );
+        } else {
+          await expect(installDataItem(ctx, fourth)).rejects.toThrow(source);
+        }
+        expect(
+          await Promise.all(fixture.guarded.map((path) => readFile(path))),
+        ).toEqual(before);
+      } finally {
+        await removeProject(fixture);
+      }
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+}

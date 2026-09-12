@@ -595,6 +595,24 @@ planning, consent revalidation, and fragment execution
 Fragment planning shares that memo across old and next contributions
 (`src/fragments.ts:535`, `src/fragments.ts:543`).
 
+Each named `add` creates a memo when it loads its context
+(`src/commands/add.ts:351`). Standalone planning and installation share that
+memo (`src/commands/add.ts:284`, `src/commands/add.ts:537`,
+`src/commands/add.ts:567`). Bundle collision preflight, consent planning,
+and member installation share the invocation memo
+(`src/commands/add.ts:966`, `src/commands/add.ts:995`,
+`src/commands/add.ts:1030`, `src/bundle-install.ts:346`,
+`src/bundle-install.ts:368`). Interactive add keeps the memo across context
+reloads, selected bundles, and selected items
+(`src/commands/add.ts:1103`, `src/commands/add.ts:1147`,
+`src/commands/add.ts:1207`). These reloads still read project state
+(`src/commands/add.ts:353`). An exported `installDataItem` call without
+`opts.memo` creates a fresh memo, even when its caller reuses the context
+(`src/commands/add.ts:636`). Fragment source cleanliness and consent
+revalidation remain live (`src/commands/add.ts:507`,
+`src/commands/add.ts:657`, `src/commands/add.ts:1015`,
+`src/commands/add.ts:1273`).
+
 Memo keys require a full SHA-1 or SHA-256 object name and include the repository
 (`src/git-read-memo.ts:11`). Tree keys also include flags and pathspecs
 (`src/git.ts:755`). Trees enter the memo after record parsing
