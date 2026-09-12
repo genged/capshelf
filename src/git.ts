@@ -1,3 +1,4 @@
+import { gitObjectReadKey, type GitReadMemo } from "./git-read-memo";
 import { constants } from "node:fs";
 import {
   access,
@@ -13,6 +14,7 @@ import { tmpdir } from "node:os";
 import { basename, delimiter, join, resolve } from "node:path";
 import { CliError, ExitCode, PreconditionError } from "./errors";
 import { isErrno } from "./fs-utils";
+import { recordGitRead } from "./git-measure";
 
 const GIT_MISSING_MESSAGE =
   "git is required but was not found on PATH\n  install Git, then retry";
@@ -106,10 +108,11 @@ async function reportedGitVersion(): Promise<string> {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout] = await Promise.all([
+  const [stdout, exitCode] = await Promise.all([
     new Response(proc.stdout).text(),
     proc.exited,
   ]);
+  recordGitRead("--version", "", ["--version"], exitCode === 0, true);
   return stdout.trim().replace(/^git version /, "") || "(unknown)";
 }
 
@@ -284,6 +287,17 @@ async function runGit(
     new Response(proc.stderr).text(),
   ]);
   const exitCode = await proc.exited;
+  const operation =
+    args.find((arg) =>
+      ["show", "cat-file", "ls-tree", "rev-parse", "check-attr"].includes(arg),
+    ) ?? args[0]!;
+  recordGitRead(
+    operation === "cat-file" ? `${operation} ${args[1]}` : operation,
+    "repo" in binding ? (binding.repo ?? cwd ?? "") : (cwd ?? ""),
+    binding.profile === "source-read" ? args : [],
+    exitCode === 0,
+    true,
+  );
   return { exitCode, stdout, stderr: stderr.trim() };
 }
 
@@ -604,18 +618,28 @@ export async function showAtCommit(
   repo: string,
   commit: string,
   relPath: string,
+  memo?: GitReadMemo,
 ): Promise<Buffer> {
-  return await sourceReadBuffer(repo, ["show", `${commit}:${relPath}`]);
+  const key = gitObjectReadKey(repo, commit, [relPath]);
+  const cached = key === undefined ? undefined : memo?.shows.get(key);
+  if (cached !== undefined) return Buffer.from(cached);
+  const bytes = await sourceReadBuffer(repo, ["show", `${commit}:${relPath}`]);
+  if (key !== undefined) memo?.shows.set(key, Buffer.from(bytes));
+  return bytes;
 }
 
 export async function commitExists(
   repo: string,
   commit: string,
+  memo?: GitReadMemo,
 ): Promise<boolean> {
-  return (
+  const key = gitObjectReadKey(repo, commit);
+  if (key !== undefined && memo?.commits.has(key)) return true;
+  const present =
     (await sourceRead(repo, ["cat-file", "-e", `${commit}^{commit}`]))
-      .exitCode === 0
-  );
+      .exitCode === 0;
+  if (present && key !== undefined) memo?.commits.add(key);
+  return present;
 }
 
 export async function resolveCommit(
@@ -725,17 +749,23 @@ export async function lsTreeEntriesForPathspecs(
   repo: string,
   commit: string,
   pathspecs: string[],
+  options: { includeTrees?: boolean; memo?: GitReadMemo } = {},
 ): Promise<GitTreeEntry[]> {
   if (pathspecs.length === 0) return [];
-  const out = await sourceReadText(repo, [
+  const args = [
     "ls-tree",
     "-r",
+    ...(options.includeTrees === true ? ["-t"] : []),
     "-z",
     commit,
     "--",
     ...pathspecs,
-  ]);
-  return out
+  ];
+  const key = gitObjectReadKey(repo, commit, args);
+  const cached = key === undefined ? undefined : options.memo?.trees.get(key);
+  if (cached !== undefined) return cached.map((entry) => ({ ...entry }));
+  const out = await sourceReadText(repo, args);
+  const entries = out
     .split("\0")
     .filter((s) => s.length > 0)
     .map((line) => {
@@ -748,6 +778,12 @@ export async function lsTreeEntriesForPathspecs(
         path: match[4]!,
       };
     });
+  if (key !== undefined)
+    options.memo?.trees.set(
+      key,
+      entries.map((entry) => ({ ...entry })),
+    );
+  return entries;
 }
 
 /**
@@ -760,47 +796,87 @@ export async function lsTreeEntriesForPathspecs(
  * the two disagreeing is what let a lock be written that no later command
  * could satisfy.
  */
+export class GitBlobReadError extends Error {
+  readonly blobId: string;
+
+  constructor(blobId: string, message: string) {
+    super(message);
+    this.blobId = blobId;
+  }
+}
+
 export async function catFileBlobs(
   repo: string,
   blobIds: Iterable<string>,
+  memo?: GitReadMemo,
 ): Promise<Map<string, Buffer>> {
-  const ids = [...new Set(blobIds)];
+  const requestedIds = [...blobIds];
   const out = new Map<string, Buffer>();
+  const ids: string[] = [];
+  for (const id of new Set(requestedIds)) {
+    const key = gitObjectReadKey(repo, id);
+    const cached = key === undefined ? undefined : memo?.blobs.get(key);
+    if (cached === undefined) ids.push(id);
+    else out.set(id, Buffer.from(cached));
+  }
   if (ids.length === 0) return out;
   for (const id of ids) {
     if (!/^[0-9a-f]{40,64}$/.test(id)) {
       throw new Error(`invalid git object name: ${id}`);
     }
   }
-  const stdout = await sourceReadBuffer(repo, ["cat-file", "--batch"], {
-    stdin: `${ids.join("\n")}\n`,
-  });
+  try {
+    const stdout = await sourceReadBuffer(repo, ["cat-file", "--batch"], {
+      stdin: `${ids.join("\n")}\n`,
+    });
 
-  let offset = 0;
-  for (const requested of ids) {
-    const newline = stdout.indexOf(0x0a, offset);
-    if (newline === -1) {
-      throw new Error(`unexpected end of git cat-file output for ${requested}`);
+    let offset = 0;
+    for (const requested of ids) {
+      const newline = stdout.indexOf(0x0a, offset);
+      if (newline === -1) {
+        throw new GitBlobReadError(
+          requested,
+          `unexpected end of git cat-file output for ${requested}`,
+        );
+      }
+      const header = stdout.toString("utf-8", offset, newline);
+      const match = /^([0-9a-f]+) (\S+) (\d+)$/.exec(header);
+      if (!match) {
+        throw new GitBlobReadError(
+          requested,
+          `git cat-file could not read ${requested}: ${header}`,
+        );
+      }
+      if (match[2] !== "blob") {
+        throw new GitBlobReadError(
+          requested,
+          `${requested} is a ${match[2]}, not a blob`,
+        );
+      }
+      const size = Number(match[3]);
+      const start = newline + 1;
+      const end = start + size;
+      if (end > stdout.length) {
+        throw new GitBlobReadError(
+          requested,
+          `truncated git cat-file output for ${requested}`,
+        );
+      }
+      const content = stdout.subarray(start, end);
+      out.set(match[1]!, content);
+      const key = gitObjectReadKey(repo, requested);
+      if (key !== undefined) memo?.blobs.set(key, Buffer.from(content));
+      // Git writes a single LF after each object's contents.
+      offset = end + 1;
     }
-    const header = stdout.toString("utf-8", offset, newline);
-    const match = /^([0-9a-f]+) (\S+) (\d+)$/.exec(header);
-    if (!match) {
-      throw new Error(`git cat-file could not read ${requested}: ${header}`);
+    return out;
+  } finally {
+    const readIds = new Set(ids);
+    for (const id of requestedIds) {
+      if (!readIds.has(id)) continue;
+      recordGitRead("batch-blob", repo, [id], out.has(id), false);
     }
-    if (match[2] !== "blob") {
-      throw new Error(`${requested} is a ${match[2]}, not a blob`);
-    }
-    const size = Number(match[3]);
-    const start = newline + 1;
-    const end = start + size;
-    if (end > stdout.length) {
-      throw new Error(`truncated git cat-file output for ${requested}`);
-    }
-    out.set(match[1]!, stdout.subarray(start, end));
-    // Git writes a single LF after each object's contents.
-    offset = end + 1;
   }
-  return out;
 }
 
 export interface CheckAttrResult {
@@ -835,11 +911,28 @@ export interface CheckAttrResult {
  * subprocess, and it makes the local override structurally unable to
  * participate rather than merely unlikely to.
  */
+export async function repositoryObjectsDirectory(
+  repo: string,
+): Promise<string> {
+  return resolve(
+    repo,
+    (
+      await sourceReadText(repo, [
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-path",
+        "objects",
+      ])
+    ).trim(),
+  );
+}
+
 export async function checkAttrAtCommit(
   repo: string,
   commit: string,
   paths: string[],
   attributes: string[],
+  observeObjectsDir?: () => Promise<string>,
 ): Promise<CheckAttrResult[]> {
   if (paths.length === 0 || attributes.length === 0) return [];
   for (const path of paths) {
@@ -852,17 +945,9 @@ export async function checkAttrAtCommit(
       `checkAttrAtCommit needs a full object name, got ${commit}`,
     );
   }
-  const objectsDir = resolve(
-    repo,
-    (
-      await sourceReadText(repo, [
-        "rev-parse",
-        "--path-format=absolute",
-        "--git-path",
-        "objects",
-      ])
-    ).trim(),
-  );
+  const objectsDir = await (observeObjectsDir
+    ? observeObjectsDir()
+    : repositoryObjectsDirectory(repo));
   const shadow = await mkdtemp(join(tmpdir(), "capshelf-attrs-"));
   try {
     await mkdir(join(shadow, "objects", "info"), { recursive: true });

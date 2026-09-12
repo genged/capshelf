@@ -1,3 +1,4 @@
+import { GitReadMemo } from "./git-read-memo";
 /**
  * The status report as a function: the per-item rows `capshelf status`
  * prints, computed for one project, without the command's option parsing or
@@ -20,7 +21,12 @@ import {
 import { itemOutputTargets, parseLockKey, shaOfInstalled } from "./installed";
 import { findSystemItem, shaOfSystemItem } from "./bundled";
 import type { ItemRef } from "./item-ref";
-import { commitExists, isGitWorkTreeRoot } from "./git";
+import {
+  commitExists,
+  isGitWorkTreeRoot,
+  headSha,
+  repositoryObjectsDirectory,
+} from "./git";
 import { upstreamFactsForItem } from "./upstream-facts";
 import {
   listClaudePlugins,
@@ -66,7 +72,7 @@ import {
   itemTreeEntriesAtCommit,
   type FilteredPath,
 } from "./pin";
-import { captureCommittedItemNeeds } from "./metadata";
+import { loadCommittedItemNeeds } from "./metadata";
 import type { ItemNeeds } from "./metadata";
 import {
   shaOfInstalledSubagent,
@@ -215,6 +221,13 @@ export async function buildStatusReport(
         );
   const externalSkillNames = new Set(external.map((skill) => skill.name));
 
+  const memo = new GitReadMemo();
+  let observedHead: string | undefined;
+  let observedObjectsDir: string | undefined;
+  const observeObjectsDir = async (): Promise<string> => {
+    observedObjectsDir ??= await repositoryObjectsDirectory(dataRepo!);
+    return observedObjectsDir;
+  };
   const rows: StatusRow[] = [];
   const fragmentStates = new Map<string, FragmentContributionState>();
   for (const target of targets) {
@@ -231,7 +244,7 @@ export async function buildStatusReport(
     // the row degrades to missing_source_commit instead of crashing.
     const sourceCommitPresent: boolean | null =
       entry.source === "data" && dataRepo
-        ? await commitExists(dataRepo, entry.sourceCommit)
+        ? await commitExists(dataRepo, entry.sourceCommit, memo)
         : null;
     // Under lock version 4 the installed state is named the way Git
     // names it — a blob id per pinned path plus its mode — so the same
@@ -248,6 +261,7 @@ export async function buildStatusReport(
             kind,
             itemName,
             entry.sourceCommit,
+            memo,
           )
         : null;
     let currentSha: string | null;
@@ -304,22 +318,18 @@ export async function buildStatusReport(
       if (sourceCommitPresent === false) {
         currentSha = entryIdentity(entry);
       } else if (dataRepo) {
-        const stateKey = `${rowScope}/${key}`;
-        if (!fragmentStates.has(stateKey)) {
-          fragmentStates.set(
-            stateKey,
-            await itemFragmentContributionState(
-              project,
-              dataRepo,
-              manifest,
-              lock,
-              kind,
-              itemName,
-              entry,
-            ),
-          );
-        }
-        fragmentOutputState = fragmentStates.get(stateKey)!;
+        fragmentOutputState = await itemFragmentContributionState(
+          project,
+          dataRepo,
+          manifest,
+          lock,
+          kind,
+          itemName,
+          entry,
+          rowScope,
+          fragmentStates,
+          memo,
+        );
         currentSha =
           fragmentOutputState === "ok"
             ? entryIdentity(entry)
@@ -342,6 +352,7 @@ export async function buildStatusReport(
           kind,
           itemName,
           treeIdentity ? "tree" : "worktree",
+          memo,
         );
         upstreamSha = upstream.upstreamSha;
         upstreamDirty = upstream.upstreamDirty;
@@ -352,11 +363,13 @@ export async function buildStatusReport(
             upstream.sourceCommit !== entry.sourceCommit);
         if (upstreamSha !== null || upstreamDirty) {
           try {
+            observedHead ??= await headSha(dataRepo);
             currentNeeds = (
-              await captureCommittedItemNeeds(dataRepo, {
-                kind,
-                name: itemName,
-              })
+              await loadCommittedItemNeeds(
+                dataRepo,
+                { kind, name: itemName },
+                observedHead,
+              )
             ).needs;
           } catch {
             currentNeeds = undefined;
@@ -383,6 +396,8 @@ export async function buildStatusReport(
             kind,
             itemName,
             entry.sourceCommit,
+            observeObjectsDir,
+            memo,
           )
         : [];
     const axes: StatusAxes | undefined =
@@ -454,7 +469,7 @@ export async function buildStatusReport(
         kind,
         itemName,
         entry.sourceCommit,
-        { commitKnownPresent: true },
+        { commitKnownPresent: true, memo },
       );
     }
 
@@ -483,6 +498,7 @@ export async function buildStatusReport(
               dataRepo,
               itemName,
               entry.sourceCommit,
+              memo,
             )
           ).map((detail) => ({
             ...detail,
@@ -583,12 +599,23 @@ async function filteredPathsForEntry(
   kind: ItemKind,
   name: string,
   commit: string,
+  observeObjectsDir: () => Promise<string>,
+  memo: GitReadMemo,
 ): Promise<FilteredPath[]> {
   try {
-    const entries = await itemTreeEntriesAtCommit(dataRepo, kind, name, commit);
-    return await filteredPathsAtCommit(dataRepo, commit, [
-      { kind, name, entries },
-    ]);
+    const entries = await itemTreeEntriesAtCommit(
+      dataRepo,
+      kind,
+      name,
+      commit,
+      memo,
+    );
+    return await filteredPathsAtCommit(
+      dataRepo,
+      commit,
+      [{ kind, name, entries }],
+      observeObjectsDir,
+    );
   } catch {
     return [];
   }
@@ -637,6 +664,9 @@ async function itemFragmentContributionState(
   kind: Extract<ItemKind, "settings" | "mcp" | "codex-config">,
   name: string,
   entry: LockEntry,
+  rowScope: string,
+  states: Map<string, FragmentContributionState>,
+  memo: GitReadMemo,
 ): Promise<FragmentContributionState> {
   if (entry.source !== "data") return "ok";
   const targets = await lockedFragmentTargetsForItem(
@@ -645,16 +675,23 @@ async function itemFragmentContributionState(
     name,
     entry,
     manifest,
+    memo,
   );
   let state: FragmentContributionState = "ok";
   for (const target of targets) {
-    const targetState = await fragmentContributionState(
-      project,
-      dataRepo,
-      manifest,
-      lock,
-      target,
-    );
+    const stateKey = `${rowScope}/${target}`;
+    let targetState = states.get(stateKey);
+    if (targetState === undefined) {
+      targetState = await fragmentContributionState(
+        project,
+        dataRepo,
+        manifest,
+        lock,
+        target,
+        memo,
+      );
+      states.set(stateKey, targetState);
+    }
     if (targetState === "missing") return "missing";
     if (targetState === "drifted") state = "drifted";
   }

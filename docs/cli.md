@@ -1553,6 +1553,29 @@ content sha is unchanged), or push/fetch the clone that has the commit. See
 [`docs/team-workflow.md`](team-workflow.md) for the team loop, the
 propose-upstream recipe, and the CI gate built on this state.
 
+### Unreadable fragment sources
+
+A committed fragment source must be a regular file. An absent optional source
+is valid. An empty directory, unreadable blob, or parse error is refused.
+The error names the canonical source path and commit
+(`src/fragments.ts:300`).
+
+`apply` and `update` refuse an unreadable pinned fragment before writing its
+outputs or project metadata. `status` reports the error instead of a healthy
+fragment row (`tests/fragment-source-read.test.ts:44`).
+Restore the missing Git objects from a healthy data-repo clone, then retry.
+
+### Git read measurements
+
+Set `CAPSHELF_GIT_MEASURE=1` to emit structured Git read records and an exit
+summary to stderr (`src/git-measure.ts:11`). Standard output keeps its normal
+format. Records include repository paths, outcomes, and subprocess counts.
+Only source-read operations include arguments. Batch records include requested blob IDs, without blob contents.
+
+```bash
+CAPSHELF_GIT_MEASURE=1 capshelf status --json > status.json 2> git-reads.jsonl
+```
+
 ### Interrupted initialization
 
 `init` writes `.capshelf/local.json` last, so the file the "already

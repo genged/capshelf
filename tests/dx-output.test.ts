@@ -544,8 +544,14 @@ describe("runtime target coverage", () => {
       ).items["data/mcp/deepwiki"],
     ).toBeUndefined();
 
-    // An *empty* tree has no descendants at all, so `ls-tree -r` emits nothing
-    // for it. Only asking Git the object type catches this shape.
+    // Retaining tree entries also detects an empty canonical directory
+    // (src/fragments.ts:320).
+    const beforeManifest = await readFile(
+      join(project, ".capshelf", "capshelf.json"),
+    );
+    const beforeLock = await readFile(
+      join(project, ".capshelf", "capshelf.lock.json"),
+    );
     const emptyTreeId = (
       await $`git -C ${dataRepo} hash-object -t tree /dev/null`.text()
     ).trim();
@@ -569,6 +575,14 @@ describe("runtime target coverage", () => {
     expect(emptyTree.stderr.toString()).toContain(
       "mcp/github/claude.json is a directory at",
     );
+    expect(await readFile(join(project, ".capshelf", "capshelf.json"))).toEqual(
+      beforeManifest,
+    );
+    expect(
+      await readFile(join(project, ".capshelf", "capshelf.lock.json")),
+    ).toEqual(beforeLock);
+    expect(existsSync(join(project, ".mcp.json"))).toBe(false);
+    expect(existsSync(join(project, ".codex", "config.toml"))).toBe(false);
   });
 
   test("a bundle refuses before installing any member when a pin cannot be read", async () => {
@@ -593,7 +607,7 @@ describe("runtime target coverage", () => {
 
     const added = await run(["add", "bundles/all"]);
     expect(added.exitCode).toBe(3);
-    expect(added.stderr.toString()).toContain(
+    expect(added.stdout.toString() + added.stderr.toString()).toContain(
       "cannot read mcp/github/codex.toml at",
     );
     // The proof runs while the plans are built, so it refuses before the first
@@ -622,18 +636,12 @@ describe("runtime target coverage", () => {
       { force: true },
     );
 
-    const status = await run(["status", "mcp/github"]);
-    expect(status.exitCode).toBe(0);
-    expect(status.stdout.toString()).toContain(
-      "targets: unknown (source tree unreadable)",
+    const status = await run(["status", "mcp/github", "--json"]);
+    expect(status.exitCode).toBe(3);
+    expect(status.stderr.toString()).toContain(
+      "cannot read mcp/github/codex.toml at",
     );
-    const row = JSON.parse(
-      (await run(["status", "mcp/github", "--json"])).stdout.toString(),
-    ).items[0];
-    expect(row.coverageState).toBe("unknown");
-    expect(row.targetCoverage.map((r: { present: null }) => r.present)).toEqual(
-      [null, null],
-    );
+    expect(status.stdout.toString()).not.toContain('"state": "ok"');
   });
 
   test("re-pin guidance is not offered for an unreadable object database", async () => {

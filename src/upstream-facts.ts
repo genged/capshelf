@@ -1,3 +1,4 @@
+import type { GitReadMemo } from "./git-read-memo";
 import { findMasterItemByRef } from "./item-ref";
 import {
   allCanonicalItemRelPaths,
@@ -60,6 +61,7 @@ export async function upstreamFactsForItem(
   kind: ItemKind,
   name: string,
   identity: UpstreamIdentity = "worktree",
+  memo?: GitReadMemo,
 ): Promise<UpstreamFacts> {
   const masterItem = await findMasterItemByRef(dataRepo, { kind, name });
   if (!masterItem) {
@@ -75,7 +77,13 @@ export async function upstreamFactsForItem(
         sourceCommit === null
           ? null
           : sourcePinDigest(
-              await itemTreeEntriesAtCommit(dataRepo, kind, name, sourceCommit),
+              await itemTreeEntriesAtCommit(
+                dataRepo,
+                kind,
+                name,
+                sourceCommit,
+                memo,
+              ),
             ),
       upstreamDirty,
       sourceCommit,

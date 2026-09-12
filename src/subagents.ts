@@ -1,3 +1,4 @@
+import type { GitReadMemo } from "./git-read-memo";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -552,6 +553,7 @@ export async function subagentTargetStatusAtCommit(
   dataRepo: string,
   name: string,
   commit: string,
+  memo?: GitReadMemo,
 ): Promise<SubagentTargetStatus[]> {
   const result: SubagentTargetStatus[] = [];
   for (const source of await subagentSourcesAtCommit(
@@ -565,7 +567,7 @@ export async function subagentTargetStatusAtCommit(
     if (stat?.isFile() && !stat.isSymbolicLink()) {
       const [installed, expected] = await Promise.all([
         readFile(source.outputPath),
-        showAtCommit(dataRepo, commit, source.relPath),
+        showAtCommit(dataRepo, commit, source.relPath, memo),
       ]);
       state = installed.equals(expected) ? "ok" : "drifted";
     } else if (stat !== null) {

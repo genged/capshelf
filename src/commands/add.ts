@@ -60,7 +60,7 @@ import {
 import { targetDir } from "../sync";
 import { findInstallConflict, installedPath, parseLockKey } from "../installed";
 import { isSystemItemName } from "../bundled";
-import { assertPathClean, objectTypeAtCommit, showAtCommit } from "../git";
+import { assertPathClean } from "../git";
 import { findMasterItemByRef, lockKeyForRef, parseItemRef } from "../item-ref";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import {
@@ -84,6 +84,7 @@ import {
   fragmentContributionState,
   fragmentOutputPath,
   fragmentTargetPresenceInPaths,
+  loadFragmentSourcesAtCommit,
   planFragmentOutput,
   presentSources,
 } from "../fragments";
@@ -522,7 +523,13 @@ async function planStandaloneFragmentAdd(
   // The pin's own listing, not a second read of the same commit: this must be
   // the exact target set `installDataItem` writes, or the consent gate covers
   // a different set than the install does.
-  await assertPinnedSourcesReadable(ctx.dataRepo, item, pin);
+  await loadFragmentSourcesAtCommit({
+    dataRepo: ctx.dataRepo,
+    kind: item.kind,
+    name: item.name,
+    commit: pin.sourceCommit,
+    manifest: ctx.manifest,
+  });
   const targets = [
     ...new Set(
       presentSources(
@@ -585,62 +592,6 @@ async function planStandaloneFragmentAdd(
     ]),
     pin,
   };
-}
-
-/**
- * Every canonical source the pin lists must read before anything is planned,
- * consented to, or written.
- *
- * `ls-tree` names a path without opening its blob, and the merge that follows
- * (`fragmentValuesForTarget`) treats a failed `git show` as an absent
- * contribution. An unreadable pinned blob would therefore be planned as
- * nothing and consented to as nothing — and if the object became readable in
- * the window before the write, merged in without ever passing the gate. The
- * commit and the pin digest are identical throughout, so the plan snapshot
- * cannot see that transition; refusing the unreadable object up front can.
- */
-async function assertPinnedSourcesReadable(
-  dataRepo: string,
-  item: MasterItem,
-  pin: PinnedSource,
-): Promise<void> {
-  if (!isFragmentItemKind(item.kind)) return;
-  // A canonical path committed as a *directory* is invisible to exact-path
-  // matching — `ls-tree -r` names it only through its descendants, and an
-  // empty tree has none at all — so the target reads as absent and the install
-  // goes through. `apply` then probes `git show <commit>:<path>`, which
-  // resolves the tree, hands its listing to the JSON or TOML parser, and fails
-  // after the lock was saved. Asking Git the object type answers both shapes
-  // at once, and keeps the failure where the worktree-derived preflight used
-  // to put it: before any state is written.
-  for (const relPath of allCanonicalItemRelPaths(item.kind, item.name)) {
-    if (
-      (await objectTypeAtCommit(dataRepo, pin.sourceCommit, relPath)) === "tree"
-    ) {
-      throw new PreconditionError(
-        `${relPath} is a directory at ${pin.sourceCommit}\n` +
-          "  a canonical source must be a regular file; remove or rename the directory in the data repo and commit",
-      );
-    }
-  }
-  const sources = presentSources(
-    fragmentTargetPresenceInPaths(
-      item.kind,
-      item.name,
-      pin.entries.map((entry) => entry.repoRelPath),
-    ),
-  );
-  for (const source of sources) {
-    try {
-      await showAtCommit(dataRepo, pin.sourceCommit, source.relPath);
-    } catch (cause) {
-      throw new PreconditionError(
-        `cannot read ${source.relPath} at ${pin.sourceCommit}\n` +
-          "  the pin names this source but the data repo cannot produce its content; no changes were written",
-        { cause },
-      );
-    }
-  }
 }
 
 export interface InstallDataItemOptions {
@@ -798,12 +749,16 @@ export async function installDataItem(
       `${item.kind}/${item.name} has no canonical source files at ${pin.sourceCommit}`,
     );
   }
-  // Only when this call produced the pin. A supplied `opts.pin` came from
-  // `planStandaloneFragmentAdd`, which validated it as it built the plan the
-  // user consented to; re-reading the same blobs here proves nothing new and
-  // costs one subprocess per canonical source, per member, on every add.
-  if (opts.pin === undefined) {
-    await assertPinnedSourcesReadable(dataRepo, item, pin);
+  // A supplied pin passed source validation during planning
+  // (src/commands/add.ts:526). Validate pins created here before mutation.
+  if (opts.pin === undefined && isFragmentItemKind(item.kind)) {
+    await loadFragmentSourcesAtCommit({
+      dataRepo,
+      kind: item.kind,
+      name: item.name,
+      commit: pin.sourceCommit,
+      manifest,
+    });
   }
   const dst = isFragmentItemKind(item.kind)
     ? fragmentOutputPath(project, sources[0]!.target)

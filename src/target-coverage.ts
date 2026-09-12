@@ -1,3 +1,4 @@
+import type { GitReadMemo } from "./git-read-memo";
 import { relative } from "node:path";
 import {
   catFileBlobs,
@@ -122,12 +123,12 @@ export async function itemTargetCoverageAtCommit(
    * (`src/commands/status.ts`), and only calls this when the answer was true —
    * so re-probing here is a second identical `git cat-file -e` per row.
    */
-  opts: { commitKnownPresent?: boolean } = {},
+  opts: { commitKnownPresent?: boolean; memo?: GitReadMemo } = {},
 ): Promise<TargetCoverageReport | null> {
   if (!hasTargetCoverage(kind, name)) return null;
   if (
     opts.commitKnownPresent !== true &&
-    !(await commitExists(dataRepo, commit))
+    !(await commitExists(dataRepo, commit, opts.memo))
   ) {
     return unknownTargetCoverage(
       project,
@@ -136,7 +137,13 @@ export async function itemTargetCoverageAtCommit(
       "locked commit unreachable",
     );
   }
-  const paths = await canonicalPathsAtCommit(dataRepo, kind, name, commit);
+  const paths = await canonicalPathsAtCommit(
+    dataRepo,
+    kind,
+    name,
+    commit,
+    opts.memo,
+  );
   if (paths === null) {
     return unknownTargetCoverage(project, kind, name, "source tree unreadable");
   }
@@ -201,12 +208,14 @@ async function canonicalPathsAtCommit(
   kind: ItemKind,
   name: string,
   commit: string,
+  memo?: GitReadMemo,
 ): Promise<Set<string> | null> {
   try {
     const entries = await lsTreeEntriesForPathspecs(
       dataRepo,
       commit,
       allCanonicalItemRelPaths(kind, name).map(literalPathspec),
+      { memo },
     );
     const regular = entries.filter(
       (entry) => entry.mode === "100644" || entry.mode === "100755",
@@ -218,6 +227,7 @@ async function canonicalPathsAtCommit(
     await catFileBlobs(
       dataRepo,
       regular.map((entry) => entry.object),
+      memo,
     );
     return new Set(regular.map((entry) => entry.path));
   } catch {

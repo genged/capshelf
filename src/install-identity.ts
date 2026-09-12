@@ -1,3 +1,4 @@
+import type { GitReadMemo } from "./git-read-memo";
 import { existsSync } from "node:fs";
 import { installedPath, itemOutputTargets } from "./installed";
 import type { LockEntry } from "./lock";
@@ -102,10 +103,11 @@ export async function describeInstallation(
   kind: ItemKind,
   name: string,
   commit: string,
+  memo?: GitReadMemo,
 ): Promise<InstallationReport | null> {
   let entries: PinTreeEntry[];
   try {
-    entries = await itemTreeEntriesAtCommit(dataRepo, kind, name, commit);
+    entries = await itemTreeEntriesAtCommit(dataRepo, kind, name, commit, memo);
   } catch {
     return null;
   }
@@ -148,7 +150,7 @@ export async function describeInstallation(
 
   if (differingPaths.length > 0) {
     const bytes = new Map(
-      (await readEntryBytes(dataRepo, differingPaths)).map((file) => [
+      (await readEntryBytes(dataRepo, differingPaths, memo)).map((file) => [
         file.path,
         file.content,
       ]),

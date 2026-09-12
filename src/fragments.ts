@@ -1,3 +1,4 @@
+import type { GitReadMemo } from "./git-read-memo";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { atomicWriteFile } from "./fs-utils";
@@ -45,12 +46,18 @@ import { PreconditionError } from "./errors";
 import { assertNever } from "./assert";
 import { claudeDir, codexProjectConfigDir } from "./paths";
 import {
+  GitBlobReadError,
+  type GitTreeEntry,
   assertPathClean,
   commitExists,
   lastTouchingCommitForPaths,
-  showAtCommit,
+  literalPathspec,
+  lsTreeEntriesForPathspecs,
 } from "./git";
 import { missingSourceCommitMessage } from "./upstream-check";
+import { readEntryBytes } from "./pin";
+import type { PinnedBytes, PinTreeEntry } from "./pin";
+import { findMasterItemByRef } from "./item-ref";
 
 export type FragmentFormat = "json" | "toml";
 export type FragmentTarget = "claude-settings" | "claude-mcp" | "codex-config";
@@ -277,16 +284,6 @@ export function fragmentTargetPresence(
   }));
 }
 
-/**
- * Presence read from a set of repo-relative paths that some *single* tree
- * listing already produced — `add` passes its pin's entries.
- *
- * This is not the same question as probing each candidate with `git show`.
- * `sourceExistsAtCommit` catches every git failure, which is the right answer
- * for "is this path in the tree" and the wrong one for "did the read work": an
- * unreadable object database would be reported as a missing source. One
- * `ls-tree` raises instead, and cannot observe two repository states.
- */
 export function fragmentTargetPresenceInPaths(
   kind: FragmentItemKind,
   name: string,
@@ -300,23 +297,98 @@ export function fragmentTargetPresenceInPaths(
   }));
 }
 
-async function fragmentTargetPresenceAtCommit(
-  dataRepo: string,
-  kind: FragmentItemKind,
-  name: string,
-  commit: string,
-  manifest?: Manifest,
-): Promise<TargetPresence[]> {
-  await assertSourceCommitExists(dataRepo, commit, manifest);
-  const presence: TargetPresence[] = [];
-  for (const source of fragmentSourceCandidates(kind, name)) {
-    presence.push({
-      source,
-      runtimeTarget: source.sourceTarget ?? null,
-      present: await sourceExistsAtCommit(dataRepo, commit, source.relPath),
+export async function loadFragmentSourcesAtCommit(input: {
+  dataRepo: string;
+  kind: FragmentItemKind;
+  name: string;
+  commit: string;
+  manifest?: Manifest;
+  memo?: GitReadMemo;
+}): Promise<{
+  presence: TargetPresence[];
+  values: Map<string, ConfigObject>;
+  rawByRelPath: Map<string, Buffer>;
+}> {
+  const { dataRepo, kind, name, commit, manifest, memo } = input;
+  await assertSourceCommitExists(dataRepo, commit, manifest, memo);
+  const candidates = fragmentSourceCandidates(kind, name);
+  let tree: GitTreeEntry[];
+  try {
+    tree = await lsTreeEntriesForPathspecs(
+      dataRepo,
+      commit,
+      candidates.map((source) => literalPathspec(source.relPath)),
+      { includeTrees: true, memo },
+    );
+  } catch (cause) {
+    throw new PreconditionError(
+      `cannot enumerate ${candidates.map((source) => source.relPath).join(", ")} at ${commit}`,
+      { cause },
+    );
+  }
+  const entries: PinTreeEntry[] = [];
+  for (const source of candidates) {
+    const entry = tree.find((candidate) => candidate.path === source.relPath);
+    if (!entry) continue;
+    if (entry.type === "tree") {
+      throw new PreconditionError(
+        `${source.relPath} is a directory at ${commit}\n  a canonical source must be a regular file`,
+      );
+    }
+    if (
+      entry.type !== "blob" ||
+      (entry.mode !== "100644" && entry.mode !== "100755")
+    ) {
+      throw new PreconditionError(
+        `${source.relPath} is not a regular file at ${commit} (mode ${entry.mode}, type ${entry.type})`,
+      );
+    }
+    entries.push({
+      path: source.relPath,
+      repoRelPath: source.relPath,
+      mode: entry.mode,
+      blobId: entry.object,
     });
   }
-  return presence;
+  const presence = fragmentTargetPresenceInPaths(
+    kind,
+    name,
+    entries.map((entry) => entry.repoRelPath),
+  );
+  let bytes: PinnedBytes[];
+  try {
+    bytes = await readEntryBytes(dataRepo, entries, memo);
+  } catch (cause) {
+    const failedEntries =
+      cause instanceof GitBlobReadError
+        ? entries.filter((entry) => entry.blobId === cause.blobId)
+        : entries;
+    throw new PreconditionError(
+      failedEntries
+        .map((entry) => `cannot read ${entry.repoRelPath} at ${commit}`)
+        .join("\n"),
+      { cause },
+    );
+  }
+  const rawByRelPath = new Map(
+    bytes.map((entry) => [entry.path, entry.content]),
+  );
+  const values = new Map<string, ConfigObject>();
+  for (const source of presentSources(presence)) {
+    const raw = rawByRelPath.get(source.relPath)!;
+    try {
+      values.set(
+        source.relPath,
+        parseFragmentSourceText(source, raw.toString("utf-8")),
+      );
+    } catch (cause) {
+      throw new PreconditionError(
+        `cannot parse ${source.relPath} at ${commit}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        { cause },
+      );
+    }
+  }
+  return { presence, values, rawByRelPath };
 }
 
 /**
@@ -351,15 +423,19 @@ export async function fragmentSourcesAtCommit(
   name: string,
   commit: string,
   manifest?: Manifest,
+  memo?: GitReadMemo,
 ): Promise<FragmentSource[]> {
   return presentSources(
-    await fragmentTargetPresenceAtCommit(
-      dataRepo,
-      kind,
-      name,
-      commit,
-      manifest,
-    ),
+    (
+      await loadFragmentSourcesAtCommit({
+        dataRepo,
+        kind,
+        name,
+        commit,
+        manifest,
+        memo,
+      })
+    ).presence,
   );
 }
 
@@ -379,34 +455,21 @@ export async function shaOfFragmentItem(
   );
 }
 
-/**
- * Hash a fragment item's canonical sources *as committed at `commit`*,
- * ignoring the worktree entirely. Iterates the static
- * `allCanonicalItemRelPaths` list and treats a failed `git show` as "file
- * absent at that commit" — deliberately not `canonicalItemRelPaths`, which
- * filters by worktree `existsSync` and would silently miss canonical files
- * that exist at the commit but were deleted (dirty-deleted) in the worktree.
- * Matches `shaOfFragmentItem`'s hashing scheme so the results are comparable
- * to locked shas.
- */
 export async function shaOfFragmentItemAtCommit(
   dataRepo: string,
   kind: FragmentItemKind,
   name: string,
   commit: string,
 ): Promise<string> {
-  const present: Array<{ name: string; content: Buffer }> = [];
-  for (const relPath of allCanonicalItemRelPaths(kind, name)) {
-    try {
-      present.push({
-        name: relPath,
-        content: await showAtCommit(dataRepo, commit, relPath),
-      });
-    } catch {
-      // Absent at that commit; participates as absent in the file map.
-    }
-  }
-  return hashNamedContents(present);
+  const { rawByRelPath } = await loadFragmentSourcesAtCommit({
+    dataRepo,
+    kind,
+    name,
+    commit,
+  });
+  return hashNamedContents(
+    [...rawByRelPath].map(([path, content]) => ({ name: path, content })),
+  );
 }
 
 export async function lastTouchingFragmentCommit(
@@ -437,15 +500,17 @@ export async function readFragmentAtCommit(
   source: FragmentSource,
   commit: string,
 ): Promise<ConfigObject> {
-  let raw: Buffer;
-  try {
-    raw = await showAtCommit(dataRepo, commit, source.relPath);
-  } catch {
-    throw new Error(missingSourceCommitMessage(dataRepo, commit, manifest));
-  }
-  const spec = fragmentOutputSpec(source.target);
-  const parsed = spec.parse(raw.toString("utf-8"), source.relPath);
-  return validateFragmentSource(source, parsed);
+  const loaded = await loadFragmentSourcesAtCommit({
+    dataRepo,
+    kind: source.kind,
+    name: source.name,
+    commit,
+    manifest,
+  });
+  const value = loaded.values.get(source.relPath);
+  if (value === undefined)
+    throw new PreconditionError(`${source.relPath} is absent at ${commit}`);
+  return value;
 }
 
 export function parseFragmentSourceText(
@@ -621,11 +686,18 @@ export async function fragmentContributionState(
   manifest: Manifest,
   lock: Lock,
   target: FragmentTarget,
+  memo?: GitReadMemo,
 ): Promise<FragmentContributionState> {
   const spec = fragmentOutputSpec(target);
   const path = spec.outputPath(project);
   const managed = spec.normalizeOutput(
-    await mergeFragmentContributions({ dataRepo, manifest, lock, target }),
+    await mergeFragmentContributions({
+      dataRepo,
+      manifest,
+      lock,
+      target,
+      memo,
+    }),
   );
   if (spec.isSyntheticOnly(managed)) return "ok";
   if (!existsSync(path)) return "missing";
@@ -654,6 +726,7 @@ export async function lockedFragmentTargetsForItem(
   name: string,
   entry: DataLockEntry,
   manifest?: Manifest,
+  memo?: GitReadMemo,
 ): Promise<FragmentTarget[]> {
   const sources = await fragmentSourcesAtCommit(
     dataRepo,
@@ -661,6 +734,7 @@ export async function lockedFragmentTargetsForItem(
     name,
     entry.sourceCommit,
     manifest,
+    memo,
   );
   return uniqueTargets(sources);
 }
@@ -689,12 +763,10 @@ export async function touchedFragmentTargetsForItem(
         manifest,
       )
     : [];
-  try {
+  if (await findMasterItemByRef(dataRepo, { kind, name })) {
     targets.push(
       ...(await currentFragmentTargetsForItem(dataRepo, kind, name)),
     );
-  } catch {
-    // Missing current upstream is handled by the caller for item-level status.
   }
   return [...new Set(targets)];
 }
@@ -775,6 +847,7 @@ async function mergeFragmentContributions(opts: {
   manifest: Manifest;
   lock: Lock;
   target: FragmentTarget;
+  memo?: GitReadMemo;
 }): Promise<ConfigObject> {
   return mergeConfigObjects(
     (await fragmentValuesForTarget(opts)).map((fragment) => fragment.value),
@@ -786,37 +859,24 @@ export async function fragmentValuesForTarget(opts: {
   manifest: Manifest;
   lock: Lock;
   target: FragmentTarget;
+  memo?: GitReadMemo;
 }): Promise<FragmentValue[]> {
   const values: FragmentValue[] = [];
   for (const kind of contributionKindsForTarget(opts.target)) {
     for (const name of manifestNamesForKind(opts.manifest, kind)) {
       const entry = opts.lock.items[dataKey(kind, name)];
       if (entry?.source !== "data" || entry.local === true) continue;
-      await assertSourceCommitExists(
-        opts.dataRepo,
-        entry.sourceCommit,
-        opts.manifest,
-      );
-      for (const source of fragmentSourceCandidates(kind, name)) {
+      const loaded = await loadFragmentSourcesAtCommit({
+        dataRepo: opts.dataRepo,
+        kind,
+        name,
+        commit: entry.sourceCommit,
+        manifest: opts.manifest,
+        memo: opts.memo,
+      });
+      for (const source of presentSources(loaded.presence)) {
         if (source.target !== opts.target) continue;
-        if (
-          !(await sourceExistsAtCommit(
-            opts.dataRepo,
-            entry.sourceCommit,
-            source.relPath,
-          ))
-        ) {
-          continue;
-        }
-        values.push({
-          source,
-          value: await readFragmentAtCommit(
-            opts.dataRepo,
-            opts.manifest,
-            source,
-            entry.sourceCommit,
-          ),
-        });
+        values.push({ source, value: loaded.values.get(source.relPath)! });
       }
     }
   }
@@ -858,25 +918,13 @@ async function assertSourceCommitExists(
   dataRepo: string,
   commit: string,
   manifest?: Manifest,
+  memo?: GitReadMemo,
 ): Promise<void> {
-  if (await commitExists(dataRepo, commit)) return;
+  if (await commitExists(dataRepo, commit, memo)) return;
   if (manifest) {
     throw new Error(missingSourceCommitMessage(dataRepo, commit, manifest));
   }
   throw new Error(`data repo at ${dataRepo} does not contain commit ${commit}`);
-}
-
-async function sourceExistsAtCommit(
-  dataRepo: string,
-  commit: string,
-  relPath: string,
-): Promise<boolean> {
-  try {
-    await showAtCommit(dataRepo, commit, relPath);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function assertNoUnmanagedCollisions(

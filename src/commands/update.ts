@@ -50,6 +50,7 @@ import {
 } from "../master";
 import {
   assertRepoClean,
+  commitExists,
   headSha,
   isAncestor,
   objectTypeAtCommit,
@@ -1222,7 +1223,13 @@ async function updateDataTarget(
       parsed.name,
       entry,
       ctx.manifest,
-    ).catch((cause: unknown) => {
+    ).catch(async (cause: unknown) => {
+      if (await commitExists(ctx.dataRepo!, entry.sourceCommit)) {
+        throw new PreconditionError(
+          `${cause instanceof Error ? cause.message : String(cause)}\n  repair the source or restore its Git objects, then retry`,
+          { cause },
+        );
+      }
       throw new PreconditionError(
         `not updating ${parsed.kind}/${parsed.name} — its locked source commit ${entry.sourceCommit} cannot be resolved, and a fragment's contribution cannot be recovered from the merged output\n` +
           `  ${cause instanceof Error ? cause.message : String(cause)}\n` +

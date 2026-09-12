@@ -1,3 +1,4 @@
+import type { GitReadMemo } from "./git-read-memo";
 import { constants } from "node:fs";
 import { mkdtemp, open, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
@@ -174,12 +175,15 @@ export async function itemTreeEntriesAtCommit(
   kind: ItemKind,
   name: string,
   commit: string,
+  memo?: GitReadMemo,
 ): Promise<PinTreeEntry[]> {
   const itemRoot = itemRepoRelPath(kind, name);
   const pathspecs = isCopyDirectoryItemKind(kind)
     ? [literalPathspec(itemRoot)]
     : allCanonicalItemRelPaths(kind, name).map(literalPathspec);
-  const raw = await lsTreeEntriesForPathspecs(dataRepo, commit, pathspecs);
+  const raw = await lsTreeEntriesForPathspecs(dataRepo, commit, pathspecs, {
+    memo,
+  });
   // Refuses gitlinks and symlinks before they can reach the digest, so a pin
   // can never name something materialization is unable to write.
   assertRegularBlobEntries(raw, itemRoot);
@@ -347,6 +351,7 @@ export async function filteredPathsAtCommit(
   dataRepo: string,
   commit: string,
   subjects: readonly FilterCheckSubject[],
+  observeObjectsDir?: () => Promise<string>,
 ): Promise<FilteredPath[]> {
   const paths: string[] = [];
   const owner = new Map<string, string>();
@@ -357,7 +362,13 @@ export async function filteredPathsAtCommit(
     }
   }
   if (paths.length === 0) return [];
-  const results = await checkAttrAtCommit(dataRepo, commit, paths, ["filter"]);
+  const results = await checkAttrAtCommit(
+    dataRepo,
+    commit,
+    paths,
+    ["filter"],
+    observeObjectsDir,
+  );
   const filtered: FilteredPath[] = [];
   for (const result of results) {
     if (result.attribute !== "filter") continue;
@@ -577,10 +588,12 @@ export async function readPinnedBytes(
 export async function readEntryBytes(
   dataRepo: string,
   entries: readonly PinTreeEntry[],
+  memo?: GitReadMemo,
 ): Promise<PinnedBytes[]> {
   const blobs = await catFileBlobs(
     dataRepo,
     entries.map((entry) => entry.blobId),
+    memo,
   );
   return entries.map((entry) => {
     const content = blobs.get(entry.blobId);
