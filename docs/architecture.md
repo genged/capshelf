@@ -585,6 +585,39 @@ scope (`src/status-report.ts:573`). The fragment target identity separates each
 generated output (`src/status-report.ts:578`). Direct diff calls use a fresh planner
 (`src/status-diff.ts:238`).
 
+Each `apply` invocation owns one immutable Git read memo
+(`src/commands/apply.ts:156`). Ordinary `update` owns one memo in its command
+context (`src/commands/update.ts:271`). Both commands share it across initial
+planning, consent revalidation, and fragment execution
+(`src/commands/apply.ts:159`, `src/commands/apply.ts:225`,
+`src/commands/apply.ts:367`, `src/commands/update.ts:281`,
+`src/commands/update.ts:338`, `src/commands/update.ts:389`).
+Fragment planning shares that memo across old and next contributions
+(`src/fragments.ts:535`, `src/fragments.ts:543`).
+
+Memo keys require a full SHA-1 or SHA-256 object name and include the repository
+(`src/git-read-memo.ts:11`). Tree keys also include flags and pathspecs
+(`src/git.ts:755`). Trees enter the memo after record parsing
+(`src/git.ts:768`). Blobs enter after header, type, and length checks
+(`src/git.ts:833`). Failed reads leave the failed object uncached, so a retry
+reads it again (`src/git.ts:818`, `src/git.ts:868`). A later writer invocation
+creates a fresh memo (`src/commands/apply.ts:156`, `src/commands/update.ts:272`).
+An object removed after a successful read can remain available in that memo
+(`src/git.ts:818`).
+Deletion between commands causes a fresh read and refusal
+(`tests/writer-read-memo.test.ts:151`).
+Callers that omit the optional memo keep independent reads
+(`src/fragments.ts:133`, `src/pin.ts:254`).
+
+The memo stores only immutable Git reads (`src/git-read-memo.ts:4`).
+Planning reads current
+output bytes each time (`src/fragments.ts:530`). Publication checks those bytes
+again before its first write (`src/fragments.ts:606`). Update still resolves
+the selected commit and checks filters outside the memo
+(`src/pin.ts:256`, `src/pin.ts:275`). Its repository cleanliness check remains
+outside the memo (`src/commands/update.ts:233`). Copy publication still verifies
+installed bytes before committing its transaction (`src/materialize.ts:749`).
+
 ### The object model
 
 Git visibility is the line between drift and local state. Every call site that

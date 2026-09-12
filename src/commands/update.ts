@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import { GitReadMemo } from "../git-read-memo";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import {
   assertDestructivePlanUnchanged,
@@ -268,6 +269,7 @@ export function registerUpdate(program: Command): void {
         let fragmentLockChanged = false;
 
         const ctx: UpdateContext = {
+          memo: new GitReadMemo(),
           project,
           manifest,
           dataRepo,
@@ -384,6 +386,7 @@ export function registerUpdate(program: Command): void {
             try {
               plans.push(
                 await planFragmentOutput({
+                  memo: ctx.memo,
                   project,
                   dataRepo,
                   manifest,
@@ -805,6 +808,7 @@ function mergeUpdateProvenanceError(
 }
 
 interface UpdateContext {
+  memo: GitReadMemo;
   project: string;
   manifest: Manifest;
   dataRepo: string | undefined;
@@ -934,6 +938,7 @@ async function planUpdatePreflight(
       try {
         plans.push(
           await planFragmentOutput({
+            memo: ctx.memo,
             project: ctx.project,
             dataRepo: ctx.dataRepo,
             manifest: ctx.manifest,
@@ -974,6 +979,7 @@ async function planUpdatePreflight(
           ctx.manifest,
           projectLock,
           target,
+          ctx.memo,
         ),
       );
       const refs = [...(fragmentItems.get(target) ?? [])].sort();
@@ -1168,7 +1174,9 @@ async function updateDataTarget(
   // version 4 there is no second identity to keep in step: the working tree is
   // not consulted, so a checkout filter or an index bit cannot move the value
   // this records.
-  const pin = await pinCurrentSource(ctx.dataRepo, parsed.kind, parsed.name);
+  const pin = await pinCurrentSource(ctx.dataRepo, parsed.kind, parsed.name, {
+    memo: ctx.memo,
+  });
   const sha = pin.sourcePinDigest;
   const sourceCommit = pin.sourceCommit;
   if (isCopyDirectoryItemKind(parsed.kind)) {
@@ -1223,6 +1231,7 @@ async function updateDataTarget(
       parsed.name,
       entry,
       ctx.manifest,
+      ctx.memo,
     ).catch(async (cause: unknown) => {
       if (await commitExists(ctx.dataRepo!, entry.sourceCommit)) {
         throw new PreconditionError(

@@ -239,6 +239,7 @@ function brandPin(sourceCommit: string, entries: PinTreeEntry[]): PinnedSource {
 export interface PinOptions {
   /** Skip PIN-9. Only the one-time `lock migrate` audit path sets this. */
   skipFilterCheck?: boolean;
+  memo?: GitReadMemo;
 }
 
 /**
@@ -258,7 +259,13 @@ export async function pinItemAtCommit(
       `data repo at ${dataRepo} does not contain commit ${commit}`,
     );
   }
-  const entries = await itemTreeEntriesAtCommit(dataRepo, kind, name, resolved);
+  const entries = await itemTreeEntriesAtCommit(
+    dataRepo,
+    kind,
+    name,
+    resolved,
+    options.memo,
+  );
   if (entries.length === 0) {
     throw new Error(
       `${itemRepoRelPath(kind, name)} has no materializable files at ${commit}`,

@@ -130,6 +130,7 @@ export interface ApplyFragmentOutputOptions {
   nextLock: Lock;
   target: FragmentTarget;
   dryRun?: boolean;
+  memo?: GitReadMemo;
 }
 
 export interface FragmentApplyResult {
@@ -536,6 +537,7 @@ export async function planFragmentOutput(
     manifest: opts.oldManifest ?? opts.manifest,
     lock: opts.oldLock,
     target: opts.target,
+    memo: opts.memo,
   });
   const oldManaged = spec.normalizeOutput(rawOldManaged);
   const nextFragments = await fragmentValuesForTarget({
@@ -543,6 +545,7 @@ export async function planFragmentOutput(
     manifest: opts.nextManifest ?? opts.manifest,
     lock: opts.nextLock,
     target: opts.target,
+    memo: opts.memo,
   });
   const rawNextManaged = mergeConfigObjects(
     nextFragments.map((fragment) => fragment.value),
@@ -753,6 +756,7 @@ export async function touchedFragmentTargetsForItem(
   name: string,
   oldEntry?: DataLockEntry,
   manifest?: Manifest,
+  memo?: GitReadMemo,
 ): Promise<FragmentTarget[]> {
   const targets = oldEntry
     ? await lockedFragmentTargetsForItem(
@@ -761,6 +765,7 @@ export async function touchedFragmentTargetsForItem(
         name,
         oldEntry,
         manifest,
+        memo,
       )
     : [];
   if (await findMasterItemByRef(dataRepo, { kind, name })) {

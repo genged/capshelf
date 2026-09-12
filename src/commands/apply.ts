@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import { GitReadMemo } from "../git-read-memo";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import {
   assertDestructivePlanUnchanged,
@@ -81,6 +82,7 @@ interface ApplyExternalSkip {
 type ApplyResult = MaterializeResult | ApplyError | ApplyExternalSkip;
 
 interface ApplyPreflightInput {
+  memo: GitReadMemo;
   project: string;
   manifest: Manifest;
   projectLock: Lock;
@@ -151,9 +153,11 @@ export function registerApply(program: Command): void {
           ? await resolveProjectDataRepo(project, manifest, cmd)
           : undefined;
 
+        const memo = new GitReadMemo();
         const externalSkills = await listSkillsShSkills(project);
         const externalSkillNames = new Set(externalSkills.map((s) => s.name));
         const preflight = await planApplyPreflight({
+          memo,
           project,
           manifest,
           projectLock,
@@ -219,6 +223,7 @@ export function registerApply(program: Command): void {
           return;
         }
         const revalidated = await planApplyPreflight({
+          memo,
           project,
           manifest,
           projectLock,
@@ -280,6 +285,7 @@ export function registerApply(program: Command): void {
                 parsed.name,
                 entry,
                 manifest,
+                memo,
               )) {
                 fragmentTargets.add(outputTarget);
               }
@@ -359,6 +365,7 @@ export function registerApply(program: Command): void {
         const fragmentResults =
           fragmentTargets.size > 0
             ? await reconcileFragmentTargets({
+                memo,
                 project,
                 dataRepo,
                 manifest,
@@ -406,6 +413,7 @@ export function registerApply(program: Command): void {
  * its `items` array and the command keeps exit 1 (docs/cli.md:253).
  */
 async function reconcileFragmentTargets(input: {
+  memo: GitReadMemo;
   project: string;
   dataRepo: string | undefined;
   manifest: Manifest;
@@ -420,6 +428,7 @@ async function reconcileFragmentTargets(input: {
       if (!input.dataRepo) throw new Error("data repo is required");
       plans.push(
         await planFragmentOutput({
+          memo: input.memo,
           project: input.project,
           dataRepo: input.dataRepo,
           manifest: input.manifest,
@@ -509,6 +518,7 @@ async function planApplyPreflight(
           parsed.name,
           entry,
           input.manifest,
+          input.memo,
         )) {
           fragmentTargets.add(target);
           const items = fragmentItems.get(target) ?? new Set<string>();
@@ -625,6 +635,7 @@ async function planApplyPreflight(
       try {
         fragmentPlans.push(
           await planFragmentOutput({
+            memo: input.memo,
             project: input.project,
             dataRepo: input.dataRepo,
             manifest: input.manifest,
@@ -656,6 +667,7 @@ async function planApplyPreflight(
           input.manifest,
           input.projectLock,
           target,
+          input.memo,
         ),
       );
       const refs = [...(fragmentItems.get(target) ?? [])].sort();
