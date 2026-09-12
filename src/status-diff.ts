@@ -64,6 +64,7 @@ interface StatusDiffOptions {
   lock: Lock;
   row: DiffableStatusRow;
   view?: StatusDiffView;
+  fragmentPlanner?: typeof planFragmentOutput;
 }
 
 interface CopyDirectoryFilesOptions {
@@ -234,7 +235,7 @@ export async function buildStatusDiff(
     const parts: string[] = [];
     let firstPath = "";
     for (const target of targets) {
-      const plan = await planFragmentOutput({
+      const plan = await (opts.fragmentPlanner ?? planFragmentOutput)({
         project: opts.project,
         dataRepo: opts.dataRepo,
         manifest: opts.manifest,

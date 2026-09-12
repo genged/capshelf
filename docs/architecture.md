@@ -578,6 +578,13 @@ only after all target writes succeed. Configuration maps use own data
 properties throughout merge and serialization so valid keys such as
 `__proto__` and `constructor` are not lost or mistaken for inherited values.
 
+One status diff collection reuses each fragment output plan. The collection
+owns the cache, so a later collection reads the project and repository again
+(`src/status-report.ts:563`). Lock object identity separates project and local
+scope (`src/status-report.ts:573`). The fragment target identity separates each
+generated output (`src/status-report.ts:578`). Direct diff calls use a fresh planner
+(`src/status-diff.ts:238`).
+
 ### The object model
 
 Git visibility is the line between drift and local state. Every call site that

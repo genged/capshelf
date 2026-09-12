@@ -2,10 +2,18 @@ import { $, file } from "bun";
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { currentPinDigest } from "./pin-fixtures";
-import { chmod, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdtemp,
+  mkdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { dataKey } from "../src/lock";
+import { dataKey, loadLock } from "../src/lock";
+import { loadManifest } from "../src/manifest";
 import { lastTouchingCommit } from "../src/git";
 import { shaOfGitVisibleItem } from "../src/master";
 import {
@@ -18,6 +26,8 @@ import {
   unifiedDiff,
   unifiedDiffBytes,
 } from "../src/status-diff";
+import { buildStatusReport, collectStatusDiffs } from "../src/status-report";
+import { runInProcess } from "./cli-fixtures";
 
 async function tempRepo(prefix: string): Promise<string> {
   const repo = await mkdtemp(join(tmpdir(), prefix));
@@ -30,6 +40,15 @@ async function tempRepo(prefix: string): Promise<string> {
 async function commitAll(repo: string, message: string): Promise<void> {
   await $`git -C ${repo} add -A`.quiet();
   await $`git -C ${repo} commit -qm ${message}`.quiet();
+}
+
+async function rejectionMessage<T>(run: () => Promise<T>): Promise<string> {
+  try {
+    await run();
+  } catch (cause: unknown) {
+    return cause instanceof Error ? cause.message : String(cause);
+  }
+  throw new Error("expected operation to reject");
 }
 
 describe("status diff helpers", () => {
@@ -567,6 +586,119 @@ describe("status diff helpers", () => {
     expect(diff?.text).toContain("Bash(git status *)");
     expect(diff?.text).toContain("Bash(curl *)");
   });
+
+  test("fragment diff plans stay fresh across direct and collected calls", async () => {
+    const dataRepo = await tempRepo("capshelf-status-fresh-data-");
+    const project = await tempRepo("capshelf-status-fresh-project-");
+    try {
+      const fragment = join(dataRepo, "settings", "base");
+      await mkdir(fragment, { recursive: true });
+      await writeFile(
+        join(fragment, "settings.json"),
+        `${JSON.stringify({ env: { BASE: "value" } })}\n`,
+      );
+      await commitAll(dataRepo, "base settings");
+      const run = runInProcess(project);
+      const init = await run(["init", "--data", dataRepo, "--no-upstream"]);
+      expect(init.exitCode).toBe(0);
+      expect((await run(["add", "settings/base"])).exitCode).toBe(0);
+      const manifest = await loadManifest(project);
+      const lock = await loadLock(project);
+      const entry = lock.items[dataKey("settings", "base")];
+      if (entry?.source !== "data") throw new Error("missing fixture pin");
+      const row = {
+        scope: "project" as const,
+        source: "data" as const,
+        kind: "settings" as const,
+        name: "base",
+        state: "output_drift",
+        sourceCommit: entry.sourceCommit,
+      };
+
+      const diffOptions = { project, dataRepo, manifest, lock, row };
+      expect(await buildStatusDiff(diffOptions)).toBeNull();
+      const reportInput = {
+        project,
+        dataRepo,
+        manifest,
+        projectLock: lock,
+        localLock: { version: 4 as const, items: {} },
+        scope: { project: true },
+      };
+      const cleanReport = await buildStatusReport(reportInput);
+      expect(
+        await collectStatusDiffs({
+          ...reportInput,
+          rows: cleanReport.rows,
+          view: "installed",
+        }),
+      ).toEqual([]);
+
+      const settingsPath = join(project, ".claude", "settings.json");
+      const original = await readFile(settingsPath, "utf-8");
+      const edited = original.replace('"value"', '"RISK-PROBE"');
+      expect(edited).not.toBe(original);
+      await writeFile(settingsPath, edited);
+      expect((await buildStatusDiff(diffOptions))?.text).toContain(
+        "RISK-PROBE",
+      );
+      const driftedReport = await buildStatusReport(reportInput);
+      const collected = await collectStatusDiffs({
+        ...reportInput,
+        rows: driftedReport.rows,
+        view: "installed",
+      });
+      expect(collected.map((diff) => diff.text).join("\n")).toContain(
+        "RISK-PROBE",
+      );
+
+      await writeFile(settingsPath, "{malformed\n");
+      const directMessage = await rejectionMessage(() =>
+        buildStatusDiff(diffOptions),
+      );
+      const collectedMessage = await rejectionMessage(() =>
+        collectStatusDiffs({
+          ...reportInput,
+          rows: driftedReport.rows,
+          view: "installed",
+        }),
+      );
+      expect(collectedMessage).toBe(directMessage);
+      const malformed = await run(["status", "--diff", "--json"]);
+      expect(malformed.exitCode).toBe(1);
+      const malformedError = JSON.parse(malformed.stderr.toString());
+      expect(malformedError.error.exitCode).toBe(1);
+      expect(directMessage).toContain(malformedError.error.message);
+      expect(directMessage).toContain("JSON Parse error");
+
+      await writeFile(settingsPath, edited);
+      await rm(dataRepo, { recursive: true, force: true });
+      await mkdir(dataRepo);
+      await $`git -C ${dataRepo} init -q`.quiet();
+      const missingInput = {
+        ...reportInput,
+        rows: driftedReport.rows,
+        view: "installed" as const,
+      };
+      const missingCollectedMessage = await rejectionMessage(() =>
+        collectStatusDiffs(missingInput),
+      );
+      const missingDirectMessage = await rejectionMessage(() =>
+        buildStatusDiff(diffOptions),
+      );
+      expect(missingCollectedMessage).toBe(missingDirectMessage);
+      expect(missingCollectedMessage).toContain("does not contain commit");
+      const missingSource = await run(["status", "--diff", "--json"]);
+      expect(missingSource.exitCode).toBe(1);
+      const missingError = JSON.parse(missingSource.stderr.toString());
+      expect(missingError.error.exitCode).toBe(1);
+      expect(missingError.error.message).toContain("does not contain commit");
+      expect(missingError.error.message).toContain("capshelf.lock.json");
+    } finally {
+      await rm(project, { recursive: true, force: true });
+      await rm(dataRepo, { recursive: true, force: true });
+    }
+  }, 30000);
 
   test("buildStatusDiff does not raw-walk copy items without locked files", async () => {
     const project = await mkdtemp(join(tmpdir(), "capshelf-status-no-lock-"));

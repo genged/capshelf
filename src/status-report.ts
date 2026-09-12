@@ -54,7 +54,10 @@ import type { RuntimeWarning } from "./runtime-warnings";
 import {
   fragmentContributionState,
   lockedFragmentTargetsForItem,
+  planFragmentOutput,
   type FragmentContributionState,
+  type FragmentOutputPlan,
+  type FragmentTarget,
 } from "./fragments";
 import {
   deriveNeedsState,
@@ -562,6 +565,22 @@ export async function collectStatusDiffs(
 ): Promise<StatusDiff[]> {
   const diffs: StatusDiff[] = [];
   const seenPaths = new Set<string>();
+  const fragmentPlans = new Map<
+    Lock,
+    Map<FragmentTarget, FragmentOutputPlan>
+  >();
+  const fragmentPlanner: typeof planFragmentOutput = async (opts) => {
+    let plansByTarget = fragmentPlans.get(opts.oldLock);
+    if (plansByTarget === undefined) {
+      plansByTarget = new Map();
+      fragmentPlans.set(opts.oldLock, plansByTarget);
+    }
+    const cached = plansByTarget.get(opts.target);
+    if (cached !== undefined) return cached;
+    const plan = await planFragmentOutput(opts);
+    plansByTarget.set(opts.target, plan);
+    return plan;
+  };
   for (const row of input.rows) {
     const rowLock = row.scope === "local" ? input.localLock : input.projectLock;
     const views =
@@ -576,6 +595,7 @@ export async function collectStatusDiffs(
         lock: rowLock,
         row,
         view,
+        fragmentPlanner,
       });
       const identity = diff
         ? `${row.scope}:${diff.item}:${diff.path}:${diff.view}`
