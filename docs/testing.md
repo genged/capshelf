@@ -26,6 +26,36 @@ from terminal input (`exec < /dev/null`) and passes `--yes` for consent.
 Smoke therefore proves non-interactive behavior only. Terminal behavior
 belongs to the E2E pseudo-terminal cells.
 
+## Read reuse regression coverage
+
+These integration tests pair read counts with output and failure assertions:
+
+- Status reports merge each shared fragment output once and retain
+  each item's target set (`tests/status-read-amplification.test.ts:144`, `:290`).
+  Repeated reports observe output deletion and changed requirements
+  (`tests/status-read-amplification.test.ts:144`, `:175`).
+  Injected HEAD and object-directory failures check retry behavior
+  (`tests/status-read-amplification.test.ts:175`, `:223`).
+- Diff collections reuse output plans and compare complete results with
+  independent direct calls (`tests/status-read-amplification.test.ts:322`,
+  `:426`, `:495`). Cases vary lock content, scope, project, repository, and
+  dirty shared-output sources. Direct and collected calls also detect later
+  output edits, malformed JSON, and missing commits
+  (`tests/status-diff.test.ts:590`).
+- Writer tests count successful immutable Git requests for `apply`, `update`,
+  and standalone, bundle, and interactive fragment adds
+  (`tests/writer-read-memo.test.ts:87`, `:422`). Repeated commands check fresh
+  reads, unchanged bytes, and `already-current` results
+  (`tests/writer-read-memo.test.ts:87`). Removing a blob between invocations
+  must cause refusal, including calls that reuse an exported install context
+  (`tests/writer-read-memo.test.ts:157`, `:495`).
+- Writer fault injection checks edits during confirmation, changed HEAD,
+  damaged copy publication, and rollback after a second fragment write fails
+  (`tests/writer-read-memo.test.ts:198`, `:239`, `:300`, `:369`).
+
+Use these tests to check reuse boundaries. For manual investigation, use the
+[Git read diagnostics](cli.md#git-read-measurements).
+
 ## The end-to-end layer
 
 Every E2E test starts the compiled executable named by `CAPSHELF_E2E_BIN` as a

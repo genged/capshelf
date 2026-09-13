@@ -578,6 +578,14 @@ only after all target writes succeed. Configuration maps use own data
 properties throughout merge and serialization so valid keys such as
 `__proto__` and `constructor` are not lost or mistaken for inherited values.
 
+Each status report owns its Git memo and repository observations
+(`src/status-report.ts:227`). It retains successful HEAD and object-directory
+observations within that report (`src/status-report.ts:231`, `:369`). A failed
+observation leaves its slot empty, so later rows retry those reads.
+The report also shares fragment contribution state by scope and output target
+(`src/status-report.ts:235`, `:702`). Report rows remain sequential
+(`src/status-report.ts:236`).
+
 One status diff collection reuses each fragment output plan. The collection
 owns the cache, so a later collection reads the project and repository again
 (`src/status-report.ts:563`). Lock object identity separates project and local
