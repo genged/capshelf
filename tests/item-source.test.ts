@@ -16,7 +16,12 @@ import { expect, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { itemTreeEntriesAtCommit, sourcePinDigest } from "../src/pin";
-import { contentSourceFor, gitTreeSource } from "../src/item-source";
+import {
+  contentSourceFor,
+  gitTreeSource,
+  ownershipFor,
+} from "../src/item-source";
+import type { LockEntry } from "../src/lock";
 import { commitAll, tempRepo } from "./cli-fixtures";
 
 test("R1: a data item pins at its canonical repository path", async () => {
@@ -106,4 +111,28 @@ test("R2: a data entry without a repository is a programmer error", () => {
       name: "review",
     }),
   ).toThrow(/repository/i);
+});
+
+/**
+ * The other axis, which the same two entries answer differently. Ownership is
+ * derived from the record alone: it needs no repository, no commit, and no
+ * field the lock does not already carry.
+ */
+test("ownership is derived from the record, not from the content", () => {
+  const shelfEntry: LockEntry = {
+    source: "data",
+    sourcePinDigest: "a".repeat(64),
+    sourceCommit: "b".repeat(40),
+    needs: null,
+    needsSourceCommit: null,
+    appliedAt: "2026-09-14T00:00:00.000Z",
+  };
+  const systemEntry: LockEntry = {
+    source: "system",
+    sha: "bb98bfd98e63",
+    cliVersion: "0.12.0",
+    appliedAt: "2026-09-14T00:00:00.000Z",
+  };
+  expect(ownershipFor(shelfEntry)).toBe("shelf");
+  expect(ownershipFor(systemEntry)).toBe("system");
 });
