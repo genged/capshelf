@@ -220,4 +220,49 @@ describe("standalone add convergence", () => {
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );
+
+  test(
+    "a non-kind two-segment ref is a refused precondition, not a generic error",
+    async () => {
+      const project = await tempRepo("capshelf-add-shorthand-project-");
+      const dataRepo = await tempRepo("capshelf-add-shorthand-data-");
+      const run = runInProcess(project);
+      await addSkill(dataRepo, "hello", "hello\n");
+      await commitAll(dataRepo, "hello");
+      expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+      const lockPath = join(project, ".capshelf", "capshelf.lock.json");
+      const lockBefore = await file(lockPath).text();
+
+      const result = await run(["add", "vercel-labs/agent-skills"]);
+      expect(result.exitCode).toBe(3);
+      const stderr = result.stderr.toString();
+      expect(stderr).toContain('"vercel-labs" is not an item kind');
+      expect(stderr).toContain("owner/repo shorthand is ambiguous");
+      expect(stderr).toContain("capshelf add skills/agent-skills");
+      // The hint must not promise a command that does not exist yet.
+      expect(stderr).not.toContain("https://github.com");
+
+      // A refusal leaves owned state byte identical.
+      expect(await file(lockPath).text()).toBe(lockBefore);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "a valid kind/name ref still reaches the parser and the data repo",
+    async () => {
+      const project = await tempRepo("capshelf-add-kindref-project-");
+      const dataRepo = await tempRepo("capshelf-add-kindref-data-");
+      const run = runInProcess(project);
+      await addSkill(dataRepo, "hello", "hello\n");
+      await commitAll(dataRepo, "hello");
+      expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+
+      // Exit 2, not 3: the kind parses and the item is simply absent.
+      const missing = await run(["add", "skills/absent"]);
+      expect(missing.exitCode).toBe(2);
+      expect((await run(["add", "skills/hello"])).exitCode).toBe(0);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
 });

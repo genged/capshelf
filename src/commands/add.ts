@@ -36,10 +36,12 @@ import {
 import type { PinnedSource } from "../pin";
 import { materializeLockEntry } from "../materialize";
 import {
+  ITEM_KINDS,
   allCanonicalItemRelPaths,
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
   isFragmentItemKind,
+  isItemKind,
   listMasterItems,
 } from "../master";
 import type { MasterItem } from "../master";
@@ -240,6 +242,9 @@ async function addOne(
     await addBundle(bundleName, opts, cmd);
     return;
   }
+
+  const shorthand = nonKindRefRefusal(itemRef);
+  if (shorthand) throw shorthand;
 
   const ref = parseItemRef(itemRef);
   if (opts.target) {
@@ -1237,6 +1242,34 @@ export async function runInteractiveAdd(request: {
 
   printInteractiveSummary({ added, alreadyInstalled, failed }, ctx.local);
   return { outcome: "installed", added, alreadyInstalled, failed };
+}
+
+/**
+ * `<something>/<name>` where the something is not a kind, refused here instead
+ * of by the ref parser.
+ *
+ * `owner/repo` is shaped exactly like `kind/name`, and nothing in the text
+ * tells a GitHub shorthand apart from a mistyped kind. One refusal serves both
+ * readers: the kind list answers the typo, and the shorthand line answers the
+ * other. `add` already refuses a bad argument with exit 3 rather than the
+ * parser's generic exit 1 (see the `--target` and `--json` refusals above), so
+ * this is that same class and not a new precedent. The other verbs keep the
+ * parser's exit 1, because they have no alternative form to point at.
+ */
+function nonKindRefRefusal(itemRef: string): PreconditionError | null {
+  const parts = itemRef.trim().split("/");
+  if (parts.length !== 2) return null;
+  const [kind, name] = parts;
+  if (!kind || !name || isItemKind(kind)) return null;
+  return new PreconditionError(
+    `"${kind}" is not an item kind (supported: ${ITEM_KINDS.join(", ")})`,
+    {
+      hint:
+        "owner/repo shorthand is ambiguous with kind/name here\n" +
+        `  name a shelf item instead: capshelf add skills/${name}\n` +
+        "  or run capshelf ls to see the shelf",
+    },
+  );
 }
 
 /** The refusal both entry points into `installDataItem` print for a system name. */
