@@ -16,20 +16,26 @@ import { expect, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { itemTreeEntriesAtCommit, sourcePinDigest } from "../src/pin";
+import { contentSourceFor, gitTreeSource } from "../src/item-source";
 import { commitAll, tempRepo } from "./cli-fixtures";
 
 test("R1: a data item pins at its canonical repository path", async () => {
   const repo = await tempRepo("capshelf-source-r1-");
   await mkdir(join(repo, "skills", "review"), { recursive: true });
   await writeFile(join(repo, "skills", "review", "SKILL.md"), "canonical\n");
-  await mkdir(join(repo, "skills", "review", "references"), { recursive: true });
+  await mkdir(join(repo, "skills", "review", "references"), {
+    recursive: true,
+  });
   await writeFile(
     join(repo, "skills", "review", "references", "notes.md"),
     "notes\n",
   );
   await commitAll(repo, "one item");
 
-  const entries = await itemTreeEntriesAtCommit(repo, "skills", "review", "HEAD");
+  const entries = await itemTreeEntriesAtCommit(
+    gitTreeSource({ repo, kind: "skills", name: "review", commit: "HEAD" }),
+    "skills",
+  );
 
   // Repository-relative paths name the canonical layout.
   expect(entries.map((entry) => entry.repoRelPath)).toEqual([
@@ -54,22 +60,20 @@ test("R1: a pi-extension pins at its own canonical path, not under skills", asyn
   await commitAll(repo, "one extension");
 
   const entries = await itemTreeEntriesAtCommit(
-    repo,
+    gitTreeSource({
+      repo,
+      kind: "pi-extensions",
+      name: "linter",
+      commit: "HEAD",
+    }),
     "pi-extensions",
-    "linter",
-    "HEAD",
   );
   expect(entries.map((entry) => entry.repoRelPath)).toEqual([
     "pi/extensions/linter/index.ts",
   ]);
 });
 
-test("R2: a system entry needs no repository to resolve its content", async () => {
-  // Replace this dynamic import with a top-level one in Phase 1. The module
-  // does not exist at Phase 0, which is this test's recorded RED, and this
-  // repository forbids inline imports in shipped code.
-  const { contentSourceFor } = await import("../src/item-source");
-
+test("R2: a system entry needs no repository to resolve its content", () => {
   const source = contentSourceFor({
     entry: {
       source: "system",
@@ -87,9 +91,7 @@ test("R2: a system entry needs no repository to resolve its content", async () =
   // was caught at runtime rather than being unrepresentable.
 });
 
-test("R2: a data entry without a repository is a programmer error", async () => {
-  const { contentSourceFor } = await import("../src/item-source");
-
+test("R2: a data entry without a repository is a programmer error", () => {
   expect(() =>
     contentSourceFor({
       entry: {

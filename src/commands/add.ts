@@ -61,6 +61,7 @@ import {
 } from "../errors";
 import { targetDir } from "../sync";
 import { findInstallConflict, installedPath, parseLockKey } from "../installed";
+import { contentSourceFor } from "../item-source";
 import { isSystemItemName } from "../bundled";
 import { assertPathClean } from "../git";
 import { GitReadMemo } from "../git-read-memo";
@@ -847,12 +848,18 @@ export async function installDataItem(
     // does, instead of copying the data repo working tree. The asymmetry that
     // made the original bug invisible from inside a project is gone: both
     // routes now read the same objects, so they cannot disagree.
+    const entry = writableLock.items[key]!;
     await materializeLockEntry({
       project,
-      dataRepo,
+      source: contentSourceFor({
+        entry,
+        kind: item.kind,
+        name: item.name,
+        repo: dataRepo,
+      }),
       manifest,
       key,
-      entry: writableLock.items[key]!,
+      entry,
       scope: ctx.local ? "local" : "project",
     });
   } else if (item.kind === "subagents") {

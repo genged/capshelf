@@ -20,13 +20,14 @@ import {
   installedPath,
 } from "./installed";
 import type { ItemSource } from "./installed";
+import { isGitTree, sameContentSource } from "./item-source";
+import type { ContentSource, GitTreeSource } from "./item-source";
 import type { ItemKind, CopyDirectoryItemKind } from "./master";
 import {
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
   isFragmentItemKind,
   isMetadataSidecarPath,
-  itemRepoRelPath,
 } from "./master";
 import { hashNamedContents } from "./content-hash";
 import type { Scope } from "./promote-core";
@@ -86,15 +87,25 @@ export interface MaterializeHooks {
   afterPublish?: () => Promise<void>;
 }
 
+/**
+ * A lock entry and the content source its bytes are read through. The two
+ * travel together so a caller cannot hand one function an entry and another
+ * entry's source.
+ */
+export interface SourcedEntry {
+  entry: LockEntry;
+  source: ContentSource;
+}
+
 export interface MaterializeOptions {
   project: string;
-  dataRepo?: string;
+  source: ContentSource;
   manifest?: Manifest;
   key: string;
   entry: LockEntry;
   /** Previous lock snapshot used to distinguish stale managed paths from
    * ignored local-only files while replacing a directory. */
-  previousEntry?: LockEntry;
+  previous?: SourcedEntry;
   /**
    * Lock scope the entry came from — not inferable from `entry.local`, which
    * records intentional divergence. Local-scope installs are Git-excluded, so
@@ -130,7 +141,7 @@ export interface CopyDirectoryReconciliationFiles {
 export async function materializeLockEntry(
   opts: MaterializeOptions,
 ): Promise<MaterializeResult> {
-  const { source, kind, name } = parseLockKey(opts.key);
+  const { source: keySource, kind, name } = parseLockKey(opts.key);
   if (isFragmentItemKind(kind)) {
     throw new Error(
       `${kind}/${name} is a fragment item and must be reconciled through fragment outputs`,
@@ -146,11 +157,16 @@ export async function materializeLockEntry(
   }
   const dst = installedPath(opts.project, kind, name);
 
-  if (opts.entry.source !== source) {
+  if (opts.entry.source !== keySource) {
     throw new Error(
       `lock key ${opts.key} source does not match entry source ${opts.entry.source}`,
     );
   }
+
+  const previous: SourcedEntry = opts.previous ?? {
+    entry: opts.entry,
+    source: opts.source,
+  };
 
   if (
     opts.entry.source === "data" &&
@@ -159,7 +175,7 @@ export async function materializeLockEntry(
   ) {
     return {
       key: opts.key,
-      source,
+      source: keySource,
       kind,
       name,
       action: "kept-local",
@@ -167,12 +183,11 @@ export async function materializeLockEntry(
       sha: await installedIdentityForEntry(
         dst,
         opts.entry,
-        await itemContentForEntry(
-          opts.dataRepo,
-          opts.manifest,
+        await itemContentForSource(
+          opts.source,
           kind,
           name,
-          opts.entry,
+          opts.manifest,
         ).catch(() => null),
       ),
       message: opts.entry.localReason,
@@ -180,24 +195,8 @@ export async function materializeLockEntry(
     };
   }
 
-  let dataBeforeMatches = false;
-  let reconciliationFiles: CopyDirectoryReconciliationFiles;
-  if (opts.entry.source === "data") {
-    if (!opts.dataRepo) {
-      throw new Error(`data repo is required to apply ${kind}/${name}`);
-    }
+  if (isGitTree(opts.source)) {
     assertCanMaterializeInstalled(opts.project, kind, name);
-    reconciliationFiles = await copyDirectoryReconciliationFiles({
-      project: opts.project,
-      dataRepo: opts.dataRepo,
-      manifest: opts.manifest,
-      kind,
-      name,
-      entry: opts.entry,
-      previousEntry: opts.previousEntry ?? opts.entry,
-      scope: opts.scope,
-      hooks: opts.hooks,
-    });
   } else {
     const item = findSystemItem(name);
     if (!item || item.kind !== kind) {
@@ -209,21 +208,23 @@ export async function materializeLockEntry(
     // content is unrecoverable by design, so this cannot be repaired by
     // retrying — say what the state is and name the command that re-pins it.
     const sourceSha = await shaOfSystemItem(item);
-    if (sourceSha !== opts.entry.sha) {
+    if (sourceSha !== opts.source.sha) {
       throw new Error(
-        `bundled ${kind}/${name} in this ${PRODUCT_NAME} binary hashes to ${sourceSha}, but lock expects ${opts.entry.sha}; superseded bundled content is not recoverable — run \`${PRODUCT_NAME} update ${kind}/${name}\` to re-pin the item to the bundled content this binary carries`,
+        `bundled ${kind}/${name} in this ${PRODUCT_NAME} binary hashes to ${sourceSha}, but lock expects ${opts.source.sha}; superseded bundled content is not recoverable — run \`${PRODUCT_NAME} update ${kind}/${name}\` to re-pin the item to the bundled content this binary carries`,
       );
     }
-    reconciliationFiles = await copyDirectoryReconciliationFiles({
-      project: opts.project,
-      kind,
-      name,
-      entry: opts.entry,
-      previousEntry: opts.previousEntry ?? opts.entry,
-      scope: opts.scope,
-      hooks: opts.hooks,
-    });
   }
+  const reconciliationFiles = await copyDirectoryReconciliationFiles({
+    project: opts.project,
+    source: opts.source,
+    manifest: opts.manifest,
+    kind,
+    name,
+    entry: opts.entry,
+    previous,
+    scope: opts.scope,
+    hooks: opts.hooks,
+  });
 
   // PIN-5: the installed identity is filesystem work over the *managed* path
   // set. It used to route through project Git, which meant an edit to the
@@ -235,24 +236,22 @@ export async function materializeLockEntry(
   // there is one. Naming it in the incoming entry's model instead would make
   // an untouched install look drifted for the ordinary reason that the
   // upstream content changed.
-  const basisEntry = opts.previousEntry ?? opts.entry;
   const before = await installedIdentityForEntry(
     dst,
-    basisEntry,
-    basisEntry === opts.entry
+    previous.entry,
+    previous.entry === opts.entry
       ? {
           entries: reconciliationFiles.entries,
           files: reconciliationFiles.expected,
         }
-      : await itemContentForEntry(
-          opts.dataRepo,
-          opts.manifest,
+      : await itemContentForSource(
+          previous.source,
           kind,
           name,
-          basisEntry,
+          opts.manifest,
         ).catch(() => null),
   );
-  dataBeforeMatches = await installedFilesMatch(
+  const dataBeforeMatches = await installedFilesMatch(
     dst,
     reconciliationFiles.expected,
     reconciliationFiles.preserved,
@@ -281,7 +280,7 @@ export async function materializeLockEntry(
   const changed = !dataBeforeMatches;
   return {
     key: opts.key,
-    source,
+    source: keySource,
     kind,
     name,
     action: opts.dryRun
@@ -381,21 +380,20 @@ async function installedIdentityForEntry(
 
 export async function copyDirectoryReconciliationFiles(opts: {
   project: string;
-  dataRepo?: string;
+  source: ContentSource;
   manifest?: Manifest;
   kind: CopyDirectoryItemKind;
   name: string;
   entry: LockEntry;
-  previousEntry: LockEntry;
+  previous: SourcedEntry;
   scope: Scope;
   hooks?: MaterializeHooks;
 }): Promise<CopyDirectoryReconciliationFiles> {
-  const content = await itemContentForEntry(
-    opts.dataRepo,
-    opts.manifest,
+  const content = await itemContentForSource(
+    opts.source,
     opts.kind,
     opts.name,
-    opts.entry,
+    opts.manifest,
     opts.hooks,
   );
   const expected = content.files;
@@ -409,7 +407,11 @@ export async function copyDirectoryReconciliationFiles(opts: {
   // before any write, and `planCopyDirectoryDestruction` must be able to plan
   // against a superseded entry without it. `sameSourceContent` below states the
   // same assumption for the previous-entry read.
-  if (opts.entry.source === "data" && opts.dataRepo) {
+  //
+  // Two halves, deliberately: the source says a retrieval happened, and the
+  // entry says which recorded identity to check it against. A bundled source
+  // retrieves nothing, and a system entry records no source identity.
+  if (isGitTree(opts.source) && opts.entry.source === "data") {
     // The entries were read by the call above and cached with the bytes, so
     // verification adds no subprocess: version 4 digests what is already in
     // hand, and version 3 hashes the bytes it already holds.
@@ -439,14 +441,13 @@ export async function copyDirectoryReconciliationFiles(opts: {
   // trying to replace it. The consequence is that a stale managed path the
   // project ignores is preserved instead of deleted, which is the safe
   // direction, and every Git-visible one still reaches the consent boundary.
-  const previous = sameSourceContent(opts.entry, opts.previousEntry)
+  const previous = sameContentSource(opts.source, opts.previous.source)
     ? expected
-    : await itemContentForEntry(
-        opts.dataRepo,
-        opts.manifest,
+    : await itemContentForSource(
+        opts.previous.source,
         opts.kind,
         opts.name,
-        opts.previousEntry,
+        opts.manifest,
       ).then(
         (content) => content.files,
         () => [],
@@ -555,35 +556,14 @@ export async function assertNoPreservedPathCollisions(opts: {
  * the data repo is gone or the source commit was garbage-collected.
  */
 export async function lockedCopyDirectoryFiles(opts: {
-  dataRepo?: string;
+  source: ContentSource;
   manifest?: Manifest;
   kind: CopyDirectoryItemKind;
   name: string;
-  entry: LockEntry;
 }): Promise<NamedFile[]> {
   return (
-    await itemContentForEntry(
-      opts.dataRepo,
-      opts.manifest,
-      opts.kind,
-      opts.name,
-      opts.entry,
-    )
+    await itemContentForSource(opts.source, opts.kind, opts.name, opts.manifest)
   ).files;
-}
-
-/**
- * True when two lock entries resolve to the same source tree. Data entries are
- * identified by their source commit; system entries always resolve to the
- * current bundle, so the entry itself carries no selection.
- */
-function sameSourceContent(entry: LockEntry, previous: LockEntry): boolean {
-  if (entry === previous) return true;
-  if (entry.source !== previous.source) return false;
-  if (entry.source === "data" && previous.source === "data") {
-    return entry.sourceCommit === previous.sourceCommit;
-  }
-  return true;
 }
 
 /**
@@ -602,16 +582,14 @@ function sameSourceContent(entry: LockEntry, previous: LockEntry): boolean {
 const atCommitFiles = new Map<string, CommitItemContent>();
 
 async function _readDataFilesAtCommit(
-  dataRepo: string,
-  manifest: Manifest | undefined,
+  source: GitTreeSource,
   kind: CopyDirectoryItemKind,
   name: string,
-  commit: string,
+  manifest?: Manifest,
   hooks?: MaterializeHooks,
 ): Promise<NamedFile[]> {
-  return (
-    await readItemContentAtCommit(dataRepo, manifest, kind, name, commit, hooks)
-  ).files;
+  return (await readItemContentAtCommit(source, kind, name, manifest, hooks))
+    .files;
 }
 
 interface CommitItemContent {
@@ -628,15 +606,15 @@ interface CommitItemContent {
  * construction rather than by agreement.
  */
 async function readItemContentAtCommit(
-  dataRepo: string,
-  manifest: Manifest | undefined,
+  source: GitTreeSource,
   kind: CopyDirectoryItemKind,
   name: string,
-  commit: string,
+  manifest?: Manifest,
   hooks?: MaterializeHooks,
 ): Promise<CommitItemContent> {
-  const repoRelPath = itemRepoRelPath(kind, name);
-  const cacheKey = `${dataRepo}\0${commit}\0${repoRelPath}`;
+  // The item root is part of the key, so a read at a root other than the
+  // canonical one cannot collide with a canonical read of the same commit.
+  const cacheKey = `${source.repo}\0${source.commit}\0${source.itemRoot}`;
   const cached = atCommitFiles.get(cacheKey);
   if (cached) {
     // Hooks still fire on a cache hit: they are how the transaction tests
@@ -653,26 +631,28 @@ async function readItemContentAtCommit(
 
   let entries: PinTreeEntry[];
   try {
-    entries = await itemTreeEntriesAtCommit(dataRepo, kind, name, commit);
+    entries = await itemTreeEntriesAtCommit(source, kind);
   } catch (error) {
     if (error instanceof PreconditionError) throw error;
-    throwMissingCommit(dataRepo, manifest, commit, { kind, name });
+    throwMissingCommit(source.repo, manifest, source.commit, { kind, name });
   }
   if (entries.length === 0) {
-    throw new Error(`${repoRelPath} has no materializable files at ${commit}`);
+    throw new Error(
+      `${source.itemRoot} has no materializable files at ${source.commit}`,
+    );
   }
   for (const [index, entry] of entries.entries()) {
     await hooks?.beforeSourceRead?.(entry.repoRelPath, index);
   }
   let files: NamedFile[];
   try {
-    files = (await readEntryBytes(dataRepo, entries)).map((file) => ({
+    files = (await readEntryBytes(source.repo, entries)).map((file) => ({
       path: file.path,
       content: file.content,
       mode: file.mode,
     }));
   } catch {
-    throwMissingCommit(dataRepo, manifest, commit, { kind, name });
+    throwMissingCommit(source.repo, manifest, source.commit, { kind, name });
   }
   const content: CommitItemContent = { entries, files };
   atCommitFiles.set(cacheKey, content);
@@ -760,25 +740,20 @@ async function materializeCopyDirectory(
   }
 }
 
-async function itemContentForEntry(
-  dataRepo: string | undefined,
-  manifest: Manifest | undefined,
+/**
+ * The managed files a content source selects. The repository, the commit, and
+ * the root are inside the source, so an ambient `dataRepo` argument can no
+ * longer disagree with the entry that named it.
+ */
+async function itemContentForSource(
+  source: ContentSource,
   kind: CopyDirectoryItemKind,
   name: string,
-  entry: LockEntry,
+  manifest?: Manifest,
   hooks?: MaterializeHooks,
 ): Promise<CommitItemContent> {
-  if (entry.source === "data") {
-    if (!dataRepo)
-      throw new Error(`data repo is required to apply ${kind}/${name}`);
-    return await readItemContentAtCommit(
-      dataRepo,
-      manifest,
-      kind,
-      name,
-      entry.sourceCommit,
-      hooks,
-    );
+  if (isGitTree(source)) {
+    return await readItemContentAtCommit(source, kind, name, manifest, hooks);
   }
   const item = findSystemItem(name);
   if (!item || item.kind !== kind) {

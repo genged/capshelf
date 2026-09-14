@@ -11,7 +11,9 @@ import { gitInfoExcludePath, headSha } from "../src/git";
 import { ManifestSchema } from "../src/manifest";
 import { shaOfGitVisibleItem } from "../src/master";
 import { materializeLockEntry } from "../src/materialize";
+import { contentSourceFor } from "../src/item-source";
 import { dataKey } from "../src/lock";
+import type { LockEntry } from "../src/lock";
 import {
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
   addSkill,
@@ -72,17 +74,23 @@ describe("trust boundaries", () => {
     await mkdir(installed, { recursive: true });
     await writeFile(join(installed, "SKILL.md"), "original install\n");
 
+    const entry: LockEntry = {
+      source: "data",
+      sourcePinDigest: "not-read",
+      sourceCommit: commit,
+      appliedAt: "2026-08-03T00:00:00.000Z",
+    };
     await expect(
       materializeLockEntry({
         project,
-        dataRepo,
+        source: contentSourceFor({
+          entry,
+          kind: "skills",
+          name: "unsafe",
+          repo: dataRepo,
+        }),
         key: dataKey("skills", "unsafe"),
-        entry: {
-          source: "data",
-          sourcePinDigest: "not-read",
-          sourceCommit: commit,
-          appliedAt: "2026-08-03T00:00:00.000Z",
-        },
+        entry,
         scope: "project",
       }),
     ).rejects.toThrow(/mode 120000.*regular files only/u);

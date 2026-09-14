@@ -14,6 +14,7 @@ import { atomicWriteFile } from "../fs-utils";
 import { resolveCommit } from "../git";
 import { PRODUCT_NAME } from "../identity";
 import { parseLockKey } from "../installed";
+import { contentSourceFor, gitTreeSource } from "../item-source";
 import {
   LOCK_VERSION,
   isLockV4,
@@ -353,12 +354,13 @@ async function convertEntry(
       `source commit ${entry.sourceCommit} cannot be resolved in ${input.dataRepo}`,
     );
   }
-  const entries = await itemTreeEntriesAtCommit(
-    input.dataRepo,
-    parsed.kind,
-    parsed.name,
-    resolved,
-  );
+  const source = gitTreeSource({
+    repo: input.dataRepo,
+    kind: parsed.kind,
+    name: parsed.name,
+    commit: resolved,
+  });
+  const entries = await itemTreeEntriesAtCommit(source, parsed.kind);
   if (entries.length === 0) {
     throw new Error(
       `${itemRepoRelPath(parsed.kind, parsed.name)} has no committed content at ${resolved}`,
@@ -371,13 +373,9 @@ async function convertEntry(
 
   await assertNeedsProvenance(input, parsed, entry);
 
-  const pin = await pinItemAtCommit(
-    input.dataRepo,
-    parsed.kind,
-    parsed.name,
-    resolved,
-    { skipFilterCheck: true },
-  );
+  const pin = await pinItemAtCommit(source, parsed.kind, parsed.name, {
+    skipFilterCheck: true,
+  });
   const outcome = await auditLegacySha(input, parsed, entry, resolved);
   return {
     scope,
@@ -553,7 +551,12 @@ async function publishMigration(
       if (parsed.kind !== "skills" && parsed.kind !== "pi-extensions") continue;
       await materializeLockEntry({
         project,
-        dataRepo,
+        source: contentSourceFor({
+          entry: repair.entry,
+          kind: parsed.kind,
+          name: parsed.name,
+          repo: dataRepo,
+        }),
         manifest,
         key: repair.key,
         entry: repair.entry,

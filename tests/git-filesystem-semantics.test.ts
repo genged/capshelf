@@ -17,6 +17,7 @@ import { ensureLocalExcludes, removeLocalExcludes } from "../src/local-config";
 import { ManifestSchema } from "../src/manifest";
 import { shaOfGitVisibleItem } from "../src/master";
 import { materializeLockEntry } from "../src/materialize";
+import { contentSourceFor } from "../src/item-source";
 import { dataKey, type Lock } from "../src/lock";
 import { copyDirectoryModeDrifted } from "../src/status-diff";
 import { syncTrackedIntoDataRepo } from "../src/commands/promote-named";
@@ -239,7 +240,12 @@ describe("Git and filesystem semantics", () => {
     ).toBe(true);
     const applied = await materializeLockEntry({
       project,
-      dataRepo,
+      source: contentSourceFor({
+        entry,
+        kind: "skills",
+        name: "mode",
+        repo: dataRepo,
+      }),
       key: dataKey("skills", "mode"),
       entry,
       scope: "project",

@@ -42,6 +42,7 @@ import type {
   SystemLockEntry,
 } from "../lock";
 import { installedPath, parseLockKey, shaOfInstalled } from "../installed";
+import { contentSourceFor, gitTreeSource } from "../item-source";
 import {
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
@@ -532,10 +533,13 @@ async function updateMergeTarget(input: {
     namedFilesAtCommit(dataRepo, repoRelPath, plannedHead),
   ]);
   const upstreamEntries = await itemTreeEntriesAtCommit(
-    dataRepo,
+    gitTreeSource({
+      repo: dataRepo,
+      kind: parsed.kind,
+      name: parsed.name,
+      commit: plannedHead,
+    }),
     parsed.kind,
-    parsed.name,
-    plannedHead,
   );
   const hashWidth = hashWidthOf(upstreamEntries);
   const upstreamChanged = upstreamPin.sourcePinDigest !== entry.sourcePinDigest;
@@ -577,10 +581,13 @@ async function updateMergeTarget(input: {
       mergeBase,
     );
     const baseEntries = await itemTreeEntriesAtCommit(
-      dataRepo,
+      gitTreeSource({
+        repo: dataRepo,
+        kind: parsed.kind,
+        name: parsed.name,
+        commit: mergeBase,
+      }),
       parsed.kind,
-      parsed.name,
-      mergeBase,
     );
     if (sourcePinDigest(baseEntries) !== entry.sourcePinDigest) {
       throw mergeUpdateProvenanceError(
@@ -627,12 +634,25 @@ async function updateMergeTarget(input: {
     );
     const reconciliation = await copyDirectoryReconciliationFiles({
       project,
-      dataRepo,
+      source: contentSourceFor({
+        entry: newEntry,
+        kind,
+        name: parsed.name,
+        repo: dataRepo,
+      }),
       manifest: input.manifest,
       kind,
       name: parsed.name,
       entry: newEntry,
-      previousEntry: entry,
+      previous: {
+        entry,
+        source: contentSourceFor({
+          entry,
+          kind,
+          name: parsed.name,
+          repo: dataRepo,
+        }),
+      },
       scope: target.scope,
     });
     await assertNoPreservedPathCollisions({
@@ -1321,11 +1341,24 @@ async function updateDataTarget(
         })()
       : await materializeLockEntry({
           project: ctx.project,
-          dataRepo: ctx.dataRepo,
+          source: contentSourceFor({
+            entry: newEntry,
+            kind: parsed.kind,
+            name: parsed.name,
+            repo: ctx.dataRepo,
+          }),
           manifest: ctx.manifest,
           key,
           entry: newEntry,
-          previousEntry: entry,
+          previous: {
+            entry,
+            source: contentSourceFor({
+              entry,
+              kind: parsed.kind,
+              name: parsed.name,
+              repo: ctx.dataRepo,
+            }),
+          },
           scope,
           dryRun: ctx.dryRun,
         });
@@ -1395,10 +1428,22 @@ async function updateSystemTarget(
   };
   const materialized = await materializeLockEntry({
     project: ctx.project,
+    source: contentSourceFor({
+      entry: newEntry,
+      kind: parsed.kind,
+      name: parsed.name,
+    }),
     key,
     manifest: ctx.manifest,
     entry: newEntry,
-    previousEntry: entry,
+    previous: {
+      entry,
+      source: contentSourceFor({
+        entry,
+        kind: parsed.kind,
+        name: parsed.name,
+      }),
+    },
     scope,
     dryRun: ctx.dryRun,
   });

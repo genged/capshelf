@@ -22,6 +22,7 @@ import {
 } from "../lock";
 import type { LockEntry } from "../lock";
 import { parseLockKey } from "../installed";
+import { contentSourceFor } from "../item-source";
 import { assertIsGitRepo } from "../git";
 import { globalOpts } from "../global-options";
 import { NotFoundError, PreconditionError } from "../errors";
@@ -203,11 +204,15 @@ export function registerRevert(program: Command): void {
         } else if (isCopyDirectoryItemKind(parsed.kind)) {
           const preview = await materializeLockEntry({
             project,
-            dataRepo,
+            source: contentSourceFor({
+              entry,
+              kind: parsed.kind,
+              name: parsed.name,
+              repo: dataRepo,
+            }),
             manifest,
             key,
             entry,
-            previousEntry: entry,
             scope,
             ignoreLocal: true,
             dryRun: true,
@@ -359,11 +364,24 @@ export function registerRevert(program: Command): void {
             })()
           : await materializeLockEntry({
               project,
-              dataRepo,
+              source: contentSourceFor({
+                entry: nextEntry,
+                kind: parsed.kind,
+                name: parsed.name,
+                repo: dataRepo,
+              }),
               manifest,
               key,
               entry: nextEntry,
-              previousEntry: entry,
+              previous: {
+                entry,
+                source: contentSourceFor({
+                  entry,
+                  kind: parsed.kind,
+                  name: parsed.name,
+                  repo: dataRepo,
+                }),
+              },
               scope: opts.local ? "local" : "project",
               ignoreLocal: true,
             });

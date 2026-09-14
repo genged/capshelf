@@ -75,6 +75,7 @@ import {
   itemTreeEntriesAtCommit,
   type FilteredPath,
 } from "./pin";
+import { gitTreeSource } from "./item-source";
 import { loadCommittedItemNeeds } from "./metadata";
 import type { ItemNeeds } from "./metadata";
 import {
@@ -624,10 +625,8 @@ async function filteredPathsForEntry(
 ): Promise<FilteredPath[]> {
   try {
     const entries = await itemTreeEntriesAtCommit(
-      dataRepo,
+      gitTreeSource({ repo: dataRepo, kind, name, commit }),
       kind,
-      name,
-      commit,
       memo,
     );
     return await filteredPathsAtCommit(

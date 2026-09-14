@@ -22,6 +22,7 @@ import { itemOutputTargets } from "./installed";
 import { entryIdentity } from "./lock";
 import type { DataLockEntry } from "./lock";
 import { itemTreeEntriesAtCommit, sourcePinDigest } from "./pin";
+import { gitTreeSource } from "./item-source";
 import { installedTreeIdentity } from "./install-identity";
 
 export const SUBAGENT_TARGETS = ["claude", "codex"] as const;
@@ -518,10 +519,13 @@ async function assertSubagentSourceMatchesEntry(
   if (entry.sourcePinDigest !== undefined) {
     const digest = sourcePinDigest(
       await itemTreeEntriesAtCommit(
-        dataRepo,
+        gitTreeSource({
+          repo: dataRepo,
+          kind: "subagents",
+          name,
+          commit: entry.sourceCommit,
+        }),
         "subagents",
-        name,
-        entry.sourceCommit,
       ),
     );
     if (digest === entry.sourcePinDigest) return;

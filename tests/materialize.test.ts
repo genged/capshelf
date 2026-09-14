@@ -13,6 +13,9 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { dataKey } from "../src/lock";
+import type { LockEntry } from "../src/lock";
+import { contentSourceFor } from "../src/item-source";
+import type { ContentSource } from "../src/item-source";
 import { lastTouchingCommit } from "../src/git";
 import { shaOfItem } from "../src/master";
 import { currentPinDigest } from "./pin-fixtures";
@@ -40,6 +43,16 @@ async function commitAll(repo: string, message: string): Promise<void> {
 
 function isExecutable(path: string): boolean {
   return (lstatSync(path).mode & 0o111) !== 0;
+}
+
+/** Every item in this file is `skills/hello` in the fixture data repo. */
+function helloSource(dataRepo: string, entry: LockEntry): ContentSource {
+  return contentSourceFor({
+    entry,
+    kind: "skills",
+    name: "hello",
+    repo: dataRepo,
+  });
 }
 
 describe("materializeLockEntry", () => {
@@ -75,16 +88,17 @@ describe("materializeLockEntry", () => {
     await mkdir(installed, { recursive: true });
     await writeFile(join(installed, "stale.txt"), "stale\n");
 
+    const entry: LockEntry = {
+      source: "data",
+      sha,
+      sourceCommit,
+      appliedAt: new Date().toISOString(),
+    };
     const result = await materializeLockEntry({
       project,
-      dataRepo,
+      source: helloSource(dataRepo, entry),
       key: dataKey("skills", "hello"),
-      entry: {
-        source: "data",
-        sha,
-        sourceCommit,
-        appliedAt: new Date().toISOString(),
-      },
+      entry,
       scope: "project",
     });
 
@@ -130,7 +144,7 @@ describe("materializeLockEntry", () => {
 
     const result = await materializeLockEntry({
       project,
-      dataRepo,
+      source: helloSource(dataRepo, entry),
       key: dataKey("skills", "hello"),
       entry,
       scope: "project",
@@ -144,7 +158,7 @@ describe("materializeLockEntry", () => {
     // against the same entry passes and reports already-current.
     const dryRun = await materializeLockEntry({
       project,
-      dataRepo,
+      source: helloSource(dataRepo, entry),
       key: dataKey("skills", "hello"),
       entry,
       scope: "project",
@@ -169,16 +183,17 @@ describe("materializeLockEntry", () => {
     await writeFile(join(installed, "SKILL.md"), "local drift\n");
     await writeFile(join(installed, "stale.txt"), "stale\n");
 
+    const entry: LockEntry = {
+      source: "data",
+      sha,
+      sourceCommit,
+      appliedAt: new Date().toISOString(),
+    };
     const result = await materializeLockEntry({
       project,
-      dataRepo,
+      source: helloSource(dataRepo, entry),
       key: dataKey("skills", "hello"),
-      entry: {
-        source: "data",
-        sha,
-        sourceCommit,
-        appliedAt: new Date().toISOString(),
-      },
+      entry,
       scope: "project",
       dryRun: true,
     });
@@ -211,7 +226,7 @@ describe("materializeLockEntry", () => {
     };
     await materializeLockEntry({
       project,
-      dataRepo,
+      source: helloSource(dataRepo, v1),
       key: dataKey("skills", "hello"),
       entry: v1,
       scope: "project",
@@ -230,10 +245,10 @@ describe("materializeLockEntry", () => {
 
     const result = await materializeLockEntry({
       project,
-      dataRepo,
+      source: helloSource(dataRepo, v2),
       key: dataKey("skills", "hello"),
       entry: v2,
-      previousEntry: v1,
+      previous: { entry: v1, source: helloSource(dataRepo, v1) },
       scope: "project",
     });
 
@@ -262,7 +277,7 @@ describe("materializeLockEntry", () => {
     };
     await materializeLockEntry({
       project,
-      dataRepo,
+      source: helloSource(dataRepo, v1),
       key: dataKey("skills", "hello"),
       entry: v1,
       scope: "project",
@@ -293,10 +308,10 @@ describe("materializeLockEntry", () => {
     };
     const result = await materializeLockEntry({
       project,
-      dataRepo,
+      source: helloSource(dataRepo, v2),
       key: dataKey("skills", "hello"),
       entry: v2,
-      previousEntry: v1,
+      previous: { entry: v1, source: helloSource(dataRepo, v1) },
       scope: "project",
     });
 
@@ -315,7 +330,7 @@ describe("materializeLockEntry", () => {
     // rewritten, so the item converges instead of reconciling forever.
     const again = await materializeLockEntry({
       project,
-      dataRepo,
+      source: helloSource(dataRepo, v2),
       key: dataKey("skills", "hello"),
       entry: v2,
       scope: "project",
@@ -341,7 +356,7 @@ describe("materializeLockEntry", () => {
     };
     await materializeLockEntry({
       project,
-      dataRepo,
+      source: helloSource(dataRepo, entry),
       key: dataKey("skills", "hello"),
       entry,
       scope: "project",
@@ -355,7 +370,7 @@ describe("materializeLockEntry", () => {
     await expect(
       materializeLockEntry({
         project,
-        dataRepo,
+        source: helloSource(dataRepo, entry),
         key: dataKey("skills", "hello"),
         entry,
         scope: "project",
@@ -384,7 +399,7 @@ describe("materializeLockEntry", () => {
     };
     await materializeLockEntry({
       project,
-      dataRepo,
+      source: helloSource(dataRepo, v1),
       key: dataKey("skills", "hello"),
       entry: v1,
       scope: "project",
@@ -439,10 +454,10 @@ describe("materializeLockEntry", () => {
 
     await materializeLockEntry({
       project,
-      dataRepo,
+      source: helloSource(dataRepo, v2),
       key: dataKey("skills", "hello"),
       entry: v2,
-      previousEntry: v1,
+      previous: { entry: v1, source: helloSource(dataRepo, v1) },
       scope: "project",
     });
     expect(await file(join(installed, "SKILL.md")).text()).toBe("hello v2\n");
@@ -478,7 +493,7 @@ describe("materializeLockEntry", () => {
 
     const result = await materializeLockEntry({
       project,
-      dataRepo,
+      source: helloSource(dataRepo, entry),
       key: dataKey("skills", "hello"),
       entry,
       scope: "local",
@@ -492,7 +507,7 @@ describe("materializeLockEntry", () => {
 
     const dryRun = await materializeLockEntry({
       project,
-      dataRepo,
+      source: helloSource(dataRepo, entry),
       key: dataKey("skills", "hello"),
       entry,
       scope: "local",
@@ -509,18 +524,19 @@ describe("materializeLockEntry", () => {
     await mkdir(installed, { recursive: true });
     await writeFile(join(installed, "SKILL.md"), "local\n");
 
+    const entry: LockEntry = {
+      source: "data",
+      sourcePinDigest: "locked",
+      sourceCommit: "commit",
+      appliedAt: new Date().toISOString(),
+      local: true,
+      localReason: "project-specific",
+    };
     const result = await materializeLockEntry({
       project,
-      dataRepo: "/unused",
+      source: helloSource("/unused", entry),
       key: dataKey("skills", "hello"),
-      entry: {
-        source: "data",
-        sourcePinDigest: "locked",
-        sourceCommit: "commit",
-        appliedAt: new Date().toISOString(),
-        local: true,
-        localReason: "project-specific",
-      },
+      entry,
       scope: "project",
     });
 

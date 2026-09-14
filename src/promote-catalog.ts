@@ -40,6 +40,7 @@ import { homeRelative } from "./paths";
 import { sanitizeDisplayText } from "./pick-core";
 import type { PickRow } from "./pick-core";
 import { filteredPathsAtCommit, itemTreeEntriesAtCommit } from "./pin";
+import { gitTreeSource } from "./item-source";
 import { deriveState } from "./status-core";
 import type { State } from "./status-core";
 import { upstreamFactsForItem } from "./upstream-facts";
@@ -425,10 +426,8 @@ async function sourceFiltered(
 ): Promise<boolean> {
   try {
     const entries = await itemTreeEntriesAtCommit(
-      opts.dataRepo,
+      gitTreeSource({ repo: opts.dataRepo, kind, name, commit }),
       kind,
-      name,
-      commit,
     );
     return (
       (

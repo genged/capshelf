@@ -25,6 +25,7 @@ import {
   namedFilesTreeEntries,
   sourcePinDigest,
 } from "./pin";
+import { gitTreeSource } from "./item-source";
 import { unifiedDiffBytes } from "./status-diff";
 import { lstatOrNull } from "./fs-utils";
 import { subagentSourcesAtCommit } from "./subagents";
@@ -55,7 +56,10 @@ export async function preparePromotePreview(input: {
     dataKey(kind, name),
   );
   const head = await headSha(dataRepo);
-  const baseEntries = await itemTreeEntriesAtCommit(dataRepo, kind, name, head);
+  const baseEntries = await itemTreeEntriesAtCommit(
+    gitTreeSource({ repo: dataRepo, kind, name, commit: head }),
+    kind,
+  );
   const baseFiles = await filesFromEntries(dataRepo, head, baseEntries);
   let candidateFiles: NamedFile[];
 
@@ -101,10 +105,13 @@ export async function validatePromotePreview(input: {
 }): Promise<string> {
   const head = await headSha(input.dataRepo);
   const baseEntries = await itemTreeEntriesAtCommit(
-    input.dataRepo,
+    gitTreeSource({
+      repo: input.dataRepo,
+      kind: input.kind,
+      name: input.name,
+      commit: head,
+    }),
     input.kind,
-    input.name,
-    head,
   );
   const candidateDigest = sourcePinDigest(
     namedFilesTreeEntries(input.candidateFiles, hashWidthOf(baseEntries)),

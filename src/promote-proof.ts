@@ -1,4 +1,5 @@
 import { PreconditionError } from "./errors";
+import { gitTreeSource } from "./item-source";
 import type { ItemKind } from "./master";
 import type { NamedFile } from "./merge-tree";
 import {
@@ -21,10 +22,14 @@ export async function assertCommittedTreeEqualsCandidate(opts: {
   candidateFiles: readonly NamedFile[];
 }): Promise<PinnedSource> {
   const pin = await pinItemAtCommit(
-    opts.dataRepo,
+    gitTreeSource({
+      repo: opts.dataRepo,
+      kind: opts.kind,
+      name: opts.name,
+      commit: opts.commit,
+    }),
     opts.kind,
     opts.name,
-    opts.commit,
   );
   const mismatches = compareCandidateToCommit(opts.candidateFiles, pin.entries);
   if (mismatches.length > 0) {

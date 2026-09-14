@@ -11,9 +11,24 @@ import {
   validateSubagentSource,
 } from "../src/subagents";
 import { assertLockV4, createDataLockEntry, loadLock } from "../src/lock";
+import { gitTreeSource } from "../src/item-source";
 import { pinItemAtCommit } from "../src/pin";
+import type { PinnedSource } from "../src/pin";
 import { emptyNeeds } from "../src/metadata";
 import { commitAll, runInProcess, tempRepo } from "./cli-fixtures";
+
+function reviewerPin(dataRepo: string, commit: string): Promise<PinnedSource> {
+  return pinItemAtCommit(
+    gitTreeSource({
+      repo: dataRepo,
+      kind: "subagents",
+      name: "reviewer",
+      commit,
+    }),
+    "subagents",
+    "reviewer",
+  );
+}
 
 const CLAUDE = `---
 name: reviewer
@@ -152,12 +167,7 @@ describe("subagent validation and identity", () => {
       "reviewer",
     );
     const firstEntry = createDataLockEntry({
-      pin: await pinItemAtCommit(
-        dataRepo,
-        "subagents",
-        "reviewer",
-        firstCommit,
-      ),
+      pin: await reviewerPin(dataRepo, firstCommit),
       needs: emptyNeeds(),
       needsSourceCommit: firstCommit,
     });
@@ -179,12 +189,7 @@ describe("subagent validation and identity", () => {
       "reviewer",
     );
     const secondEntry = createDataLockEntry({
-      pin: await pinItemAtCommit(
-        dataRepo,
-        "subagents",
-        "reviewer",
-        secondCommit,
-      ),
+      pin: await reviewerPin(dataRepo, secondCommit),
       needs: emptyNeeds(),
       needsSourceCommit: secondCommit,
     });
@@ -222,12 +227,7 @@ describe("subagent validation and identity", () => {
       "reviewer",
     );
     const firstEntry = createDataLockEntry({
-      pin: await pinItemAtCommit(
-        dataRepo,
-        "subagents",
-        "reviewer",
-        firstCommit,
-      ),
+      pin: await reviewerPin(dataRepo, firstCommit),
       needs: emptyNeeds(),
       needsSourceCommit: firstCommit,
     });
@@ -255,12 +255,7 @@ describe("subagent validation and identity", () => {
       "reviewer",
     );
     const secondEntry = createDataLockEntry({
-      pin: await pinItemAtCommit(
-        dataRepo,
-        "subagents",
-        "reviewer",
-        secondCommit,
-      ),
+      pin: await reviewerPin(dataRepo, secondCommit),
       needs: emptyNeeds(),
       needsSourceCommit: secondCommit,
     });

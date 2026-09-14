@@ -9,6 +9,7 @@ import { buildStatusReport, collectStatusDiffs } from "../src/status-report";
 import { emptyLock, refreshDataLockEntry } from "../src/lock";
 import type { Lock } from "../src/lock";
 import { emptyManifest } from "../src/manifest";
+import { gitTreeSource } from "../src/item-source";
 import {
   itemTreeEntriesAtCommit,
   pinCurrentSource,
@@ -87,7 +88,10 @@ async function reportFixture(withMcp = false, marker = "fixture") {
         source: "data",
         sourceCommit: commit,
         sourcePinDigest: sourcePinDigest(
-          await itemTreeEntriesAtCommit(dataRepo, kind, name, commit),
+          await itemTreeEntriesAtCommit(
+            gitTreeSource({ repo: dataRepo, kind, name, commit }),
+            kind,
+          ),
         ),
         needs: {
           bin: kind === "settings" ? ["old-tool"] : [],

@@ -2,6 +2,7 @@ import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
 import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { gitTreeSource } from "../src/item-source";
 import { allCanonicalItemRelPaths } from "../src/master";
 import { pinItemAtCommit } from "../src/pin";
 import { subagentCandidates, subagentSourceCandidates } from "../src/subagents";
@@ -127,9 +128,18 @@ describe("target coverage", () => {
     expect(report?.state).toBe("known");
     expect(report?.rows.map((row) => row.present)).toEqual([true, false]);
     // Coverage must never promise a target the pin refuses to name.
-    expect(pinItemAtCommit(dataRepo, "mcp", "deepwiki", head)).rejects.toThrow(
-      /unsupported Git entry/,
-    );
+    expect(
+      pinItemAtCommit(
+        gitTreeSource({
+          repo: dataRepo,
+          kind: "mcp",
+          name: "deepwiki",
+          commit: head,
+        }),
+        "mcp",
+        "deepwiki",
+      ),
+    ).rejects.toThrow(/unsupported Git entry/);
   });
 
   test("an unreachable commit is unknown before any tree read is attempted", async () => {

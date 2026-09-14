@@ -15,6 +15,7 @@ import {
   planSubagentDestruction,
 } from "../destructive-preflight";
 import { parseLockKey } from "../installed";
+import { contentSourceFor } from "../item-source";
 import { PRODUCT_NAME } from "../identity";
 import { entryIdentity } from "../lock";
 import type { Lock } from "../lock";
@@ -336,15 +337,21 @@ export function registerApply(program: Command): void {
               );
               continue;
             }
+            const entry = lock.items[key]!;
             results.push(
               addScope(
                 scope,
                 await materializeLockEntry({
                   project,
-                  dataRepo,
+                  source: contentSourceFor({
+                    entry,
+                    kind: parsed.kind,
+                    name: parsed.name,
+                    repo: dataRepo,
+                  }),
                   manifest,
                   key,
-                  entry: lock.items[key]!,
+                  entry,
                   scope,
                 }),
               ),
@@ -596,7 +603,12 @@ async function planApplyPreflight(
         scope,
         await materializeLockEntry({
           project: input.project,
-          dataRepo: input.dataRepo,
+          source: contentSourceFor({
+            entry,
+            kind: parsed.kind,
+            name: parsed.name,
+            repo: input.dataRepo,
+          }),
           manifest: input.manifest,
           key,
           entry,

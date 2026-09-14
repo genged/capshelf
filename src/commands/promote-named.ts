@@ -30,6 +30,7 @@ import {
 } from "../pin";
 import type { PinnedSource } from "../pin";
 import { assertCommittedTreeEqualsCandidate } from "../promote-proof";
+import { gitTreeSource } from "../item-source";
 import { installedPath, parseLockKey } from "../installed";
 import {
   isCopyDirectoryItemKind,
@@ -409,10 +410,14 @@ export async function promoteSubagent(
       name,
     });
     const pin = await pinItemAtCommit(
-      dataRepo,
+      gitTreeSource({
+        repo: dataRepo,
+        kind: "subagents",
+        name,
+        commit: sourceCommit,
+      }),
       "subagents",
       name,
-      sourceCommit,
     );
     lock.items[key] = refreshDataLockEntry(entry, { pin, ...snapshot });
     return {
@@ -476,7 +481,16 @@ export async function promoteSubagent(
     dataRepo,
     name,
   );
-  const pin = await pinItemAtCommit(dataRepo, "subagents", name, sourceCommit);
+  const pin = await pinItemAtCommit(
+    gitTreeSource({
+      repo: dataRepo,
+      kind: "subagents",
+      name,
+      commit: sourceCommit,
+    }),
+    "subagents",
+    name,
+  );
   const sha = pin.sourcePinDigest;
   const snapshot = await captureCommittedItemNeeds(dataRepo, {
     kind: "subagents",
@@ -608,10 +622,13 @@ export async function promoteFragmentSource(
   // the user to `capshelf update`, which had nothing to update.
   const headCommittedSha = sourcePinDigest(
     await itemTreeEntriesAtCommit(
-      dataRepo,
+      gitTreeSource({
+        repo: dataRepo,
+        kind,
+        name,
+        commit: await headSha(dataRepo),
+      }),
       kind,
-      name,
-      await headSha(dataRepo),
     ),
   );
   if (!dirty) {
@@ -709,7 +726,11 @@ export async function promoteFragmentSource(
   // concurrent editor can change the worktree after the preview and before
   // Git stages it. The transaction rolls back that commit and does not restore
   // or discard the worktree bytes.
-  const pin = await pinItemAtCommit(dataRepo, kind, name, sourceCommit);
+  const pin = await pinItemAtCommit(
+    gitTreeSource({ repo: dataRepo, kind, name, commit: sourceCommit }),
+    kind,
+    name,
+  );
   const sha = pin.sourcePinDigest;
   const snapshot = await captureCommittedItemNeeds(dataRepo, { kind, name });
   const nextEntry = refreshDataLockEntry(entry, { pin, ...snapshot });
@@ -850,7 +871,10 @@ export async function syncTrackedIntoDataRepo(
       namedFilesTreeEntries(
         localFiles,
         hashWidthOf(
-          await itemTreeEntriesAtCommit(dataRepo, kind, name, lockedCommit),
+          await itemTreeEntriesAtCommit(
+            gitTreeSource({ repo: dataRepo, kind, name, commit: lockedCommit }),
+            kind,
+          ),
         ),
       ),
     ) === entry.sourcePinDigest;

@@ -13,6 +13,7 @@ import {
   itemTreeEntriesAtCommit,
   sourcePinDigest,
 } from "./pin";
+import { gitTreeSource } from "./item-source";
 import type { FragmentItemKind, ItemKind } from "./master";
 import { isPathClean, lastTouchingContentCommit } from "./git";
 import {
@@ -78,10 +79,13 @@ export async function upstreamFactsForItem(
           ? null
           : sourcePinDigest(
               await itemTreeEntriesAtCommit(
-                dataRepo,
+                gitTreeSource({
+                  repo: dataRepo,
+                  kind,
+                  name,
+                  commit: sourceCommit,
+                }),
                 kind,
-                name,
-                sourceCommit,
                 memo,
               ),
             ),

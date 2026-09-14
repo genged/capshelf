@@ -338,25 +338,39 @@ export function itemRepoRelPath(kind: ItemKind, name: string): string {
   }
 }
 
+/**
+ * The paths a kind occupies inside its own item root, POSIX-separated. An
+ * empty list means the whole root, which is what a copy-directory item is.
+ *
+ * The kind decides the layout; the content source decides where the root is.
+ * Keeping the two apart is what lets an item be read at a root other than the
+ * canonical one without a second path rule.
+ */
+export function itemRelPathsWithinRoot(kind: ItemKind): readonly string[] {
+  switch (kind) {
+    case "skills":
+    case "pi-extensions":
+      return [];
+    case "settings":
+      return ["settings.json"];
+    case "subagents":
+      return ["claude.md", "codex.toml"];
+    case "mcp":
+      return ["claude.json", "codex.toml"];
+    case "codex-config":
+      return ["config.toml"];
+    default:
+      return assertNever(kind);
+  }
+}
+
 export function allCanonicalItemRelPaths(
   kind: ItemKind,
   name: string,
 ): string[] {
-  switch (kind) {
-    case "skills":
-    case "pi-extensions":
-      return [itemRepoRelPath(kind, name)];
-    case "settings":
-      return [`settings/${name}/settings.json`];
-    case "subagents":
-      return [`subagents/${name}/claude.md`, `subagents/${name}/codex.toml`];
-    case "mcp":
-      return [`mcp/${name}/claude.json`, `mcp/${name}/codex.toml`];
-    case "codex-config":
-      return [`codex/config/${name}/config.toml`];
-    default:
-      return assertNever(kind);
-  }
+  const itemRoot = itemRepoRelPath(kind, name);
+  if (isCopyDirectoryItemKind(kind)) return [itemRoot];
+  return itemRelPathsWithinRoot(kind).map((rel) => `${itemRoot}/${rel}`);
 }
 
 export async function canonicalItemRelPaths(

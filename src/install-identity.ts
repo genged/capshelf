@@ -9,6 +9,7 @@ import {
   itemRepoRelPath,
 } from "./master";
 import { gitignoreVisibleFiles, inventoryLocalTree } from "./gitignore";
+import { gitTreeSource } from "./item-source";
 import { classifyInstalledFile, type InstallDifference } from "./install-diff";
 import type { ItemKind } from "./master";
 import {
@@ -107,7 +108,11 @@ export async function describeInstallation(
 ): Promise<InstallationReport | null> {
   let entries: PinTreeEntry[];
   try {
-    entries = await itemTreeEntriesAtCommit(dataRepo, kind, name, commit, memo);
+    entries = await itemTreeEntriesAtCommit(
+      gitTreeSource({ repo: dataRepo, kind, name, commit }),
+      kind,
+      memo,
+    );
   } catch {
     return null;
   }
@@ -244,7 +249,10 @@ export async function installedTreeIdentity(
 ): Promise<string | null> {
   let entries: PinTreeEntry[];
   try {
-    entries = await itemTreeEntriesAtCommit(dataRepo, kind, name, commit);
+    entries = await itemTreeEntriesAtCommit(
+      gitTreeSource({ repo: dataRepo, kind, name, commit }),
+      kind,
+    );
   } catch {
     return null;
   }

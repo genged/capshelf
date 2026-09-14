@@ -22,9 +22,12 @@ import {
   isCopyTargetFileItemKind,
   isFragmentItemKind,
   isMetadataSidecarPath,
+  itemRelPathsWithinRoot,
   itemRepoRelPath,
 } from "./master";
 import type { ItemKind } from "./master";
+import { gitTreeSource } from "./item-source";
+import type { GitTreeSource } from "./item-source";
 import type { GitFileMode } from "./merge-tree";
 
 /*
@@ -169,21 +172,28 @@ export function blobIdOf(bytes: Uint8Array, width: GitHashWidth): string {
  * | copy-directory (`skills`, `pi-extensions`) | every blob under the item path, sidecar excluded   |
  * | copy-target-file (`subagents`)            | canonical target paths present at the commit       |
  * | fragments (`settings`, `mcp`, `codex-config`) | canonical source paths present at the commit    |
+ *
+ * The source names the repository, the commit, and the root. The kind names
+ * the paths inside that root, so the two axes stay separate: a source with a
+ * root other than the canonical one needs no second path rule.
  */
 export async function itemTreeEntriesAtCommit(
-  dataRepo: string,
+  source: GitTreeSource,
   kind: ItemKind,
-  name: string,
-  commit: string,
   memo?: GitReadMemo,
 ): Promise<PinTreeEntry[]> {
-  const itemRoot = itemRepoRelPath(kind, name);
+  const itemRoot = source.itemRoot;
   const pathspecs = isCopyDirectoryItemKind(kind)
     ? [literalPathspec(itemRoot)]
-    : allCanonicalItemRelPaths(kind, name).map(literalPathspec);
-  const raw = await lsTreeEntriesForPathspecs(dataRepo, commit, pathspecs, {
-    memo,
-  });
+    : itemRelPathsWithinRoot(kind).map((rel) =>
+        literalPathspec(`${itemRoot}/${rel}`),
+      );
+  const raw = await lsTreeEntriesForPathspecs(
+    source.repo,
+    source.commit,
+    pathspecs,
+    { memo },
+  );
   // Refuses gitlinks and symlinks before they can reach the digest, so a pin
   // can never name something materialization is unable to write.
   assertRegularBlobEntries(raw, itemRoot);
@@ -247,32 +257,29 @@ export interface PinOptions {
  * says must never be pinned.
  */
 export async function pinItemAtCommit(
-  dataRepo: string,
+  source: GitTreeSource,
   kind: ItemKind,
   name: string,
-  commit: string,
   options: PinOptions = {},
 ): Promise<PinnedSource> {
-  const resolved = await resolveCommit(dataRepo, commit);
+  const resolved = await resolveCommit(source.repo, source.commit);
   if (resolved === null) {
     throw new PreconditionError(
-      `data repo at ${dataRepo} does not contain commit ${commit}`,
+      `data repo at ${source.repo} does not contain commit ${source.commit}`,
     );
   }
   const entries = await itemTreeEntriesAtCommit(
-    dataRepo,
+    { ...source, commit: resolved },
     kind,
-    name,
-    resolved,
     options.memo,
   );
   if (entries.length === 0) {
     throw new Error(
-      `${itemRepoRelPath(kind, name)} has no materializable files at ${commit}`,
+      `${source.itemRoot} has no materializable files at ${source.commit}`,
     );
   }
   if (options.skipFilterCheck !== true) {
-    await assertNoExternalFilterDrivers(dataRepo, resolved, [
+    await assertNoExternalFilterDrivers(source.repo, resolved, [
       { kind, name, entries },
     ]);
   }
@@ -304,7 +311,11 @@ export async function currentSourceCommit(
   throw new Error(`no pin strategy for ${kind}/${name}`);
 }
 
-/** `currentSourceCommit` followed by `pinItemAtCommit`. */
+/**
+ * `currentSourceCommit` followed by `pinItemAtCommit`. It reads the shelf's
+ * own working tree to select the commit, so it takes a repository rather than
+ * a content source.
+ */
 export async function pinCurrentSource(
   dataRepo: string,
   kind: ItemKind,
@@ -312,10 +323,14 @@ export async function pinCurrentSource(
   options: PinOptions = {},
 ): Promise<PinnedSource> {
   return await pinItemAtCommit(
-    dataRepo,
+    gitTreeSource({
+      repo: dataRepo,
+      kind,
+      name,
+      commit: await currentSourceCommit(dataRepo, kind, name),
+    }),
     kind,
     name,
-    await currentSourceCommit(dataRepo, kind, name),
     options,
   );
 }

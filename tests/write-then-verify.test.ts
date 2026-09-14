@@ -7,6 +7,7 @@ import type { LockEntryV4, LockV4 } from "../src/lock";
 import { materializeLockEntry } from "../src/materialize";
 import { materializeSubagent } from "../src/subagents";
 import { pinItemAtCommit, currentSourceCommit } from "../src/pin";
+import { contentSourceFor, gitTreeSource } from "../src/item-source";
 import { addSkill, commitAll, runInProcess, tempRepo } from "./cli-fixtures";
 
 /**
@@ -39,26 +40,44 @@ describe("write-then-verify", () => {
     await commitAll(dataRepo, "hello v2");
     const entry = (await loadLock(project)).items[dataKey("skills", "hello")]!;
     const pin = await pinItemAtCommit(
-      dataRepo,
+      gitTreeSource({
+        repo: dataRepo,
+        kind: "skills",
+        name: "hello",
+        commit: await currentSourceCommit(dataRepo, "skills", "hello"),
+      }),
       "skills",
       "hello",
-      await currentSourceCommit(dataRepo, "skills", "hello"),
     );
     if (entry.source !== "data") throw new Error("expected a data entry");
 
+    const selected: LockEntryV4 = {
+      ...entry,
+      sha: undefined,
+      sourcePinDigest: pin.sourcePinDigest,
+      sourceCommit: pin.sourceCommit,
+    };
     const installed = join(project, ".agents", "skills", "hello", "SKILL.md");
     await expect(
       materializeLockEntry({
         project,
-        dataRepo,
+        source: contentSourceFor({
+          entry: selected,
+          kind: "skills",
+          name: "hello",
+          repo: dataRepo,
+        }),
         key: dataKey("skills", "hello"),
-        entry: {
-          ...entry,
-          sha: undefined,
-          sourcePinDigest: pin.sourcePinDigest,
-          sourceCommit: pin.sourceCommit,
+        entry: selected,
+        previous: {
+          entry,
+          source: contentSourceFor({
+            entry,
+            kind: "skills",
+            name: "hello",
+            repo: dataRepo,
+          }),
         },
-        previousEntry: entry,
         scope: "project",
         hooks: {
           // The published bytes are corrupted after the writer put them
@@ -99,10 +118,14 @@ describe("write-then-verify", () => {
     ]!;
     if (previous.source !== "data") throw new Error("expected a data entry");
     const pin = await pinItemAtCommit(
-      dataRepo,
+      gitTreeSource({
+        repo: dataRepo,
+        kind: "subagents",
+        name: "reviewer",
+        commit: await currentSourceCommit(dataRepo, "subagents", "reviewer"),
+      }),
       "subagents",
       "reviewer",
-      await currentSourceCommit(dataRepo, "subagents", "reviewer"),
     );
     const output = join(project, ".claude", "agents", "reviewer.md");
     const before = await readFile(output, "utf-8");

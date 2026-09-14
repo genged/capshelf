@@ -26,6 +26,7 @@ import type {
   ItemKind,
 } from "./master";
 import { itemTreeEntriesAtCommit, sourcePinDigest } from "./pin";
+import { gitTreeSource } from "./item-source";
 import { loadCommittedItemNeeds } from "./metadata";
 import { shaOfSubagentAtCommit } from "./subagents";
 
@@ -43,10 +44,13 @@ export async function verifyDataLockEntries(
       // working-tree state participates.
       const digest = sourcePinDigest(
         await itemTreeEntriesAtCommit(
-          dataRepo,
+          gitTreeSource({
+            repo: dataRepo,
+            kind: parsed.kind,
+            name: parsed.name,
+            commit: entry.sourceCommit,
+          }),
           parsed.kind,
-          parsed.name,
-          entry.sourceCommit,
         ).catch(() => {
           throw new Error(
             missingSourceCommitMessage(dataRepo, entry.sourceCommit, manifest),

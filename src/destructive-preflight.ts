@@ -13,6 +13,7 @@ import type {
 import { showAtCommit } from "./git";
 import { inventoryLocalTree } from "./gitignore";
 import { installedPath } from "./installed";
+import { contentSourceFor } from "./item-source";
 import { shaOfInstalledForScope } from "./item-snapshot";
 import type { DataLockEntry, LockEntry } from "./lock";
 import type { Manifest } from "./manifest";
@@ -54,17 +55,24 @@ export async function planCopyDirectoryDestruction(opts: {
    */
   repairUnresolvableCurrent?: boolean;
 }): Promise<PlannedDestruction> {
-  const readReconciliationFiles = (entry: LockEntry) =>
-    copyDirectoryReconciliationFiles({
+  const readReconciliationFiles = async (entry: LockEntry) => {
+    const source = contentSourceFor({
+      entry,
+      kind: opts.kind,
+      name: opts.name,
+      repo: opts.dataRepo,
+    });
+    return await copyDirectoryReconciliationFiles({
       project: opts.project,
-      dataRepo: opts.dataRepo,
+      source,
       manifest: opts.manifest,
       kind: opts.kind,
       name: opts.name,
       entry,
-      previousEntry: entry,
+      previous: { entry, source },
       scope: opts.scope,
     });
+  };
   const current =
     opts.repairUnresolvableCurrent === true &&
     opts.currentEntry !== opts.selectedEntry
@@ -234,11 +242,15 @@ export async function planCopyDirectoryRemoval(opts: {
   let expectedFiles: NamedFile[];
   try {
     expectedFiles = await lockedCopyDirectoryFiles({
-      dataRepo: opts.dataRepo,
+      source: contentSourceFor({
+        entry: opts.currentEntry,
+        kind: opts.kind,
+        name: opts.name,
+        repo: opts.dataRepo,
+      }),
       manifest: opts.manifest,
       kind: opts.kind,
       name: opts.name,
-      entry: opts.currentEntry,
     });
   } catch {
     expectedFiles = [];

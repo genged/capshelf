@@ -3,6 +3,7 @@ import {
   itemTreeEntriesAtCommit,
   sourcePinDigest,
 } from "../src/pin";
+import { gitTreeSource } from "../src/item-source";
 import type { ItemKind } from "../src/master";
 import { installedTreeIdentity } from "../src/install-identity";
 
@@ -20,7 +21,10 @@ export async function pinDigestAtCommit(
   commit: string,
 ): Promise<string> {
   return sourcePinDigest(
-    await itemTreeEntriesAtCommit(dataRepo, kind, name, commit),
+    await itemTreeEntriesAtCommit(
+      gitTreeSource({ repo: dataRepo, kind, name, commit }),
+      kind,
+    ),
   );
 }
 

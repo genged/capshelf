@@ -33,6 +33,7 @@ import {
 import type { DataLockEntryV4, Lock } from "../lock";
 import { pinItemAtCommit } from "../pin";
 import type { PinnedSource } from "../pin";
+import { gitTreeSource } from "../item-source";
 import { assertCommittedTreeEqualsCandidate } from "../promote-proof";
 import { isSystemItemName } from "../bundled";
 import { isCopyDirectoryItemKind, itemRepoRelPath } from "../master";
@@ -556,7 +557,11 @@ export async function shareFragment(
   // file into the data repo and commits it in place, so PIN-11's `A == B` has
   // no `A` to compare — the pending set can be a subset of the canonical paths
   // the item ends up with. The pin still comes from the committed tree.
-  const pin = await pinItemAtCommit(dataRepo, kind, name, sourceCommit);
+  const pin = await pinItemAtCommit(
+    gitTreeSource({ repo: dataRepo, kind, name, commit: sourceCommit }),
+    kind,
+    name,
+  );
   const sha = pin.sourcePinDigest;
 
   addManifestName(manifest, kind, name);

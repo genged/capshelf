@@ -16,6 +16,7 @@ import {
 } from "../src/fragments";
 import { lastTouchingContentCommit } from "../src/git";
 import { materializeLockEntry } from "../src/materialize";
+import { contentSourceFor } from "../src/item-source";
 import { dataKey } from "../src/lock";
 import {
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
@@ -281,7 +282,12 @@ describe("materialization transactions", () => {
       await expect(
         materializeLockEntry({
           project,
-          dataRepo,
+          source: contentSourceFor({
+            entry,
+            kind: "skills",
+            name: "atomic",
+            repo: dataRepo,
+          }),
           key: dataKey("skills", "atomic"),
           entry,
           scope: "project",
