@@ -13,6 +13,7 @@ import {
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { dataKey, loadLock } from "../src/lock";
+import { gitTreeSource } from "../src/item-source";
 import { loadManifest } from "../src/manifest";
 import { lastTouchingCommit } from "../src/git";
 import { shaOfGitVisibleItem } from "../src/master";
@@ -419,12 +420,15 @@ describe("status diff helpers", () => {
     await expect(
       currentCopyDirectoryItemSha({
         project,
-        dataRepo,
+        source: gitTreeSource({
+          repo: dataRepo,
+          kind: "skills",
+          name: "hello",
+          commit: sourceCommit,
+        }),
         manifest,
-        source: "data",
         kind: "skills",
         name: "hello",
-        sourceCommit,
       }),
     ).resolves.toBe(lockedSha);
 
@@ -473,7 +477,12 @@ describe("status diff helpers", () => {
     await expect(
       currentCopyDirectoryItemSha({
         project,
-        dataRepo,
+        source: gitTreeSource({
+          repo: dataRepo,
+          kind: "skills",
+          name: "hello",
+          commit: sourceCommit,
+        }),
         manifest: {
           installMode: "codex-compatible",
           skills: ["hello"],
@@ -481,10 +490,8 @@ describe("status diff helpers", () => {
           mcp: [],
           codexConfig: [],
         },
-        source: "data",
         kind: "skills",
         name: "hello",
-        sourceCommit,
       }),
     ).resolves.toMatch(/^[0-9a-f]{12}$/);
 

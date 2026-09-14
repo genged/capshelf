@@ -9,7 +9,7 @@ import {
   itemRepoRelPath,
 } from "./master";
 import { gitignoreVisibleFiles, inventoryLocalTree } from "./gitignore";
-import { gitTreeSource } from "./item-source";
+import type { GitTreeSource } from "./item-source";
 import { classifyInstalledFile, type InstallDifference } from "./install-diff";
 import type { ItemKind } from "./master";
 import {
@@ -27,8 +27,13 @@ import type { InstalledTarget, PinTreeEntry } from "./pin";
  * True when this entry's identity is the committed tree (lock version 4)
  * rather than a hash of the data repo's working copy (versions 2 and 3).
  *
- * Comparisons must never mix the two: they answer different questions, and a
- * silent mix would recreate exactly the disagreement version 4 removes.
+ * This is a question about the lock version, not about where the bytes come
+ * from: `ContentSource` answers that one. It reads `source` only because a
+ * system entry has no `sourcePinDigest` field to read.
+ *
+ * Comparisons must never mix the two identity models: they answer different
+ * questions, and a silent mix would recreate exactly the disagreement version 4
+ * removes.
  */
 export function isTreePinned(entry: LockEntry): boolean {
   return entry.source === "data" && entry.sourcePinDigest !== undefined;
@@ -100,19 +105,14 @@ export interface InstallationReport {
  */
 export async function describeInstallation(
   project: string,
-  dataRepo: string,
+  source: GitTreeSource,
   kind: ItemKind,
   name: string,
-  commit: string,
   memo?: GitReadMemo,
 ): Promise<InstallationReport | null> {
   let entries: PinTreeEntry[];
   try {
-    entries = await itemTreeEntriesAtCommit(
-      gitTreeSource({ repo: dataRepo, kind, name, commit }),
-      kind,
-      memo,
-    );
+    entries = await itemTreeEntriesAtCommit(source, kind, memo);
   } catch {
     return null;
   }
@@ -155,7 +155,7 @@ export async function describeInstallation(
 
   if (differingPaths.length > 0) {
     const bytes = new Map(
-      (await readEntryBytes(dataRepo, differingPaths, memo)).map((file) => [
+      (await readEntryBytes(source.repo, differingPaths, memo)).map((file) => [
         file.path,
         file.content,
       ]),
@@ -242,17 +242,13 @@ async function hiddenExtraPaths(
  */
 export async function installedTreeIdentity(
   project: string,
-  dataRepo: string,
+  source: GitTreeSource,
   kind: ItemKind,
   name: string,
-  commit: string,
 ): Promise<string | null> {
   let entries: PinTreeEntry[];
   try {
-    entries = await itemTreeEntriesAtCommit(
-      gitTreeSource({ repo: dataRepo, kind, name, commit }),
-      kind,
-    );
+    entries = await itemTreeEntriesAtCommit(source, kind);
   } catch {
     return null;
   }

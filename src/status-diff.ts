@@ -15,11 +15,12 @@ import {
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
   isMetadataSidecarPath,
-  itemRepoRelPath,
 } from "./master";
 import type { CopyDirectoryItemKind, ItemKind } from "./master";
 import type { ItemSource } from "./installed";
 import { installedPath } from "./installed";
+import { contentSourceOrNull, gitTreeSource, isGitTree } from "./item-source";
+import type { ContentSource, GitTreeSource } from "./item-source";
 import { findSystemItem } from "./bundled";
 import {
   assertRegularBlobEntries,
@@ -69,12 +70,15 @@ interface StatusDiffOptions {
 
 interface CopyDirectoryFilesOptions {
   project: string;
-  dataRepo: string | null;
+  /**
+   * Where the locked bytes are. Null means they cannot be read at all — no
+   * repository, or a commit `status` already found unreachable — and every
+   * consumer degrades rather than failing.
+   */
+  source: ContentSource | null;
   manifest: Manifest;
-  source: ItemSource;
   kind: CopyDirectoryItemKind;
   name: string;
-  sourceCommit?: string;
 }
 
 export interface StatusDiff {
@@ -174,12 +178,15 @@ export async function buildStatusDiff(
       upstreamFiles =
         (await expectedFilesForCopyItem({
           project: opts.project,
-          dataRepo: opts.dataRepo,
+          source: gitTreeSource({
+            repo: opts.dataRepo,
+            kind: row.kind,
+            name: row.name,
+            commit: upstreamCommit,
+          }),
           manifest: opts.manifest,
-          source: row.source,
           kind: row.kind,
           name: row.name,
-          sourceCommit: upstreamCommit,
         })) ?? new Map();
     } catch (error) {
       return {
@@ -569,19 +576,37 @@ async function expectedFilesForRow(
   }
   return await expectedFilesForCopyItem({
     project: opts.project,
-    dataRepo: opts.dataRepo,
+    source: lockedContentSource(opts),
     manifest: opts.manifest,
-    source: opts.row.source,
     kind: opts.row.kind,
     name: opts.row.name,
-    sourceCommit: opts.row.sourceCommit,
+  });
+}
+
+/**
+ * Where a row's locked bytes are, read from the entry the row came from.
+ *
+ * A row is always built from one lock entry, so a missing entry means the
+ * caller paired a row with a lock that does not hold it. Nothing can be read
+ * for such a row, and every consumer here degrades to "no diff".
+ */
+function lockedContentSource(opts: StatusDiffOptions): ContentSource | null {
+  const entry =
+    opts.lock.items[`${opts.row.source}/${opts.row.kind}/${opts.row.name}`];
+  if (entry === undefined) return null;
+  return contentSourceOrNull({
+    entry,
+    kind: opts.row.kind,
+    name: opts.row.name,
+    repo: opts.dataRepo,
   });
 }
 
 async function expectedFilesForCopyItem(
   opts: CopyDirectoryFilesOptions,
 ): Promise<FileMap | null> {
-  if (opts.source === "system") {
+  if (opts.source === null) return null;
+  if (!isGitTree(opts.source)) {
     const item = findSystemItem(opts.name);
     if (!item || item.kind !== opts.kind) return null;
     return new Map(
@@ -595,19 +620,16 @@ async function expectedFilesForCopyItem(
     );
   }
 
-  if (!opts.dataRepo) return null;
-  if (!opts.sourceCommit) return null;
-
+  const source = opts.source;
   const files = await expectedFileEntriesForCopyItem(opts);
   if (!files) return null;
-  const repoRelPath = itemRepoRelPath(opts.kind, opts.name);
   const out: FileMap = new Map();
   for (const expected of files) {
     out.set(expected.rel, {
       content: await showExpectedFile(
-        opts,
-        opts.sourceCommit,
-        posix.join(repoRelPath, expected.rel),
+        source,
+        opts.manifest,
+        posix.join(source.itemRoot, expected.rel),
       ),
       executable: expected.executable,
     });
@@ -627,7 +649,8 @@ async function expectedFilePathsForCopyItem(
 async function expectedFileEntriesForCopyItem(
   opts: CopyDirectoryFilesOptions,
 ): Promise<Array<{ rel: string; executable: boolean }> | null> {
-  if (opts.source === "system") {
+  if (opts.source === null) return null;
+  if (!isGitTree(opts.source)) {
     const item = findSystemItem(opts.name);
     if (!item || item.kind !== opts.kind) return null;
     return item.files.map((file) => ({
@@ -636,30 +659,17 @@ async function expectedFileEntriesForCopyItem(
     }));
   }
 
-  if (!opts.dataRepo) return null;
-  if (!opts.sourceCommit) return null;
-
-  const repoRelPath = itemRepoRelPath(opts.kind, opts.name);
+  const { repo, commit, itemRoot } = opts.source;
   let entries: Awaited<ReturnType<typeof lsTreeEntriesAtCommit>>;
   try {
-    entries = await lsTreeEntriesAtCommit(
-      opts.dataRepo,
-      opts.sourceCommit,
-      repoRelPath,
-    );
+    entries = await lsTreeEntriesAtCommit(repo, commit, itemRoot);
   } catch {
-    throw new Error(
-      missingSourceCommitMessage(
-        opts.dataRepo,
-        opts.sourceCommit,
-        opts.manifest,
-      ),
-    );
+    throw new Error(missingSourceCommitMessage(repo, commit, opts.manifest));
   }
-  assertRegularBlobEntries(entries, repoRelPath);
+  assertRegularBlobEntries(entries, itemRoot);
   return entries
     .map((entry) => ({
-      rel: posix.relative(repoRelPath, entry.path),
+      rel: posix.relative(itemRoot, entry.path),
       executable: entry.mode === "100755",
     }))
     .filter(
@@ -683,16 +693,15 @@ async function expectedModesForCopyItem(
 }
 
 async function showExpectedFile(
-  opts: { dataRepo: string | null; manifest: Manifest },
-  commit: string,
+  source: GitTreeSource,
+  manifest: Manifest,
   file: string,
 ): Promise<Buffer> {
-  if (!opts.dataRepo) throw new Error("data repo is required");
   try {
-    return await showAtCommit(opts.dataRepo, commit, file);
+    return await showAtCommit(source.repo, source.commit, file);
   } catch {
     throw new Error(
-      missingSourceCommitMessage(opts.dataRepo, commit, opts.manifest),
+      missingSourceCommitMessage(source.repo, source.commit, manifest),
     );
   }
 }

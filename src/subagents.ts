@@ -466,10 +466,14 @@ export async function materializeSubagent(
       options.entry.sourcePinDigest !== undefined
         ? await installedTreeIdentity(
             options.project,
-            options.dataRepo,
+            gitTreeSource({
+              repo: options.dataRepo,
+              kind: "subagents",
+              name: options.name,
+              commit: options.entry.sourceCommit,
+            }),
             "subagents",
             options.name,
-            options.entry.sourceCommit,
           )
         : await shaOfInstalledSubagent(
             options.project,

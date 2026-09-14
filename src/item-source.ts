@@ -39,8 +39,21 @@ export type ContentSource = GitTreeSource | BundledSource;
  */
 export type Ownership = "shelf" | "system";
 
-export function isGitTree(source: ContentSource): source is GitTreeSource {
-  return source.kind === "git-tree";
+/**
+ * Both predicates accept null, which is what a reporting path holds when it
+ * cannot reach the item at all. "Not a git tree" and "unreachable" are
+ * different states, so each has its own answer.
+ */
+export function isGitTree(
+  source: ContentSource | null,
+): source is GitTreeSource {
+  return source !== null && source.kind === "git-tree";
+}
+
+export function isBundled(
+  source: ContentSource | null,
+): source is BundledSource {
+  return source !== null && source.kind === "bundled";
 }
 
 /**
@@ -75,23 +88,40 @@ export function gitTreeSource(input: {
  * error, which is what `materialize.ts` used to report from a distance through
  * an ambient `dataRepo` argument that had to agree with the entry.
  */
-export function contentSourceFor(input: {
-  entry: LockEntry;
-  kind: ItemKind;
-  name: string;
-  /** The resolved repository, when the entry needs one. */
-  repo?: string;
-  /** Overrides the canonical layout. Nothing supplies one yet. */
-  itemRoot?: string;
-}): ContentSource {
-  if (input.entry.source === "system") {
-    return { kind: "bundled", sha: input.entry.sha };
-  }
-  if (input.repo === undefined) {
+export function contentSourceFor(input: ContentSourceInput): ContentSource {
+  const source = contentSourceOrNull(input);
+  if (source === null) {
     throw new Error(
       `${input.kind}/${input.name} is a data item and needs a repository to read its content`,
     );
   }
+  return source;
+}
+
+export interface ContentSourceInput {
+  entry: LockEntry;
+  kind: ItemKind;
+  name: string;
+  /** The resolved repository, when the entry needs one. */
+  repo?: string | null;
+  /** Overrides the canonical layout. Nothing supplies one yet. */
+  itemRoot?: string;
+}
+
+/**
+ * The same source for a reporting path, which must degrade rather than fail.
+ *
+ * Null means one thing only: the entry reads from a repository and none is
+ * available. A bundled entry still returns a source, so a caller can still tell
+ * "the CLI owns these bytes" from "I cannot reach them".
+ */
+export function contentSourceOrNull(
+  input: ContentSourceInput,
+): ContentSource | null {
+  if (input.entry.source === "system") {
+    return { kind: "bundled", sha: input.entry.sha };
+  }
+  if (input.repo === undefined || input.repo === null) return null;
   return gitTreeSource({
     repo: input.repo,
     kind: input.kind,
@@ -99,6 +129,18 @@ export function contentSourceFor(input: {
     commit: input.entry.sourceCommit,
     ...(input.itemRoot !== undefined && { itemRoot: input.itemRoot }),
   });
+}
+
+/**
+ * The git tree an entry reads from, or null when it has none — either because
+ * the bytes are bundled in the binary or because no repository is available.
+ * This is the question the reporting paths ask before they probe a commit.
+ */
+export function gitTreeSourceOrNull(
+  input: ContentSourceInput,
+): GitTreeSource | null {
+  const source = contentSourceOrNull(input);
+  return source !== null && isGitTree(source) ? source : null;
 }
 
 /**

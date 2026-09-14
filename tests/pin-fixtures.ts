@@ -54,10 +54,14 @@ export async function installedPinDigestFor(
 ): Promise<string | null> {
   return await installedTreeIdentity(
     project,
-    dataRepo,
+    gitTreeSource({
+      repo: dataRepo,
+      kind,
+      name,
+      commit: commit ?? (await currentSourceCommit(dataRepo, kind, name)),
+    }),
     kind,
     name,
-    commit ?? (await currentSourceCommit(dataRepo, kind, name)),
   );
 }
 

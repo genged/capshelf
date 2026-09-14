@@ -75,7 +75,8 @@ import {
   itemTreeEntriesAtCommit,
   type FilteredPath,
 } from "./pin";
-import { gitTreeSource } from "./item-source";
+import { contentSourceOrNull, isBundled, isGitTree } from "./item-source";
+import type { GitTreeSource } from "./item-source";
 import { loadCommittedItemNeeds } from "./metadata";
 import type { ItemNeeds } from "./metadata";
 import {
@@ -241,36 +242,39 @@ export async function buildStatusReport(
     if (kind === "skills" && externalSkillNames.has(itemName)) continue;
 
     const entry = lock.items[key]!;
+    // The one place this row decides where its bytes come from. A null content
+    // source means the item reads from a repository and none is usable, which
+    // is a degraded row rather than a failed command. `tree` narrows that to
+    // the case this row can actually read a commit from.
+    const contentSource = contentSourceOrNull({
+      entry,
+      kind,
+      name: itemName,
+      repo: dataRepo,
+    });
+    const tree = isGitTree(contentSource) ? contentSource : null;
     // Reachability must be gathered before computing currentSha: the
     // sourceCommit-dependent computations below (`git show` /
     // `ls-tree` at the pinned commit) would error out on an
     // unreachable pin. When the commit is missing they are skipped and
     // the row degrades to missing_source_commit instead of crashing.
-    const sourceCommitPresent: boolean | null =
-      entry.source === "data" && dataRepo
-        ? await commitExists(dataRepo, entry.sourceCommit, memo)
-        : null;
+    const sourceCommitPresent: boolean | null = tree
+      ? await commitExists(tree.repo, tree.commit, memo)
+      : null;
     // Under lock version 4 the installed state is named the way Git
     // names it — a blob id per pinned path plus its mode — so the same
     // `sourcePinDigest` formula covers the pin, the install, and the
     // upstream. Mode is inside the digest, which is why `modeDrifted`
     // stays false on that path: an executable-bit flip is already a
     // different identity rather than a separate flag.
-    const treeIdentity = entry.source === "data" && isTreePinned(entry);
+    const treeIdentity = isTreePinned(entry);
     const installation =
-      treeIdentity && entry.source === "data" && dataRepo
-        ? await describeInstallation(
-            project,
-            dataRepo,
-            kind,
-            itemName,
-            entry.sourceCommit,
-            memo,
-          )
+      treeIdentity && tree
+        ? await describeInstallation(project, tree, kind, itemName, memo)
         : null;
     let currentSha: string | null;
     let modeDrifted = false;
-    if (treeIdentity && entry.source === "data" && dataRepo) {
+    if (treeIdentity && tree) {
       currentSha =
         sourceCommitPresent === false
           ? null
@@ -278,53 +282,50 @@ export async function buildStatusReport(
     } else if (isFragmentItemKind(kind)) {
       currentSha = await shaOfInstalled(project, kind, itemName);
     } else if (isCopyDirectoryItemKind(kind)) {
+      // An unreachable commit is the same answer as an unreachable repository:
+      // there is no locked content to compare the install against.
+      const lockedSource = sourceCommitPresent === false ? null : contentSource;
       currentSha = await currentCopyDirectoryItemSha({
         project,
-        dataRepo,
+        source: lockedSource,
         manifest,
-        source,
         kind,
         name: itemName,
-        sourceCommit:
-          entry.source === "data" && sourceCommitPresent !== false
-            ? entry.sourceCommit
-            : undefined,
       });
       if (currentSha !== null) {
         modeDrifted = await copyDirectoryModeDrifted({
           project,
-          dataRepo,
+          source: lockedSource,
           manifest,
-          source,
           kind,
           name: itemName,
-          sourceCommit:
-            entry.source === "data" && sourceCommitPresent !== false
-              ? entry.sourceCommit
-              : undefined,
         });
       }
     } else if (isCopyTargetFileItemKind(kind)) {
       currentSha =
-        entry.source === "data" && dataRepo && sourceCommitPresent !== false
+        tree && sourceCommitPresent !== false
           ? await shaOfInstalledSubagent(
               project,
-              dataRepo,
+              tree.repo,
               itemName,
-              entry.sourceCommit,
+              tree.commit,
             )
           : entryIdentity(entry);
     } else {
       throw new Error(`no status strategy for ${kind}/${itemName}`);
     }
     let fragmentOutputState: FragmentContributionState | null = null;
+    // Two questions under one guard, and they are not the same one. The outer
+    // test is about the record: only a shelf fragment contributes to a merged
+    // output. The inner test is about the content: the contribution can only be
+    // computed from a readable commit.
     if (source === "data" && isFragmentItemKind(kind)) {
-      if (sourceCommitPresent === false) {
+      if (tree === null || sourceCommitPresent === false) {
         currentSha = entryIdentity(entry);
-      } else if (dataRepo) {
+      } else {
         fragmentOutputState = await itemFragmentContributionState(
           project,
-          dataRepo,
+          tree.repo,
           manifest,
           lock,
           kind,
@@ -340,8 +341,6 @@ export async function buildStatusReport(
             : fragmentOutputState === "missing"
               ? null
               : "fragment-output-drift";
-      } else {
-        currentSha = entryIdentity(entry);
       }
     }
 
@@ -391,43 +390,38 @@ export async function buildStatusReport(
     // the commit the pin names, so the verdict is identical in every
     // clone whether or not that clone holds the driver's key.
     const filteredPaths =
-      treeIdentity &&
-      entry.source === "data" &&
-      dataRepo &&
-      sourceCommitPresent !== false
+      treeIdentity && tree && sourceCommitPresent !== false
         ? await filteredPathsForEntry(
-            dataRepo,
+            tree,
             kind,
             itemName,
-            entry.sourceCommit,
             observeObjectsDir,
             memo,
           )
         : [];
-    const axes: StatusAxes | undefined =
-      entry.source === "data" && treeIdentity
-        ? {
-            pin:
-              sourceCommitPresent === false || installation === null
-                ? "unresolvable"
-                : installation.pinnedSha === entryIdentity(entry)
-                  ? "valid"
-                  : "mismatch",
-            sourceState:
-              filteredPaths.length > 0
-                ? "filtered"
-                : upstreamDirty
-                  ? "dirty"
-                  : "exact",
-            ...(installation !== null && {
-              installation: installation.axis,
-              installDifferences: installation.differences.filter(
-                (difference) => difference.kind !== "untouched",
-              ),
-            }),
-            ...(filteredPaths.length > 0 && { filteredPaths }),
-          }
-        : undefined;
+    const axes: StatusAxes | undefined = treeIdentity
+      ? {
+          pin:
+            sourceCommitPresent === false || installation === null
+              ? "unresolvable"
+              : installation.pinnedSha === entryIdentity(entry)
+                ? "valid"
+                : "mismatch",
+          sourceState:
+            filteredPaths.length > 0
+              ? "filtered"
+              : upstreamDirty
+                ? "dirty"
+                : "exact",
+          ...(installation !== null && {
+            installation: installation.axis,
+            installDifferences: installation.differences.filter(
+              (difference) => difference.kind !== "untouched",
+            ),
+          }),
+          ...(filteredPaths.length > 0 && { filteredPaths }),
+        }
+      : undefined;
     const state = deriveState({
       kind,
       source: entry.source,
@@ -447,9 +441,10 @@ export async function buildStatusReport(
     // be read at all — no data repo, or an unreachable pin — the rows
     // degrade to `present: null` instead of the command crashing.
     let targetCoverage: TargetCoverageReport | null = null;
-    if (entry.source !== "data") {
+    if (isBundled(contentSource)) {
+      // Bundled content carries no runtime targets to cover.
       targetCoverage = null;
-    } else if (!dataRepo) {
+    } else if (tree === null) {
       targetCoverage = unknownTargetCoverage(
         project,
         kind,
@@ -469,18 +464,17 @@ export async function buildStatusReport(
       // so skips a second identical `git cat-file -e` per row.
       targetCoverage = await itemTargetCoverageAtCommit(
         project,
-        dataRepo,
+        tree.repo,
         kind,
         itemName,
-        entry.sourceCommit,
+        tree.commit,
         { commitKnownPresent: true, memo },
       );
     }
 
     const subagentTargets =
       kind === "subagents" &&
-      entry.source === "data" &&
-      dataRepo &&
+      tree &&
       sourceCommitPresent !== false &&
       // The locked commit resolves but its tree does not read.
       // `subagentSourcesAtCommit` cannot tell that from "this item has
@@ -499,9 +493,9 @@ export async function buildStatusReport(
         ? (
             await subagentTargetStatusAtCommit(
               project,
-              dataRepo,
+              tree.repo,
               itemName,
-              entry.sourceCommit,
+              tree.commit,
               memo,
             )
           ).map((detail) => ({
@@ -616,22 +610,17 @@ export async function collectStatusDiffs(
  * saving is in a multi-item `update`, which pins them all at once.
  */
 async function filteredPathsForEntry(
-  dataRepo: string,
+  source: GitTreeSource,
   kind: ItemKind,
   name: string,
-  commit: string,
   observeObjectsDir: () => Promise<string>,
   memo: GitReadMemo,
 ): Promise<FilteredPath[]> {
   try {
-    const entries = await itemTreeEntriesAtCommit(
-      gitTreeSource({ repo: dataRepo, kind, name, commit }),
-      kind,
-      memo,
-    );
+    const entries = await itemTreeEntriesAtCommit(source, kind, memo);
     return await filteredPathsAtCommit(
-      dataRepo,
-      commit,
+      source.repo,
+      source.commit,
       [{ kind, name, entries }],
       observeObjectsDir,
     );

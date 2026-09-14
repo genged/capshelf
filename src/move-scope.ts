@@ -4,6 +4,7 @@ import { isCopyDirectoryItemKind, itemRepoRelPath } from "./master";
 import type { ItemKind } from "./master";
 import { dataKey, entryIdentity, hasNeedsSnapshot } from "./lock";
 import { installedTreeIdentity } from "./install-identity";
+import { gitTreeSource } from "./item-source";
 import type { DataLockEntry } from "./lock";
 import { CheckFailedError, NotFoundError, PreconditionError } from "./errors";
 import {
@@ -106,10 +107,14 @@ export async function moveScope(
     sourceEntry.sourcePinDigest !== undefined
       ? await installedTreeIdentity(
           project,
-          dataRepo,
+          gitTreeSource({
+            repo: dataRepo,
+            kind,
+            name,
+            commit: sourceEntry.sourceCommit,
+          }),
           kind,
           name,
-          sourceEntry.sourceCommit,
         )
       : ((
           await installedSnapshot(

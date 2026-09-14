@@ -17,7 +17,7 @@ import { ensureLocalExcludes, removeLocalExcludes } from "../src/local-config";
 import { ManifestSchema } from "../src/manifest";
 import { shaOfGitVisibleItem } from "../src/master";
 import { materializeLockEntry } from "../src/materialize";
-import { contentSourceFor } from "../src/item-source";
+import { contentSourceFor, gitTreeSource } from "../src/item-source";
 import { dataKey, type Lock } from "../src/lock";
 import { copyDirectoryModeDrifted } from "../src/status-diff";
 import { syncTrackedIntoDataRepo } from "../src/commands/promote-named";
@@ -171,12 +171,15 @@ describe("Git and filesystem semantics", () => {
     expect(
       await copyDirectoryModeDrifted({
         project,
-        dataRepo,
+        source: gitTreeSource({
+          repo: dataRepo,
+          kind: "skills",
+          name: "mode",
+          commit: sourceCommit,
+        }),
         manifest: ManifestSchema.parse({}),
         kind: "skills",
         name: "mode",
-        source: "data",
-        sourceCommit,
       }),
     ).toBe(true);
 
@@ -230,12 +233,15 @@ describe("Git and filesystem semantics", () => {
     expect(
       await copyDirectoryModeDrifted({
         project,
-        dataRepo,
+        source: contentSourceFor({
+          entry,
+          kind: "skills",
+          name: "mode",
+          repo: dataRepo,
+        }),
         manifest: ManifestSchema.parse({}),
         kind: "skills",
         name: "mode",
-        source: "data",
-        sourceCommit: entry.sourceCommit,
       }),
     ).toBe(true);
     const applied = await materializeLockEntry({

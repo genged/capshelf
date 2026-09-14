@@ -349,10 +349,14 @@ async function itemState(
     const installation = sourceCommitPresent
       ? await describeInstallation(
           opts.project,
-          opts.dataRepo,
+          gitTreeSource({
+            repo: opts.dataRepo,
+            kind,
+            name,
+            commit: entry.sourceCommit,
+          }),
           kind,
           name,
-          entry.sourceCommit,
         )
       : null;
     currentSha = installation?.currentSha ?? null;

@@ -11,6 +11,7 @@ import {
 import { parseLockKey } from "../installed";
 import { shaOfInstalledForScope } from "../item-snapshot";
 import { installedTreeIdentity } from "../install-identity";
+import { gitTreeSource } from "../item-source";
 import { loadManifest } from "../manifest";
 import { resolveProjectDataRepo } from "../command-context";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
@@ -105,10 +106,14 @@ export function registerKeepLocal(program: Command): void {
           entry.sourcePinDigest !== undefined
             ? await installedTreeIdentity(
                 project,
-                dataRepo,
+                gitTreeSource({
+                  repo: dataRepo,
+                  kind: parsed.kind,
+                  name: parsed.name,
+                  commit: entry.sourceCommit,
+                }),
                 parsed.kind,
                 parsed.name,
-                entry.sourceCommit,
               )
             : await shaOfInstalledForScope(
                 project,
