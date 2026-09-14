@@ -61,7 +61,7 @@ import {
 } from "../errors";
 import { targetDir } from "../sync";
 import { findInstallConflict, installedPath, parseLockKey } from "../installed";
-import { contentSourceFor } from "../item-source";
+import { contentSourceFor, isGitTree } from "../item-source";
 import { isSystemItemName } from "../bundled";
 import { assertPathClean } from "../git";
 import { GitReadMemo } from "../git-read-memo";
@@ -413,32 +413,36 @@ async function printAlreadyInstalled(
   // rewritten upstream, or a clone that never fetched it. Coverage then
   // degrades to `unknown` rather than crashing the most likely way a user
   // checks what an item covers: re-running `add`.
-  const targetCoverage =
-    entry.source === "data"
-      ? await itemTargetCoverageAtCommit(
-          ctx.project,
+  const locked = contentSourceFor({
+    entry,
+    kind: parsed.kind,
+    name: parsed.name,
+    repo: ctx.dataRepo,
+  });
+  const targetCoverage = isGitTree(locked)
+    ? await itemTargetCoverageAtCommit(
+        ctx.project,
+        locked.repo,
+        parsed.kind,
+        parsed.name,
+        locked.commit,
+      )
+    : null;
+  const missingRequires = isGitTree(locked)
+    ? (
+        await loadCommittedItemNeeds(
           ctx.dataRepo,
-          parsed.kind,
-          parsed.name,
-          entry.sourceCommit,
+          { kind: parsed.kind, name: parsed.name },
+          locked.commit,
         )
-      : null;
-  const missingRequires =
-    entry.source === "data"
-      ? (
-          await loadCommittedItemNeeds(
-            ctx.dataRepo,
-            { kind: parsed.kind, name: parsed.name },
-            entry.sourceCommit,
-          )
-        ).requires.filter(
-          (required) =>
-            ctx.projectLock.items[`data/${required}`] === undefined &&
-            ctx.projectLock.items[`system/${required}`] === undefined &&
-            ctx.localLock.items[`data/${required}`] === undefined &&
-            ctx.localLock.items[`system/${required}`] === undefined,
-        )
-      : [];
+      ).requires.filter(
+        (required) =>
+          ctx.projectLock.items[`data/${required}`] === undefined &&
+          ctx.projectLock.items[`system/${required}`] === undefined &&
+          ctx.localLock.items[`data/${required}`] === undefined &&
+          ctx.localLock.items[`system/${required}`] === undefined,
+      )
+    : [];
   if (json) {
     console.log(
       JSON.stringify(

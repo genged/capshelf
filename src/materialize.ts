@@ -20,6 +20,7 @@ import {
   installedPath,
 } from "./installed";
 import type { ItemSource } from "./installed";
+import { isTreePinned } from "./install-identity";
 import { isGitTree, sameContentSource } from "./item-source";
 import type { ContentSource, GitTreeSource } from "./item-source";
 import type { ItemKind, CopyDirectoryItemKind } from "./master";
@@ -359,7 +360,7 @@ async function installedIdentityForEntry(
   content: { entries: readonly PinTreeEntry[]; files: NamedFile[] } | null,
 ): Promise<string | null> {
   if (content === null || !existsSync(root)) return null;
-  if (entry.source === "data" && entry.sourcePinDigest !== undefined) {
+  if (isTreePinned(entry)) {
     return await installedPinDigest(
       targetsUnderRoot(root, content.entries),
       hashWidthOf(content.entries),

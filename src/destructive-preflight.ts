@@ -13,7 +13,7 @@ import type {
 import { showAtCommit } from "./git";
 import { inventoryLocalTree } from "./gitignore";
 import { installedPath } from "./installed";
-import { contentSourceFor } from "./item-source";
+import { contentSourceFor, isBundled } from "./item-source";
 import { shaOfInstalledForScope } from "./item-snapshot";
 import type { DataLockEntry, LockEntry } from "./lock";
 import type { Manifest } from "./manifest";
@@ -110,14 +110,20 @@ export async function planCopyDirectoryDestruction(opts: {
   // reaches the consent boundary. This is the same comparison `status` uses to
   // call an item drifted — capshelf prompts for a bundled update exactly when
   // `status` says the install diverged.
+  const currentSource = contentSourceFor({
+    entry: opts.currentEntry,
+    kind: opts.kind,
+    name: opts.name,
+    repo: opts.dataRepo,
+  });
   const pristineSystemInstall =
-    opts.currentEntry.source === "system" &&
+    isBundled(currentSource) &&
     (await shaOfInstalledForScope(
       opts.project,
       opts.kind,
       opts.name,
       opts.scope,
-    )) === opts.currentEntry.sha;
+    )) === currentSource.sha;
 
   const expectedByPath = new Map(
     current.expected.map((file) => [file.path, file]),

@@ -21,7 +21,9 @@ import {
   dataKey,
   systemKey,
 } from "../lock";
-import type { Lock, LockEntry } from "../lock";
+import type { Lock } from "../lock";
+import { contentSourceOrNull, isGitTree } from "../item-source";
+import type { ContentSource } from "../item-source";
 import type { MasterItem } from "../master";
 import { shortIdentity } from "../pin";
 import { loadManifest } from "../manifest";
@@ -168,11 +170,23 @@ export function registerShow(program: Command): void {
       // sentence needs nothing, so browse-only show prints it alone.
       const tracked = project !== null && lockEntry !== null;
       const itemLabel = `${item.kind}/${item.name}`;
+      // Where this project's locked copy reads from, when it has one. `show`
+      // resolves a data repo before it reaches here, so a data entry always
+      // produces a git tree.
+      const lockedSource =
+        lockEntry === null
+          ? null
+          : contentSourceOrNull({
+              entry: lockEntry,
+              kind: item.kind,
+              name: item.name,
+              repo: dataRepo,
+            });
       const wholeCoverage = await showTargetCoverage(
         project,
         dataRepo,
         item,
-        lockEntry,
+        lockedSource,
       );
       const coverage = wholeCoverage
         ? restrictCoverage(wholeCoverage, cliTarget)
@@ -256,8 +270,9 @@ export function registerShow(program: Command): void {
                 })),
               }),
               ...(coverage && targetCoverageJson(coverage, project)),
-              sourceCommit:
-                lockEntry?.source === "data" ? lockEntry.sourceCommit : null,
+              sourceCommit: isGitTree(lockedSource)
+                ? lockedSource.commit
+                : null,
               label:
                 lockEntry?.source === "data" ? (lockEntry.label ?? null) : null,
               appliedAt: lockEntry?.appliedAt ?? null,
@@ -284,9 +299,13 @@ export function registerShow(program: Command): void {
         // `status` owns update detection and gets it right; `show` describes
         // one item.
         console.log(`  locked sha: ${shortIdentity(entryIdentity(lockEntry))}`);
-        if (lockEntry.source === "data") {
-          console.log(`  source commit: ${lockEntry.sourceCommit}`);
-          if (lockEntry.label) console.log(`  label:      ${lockEntry.label}`);
+        // Two fields, two questions. The commit says where the bytes came
+        // from; the label is a record field the user set on this entry.
+        if (isGitTree(lockedSource)) {
+          console.log(`  source commit: ${lockedSource.commit}`);
+        }
+        if (lockEntry.source === "data" && lockEntry.label) {
+          console.log(`  label:      ${lockEntry.label}`);
         }
         console.log(`  applied:    ${lockEntry.appliedAt}`);
       } else {
@@ -305,7 +324,7 @@ export function registerShow(program: Command): void {
       if (coverage) {
         printTargetCoverage(coverage, itemLabel, {
           presentWord: "present",
-          absentScope: lockEntry?.source === "data" ? "locked" : "item",
+          absentScope: isGitTree(lockedSource) ? "locked" : "item",
           tracked,
         });
       }
@@ -376,15 +395,15 @@ async function showTargetCoverage(
   project: string | null,
   dataRepo: string,
   item: MasterItem,
-  lockEntry: LockEntry | null,
+  locked: ContentSource | null,
 ): Promise<TargetCoverageReport | null> {
-  if (lockEntry?.source === "data") {
+  if (isGitTree(locked)) {
     return await itemTargetCoverageAtCommit(
       project,
-      dataRepo,
+      locked.repo,
       item.kind,
       item.name,
-      lockEntry.sourceCommit,
+      locked.commit,
     );
   }
   const head = await headSha(dataRepo).catch(() => null);

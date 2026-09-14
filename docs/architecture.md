@@ -101,15 +101,30 @@ error messages should reinforce this framing.
 
 ## The data model
 
-### Two kinds of items
+### Two kinds of items, on two axes
 
-| origin | source of truth | examples | promotable? |
+An item answers two questions, and they are separate.
+
+**Content source** says where the bytes come from. **Ownership** says who owns
+the content and who owns the record.
+
+| population | content source | ownership | promotable? |
 |---|---|---|---|
-| **system** | bundled in the CLI binary | bootstrap `capshelf` skill, future built-ins | no — submit a PR to the capshelf repo |
-| **data** | a user-owned data repo (git) | user skills, Pi extensions, settings/MCP fragments, Codex config fragments | yes — `share` and `promote` commit to the data repo |
+| **system** | `bundled` — the CLI binary | the binary owns both | no — submit a PR to the capshelf repo |
+| **data** | `git-tree` — a repository, a commit, and an item root | the data repo owns the content, capshelf owns the record | yes — `share` and `promote` commit to the data repo |
 
-Both kinds live in the same lockfile but with different entry schemas (see
-Lock below).
+Both populations live in the same lockfile with different entry schemas (see
+Lock below). Today they differ on both axes at once, so one field could answer
+both questions. A third population separates them: a pulled skill is git-tree
+sourced like a data item and unpublishable like a system item.
+
+Both values are derived in memory when a lock entry is read
+(`src/item-source.ts`). Ownership comes from two facts already on disk: which
+document holds the record, and the record's own `source` field. Nothing new is
+written, no lock format changes, and identity is untouched.
+
+A code path that asks *where are the bytes* uses `isGitTree(source)`. A path
+that asks *may the user publish this* reads the entry.
 
 ### Data repo layout
 

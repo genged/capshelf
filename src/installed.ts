@@ -248,6 +248,12 @@ export async function shaOfInstalled(
   return shaOfItem(p);
 }
 
+/**
+ * Which record owns an item, not where its bytes come from. Those were one
+ * question until a third population separated them; `ContentSource` in
+ * `src/item-source.ts` answers the other. A value here is a lock key prefix
+ * and nothing more.
+ */
 export type ItemSource = "data" | "system";
 
 export interface LockKeyParts {

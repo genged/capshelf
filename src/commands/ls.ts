@@ -14,7 +14,6 @@ import {
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
   isFragmentItemKind,
-  itemRepoRelPath,
   listMasterItems,
   ITEM_KINDS,
   parseItemKind,
@@ -26,6 +25,8 @@ import { entryIdentity, loadLocalLock, loadLock } from "../lock";
 import { loadManifest } from "../manifest";
 import { shortIdentity } from "../pin";
 import { parseLockKey } from "../installed";
+import { contentSourceOrNull, isBundled } from "../item-source";
+import type { ContentSource } from "../item-source";
 import { assertIsGitRepo } from "../git";
 import { globalOpts } from "../global-options";
 import { shaOfFragmentItem } from "../fragments";
@@ -355,19 +356,20 @@ async function shaOfDataItem(
  * an unbound clone or a missing upstream item must not break `ls --here`.
  */
 async function installedRowMetadata(
-  dataRepo: string | null,
-  source: "data" | "system",
+  source: ContentSource | null,
   kind: ItemKind,
   name: string,
 ): Promise<ItemMetadata | null> {
   try {
-    if (source === "system") {
+    if (source === null) return null;
+    if (isBundled(source)) {
       const item = findSystemItem(name);
       if (!item || item.kind !== kind) return null;
       return loadSystemItemMetadata(item);
     }
-    if (!dataRepo) return null;
-    const path = join(dataRepo, ...itemRepoRelPath(kind, name).split("/"));
+    // The working tree, not the commit: the sidecar is catalog data, and
+    // `ls --here` describes the shelf as it is now.
+    const path = join(source.repo, ...source.itemRoot.split("/"));
     if (!existsSync(path)) return null;
     return await loadDataItemMetadata({ kind, name, path });
   } catch {
@@ -423,8 +425,12 @@ async function lsHere(
   }> = [];
   for (const entry of kindFiltered) {
     const meta = await installedRowMetadata(
-      dataRepo,
-      entry.source,
+      contentSourceOrNull({
+        entry,
+        kind: entry.kind,
+        name: entry.name,
+        repo: dataRepo,
+      }),
       entry.kind,
       entry.name,
     );
