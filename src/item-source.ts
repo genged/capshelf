@@ -132,18 +132,6 @@ export function contentSourceOrNull(
 }
 
 /**
- * The git tree an entry reads from, or null when it has none — either because
- * the bytes are bundled in the binary or because no repository is available.
- * This is the question the reporting paths ask before they probe a commit.
- */
-export function gitTreeSourceOrNull(
-  input: ContentSourceInput,
-): GitTreeSource | null {
-  const source = contentSourceOrNull(input);
-  return source !== null && isGitTree(source) ? source : null;
-}
-
-/**
  * Ownership is derived, never stored. It is a function of which document holds
  * the record and the record's own `source` field. `capshelf.lock.json` and
  * `local.lock.json` hold both populations, and `source` tells them apart.
