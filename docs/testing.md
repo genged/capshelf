@@ -187,10 +187,13 @@ performance assertion.
 
 Some cells need a terminal, because a consent prompt and the pickers behave
 differently on one. The picker cells cover the `init`, `add`, `share`, and
-`promote` entry points. Those cells open a pseudo-terminal through
-`e2e/support/pty-driver.py`. They need `python3` on `PATH`, and they fail with
-that message when it is absent. The captured output carries terminal echo and
-CR line endings, so they assert substrings, not exact bytes.
+`promote` entry points. The consent cells cover two gates. One is the
+destructive-change planner. The other is the question a pulled skill asks
+before it installs content nobody on the team reviewed. Those cells open a
+pseudo-terminal through `e2e/support/pty-driver.py`. They need `python3` on
+`PATH`, and they fail with that message when it is absent. The captured output
+carries terminal echo and CR line endings, so they assert substrings, not exact
+bytes.
 
 The driver gives that terminal a window size and turns off carriage-return
 translation. A bare pseudo-terminal has neither. Its defaults are not what a
