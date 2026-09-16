@@ -62,6 +62,17 @@ import {
   type FragmentTarget,
 } from "../fragments";
 import { removeSubagentOutputs } from "../subagents";
+import { remoteCacheState } from "../remote-cache";
+import { remoteTreeSource } from "../remote-discovery";
+import {
+  REMOTE_ITEM_KIND,
+  loadRemotesLock,
+  parseRemoteKey,
+  remoteKeysForRef,
+  saveRemotesLock,
+} from "../remotes-lock";
+import type { RemotesLock } from "../remotes-lock";
+import type { Manifest } from "../manifest";
 
 interface RmOptions {
   json?: boolean;
@@ -129,6 +140,22 @@ export function registerRm(program: Command): void {
             })
             .join(", ")}; use kind/name`,
         );
+      }
+
+      // Before the not-tracked error: a remote row is in neither capshelf lock
+      // by A3, so `lockKeysForRef` above found nothing for one.
+      const remotes = await loadRemotesLock(project);
+      const remoteKeys = remoteKeysForRef(remotes, ref);
+      if (dataKeys.length === 0 && remoteKeys.length > 0) {
+        await removeRemoteSkill({
+          project,
+          manifest,
+          key: remoteKeys[0]!,
+          remotes,
+          json: opts.json === true,
+          yes: opts.yes === true,
+        });
+        return;
       }
 
       if (dataKeys.length === 0) {
@@ -427,4 +454,113 @@ export function registerRm(program: Command): void {
         );
       }
     });
+}
+
+/**
+ * Remove a pulled skill: the install, its compatibility alias, its exclude
+ * lines, and its row.
+ *
+ * A cold cache must not stop this. The locked file set is only used to label a
+ * path as reproducible managed content rather than unique local state, so when
+ * the cache is gone every installed path degrades to `extra_local_path`, is
+ * named in the prompt, and is deleted only with consent. Failing instead would
+ * strand the item in exactly the state `rm` exists for.
+ */
+async function removeRemoteSkill(input: {
+  project: string;
+  manifest: Manifest;
+  key: string;
+  remotes: RemotesLock;
+  json: boolean;
+  yes: boolean;
+}): Promise<void> {
+  const { project, key, remotes } = input;
+  const { name } = parseRemoteKey(key);
+  const entry = remotes.items[key]!;
+  const cache = remoteCacheState(entry.upstream);
+  const reviewCommand = `${PRODUCT_NAME} status ${REMOTE_ITEM_KIND}/${name} --diff-view installed`;
+  const planRemoval = async (): Promise<
+    ReturnType<typeof createDestructiveChangePlan>
+  > => {
+    const planned = await planCopyDirectoryRemoval({
+      project,
+      currentSource: cache.present
+        ? remoteTreeSource(cache.path, entry.sourceCommit, entry.subpath)
+        : null,
+      manifest: input.manifest,
+      kind: REMOTE_ITEM_KIND,
+      name,
+      key,
+      scope: "local",
+      reviewCommand,
+    });
+    return createDestructiveChangePlan(planned.changes, [
+      ...planned.snapshotParts,
+      `remote-entry:${JSON.stringify(entry)}`,
+    ]);
+  };
+
+  const accepted = await planRemoval();
+  if (
+    !(await confirmDestructiveChanges(accepted, {
+      operation: `${PRODUCT_NAME} rm`,
+      json: input.json,
+      yes: input.yes,
+      dryRun: false,
+      rerunCommand: `${PRODUCT_NAME} rm ${REMOTE_ITEM_KIND}/${name} --yes`,
+    }))
+  ) {
+    return;
+  }
+  assertDestructivePlanUnchanged(accepted, await planRemoval());
+
+  const path = installedPath(
+    project,
+    REMOTE_ITEM_KIND,
+    name,
+    input.manifest.installMode,
+  );
+  let removed = await removeInstallAliases(
+    project,
+    REMOTE_ITEM_KIND,
+    name,
+    path,
+    input.manifest.installMode,
+  );
+  if (existsSync(path)) {
+    try {
+      await rmTreeWithRetries(path);
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new CliError(`could not delete ${path} (${detail})`, {
+        hint: "another process may be writing to that directory — stop it and retry",
+        cause: err,
+      });
+    }
+    removed = true;
+  }
+  await removeLocalExcludes(project, REMOTE_ITEM_KIND, name);
+  delete remotes.items[key];
+  await saveRemotesLock(project, remotes);
+
+  if (input.json) {
+    console.log(
+      JSON.stringify(
+        {
+          source: "remote",
+          scope: "local",
+          kind: REMOTE_ITEM_KIND,
+          name,
+          upstream: entry.upstream,
+          path,
+          removedFiles: removed,
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+  console.log(`✓ removed ${key}`);
+  if (removed) console.log(`  deleted ${path}`);
 }

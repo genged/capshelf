@@ -14,6 +14,7 @@ import { installedTreeIdentity } from "../install-identity";
 import { gitTreeSource } from "../item-source";
 import { loadManifest } from "../manifest";
 import { resolveProjectDataRepo } from "../command-context";
+import { assertNotPulledSkill } from "../remote-refusal";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
 import {
   isCopyDirectoryItemKind,
@@ -46,6 +47,7 @@ export function registerKeepLocal(program: Command): void {
         ? await loadLocalLock(project)
         : await loadLock(project);
       const ref = parseItemRef(itemRef);
+      await assertNotPulledSkill(project, ref, "marking");
       const keys = lockKeysForRef(lock, ref);
       const dataKeys = keys.filter(
         (key) => parseLockKey(key).source === "data",

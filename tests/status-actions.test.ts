@@ -129,3 +129,90 @@ describe("actionsForRow", () => {
     ]);
   });
 });
+
+describe("actionsForRow for a pulled skill", () => {
+  const remoteRow = (overrides: Partial<StatusRow> & { state: State }) =>
+    row({
+      scope: "local",
+      source: "remote",
+      name: "pdf",
+      remote: {
+        upstream: "https://github.com/anthropics/skills",
+        ref: "main",
+        subpath: "skills/pdf",
+        lastChecked: null,
+        upstreamHead: null,
+        alsoTrackedInShelf: false,
+      },
+      ...overrides,
+    });
+
+  test("an up-to-date pulled skill has nothing to run", () => {
+    expect(actionsForRow(remoteRow({ state: "ok" }))).toEqual([]);
+  });
+
+  test("a drifted pulled skill is adopted or reapplied, never promoted", () => {
+    const actions = commands(
+      actionsForRow(remoteRow({ state: "drifted_local" })),
+    );
+    expect(actions).toEqual([
+      "capshelf share skills/pdf --adopt",
+      "capshelf apply skills/pdf",
+    ]);
+    expect(actions.join(" ")).not.toContain("promote");
+    expect(actions.join(" ")).not.toContain("keep-local");
+    expect(actions.join(" ")).not.toContain("revert");
+  });
+
+  test("a drifted pulled skill with an update offers the merge first", () => {
+    expect(
+      commands(actionsForRow(remoteRow({ state: "drifted_and_update" }))),
+    ).toEqual([
+      "capshelf update skills/pdf --merge",
+      "capshelf update skills/pdf",
+      "capshelf share skills/pdf --adopt",
+    ]);
+  });
+
+  test("an update available offers the update alone", () => {
+    expect(
+      commands(actionsForRow(remoteRow({ state: "update_available" }))),
+    ).toEqual(["capshelf update skills/pdf"]);
+  });
+
+  test("a pulled skill gone upstream offers removal, never a shelf command", () => {
+    const actions = commands(
+      actionsForRow(remoteRow({ state: "missing_upstream" })),
+    );
+    expect(actions).toEqual(["capshelf rm skills/pdf"]);
+  });
+
+  test("an unfinished adopt names the command that completes it", () => {
+    const actions = commands(
+      actionsForRow(
+        remoteRow({
+          state: "ok",
+          remote: {
+            upstream: "https://github.com/anthropics/skills",
+            ref: "main",
+            subpath: "skills/pdf",
+            lastChecked: null,
+            upstreamHead: null,
+            alsoTrackedInShelf: true,
+          },
+        }),
+      ),
+    );
+    expect(actions).toEqual(["capshelf share skills/pdf --adopt"]);
+  });
+
+  test("a pulled skill never gets the needs-update action", () => {
+    expect(
+      commands(
+        actionsForRow(
+          remoteRow({ state: "ok", needsState: "update_available" }),
+        ),
+      ),
+    ).toEqual([]);
+  });
+});

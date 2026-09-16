@@ -28,6 +28,7 @@ import { globalOpts } from "../global-options";
 import { NotFoundError, PreconditionError } from "../errors";
 import { assertLocalScopeSupported } from "../local-config";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
+import { assertNotPulledSkill } from "../remote-refusal";
 import { materializeLockEntry } from "../materialize";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import { printRuntimeWarnings } from "../runtime-warnings";
@@ -68,6 +69,7 @@ export function registerRevert(program: Command): void {
       if (opts.local && ref.kind) {
         assertLocalScopeSupported(ref.kind, ref.name, "revert --local");
       }
+      await assertNotPulledSkill(project, ref, "reverting");
       const key = lockKeyForRef(lock, ref);
       if (!key) {
         if (ref.kind === undefined || ref.kind === "skills") {

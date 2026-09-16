@@ -16,7 +16,7 @@
  * a `Lock`.
  */
 import { PreconditionError } from "./errors";
-import { PRODUCT_NAME } from "./identity";
+import { METADATA_DIR, PRODUCT_NAME, REMOTES_LOCK_FILE } from "./identity";
 import { installedPath } from "./installed";
 import { dataKey } from "./lock";
 import type { DataLockEntryV4 } from "./lock";
@@ -167,6 +167,29 @@ export function coldCacheRefusal(
       hint:
         "update never creates a cache, because that would make it a network command\n" +
         `  fetch it: ${PRODUCT_NAME} status --check-upstream`,
+    },
+  );
+}
+
+/**
+ * The refusal a verb with nowhere to publish prints for a pulled skill.
+ *
+ * `promote`, `move`, `keep-local`, and `revert` all act on an item the shelf
+ * owns. A pulled skill's upstream is a repository nobody on the team can
+ * publish to, and its record is a different document, so `share --adopt` is the
+ * one exit. Every verb prints the same two facts, so they cannot drift apart.
+ */
+export function remoteVerbRefusal(
+  verb: string,
+  name: string,
+): PreconditionError {
+  const ref = `${REMOTE_ITEM_KIND}/${name}`;
+  return new PreconditionError(
+    `not ${verb} ${ref} — it is a pulled skill, tracked in ${METADATA_DIR}/${REMOTES_LOCK_FILE} rather than in your shelf`,
+    {
+      hint:
+        `take ownership of it first: ${PRODUCT_NAME} share ${ref} --adopt\n` +
+        `  or remove it: ${PRODUCT_NAME} rm ${ref}`,
     },
   );
 }

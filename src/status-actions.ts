@@ -53,6 +53,56 @@ export function actionsForRow(
   };
   const system = row.source === "system";
 
+  // A pulled skill gets its own branch rather than falling through the
+  // shelf-owned one. Every command below that names the shelf — `promote`,
+  // `keep-local`, `revert` — refuses for a remote row, so listing them would
+  // turn the status output into a set of dead ends the user is invited to run.
+  if (row.source === "remote") {
+    // No `--local` suffix. Every remote row is local scope, so there is no
+    // second row to disambiguate from, and `share` has no `--local` flag at
+    // all: a printed command has to run as printed.
+    const remoteVerb = (name: string, extra = ""): string =>
+      `${prefix} ${name} ${ref}${extra}`;
+    const adopt = remoteVerb("share", " --adopt");
+    if (row.remote?.alsoTrackedInShelf === true) {
+      add(adopt, "Finish the adopt that left the skill with two owners.");
+    }
+    switch (row.state) {
+      case "update_available":
+        add(
+          remoteVerb("update"),
+          "Take the newer upstream content. It asks first.",
+        );
+        break;
+      case "drifted_local":
+        add(adopt, "Keep the edit by taking ownership.");
+        add(remoteVerb("apply"), "Discard the edit and restore the pin.");
+        break;
+      case "drifted_and_update":
+        add(
+          remoteVerb("update", " --merge"),
+          "Merge the upstream change into the local edit.",
+        );
+        add(remoteVerb("update"), "Take the upstream version over the edit.");
+        add(adopt, "Keep the edit by taking ownership.");
+        break;
+      case "missing_installed":
+      case "missing_output":
+      case "output_drift":
+        add(remoteVerb("apply"), "Reinstall from the cached pin.");
+        break;
+      case "missing_upstream":
+        add(
+          remoteVerb("rm"),
+          "Remove it. The upstream repository no longer has it.",
+        );
+        break;
+      default:
+        break;
+    }
+    return out;
+  }
+
   switch (row.state) {
     case "ok":
     case "source_filtered":

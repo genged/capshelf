@@ -13,6 +13,7 @@ import { ensureInstallAliases, parseLockKey } from "../installed";
 import { NotFoundError, PreconditionError } from "../errors";
 import { isSystemItemName } from "../bundled";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
+import { assertNotPulledSkill } from "../remote-refusal";
 import type { ItemKind } from "../master";
 import {
   assertLocalScopeSupported,
@@ -50,6 +51,7 @@ export function registerMove(program: Command): void {
 
       const { project, manifest, projectLock, localLock } =
         await loadProjectContext({ cmd });
+      await assertNotPulledSkill(project, ref, "moving");
       const localConfig = await loadLocalConfig(project);
       const resolved = resolveMoveItem(ref, projectLock, localLock);
       if (!resolved) {

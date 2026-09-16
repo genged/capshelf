@@ -277,6 +277,114 @@ test(
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
 
-// Keep the filesystem import visible: the fixtures above assert on real paths.
-void existsSync;
-void writeFile;
+test(
+  "rm removes the install, the compatibility symlink, and the remote row",
+  async () => {
+    const { world, run, lockPath, installPath } = await installed();
+    const result = await run(
+      ["rm", "skills/pdf", "--yes", "--json"],
+      world.env,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(installPath)).toBe(false);
+    expect(existsSync(join(world.project, ".claude/skills/pdf"))).toBe(false);
+    expect(JSON.parse(await readFile(lockPath, "utf-8")).items).toEqual({});
+    const exclude = await readFile(
+      join(world.project, ".git/info/exclude"),
+      "utf-8",
+    );
+    expect(exclude).not.toContain(".agents/skills/pdf/");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "rm with an extra local file lists it and refuses without consent",
+  async () => {
+    const { world, run, lockPath, installPath } = await installed();
+    await writeFile(join(installPath, "notes.md"), "mine\n");
+    const before = await readFile(lockPath, "utf-8");
+
+    const result = await run(["rm", "skills/pdf", "--json"], world.env);
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr.toString() + result.stdout.toString()).toContain(
+      "notes.md",
+    );
+    expect(existsSync(installPath)).toBe(true);
+    expect(await readFile(lockPath, "utf-8")).toBe(before);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "rm works when the cache is gone, and names every path it would delete",
+  async () => {
+    // Task 1's degrade rule: with the locked file set unknown, every installed
+    // path is possibly the user's, so each one is named and deleted only with
+    // consent. `--yes` supplies it.
+    const { world, run, installPath } = await installed();
+    await rm(cacheRootOf(world), { recursive: true });
+    const refused = await run(["rm", "skills/pdf", "--json"], world.env);
+    expect(refused.exitCode).toBe(3);
+    expect(refused.stderr.toString() + refused.stdout.toString()).toContain(
+      "SKILL.md",
+    );
+    expect(existsSync(installPath)).toBe(true);
+
+    const result = await run(
+      ["rm", "skills/pdf", "--yes", "--json"],
+      world.env,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(installPath)).toBe(false);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "promote refuses a remote row and names share --adopt",
+  async () => {
+    const { world, run } = await installed();
+    const result = await run(["promote", "skills/pdf", "--json"], world.env);
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr.toString()).toContain(
+      "capshelf share skills/pdf --adopt",
+    );
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "promote refuses a remote row before it resolves a data repo",
+  async () => {
+    // D7 allows a project that holds remote rows and no data-repo binding. The
+    // refusal that names `share --adopt` has to come first, or that project
+    // exits 6 with a message about a shelf it never had.
+    const { world, run } = await installed();
+    await rm(join(world.project, ".capshelf", "local.json"));
+    const result = await run(["promote", "skills/pdf", "--json"], {
+      ...world.env,
+      CAPSHELF_HOME: undefined,
+    });
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr.toString()).toContain(
+      "capshelf share skills/pdf --adopt",
+    );
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test.each([
+  ["keep-local", ["keep-local", "skills/pdf", "--reason", "why"]],
+  ["move", ["move", "skills/pdf", "--to", "project"]],
+  ["revert", ["revert", "skills/pdf", "--yes"]],
+])(
+  "%s refuses a remote row and names the remotes lock",
+  async (_verb, argv) => {
+    const { world, run } = await installed();
+    const result = await run([...argv, "--json"], world.env);
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr.toString()).toContain("remotes.lock.json");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);

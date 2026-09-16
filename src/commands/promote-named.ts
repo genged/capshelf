@@ -55,6 +55,7 @@ import { isSystemItemName } from "../bundled";
 import { PRODUCT_NAME } from "../identity";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import { assertLocalScopeSupported } from "../local-config";
+import { assertNotPulledSkill } from "../remote-refusal";
 import {
   captureCommittedItemNeeds,
   readSidecarBytes,
@@ -171,6 +172,10 @@ export async function promoteOne(
     projectLock: lock,
     localLock,
   } = await loadProjectContext({ cmd });
+  // Before the data repo is resolved. D7 allows a project that holds remote
+  // rows and no data-repo binding, and in that project the resolution exits 6
+  // with a message about a shelf the user never bound.
+  await assertNotPulledSkill(project, ref, "promoting");
   const dataRepo =
     opts.boundRepo ?? (await resolveProjectDataRepo(project, manifest, cmd));
 
