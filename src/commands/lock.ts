@@ -14,7 +14,11 @@ import { atomicWriteFile } from "../fs-utils";
 import { resolveCommit } from "../git";
 import { PRODUCT_NAME } from "../identity";
 import { parseLockKey } from "../installed";
-import { contentSourceFor, gitTreeSource } from "../item-source";
+import {
+  contentSourceFor,
+  contentSourceOrNull,
+  gitTreeSource,
+} from "../item-source";
 import {
   LOCK_VERSION,
   isLockV4,
@@ -503,7 +507,18 @@ async function plannedRepairLoss(
   if (parsed.kind !== "skills" && parsed.kind !== "pi-extensions") return [];
   const planned = await planCopyDirectoryDestruction({
     project: input.project,
-    dataRepo: input.dataRepo,
+    currentSource: contentSourceOrNull({
+      entry: currentEntry,
+      kind: parsed.kind,
+      name: parsed.name,
+      repo: input.dataRepo,
+    }),
+    selectedSource: contentSourceOrNull({
+      entry: selectedEntry,
+      kind: parsed.kind,
+      name: parsed.name,
+      repo: input.dataRepo,
+    }),
     manifest: input.manifest,
     kind: parsed.kind,
     name: parsed.name,
@@ -558,6 +573,8 @@ async function publishMigration(
           repo: dataRepo,
         }),
         manifest,
+        kind: parsed.kind,
+        name: parsed.name,
         key: repair.key,
         entry: repair.entry,
         scope: repair.scope,

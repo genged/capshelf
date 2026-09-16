@@ -54,6 +54,7 @@ import { beginDirectoryReplacement } from "./promote-transaction";
 import { shaOfNamedFiles } from "./item-snapshot";
 import { PRODUCT_NAME } from "./identity";
 import { PreconditionError } from "./errors";
+import { assertSafeItemName } from "./assert";
 import { isErrno } from "./fs-utils";
 import { findDestinationPathCollision } from "./path-collision";
 
@@ -102,6 +103,14 @@ export interface MaterializeOptions {
   project: string;
   source: ContentSource;
   manifest?: Manifest;
+  /**
+   * The item this writes. It used to be parsed out of `key`, which forced every
+   * writer to hold a capshelf lock key; a record kept in another document has
+   * none, and its identity key is not what selects the item.
+   */
+  kind: ItemKind;
+  name: string;
+  /** The row identity, carried into the result. */
   key: string;
   entry: LockEntry;
   /** Previous lock snapshot used to distinguish stale managed paths from
@@ -142,7 +151,13 @@ export interface CopyDirectoryReconciliationFiles {
 export async function materializeLockEntry(
   opts: MaterializeOptions,
 ): Promise<MaterializeResult> {
-  const { source: keySource, kind, name } = parseLockKey(opts.key);
+  // `key` answers "which row is this", and the caller answers "which item does
+  // this write". The name check moves with the second question: `parseLockKey`
+  // still validates the key it is given, but it no longer sees the name that
+  // reaches `installedPath`.
+  const { source: keySource } = parseLockKey(opts.key);
+  const { kind, name } = opts;
+  assertSafeItemName(name, `${kind} item`);
   if (isFragmentItemKind(kind)) {
     throw new Error(
       `${kind}/${name} is a fragment item and must be reconciled through fragment outputs`,

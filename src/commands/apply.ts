@@ -350,6 +350,8 @@ export function registerApply(program: Command): void {
                     repo: dataRepo,
                   }),
                   manifest,
+                  kind: parsed.kind,
+                  name: parsed.name,
                   key,
                   entry,
                   scope,
@@ -599,17 +601,20 @@ async function planApplyPreflight(
         continue;
       }
 
+      const source = contentSourceFor({
+        entry,
+        kind: parsed.kind,
+        name: parsed.name,
+        repo: input.dataRepo,
+      });
       const materialized = addScope(
         scope,
         await materializeLockEntry({
           project: input.project,
-          source: contentSourceFor({
-            entry,
-            kind: parsed.kind,
-            name: parsed.name,
-            repo: input.dataRepo,
-          }),
+          source,
           manifest: input.manifest,
+          kind: parsed.kind,
+          name: parsed.name,
           key,
           entry,
           scope,
@@ -623,7 +628,8 @@ async function planApplyPreflight(
       ) {
         const planned = await planCopyDirectoryDestruction({
           project: input.project,
-          dataRepo: input.dataRepo,
+          currentSource: source,
+          selectedSource: source,
           manifest: input.manifest,
           kind: parsed.kind,
           name: parsed.name,

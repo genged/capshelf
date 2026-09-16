@@ -89,6 +89,8 @@ describe("trust boundaries", () => {
           name: "unsafe",
           repo: dataRepo,
         }),
+        kind: "skills",
+        name: "unsafe",
         key: dataKey("skills", "unsafe"),
         entry,
         scope: "project",

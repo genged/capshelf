@@ -89,10 +89,26 @@ export function gitTreeSource(input: {
  * an ambient `dataRepo` argument that had to agree with the entry.
  */
 export function contentSourceFor(input: ContentSourceInput): ContentSource {
-  const source = contentSourceOrNull(input);
+  return requireContentSource(
+    contentSourceOrNull(input),
+    input.kind,
+    input.name,
+  );
+}
+
+/**
+ * The same refusal for a caller that already holds a source and has to state
+ * that it needs one. One sentence, one place: the text a user sees must not
+ * depend on which function noticed the missing repository.
+ */
+export function requireContentSource(
+  source: ContentSource | null,
+  kind: ItemKind,
+  name: string,
+): ContentSource {
   if (source === null) {
     throw new Error(
-      `${input.kind}/${input.name} is a data item and needs a repository to read its content`,
+      `${kind}/${name} is a data item and needs a repository to read its content`,
     );
   }
   return source;

@@ -67,6 +67,8 @@ describe("write-then-verify", () => {
           name: "hello",
           repo: dataRepo,
         }),
+        kind: "skills",
+        name: "hello",
         key: dataKey("skills", "hello"),
         entry: selected,
         previous: {

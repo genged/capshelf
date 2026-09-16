@@ -862,6 +862,8 @@ export async function installDataItem(
         repo: dataRepo,
       }),
       manifest,
+      kind: item.kind,
+      name: item.name,
       key,
       entry,
       scope: ctx.local ? "local" : "project",

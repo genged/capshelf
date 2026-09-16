@@ -10,6 +10,7 @@ import {
   planFragmentDestruction,
   planSubagentDestruction,
 } from "../destructive-preflight";
+import { contentSourceOrNull } from "../item-source";
 import { rmTreeWithRetries } from "../fs-utils";
 import { projectRoot } from "../paths";
 import { resolveProjectDataRepo } from "../command-context";
@@ -276,13 +277,17 @@ export function registerRm(program: Command): void {
         } else if (isCopyDirectoryItemKind(kind)) {
           const planned = await planCopyDirectoryRemoval({
             project,
-            dataRepo: await optionalDataRepo(),
+            currentSource: contentSourceOrNull({
+              entry,
+              kind,
+              name,
+              repo: await optionalDataRepo(),
+            }),
             manifest: oldManifest,
             kind,
             name,
             key: dataKey(kind, name),
             scope,
-            currentEntry: entry,
             reviewCommand,
           });
           changes.push(...planned.changes);

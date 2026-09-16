@@ -14,8 +14,9 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { dataKey } from "../src/lock";
 import type { LockEntry } from "../src/lock";
-import { contentSourceFor } from "../src/item-source";
+import { contentSourceFor, gitTreeSource } from "../src/item-source";
 import type { ContentSource } from "../src/item-source";
+import { itemTreeEntriesAtCommit, sourcePinDigest } from "../src/pin";
 import { lastTouchingCommit } from "../src/git";
 import { shaOfItem } from "../src/master";
 import { currentPinDigest } from "./pin-fixtures";
@@ -97,6 +98,8 @@ describe("materializeLockEntry", () => {
     const result = await materializeLockEntry({
       project,
       source: helloSource(dataRepo, entry),
+      kind: "skills",
+      name: "hello",
       key: dataKey("skills", "hello"),
       entry,
       scope: "project",
@@ -145,6 +148,8 @@ describe("materializeLockEntry", () => {
     const result = await materializeLockEntry({
       project,
       source: helloSource(dataRepo, entry),
+      kind: "skills",
+      name: "hello",
       key: dataKey("skills", "hello"),
       entry,
       scope: "project",
@@ -159,6 +164,8 @@ describe("materializeLockEntry", () => {
     const dryRun = await materializeLockEntry({
       project,
       source: helloSource(dataRepo, entry),
+      kind: "skills",
+      name: "hello",
       key: dataKey("skills", "hello"),
       entry,
       scope: "project",
@@ -192,6 +199,8 @@ describe("materializeLockEntry", () => {
     const result = await materializeLockEntry({
       project,
       source: helloSource(dataRepo, entry),
+      kind: "skills",
+      name: "hello",
       key: dataKey("skills", "hello"),
       entry,
       scope: "project",
@@ -227,6 +236,8 @@ describe("materializeLockEntry", () => {
     await materializeLockEntry({
       project,
       source: helloSource(dataRepo, v1),
+      kind: "skills",
+      name: "hello",
       key: dataKey("skills", "hello"),
       entry: v1,
       scope: "project",
@@ -246,6 +257,8 @@ describe("materializeLockEntry", () => {
     const result = await materializeLockEntry({
       project,
       source: helloSource(dataRepo, v2),
+      kind: "skills",
+      name: "hello",
       key: dataKey("skills", "hello"),
       entry: v2,
       previous: { entry: v1, source: helloSource(dataRepo, v1) },
@@ -278,6 +291,8 @@ describe("materializeLockEntry", () => {
     await materializeLockEntry({
       project,
       source: helloSource(dataRepo, v1),
+      kind: "skills",
+      name: "hello",
       key: dataKey("skills", "hello"),
       entry: v1,
       scope: "project",
@@ -309,6 +324,8 @@ describe("materializeLockEntry", () => {
     const result = await materializeLockEntry({
       project,
       source: helloSource(dataRepo, v2),
+      kind: "skills",
+      name: "hello",
       key: dataKey("skills", "hello"),
       entry: v2,
       previous: { entry: v1, source: helloSource(dataRepo, v1) },
@@ -331,6 +348,8 @@ describe("materializeLockEntry", () => {
     const again = await materializeLockEntry({
       project,
       source: helloSource(dataRepo, v2),
+      kind: "skills",
+      name: "hello",
       key: dataKey("skills", "hello"),
       entry: v2,
       scope: "project",
@@ -357,6 +376,8 @@ describe("materializeLockEntry", () => {
     await materializeLockEntry({
       project,
       source: helloSource(dataRepo, entry),
+      kind: "skills",
+      name: "hello",
       key: dataKey("skills", "hello"),
       entry,
       scope: "project",
@@ -371,6 +392,8 @@ describe("materializeLockEntry", () => {
       materializeLockEntry({
         project,
         source: helloSource(dataRepo, entry),
+        kind: "skills",
+        name: "hello",
         key: dataKey("skills", "hello"),
         entry,
         scope: "project",
@@ -400,6 +423,8 @@ describe("materializeLockEntry", () => {
     await materializeLockEntry({
       project,
       source: helloSource(dataRepo, v1),
+      kind: "skills",
+      name: "hello",
       key: dataKey("skills", "hello"),
       entry: v1,
       scope: "project",
@@ -427,7 +452,8 @@ describe("materializeLockEntry", () => {
     // boundary as `managed_content` rather than a hard error.
     const planned = await planCopyDirectoryDestruction({
       project,
-      dataRepo,
+      currentSource: helloSource(dataRepo, v1),
+      selectedSource: helloSource(dataRepo, v2),
       kind: "skills",
       name: "hello",
       key: dataKey("skills", "hello"),
@@ -455,6 +481,8 @@ describe("materializeLockEntry", () => {
     await materializeLockEntry({
       project,
       source: helloSource(dataRepo, v2),
+      kind: "skills",
+      name: "hello",
       key: dataKey("skills", "hello"),
       entry: v2,
       previous: { entry: v1, source: helloSource(dataRepo, v1) },
@@ -494,6 +522,8 @@ describe("materializeLockEntry", () => {
     const result = await materializeLockEntry({
       project,
       source: helloSource(dataRepo, entry),
+      kind: "skills",
+      name: "hello",
       key: dataKey("skills", "hello"),
       entry,
       scope: "local",
@@ -508,6 +538,8 @@ describe("materializeLockEntry", () => {
     const dryRun = await materializeLockEntry({
       project,
       source: helloSource(dataRepo, entry),
+      kind: "skills",
+      name: "hello",
       key: dataKey("skills", "hello"),
       entry,
       scope: "local",
@@ -515,6 +547,55 @@ describe("materializeLockEntry", () => {
     });
     expect(dryRun.action).toBe("already-current");
     expect(dryRun.currentSha).toBe(sha);
+  });
+
+  test("the source's item root decides what is read, not the lock key", async () => {
+    const dataRepo = await tempRepo();
+    const project = await tempDir("capshelf-materialize-root-");
+    await mkdir(join(dataRepo, "docs", "guides", "review"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(dataRepo, "docs", "guides", "review", "SKILL.md"),
+      "outside the canonical layout\n",
+    );
+    await commitAll(dataRepo, "one tree");
+    const commit = await lastTouchingCommit(dataRepo, "docs/guides/review");
+    // The fixture and the call must read the same tree, or the test proves
+    // nothing: `pinDigestAtCommit` pins the canonical path, so the digest is
+    // taken from this source instead.
+    const source = gitTreeSource({
+      repo: dataRepo,
+      kind: "skills",
+      name: "review",
+      commit,
+      itemRoot: "docs/guides/review",
+    });
+
+    const entry: LockEntry = {
+      source: "data",
+      sourcePinDigest: sourcePinDigest(
+        await itemTreeEntriesAtCommit(source, "skills"),
+      ),
+      sourceCommit: commit,
+      appliedAt: new Date().toISOString(),
+    };
+    const result = await materializeLockEntry({
+      project,
+      source,
+      kind: "skills",
+      name: "review",
+      key: dataKey("skills", "review"),
+      entry,
+      scope: "project",
+    });
+
+    expect(result.action).toBe("reconciled");
+    expect(
+      await file(
+        join(project, ".agents", "skills", "review", "SKILL.md"),
+      ).text(),
+    ).toBe("outside the canonical layout\n");
   });
 
   test("does not touch keep-local data items", async () => {
@@ -535,6 +616,8 @@ describe("materializeLockEntry", () => {
     const result = await materializeLockEntry({
       project,
       source: helloSource("/unused", entry),
+      kind: "skills",
+      name: "hello",
       key: dataKey("skills", "hello"),
       entry,
       scope: "project",

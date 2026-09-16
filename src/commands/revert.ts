@@ -202,15 +202,18 @@ export function registerRevert(program: Command): void {
           changes.push(...planned.changes);
           snapshotParts.push(...planned.snapshotParts);
         } else if (isCopyDirectoryItemKind(parsed.kind)) {
+          const source = contentSourceFor({
+            entry,
+            kind: parsed.kind,
+            name: parsed.name,
+            repo: dataRepo,
+          });
           const preview = await materializeLockEntry({
             project,
-            source: contentSourceFor({
-              entry,
-              kind: parsed.kind,
-              name: parsed.name,
-              repo: dataRepo,
-            }),
+            source,
             manifest,
+            kind: parsed.kind,
+            name: parsed.name,
             key,
             entry,
             scope,
@@ -222,7 +225,8 @@ export function registerRevert(program: Command): void {
           snapshotParts.push(`preview:${JSON.stringify(preview)}`);
           const planned = await planCopyDirectoryDestruction({
             project,
-            dataRepo,
+            currentSource: source,
+            selectedSource: source,
             manifest,
             kind: parsed.kind,
             name: parsed.name,
@@ -371,6 +375,8 @@ export function registerRevert(program: Command): void {
                 repo: dataRepo,
               }),
               manifest,
+              kind: parsed.kind,
+              name: parsed.name,
               key,
               entry: nextEntry,
               previous: {

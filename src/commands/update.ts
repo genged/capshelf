@@ -42,7 +42,11 @@ import type {
   SystemLockEntry,
 } from "../lock";
 import { installedPath, parseLockKey, shaOfInstalled } from "../installed";
-import { contentSourceFor, gitTreeSource } from "../item-source";
+import {
+  contentSourceFor,
+  contentSourceOrNull,
+  gitTreeSource,
+} from "../item-source";
 import {
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
@@ -898,7 +902,18 @@ async function planUpdatePreflight(
       if (isCopyDirectoryItemKind(parsed.kind)) {
         const planned = await planCopyDirectoryDestruction({
           project: ctx.project,
-          dataRepo: ctx.dataRepo,
+          currentSource: contentSourceOrNull({
+            entry: currentEntry,
+            kind: parsed.kind,
+            name: parsed.name,
+            repo: ctx.dataRepo,
+          }),
+          selectedSource: contentSourceOrNull({
+            entry: selectedEntry,
+            kind: parsed.kind,
+            name: parsed.name,
+            repo: ctx.dataRepo,
+          }),
           manifest: ctx.manifest,
           kind: parsed.kind,
           name: parsed.name,
@@ -1348,6 +1363,8 @@ async function updateDataTarget(
             repo: ctx.dataRepo,
           }),
           manifest: ctx.manifest,
+          kind: parsed.kind,
+          name: parsed.name,
           key,
           entry: newEntry,
           previous: {
@@ -1433,6 +1450,8 @@ async function updateSystemTarget(
       kind: parsed.kind,
       name: parsed.name,
     }),
+    kind: parsed.kind,
+    name: parsed.name,
     key,
     manifest: ctx.manifest,
     entry: newEntry,

@@ -13,7 +13,8 @@ import type {
 import { showAtCommit } from "./git";
 import { inventoryLocalTree } from "./gitignore";
 import { installedPath } from "./installed";
-import { contentSourceFor, isBundled } from "./item-source";
+import { isBundled, requireContentSource } from "./item-source";
+import type { ContentSource } from "./item-source";
 import { shaOfInstalledForScope } from "./item-snapshot";
 import type { DataLockEntry, LockEntry } from "./lock";
 import type { Manifest } from "./manifest";
@@ -33,7 +34,14 @@ export interface PlannedDestruction {
 
 export async function planCopyDirectoryDestruction(opts: {
   project: string;
-  dataRepo?: string;
+  /**
+   * Where the current entry's bytes are, or null when they cannot be read. The
+   * caller builds it, so an item whose root is not the canonical layout plans
+   * against the tree it actually installs from.
+   */
+  currentSource: ContentSource | null;
+  /** Where the selected entry's bytes are, or null when they cannot be read. */
+  selectedSource: ContentSource | null;
   manifest?: Manifest;
   kind: CopyDirectoryItemKind;
   name: string;
@@ -55,13 +63,14 @@ export async function planCopyDirectoryDestruction(opts: {
    */
   repairUnresolvableCurrent?: boolean;
 }): Promise<PlannedDestruction> {
-  const readReconciliationFiles = async (entry: LockEntry) => {
-    const source = contentSourceFor({
-      entry,
-      kind: opts.kind,
-      name: opts.name,
-      repo: opts.dataRepo,
-    });
+  const readReconciliationFiles = async (
+    entry: LockEntry,
+    candidate: ContentSource | null,
+  ) => {
+    // Inside the promise, deliberately: an unreadable current entry is what
+    // `repairUnresolvableCurrent` catches below, and a source that is missing
+    // is one way for it to be unreadable.
+    const source = requireContentSource(candidate, opts.kind, opts.name);
     return await copyDirectoryReconciliationFiles({
       project: opts.project,
       source,
@@ -76,10 +85,13 @@ export async function planCopyDirectoryDestruction(opts: {
   const current =
     opts.repairUnresolvableCurrent === true &&
     opts.currentEntry !== opts.selectedEntry
-      ? await readReconciliationFiles(opts.currentEntry).catch(() =>
-          readReconciliationFiles(opts.selectedEntry),
+      ? await readReconciliationFiles(
+          opts.currentEntry,
+          opts.currentSource,
+        ).catch(() =>
+          readReconciliationFiles(opts.selectedEntry, opts.selectedSource),
         )
-      : await readReconciliationFiles(opts.currentEntry);
+      : await readReconciliationFiles(opts.currentEntry, opts.currentSource);
 
   const root = installedPath(
     opts.project,
@@ -110,12 +122,11 @@ export async function planCopyDirectoryDestruction(opts: {
   // reaches the consent boundary. This is the same comparison `status` uses to
   // call an item drifted — capshelf prompts for a bundled update exactly when
   // `status` says the install diverged.
-  const currentSource = contentSourceFor({
-    entry: opts.currentEntry,
-    kind: opts.kind,
-    name: opts.name,
-    repo: opts.dataRepo,
-  });
+  const currentSource = requireContentSource(
+    opts.currentSource,
+    opts.kind,
+    opts.name,
+  );
   const pristineSystemInstall =
     isBundled(currentSource) &&
     (await shaOfInstalledForScope(
@@ -137,7 +148,7 @@ export async function planCopyDirectoryDestruction(opts: {
   const selectedPaths =
     opts.currentEntry === opts.selectedEntry
       ? null
-      : await readReconciliationFiles(opts.selectedEntry)
+      : await readReconciliationFiles(opts.selectedEntry, opts.selectedSource)
           .then((files) => new Set(files.expected.map((file) => file.path)))
           .catch(() => null);
   const seen = new Set<string>();
@@ -236,24 +247,24 @@ export async function planCopyDirectoryDestruction(opts: {
  */
 export async function planCopyDirectoryRemoval(opts: {
   project: string;
-  dataRepo?: string;
+  /**
+   * Where the entry's bytes are, or null when they cannot be read. Null is the
+   * degrade path described above, not an error: every installed path becomes
+   * `extra_local_path`, is named in the prompt, and is deleted only with
+   * consent.
+   */
+  currentSource: ContentSource | null;
   manifest?: Manifest;
   kind: CopyDirectoryItemKind;
   name: string;
   key: string;
   scope: Scope;
-  currentEntry: LockEntry;
   reviewCommand: string;
 }): Promise<PlannedDestruction> {
   let expectedFiles: NamedFile[];
   try {
     expectedFiles = await lockedCopyDirectoryFiles({
-      source: contentSourceFor({
-        entry: opts.currentEntry,
-        kind: opts.kind,
-        name: opts.name,
-        repo: opts.dataRepo,
-      }),
+      source: requireContentSource(opts.currentSource, opts.kind, opts.name),
       manifest: opts.manifest,
       kind: opts.kind,
       name: opts.name,

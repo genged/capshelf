@@ -252,6 +252,8 @@ describe("Git and filesystem semantics", () => {
         name: "mode",
         repo: dataRepo,
       }),
+      kind: "skills",
+      name: "mode",
       key: dataKey("skills", "mode"),
       entry,
       scope: "project",

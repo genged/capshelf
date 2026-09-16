@@ -288,6 +288,8 @@ describe("materialization transactions", () => {
             name: "atomic",
             repo: dataRepo,
           }),
+          kind: "skills",
+          name: "atomic",
           key: dataKey("skills", "atomic"),
           entry,
           scope: "project",
