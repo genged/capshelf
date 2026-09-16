@@ -21,7 +21,7 @@ import type { ConfigObject } from "./config-values";
 import { headSha, sourceRead } from "./git";
 import { isItemKind, itemRepoRelPath } from "./master";
 import type { MasterItem } from "./master";
-import { parseYamlDocument } from "./yaml-document";
+import { parseYamlDocument, setYamlFields } from "./yaml-document";
 
 // Defined in identity.ts (a leaf) to break the master.ts <-> metadata.ts
 // cycle; re-exported here so existing `from "./metadata"` importers still work.
@@ -505,4 +505,35 @@ function parseQualifiedRef(ref: string): string | null {
   const name = ref.slice(slash + 1);
   if (!isItemKind(kind) || name.length === 0) return null;
   return ref;
+}
+
+export interface SidecarProvenance {
+  upstream: string | null;
+  upstreamCommit: string | null;
+  upstreamPath: string | null;
+}
+
+/**
+ * Record where an adopted item came from, in the item's sidecar.
+ *
+ * The sidecar is catalog data: it is never hashed and never materialized, so
+ * provenance creates no drift in any consuming project. Nothing reads these
+ * three fields either — `parseSidecar` ignores any key it does not know — so
+ * they are a record for a person reading the data repo, not an input to any
+ * command. Do not promise that `status` will show them.
+ */
+export async function writeSidecarProvenance(
+  itemDir: string,
+  provenance: SidecarProvenance,
+): Promise<void> {
+  const path = join(itemDir, METADATA_SIDECAR);
+  const existing = existsSync(path) ? await readFile(path, "utf-8") : "";
+  await atomicWriteFile(
+    path,
+    setYamlFields(existing, [
+      ["upstream", provenance.upstream],
+      ["upstreamCommit", provenance.upstreamCommit],
+      ["upstreamPath", provenance.upstreamPath],
+    ]),
+  );
 }

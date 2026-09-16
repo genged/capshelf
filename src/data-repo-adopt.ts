@@ -16,13 +16,14 @@ import {
   ensureInstallAliases,
   installedPath,
 } from "./installed";
-import { headSha } from "./git";
+import { assertRepoClean, headSha } from "./git";
 import {
   METADATA_SIDECAR,
   parseSidecar,
   printMetadataWarnings,
   readSidecarBytes,
   restoreSidecarBytes,
+  writeSidecarProvenance,
 } from "./metadata";
 import { replaceDirFromFiles, replaceDirFromGitVisibleFiles } from "./sync";
 import { findSkillsShSkill, skillsShConflictMessage } from "./external";
@@ -39,7 +40,9 @@ import {
   namedFilesFromInstalledSnapshot,
 } from "./item-snapshot";
 import { assertCommittedTreeEqualsCandidate } from "./promote-proof";
+import { compareCandidateToCommit, pinItemAtCommit } from "./pin";
 import type { PinnedSource } from "./pin";
+import { gitTreeSource } from "./item-source";
 import { lstatOrNull } from "./fs-utils";
 import {
   CODEX_PROJECTION_ROOTS,
@@ -75,7 +78,11 @@ export async function adoptIntoDataRepo(
   if (!isCopyDirectoryItemKind(kind)) {
     throw new Error(`no adoption strategy for ${kind}/${name}`);
   }
-  if (kind === "skills") {
+  // `--adopt` exists to take ownership *from* skills.sh, so it sets
+  // `allowPreviousOwner` and this refusal steps aside. Every other path still
+  // refuses: adopting a name another tool manages would give one skill two
+  // owners with nothing recording the fact.
+  if (kind === "skills" && opts.allowPreviousOwner !== true) {
     const external = await findSkillsShSkill(project, name);
     if (external) {
       throw new PreconditionError(
@@ -93,7 +100,11 @@ export async function adoptIntoDataRepo(
 
   const repoRelPath = itemRepoRelPath(kind, name);
   const dataPath = join(dataRepo, repoRelPath);
-  if (existsSync(dataPath)) {
+  // Recorded rather than refused under `--adopt`: the comparison that decides
+  // whether an existing upstream item is the same content needs the project
+  // snapshot, which is taken forty lines below.
+  const upstreamExists = existsSync(dataPath);
+  if (upstreamExists && opts.allowExistingUpstream !== true) {
     throw new PreconditionError(
       `data repo item already exists: ${repoRelPath}`,
     );
@@ -132,12 +143,71 @@ export async function adoptIntoDataRepo(
     if (!(await restoreSidecarBytes(dataPath, upstreamSidecar))) {
       await warnAboutAdoptedSidecar(dataPath, kind, name);
     }
+    // Inside the mutation, so the provenance is part of the one commit rather
+    // than an uncommitted change left in the shelf. The sidecar is excluded
+    // from the pin, so it changes no identity and PIN-11 still compares the
+    // same two trees.
+    if (opts.provenance) {
+      await writeSidecarProvenance(dataPath, opts.provenance);
+    }
     if (kind === "skills") await refreshCodexProjection(dataRepo);
   };
   // PIN-11: `A`, captured from the project *before* the copy. The bytes are
   // held so their Git ids can be computed after the commit, using whatever
   // object-name width the committed tree turns out to use.
   const projectSnapshot = await namedFilesFromInstalledSnapshot(snapshot);
+
+  // The already-upstream case. The data repo can already hold the item, from
+  // an interrupted run or from another project. Identical content is not an
+  // error: it reports `already-upstream`, commits nothing, and the caller still
+  // releases the previous owner.
+  if (upstreamExists) {
+    await assertRepoClean(dataRepo);
+    const existingPin = await pinItemAtCommit(
+      gitTreeSource({ repo: dataRepo, kind, name, commit: "HEAD" }),
+      kind,
+      name,
+    );
+    const mismatches = compareCandidateToCommit(
+      projectSnapshot,
+      existingPin.entries,
+    );
+    if (mismatches.length > 0) {
+      throw new PreconditionError(
+        `data repo already has ${repoRelPath} with different content`,
+        {
+          hint:
+            "Capshelf kept the previous owner; ownership was kept\n" +
+            `  make ${repoRelPath} match the installed skill or rename the canonical item, then retry --adopt`,
+        },
+      );
+    }
+    if (kind === "skills") {
+      await normalizeAdoptedSkill(
+        project,
+        name,
+        adoption,
+        opts.installMode,
+        snapshot,
+      );
+    }
+    const identicalWarnings = runtimeWarningsForItem(project, kind, name);
+    return {
+      source: "data",
+      kind,
+      name,
+      action: "already-upstream",
+      sha: existingPin.sourcePinDigest,
+      sourceCommit: existingPin.sourceCommit,
+      pin: existingPin,
+      committed: false,
+      ...(identicalWarnings.length > 0 && {
+        runtimeWarnings: identicalWarnings,
+      }),
+      ...(privateDotenvWarnings.length > 0 && { privateDotenvWarnings }),
+    };
+  }
+
   const expectedHead = await headSha(dataRepo).catch(() => null);
   let pin: PinnedSource | undefined;
   const sourceCommit = await commitDataRepoMutation({

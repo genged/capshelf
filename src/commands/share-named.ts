@@ -26,6 +26,7 @@ import {
   assertLockV4,
   createDataLockEntry,
   dataKey,
+  entryIdentity,
   loadLock,
   saveLocalLock,
   saveLock,
@@ -53,6 +54,17 @@ import {
   saveLocalConfig,
 } from "../local-config";
 import { addToManifest } from "../promote-core";
+import type { Scope } from "../promote-core";
+import {
+  findPreviousOwner,
+  previousOwnerFor,
+  previousOwnerSearchPaths,
+} from "../previous-owner";
+import type { PreviousOwnerRecord } from "../previous-owner";
+import { remoteCacheState } from "../remote-cache";
+import { findLicense } from "../remote-discovery";
+import { installedPath } from "../installed";
+import { PRODUCT_NAME, METADATA_SIDECAR } from "../identity";
 import { adoptIntoDataRepo } from "../data-repo-adopt";
 import { printPrivateDotenvWarnings } from "../dotfiles";
 import {
@@ -120,6 +132,8 @@ export interface ShareOptions {
    * open cannot move the destination under the marks.
    */
   boundRepo?: string;
+  /** Take ownership from a previous owner: a remote row or a skills.sh row. */
+  adopt?: boolean;
 }
 
 export async function shareOne(
@@ -135,6 +149,14 @@ export async function shareOne(
   }
 
   const kind = ref.kind ?? "skills";
+  // Step 1 of the adopt ordering, and it has to be here rather than in
+  // `shareCopyItem`: a fragment or subagent ref is routed away below and would
+  // never reach it.
+  if (opts.adopt === true && kind !== "skills") {
+    throw new PreconditionError(
+      `share --adopt supports skills only; ${kind}/${ref.name} is a ${kind} item`,
+    );
+  }
   const name = ref.name;
   const scope = parseShareScope(
     opts.to,
@@ -166,32 +188,82 @@ export async function shareCopyItem(
       "--pick is only valid for fragment items (settings, mcp, codex-config)",
     );
   }
+  // Step 2. `--adopt` takes what is already installed; the other three name a
+  // different source, so pairing them would be two answers to one question.
+  if (opts.adopt === true) {
+    for (const [flag, value] of [
+      ["--from", opts.from],
+      ["--pick", opts.pick],
+      ["--target", opts.target],
+    ] as const) {
+      if (value !== undefined) {
+        throw new PreconditionError(
+          `share --adopt cannot be combined with ${flag}`,
+        );
+      }
+    }
+  }
 
   if (scope === "local") {
     assertLocalScopeSupported(kind, name, "share");
   }
 
+  // Step 3.
   const { project, manifest, projectLock, localLock } =
     await loadProjectContext({ cmd });
   const localConfig = await loadLocalConfig(project);
-  const dataRepo =
-    opts.boundRepo ?? (await resolveProjectDataRepo(project, manifest, cmd));
-
-  const repoRelPath = itemRepoRelPath(kind, name);
-  if (existsSync(join(dataRepo, repoRelPath))) {
-    throw new PreconditionError(
-      `data repo already has ${repoRelPath}; use promote to push edits, or move to change scope`,
-    );
-  }
-
   const key = dataKey(kind, name);
   const projectKey = lockKeyForRef(projectLock, { kind, name }, "data");
   const localKey = lockKeyForRef(localLock, { kind, name }, "data");
+
+  // Steps 4 to 7. The order is the property that makes an interrupted run
+  // recoverable, and every step here runs before the data repo is resolved:
+  // pulling needs no shelf, and only adopting does.
+  const owner =
+    opts.adopt === true ? await findPreviousOwner(project, name) : null;
+  if (opts.adopt === true) {
+    if (owner === null && projectKey === null && localKey === null) {
+      throw new PreconditionError(
+        `nothing to adopt for ${kind}/${name}: no previous owner and no capshelf lock entry`,
+        {
+          hint: `searched:\n    ${previousOwnerSearchPaths(project).join("\n    ")}`,
+        },
+      );
+    }
+    if (projectKey && localKey) {
+      throw new PreconditionError(
+        `${kind}/${name} is tracked in both project and local scope`,
+        { hint: `remove one owner first: ${PRODUCT_NAME} rm ${kind}/${name}` },
+      );
+    }
+    if (projectKey ?? localKey) {
+      await finishInterruptedAdopt({
+        project,
+        kind,
+        name,
+        key,
+        trackedScope: projectKey ? "project" : "local",
+        requestedScope: opts.to === undefined ? null : scope,
+        lock: projectKey ? projectLock : localLock,
+        owner,
+        json: opts.json === true,
+      });
+      return;
+    }
+  }
+
   if (projectKey) {
     throw new PreconditionError(
       `already tracked in project scope: ${kind}/${name}`,
     );
   }
+  // Step 8. This is where D7 ends: a missing binding exits 6. It sits below the
+  // refusals above for every caller, not only for `--adopt`, so `share` has one
+  // refusal precedence rather than two — and above the local-manifest check,
+  // which is a write-time precondition rather than a boundary.
+  const dataRepo =
+    opts.boundRepo ?? (await resolveProjectDataRepo(project, manifest, cmd));
+
   if (scope === "local") {
     if (!localConfig) {
       throw new PreconditionError(
@@ -201,19 +273,37 @@ export async function shareCopyItem(
     await assertLocalInstallPathsUntracked(project, kind, name);
   }
 
-  // Before any data-repo mutation. This assertion used to run after
+  const repoRelPath = itemRepoRelPath(kind, name);
+  // Moved down with the resolution it reads: this refusal needs `dataRepo`.
+  // Under `--adopt` it is replaced by the content comparison in
+  // `adoptIntoDataRepo`, which treats identical content as convergence.
+  if (opts.adopt !== true && existsSync(join(dataRepo, repoRelPath))) {
+    throw new PreconditionError(
+      `data repo already has ${repoRelPath}; use promote to push edits, or move to change scope`,
+    );
+  }
+
+  // Step 9, before any data-repo mutation. This assertion used to run after
   // `adoptIntoDataRepo`, so a legacy lock refused the share only after the
   // item was already committed — leaving a data-repo commit with no project
   // tracking.
   const writableProjectLock = assertLockV4(projectLock, "capshelf share");
   const writableLocalLock = assertLockV4(localLock, "capshelf share");
 
+  if (owner !== null) await warnAboutMissingLicense(project, name, owner);
+
+  // Steps 10 and 11.
   const adopted = await adoptIntoDataRepo(project, dataRepo, kind, name, {
     installMode: manifest.installMode,
     message: opts.message,
     ...((scope === "local" || localKey) && {
       sourceScope: "local" as const,
     }),
+    ...(opts.adopt === true && {
+      allowExistingUpstream: true,
+      allowPreviousOwner: true,
+    }),
+    ...(owner !== null && { provenance: owner.provenance }),
   });
 
   const snapshot = await captureCommittedItemNeeds(dataRepo, {
@@ -252,6 +342,14 @@ export async function shareCopyItem(
     await saveLocalLock(project, writableLocalLock);
   }
 
+  // Step 12, last. A crash before this leaves two owners rather than none, and
+  // a second run converges through `finishInterruptedAdopt` above.
+  let released = false;
+  if (owner !== null) {
+    await previousOwnerFor(owner.kind).release(project, name, owner);
+    released = true;
+  }
+
   if (opts.json) {
     console.log(
       JSON.stringify(
@@ -265,6 +363,10 @@ export async function shareCopyItem(
           sourceCommit: adopted.sourceCommit,
           committed: adopted.committed,
           needs: snapshot.needs,
+          ...(owner !== null && {
+            adoptedFrom: owner.kind,
+            previousOwnerReleased: released,
+          }),
           ...(runtimeWarnings.length > 0 && {
             runtimeWarnings,
           }),
@@ -279,11 +381,159 @@ export async function shareCopyItem(
     return;
   }
 
-  console.log(`✓ shared ${scope}/data/${kind}/${name} @ ${adopted.sha}`);
+  const verb = owner === null ? "shared" : "adopted";
+  console.log(`✓ ${verb} ${scope}/data/${kind}/${name} @ ${adopted.sha}`);
   console.log(`  source commit: ${adopted.sourceCommit}`);
+  if (owner !== null) {
+    printAdoptProvenance(owner, kind, name);
+    console.log(`  released: ${ownerLabel(owner)} for ${kind}/${name}`);
+  }
   printRuntimeWarnings(runtimeWarnings);
   printPrivateDotenvWarnings(adopted.privateDotenvWarnings);
   if (!opts.suppressGuidance) await printShareUpstreamGuidance(dataRepo);
+}
+
+/**
+ * Step 7: a capshelf entry already exists, so an earlier run reached step 11
+ * and stopped before step 12. Release the previous owner and report the
+ * convergence; nothing is committed, because the shelf already holds the item.
+ */
+async function finishInterruptedAdopt(input: {
+  project: string;
+  kind: CopyDirectoryItemKind;
+  name: string;
+  key: string;
+  trackedScope: Scope;
+  /** The scope `--to` asked for, or null when it was not given. */
+  requestedScope: Scope | null;
+  lock: Lock;
+  owner: PreviousOwnerRecord | null;
+  json: boolean;
+}): Promise<void> {
+  const { project, kind, name, trackedScope, owner } = input;
+  if (input.requestedScope !== null && input.requestedScope !== trackedScope) {
+    throw new PreconditionError(
+      `${kind}/${name} is already tracked in ${trackedScope} scope; --to ${input.requestedScope} disagrees`,
+      {
+        hint: `move it instead: ${PRODUCT_NAME} move ${kind}/${name} --to ${input.requestedScope}`,
+      },
+    );
+  }
+  const entry = input.lock.items[input.key];
+  const sha = entry ? entryIdentity(entry) : "(unknown)";
+  const sourceCommit =
+    entry?.source === "data" ? entry.sourceCommit : "(unknown)";
+  let released = false;
+  if (owner !== null) {
+    await previousOwnerFor(owner.kind).release(project, name, owner);
+    released = true;
+  }
+  if (input.json) {
+    console.log(
+      JSON.stringify(
+        {
+          verb: "share",
+          kind,
+          name,
+          scope: trackedScope,
+          action: "already-upstream",
+          sha,
+          sourceCommit,
+          committed: false,
+          ...(owner !== null && {
+            adoptedFrom: owner.kind,
+            previousOwnerReleased: released,
+          }),
+        },
+        null,
+        2,
+      ),
+    );
+    return;
+  }
+  console.log(
+    `= already upstream ${trackedScope}/data/${kind}/${name} @ ${sha}`,
+  );
+  console.log(
+    "  the data repo already holds identical content, so nothing was committed",
+  );
+  if (owner !== null) {
+    console.log(`  released: ${ownerLabel(owner)} for ${kind}/${name}`);
+  }
+}
+
+function ownerLabel(owner: PreviousOwnerRecord): string {
+  return owner.kind === "remote" ? "remote row" : "skills-lock.json row";
+}
+
+function printAdoptProvenance(
+  owner: PreviousOwnerRecord,
+  kind: CopyDirectoryItemKind,
+  name: string,
+): void {
+  const { upstream, upstreamCommit, upstreamPath } = owner.provenance;
+  if (upstream === null && upstreamCommit === null && upstreamPath === null) {
+    return;
+  }
+  console.log(
+    `  provenance recorded in ${itemRepoRelPath(kind, name)}/${METADATA_SIDECAR}:`,
+  );
+  if (upstream !== null) console.log(`      upstream:       ${upstream}`);
+  if (upstreamCommit !== null) {
+    console.log(`      upstreamCommit: ${upstreamCommit}`);
+  }
+  if (upstreamPath !== null) {
+    console.log(`      upstreamPath:   ${upstreamPath}`);
+  }
+}
+
+/**
+ * D10's warning. A license inside the item travels with it; one at the
+ * repository root does not, and a skill with neither is someone else's work
+ * with no stated terms. It never blocks the adopt.
+ */
+async function warnAboutMissingLicense(
+  project: string,
+  name: string,
+  owner: PreviousOwnerRecord,
+): Promise<void> {
+  const found =
+    owner.kind === "remote" && owner.provenance.upstream !== null
+      ? await remoteLicense(owner)
+      : installedLicense(project, name);
+  if (found) return;
+  console.error(
+    `⚠ no license file in the pulled item${
+      owner.provenance.upstream === null
+        ? ""
+        : ` or at the ${owner.provenance.upstream} root`
+    }`,
+  );
+  console.error(
+    "  you are copying someone else's work into your shelf. Check the terms yourself.",
+  );
+}
+
+async function remoteLicense(owner: PreviousOwnerRecord): Promise<boolean> {
+  const upstream = owner.provenance.upstream;
+  const commit = owner.provenance.upstreamCommit;
+  const subpath = owner.provenance.upstreamPath;
+  if (upstream === null || commit === null || subpath === null) return false;
+  const cache = remoteCacheState(upstream);
+  if (!cache.present) return false;
+  // A cold cache cannot answer, and a warning nobody can act on is worse than
+  // none, so an unreachable cache reports "found" and stays quiet.
+  const finding = await findLicense(cache.path, commit, subpath).catch(
+    () => null,
+  );
+  return finding === null || finding.path !== null;
+}
+
+function installedLicense(project: string, name: string): boolean {
+  const root = installedPath(project, "skills", name);
+  return ["LICENSE", "LICENSE.md", "LICENCE", "LICENCE.md", "COPYING"].some(
+    (file) => existsSync(join(root, file)),
+  );
 }
 
 export async function shareSubagent(

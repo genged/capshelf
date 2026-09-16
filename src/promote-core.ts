@@ -7,6 +7,8 @@ import type { LocalConfig } from "./local-config";
 import type { RuntimeWarning } from "./runtime-warnings";
 import type { PinnedSource } from "./pin";
 import type { ItemRef } from "./item-ref";
+import type { PreviousOwnerKind } from "./previous-owner";
+import type { SidecarProvenance } from "./metadata";
 import { claudeSkillPath, codexSkillPath, installedPath } from "./installed";
 
 export type Scope = "project" | "local";
@@ -31,6 +33,9 @@ export interface PromoteResult {
    */
   pin?: PinnedSource;
   committed: boolean;
+  /** Set only by `--adopt`: which owner the skill was taken from. */
+  adoptedFrom?: PreviousOwnerKind;
+  previousOwnerReleased?: boolean;
   /** present only when --stale-ok actually bypassed a stale check */
   staleOverride?: true;
   runtimeWarnings?: RuntimeWarning[];
@@ -41,6 +46,16 @@ export interface AdoptOptions {
   installMode: Manifest["installMode"];
   message?: string;
   sourceScope?: Scope;
+  /** Permit an existing data-repo item when its content is identical. */
+  allowExistingUpstream?: boolean;
+  /** Permit taking ownership from a previous owner (a remote or skills.sh row). */
+  allowPreviousOwner?: boolean;
+  /**
+   * Where the item came from, written into the adopted item's sidecar inside
+   * the same commit. The sidecar is excluded from the pin, so this changes no
+   * identity.
+   */
+  provenance?: SidecarProvenance;
 }
 
 export interface MoveScopeState {

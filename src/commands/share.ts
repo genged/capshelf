@@ -31,6 +31,10 @@ export function registerShare(program: Command): void {
       "--target <target>",
       "runtime target for mcp or subagent items: claude or codex",
     )
+    .option(
+      "--adopt",
+      "take ownership of a skill installed from a repository URL or by skills.sh",
+    )
     .option("-m, --message <msg>", "git commit message")
     .option("--json", "output JSON")
     .addHelpText(
@@ -64,10 +68,11 @@ async function shareWithoutItem(
     opts.from !== undefined ||
     opts.pick !== undefined ||
     opts.target !== undefined ||
-    opts.to !== undefined
+    opts.to !== undefined ||
+    opts.adopt !== undefined
   ) {
     throw new PreconditionError(
-      "share --from, --pick, --target, and --to require an item; run capshelf share with no flags to pick interactively",
+      "share --from, --pick, --target, --to, and --adopt require an item; run capshelf share with no flags to pick interactively",
     );
   }
   // `--json` names a scripted caller, and a script cannot answer a prompt.

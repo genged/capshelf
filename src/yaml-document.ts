@@ -1,4 +1,9 @@
-import { YAMLParseError, parse as parseYaml } from "yaml";
+import {
+  Document,
+  YAMLParseError,
+  parseDocument,
+  parse as parseYaml,
+} from "yaml";
 import type { ConfigValue } from "./config-values";
 
 export type ParsedYaml =
@@ -36,4 +41,24 @@ export function yamlParseDetail(cause: unknown): string {
 
 function firstLine(text: string): string {
   return text.split("\n")[0] ?? text;
+}
+
+/**
+ * Set or delete top-level scalar fields in a YAML document, keeping every other
+ * field and the document's comments.
+ *
+ * Through the document model rather than by appending text: an item's sidecar
+ * belongs to whoever wrote it, and an adopt adds three fields to it rather than
+ * replacing it. A `null` value deletes the field.
+ */
+export function setYamlFields(
+  text: string,
+  fields: ReadonlyArray<readonly [string, string | null]>,
+): string {
+  const doc = text.trim().length > 0 ? parseDocument(text) : new Document({});
+  for (const [key, value] of fields) {
+    if (value === null) doc.delete(key);
+    else doc.set(key, value);
+  }
+  return doc.toString();
 }
