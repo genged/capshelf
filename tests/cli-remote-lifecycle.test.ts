@@ -1,3 +1,4 @@
+import { $ } from "bun";
 import { expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { appendFile, readFile, rm, writeFile } from "node:fs/promises";
@@ -229,6 +230,11 @@ test(
     const out = result.stdout.toString();
     expect(out).toContain("capshelf share skills/pdf --adopt");
     expect(out).not.toContain("capshelf promote");
+    // A merge reports as a merge. "updated" would hide that a local edit was
+    // reconciled rather than overwritten, and drop the review command with it.
+    expect(out).toContain("merged upstream into installed copy");
+    expect(out).toContain("capshelf status skills/pdf --diff-view installed");
+    expect(out).not.toContain("--local");
     // The merge moves the pin as well as the files. Asserting only the file
     // content would pass while the lock still named the old commit, and the
     // row would then read as drift the merge itself created.
@@ -532,6 +538,65 @@ test(
     expect(await readFile(excludePath, "utf-8")).not.toContain(
       ".agents/skills/pdf/",
     );
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "a cold cache reports an unreadable source, not a missing install",
+  async () => {
+    // The files are intact; only machine state is gone. Reporting
+    // `missing_installed` sent the user to `capshelf apply`, which then refuses
+    // with the cold-cache refusal — a dead end that also failed --strict.
+    const { world, run, installPath } = await installed();
+    await rm(cacheRootOf(world), { recursive: true });
+    expect(existsSync(join(installPath, "SKILL.md"))).toBe(true);
+
+    const result = await run(["status", "skills/pdf", "--json"], world.env);
+    const row = objectItems(jsonOutput(result), "items").find(
+      (candidate) => candidate.name === "pdf",
+    );
+    expect(row!.state).toBe("missing_source_commit");
+
+    const text = await run(["status", "skills/pdf"], world.env);
+    const out = text.stdout.toString();
+    expect(out).toContain("capshelf status --check-upstream");
+    expect(out).not.toContain("capshelf apply");
+    expect(out).not.toContain("sync-data");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "a check that finds the item gone upstream clears the digest it measured before",
+  async () => {
+    // The first check records a digest. The second must replace it, not merge
+    // with it: a digest carried over from the run that still found the item
+    // leaves a deleted skill reading `ok` forever.
+    const { upstream, world, run, lockPath } = await installed();
+    await run(["status", "--check-upstream", "--json"], world.env);
+    expect(
+      JSON.parse(await readFile(lockPath, "utf-8")).items["remote/skills/pdf"]
+        .upstreamPinDigest,
+    ).toBeDefined();
+
+    await rm(join(upstream.work, "skills/pdf"), { recursive: true });
+    await commitAll(upstream.work, "drop pdf");
+    await $`git -C ${upstream.work} push -q origin main`.quiet();
+
+    expect(
+      (await run(["status", "--check-upstream", "--json"], world.env)).exitCode,
+    ).toBe(0);
+    expect(
+      JSON.parse(await readFile(lockPath, "utf-8")).items["remote/skills/pdf"]
+        .upstreamPinDigest,
+    ).toBeUndefined();
+    const status = await run(["status", "skills/pdf", "--json"], world.env);
+    expect(
+      objectItems(jsonOutput(status), "items").find(
+        (row) => row.name === "pdf",
+      )!.state,
+    ).toBe("missing_upstream");
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );

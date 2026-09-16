@@ -56,7 +56,12 @@ export function describe(r: StatusRow): string {
     case "ok":
       return "up-to-date";
     case "missing_source_commit":
-      return `locked sourceCommit ${shortCommit(r.sourceCommit)} is not present in the data repo`;
+      // A pulled skill's source is a clone cache on this machine, not the
+      // shelf. Naming the data repo would send the user to a repository that
+      // never held the item.
+      return r.source === "remote"
+        ? "no clone cache on this machine — run: capshelf status --check-upstream"
+        : `locked sourceCommit ${shortCommit(r.sourceCommit)} is not present in the data repo`;
     case "source_filtered":
       return "a managed path declares a git content filter — content is not portable";
     case "update_available":
@@ -313,6 +318,13 @@ function remoteRowDetail(r: StatusRow): string[] {
   const lines = [
     `      ${upstreamLabel(remote.upstream)} ${remote.ref} @ ${shortCommit(r.sourceCommit)}, ${freshness}`,
   ];
+  if (!remote.cachePresent) {
+    lines.push(
+      "      no clone cache on this machine, so the installed files cannot be",
+      "      compared against the pin. re-create it:",
+      "        capshelf status --check-upstream",
+    );
+  }
   if (
     r.state === "drifted_local" ||
     r.state === "drifted_and_update" ||
@@ -396,6 +408,10 @@ function needsStateGuidance(r: StatusRow): string[] {
 
 function missingSourceCommitGuidance(r: StatusRow): string[] {
   if (r.state !== "missing_source_commit") return [];
+  // A remote row reaches this state through an absent clone cache, which is
+  // machine state one fetch restores. `sync-data` and `update` both speak about
+  // the shelf, so `remoteRowDetail` says what to run instead.
+  if (r.source === "remote") return [];
   return missingSourceCommitRepinGuidance(r.kind, r.name);
 }
 

@@ -115,6 +115,7 @@ import {
   updateMergeRemoteTarget,
   updateRemoteSkill,
 } from "../remote-item";
+import type { RemoteUpdateResult } from "../remote-item";
 import {
   REMOTE_ITEM_KIND,
   loadRemotesLock,
@@ -590,6 +591,14 @@ interface RemoteUpdateOutcome {
   results: UpdateResult[];
 }
 
+/** What a remote `--merge` row adds to its result when it merged something. */
+interface RemoteMergeFacts {
+  action: UpdateAction;
+  mergeBase: string;
+  mergedUpstreamCommit: string;
+  mergeResultSha: string;
+}
+
 /**
  * The remote half of `update`.
  *
@@ -642,7 +651,7 @@ async function runRemoteUpdates(input: {
     ) {
       return { results };
     }
-    const moved = input.merge
+    const mergeOutcome = input.merge
       ? await updateMergeRemoteTarget({
           project: input.project,
           name: target.name,
@@ -650,16 +659,44 @@ async function runRemoteUpdates(input: {
           preview,
           dryRun: input.dryRun,
         })
-      : await updateRemoteSkill({
-          project: input.project,
-          name: target.name,
-          entry,
-          preview,
-          dryRun: input.dryRun,
-        });
-    results.push(
-      remoteResult(target, moved.action, entry, moved.to, moved.entry),
-    );
+      : null;
+    const moved: RemoteUpdateResult =
+      mergeOutcome ??
+      (await updateRemoteSkill({
+        project: input.project,
+        name: target.name,
+        entry,
+        preview,
+        dryRun: input.dryRun,
+      }));
+    // A merge that changed the installed copy reports as a merge, so the user
+    // sees the three shas and the review command rather than a bare "updated".
+    // A `--merge` run whose local copy was already the upstream content merged
+    // nothing, and saying otherwise would name an edit that does not exist.
+    const mergeFacts: RemoteMergeFacts | null =
+      mergeOutcome?.merged === true
+        ? {
+            action:
+              mergeOutcome.action === "would-update" ? "would-merge" : "merged",
+            mergeBase: mergeOutcome.mergeBase,
+            mergedUpstreamCommit: mergeOutcome.to,
+            mergeResultSha: mergeOutcome.mergeResultDigest,
+          }
+        : null;
+    results.push({
+      ...remoteResult(
+        target,
+        mergeFacts?.action ?? moved.action,
+        entry,
+        moved.to,
+        moved.entry,
+      ),
+      ...(mergeFacts !== null && {
+        mergeBase: mergeFacts.mergeBase,
+        mergedUpstreamCommit: mergeFacts.mergedUpstreamCommit,
+        mergeResultSha: mergeFacts.mergeResultSha,
+      }),
+    });
     if (!input.dryRun && moved.action === "updated") {
       input.remotes.items[target.key] = moved.entry;
       // Before the next row can refuse the command. `reconcileRemoteSkill`
@@ -1856,6 +1893,11 @@ function printUpdateResults(results: UpdateResult[]): void {
     } else if (r.action === "would-reconcile") {
       console.log(`• ${id} would reconcile`);
       printUpdateDetails(r);
+    } else if (r.action === "skipped") {
+      // `•`, not `✓`. A bare sweep leaves every remote pin alone on purpose, and
+      // a check mark beside a row nothing happened to reads as "done".
+      console.log(`• ${id} skipped`);
+      printUpdateDetails(r);
     } else if (r.action === "merged" || r.action === "would-merge") {
       console.log(
         `${r.action === "merged" ? "✓" : "•"} ${id} ${
@@ -1867,13 +1909,19 @@ function printUpdateResults(results: UpdateResult[]): void {
       console.log(`  base: ${r.mergeBase}`);
       console.log(`  upstream pin: ${r.mergedUpstreamCommit}`);
       console.log(`  installed result: ${r.mergeResultSha}`);
-      const scopeFlag = r.scope === "local" ? " --local" : "";
+      // A pulled skill has no `--local` form and nowhere to promote to, so both
+      // lines are built for its one shape. `printRemoteAdoptGuidance` names the
+      // adopt for it after the loop.
+      const scopeFlag =
+        r.source !== "remote" && r.scope === "local" ? " --local" : "";
       console.log(
         `  review: ${PRODUCT_NAME} status ${r.kind}/${r.name}${scopeFlag} --diff-view installed`,
       );
-      console.log(
-        `  publish: ${PRODUCT_NAME} promote ${r.kind}/${r.name}${scopeFlag} -m "..."`,
-      );
+      if (r.source !== "remote") {
+        console.log(
+          `  publish: ${PRODUCT_NAME} promote ${r.kind}/${r.name}${scopeFlag} -m "..."`,
+        );
+      }
       printRuntimeWarnings(r.runtimeWarnings);
     } else {
       console.log(`✓ ${id} ${r.action}`);

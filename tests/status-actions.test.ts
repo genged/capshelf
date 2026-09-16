@@ -142,6 +142,7 @@ describe("actionsForRow for a pulled skill", () => {
         subpath: "skills/pdf",
         lastChecked: null,
         upstreamHead: null,
+        cachePresent: true,
         alsoTrackedInShelf: false,
       },
       ...overrides,
@@ -187,6 +188,14 @@ describe("actionsForRow for a pulled skill", () => {
     expect(actions).toEqual(["capshelf rm skills/pdf"]);
   });
 
+  test("an absent clone cache offers the fetch, not the apply that refuses", () => {
+    const actions = commands(
+      actionsForRow(remoteRow({ state: "missing_source_commit" })),
+    );
+    expect(actions).toEqual(["capshelf status --check-upstream"]);
+    expect(actions.join(" ")).not.toContain("sync-data");
+  });
+
   test("an unfinished adopt names the command that completes it", () => {
     const actions = commands(
       actionsForRow(
@@ -198,6 +207,7 @@ describe("actionsForRow for a pulled skill", () => {
             subpath: "skills/pdf",
             lastChecked: null,
             upstreamHead: null,
+            cachePresent: true,
             alsoTrackedInShelf: true,
           },
         }),

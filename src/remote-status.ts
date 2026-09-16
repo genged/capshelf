@@ -73,8 +73,12 @@ async function buildRemoteRow(
       )
     : null;
   // A missing cache is not a missing upstream: the upstream is the repository,
-  // not the clone. When the install is present the row stays `ok` on the
-  // installed axis and the detail line says the cache is absent.
+  // not the clone. It is not a missing install either — the files can be
+  // perfectly intact. What it is is an unreadable *source*, so the row takes
+  // the state the shelf already has for that, `missing_source_commit`, rather
+  // than reporting `missing_installed` and sending the user to an `apply` that
+  // refuses. Without the cache no comparison is possible, which is the whole
+  // point of that state.
   const currentSha = installation?.currentSha ?? null;
 
   const upstream = upstreamFacts(entry);
@@ -94,7 +98,7 @@ async function buildRemoteRow(
     upstreamDirty: false,
     upstreamChanged: upstream.changed,
     fragmentOutputState: null,
-    sourceCommitPresent: null,
+    sourceCommitPresent: cache.present ? null : false,
   });
 
   const facts: RemoteRowFacts = {
@@ -103,6 +107,7 @@ async function buildRemoteRow(
     subpath: entry.subpath,
     lastChecked: entry.lastChecked ?? null,
     upstreamHead: entry.upstreamHead ?? null,
+    cachePresent: cache.present,
     alsoTrackedInShelf,
   };
   return buildStatusRow({
@@ -283,8 +288,15 @@ async function fetchOneUpstream(
       items[key] = entry;
       continue;
     }
+    // `upstreamPinDigest` is this check's measurement, never a fact carried
+    // over from the last one: absent beside a set head is exactly how a row
+    // says the item is no longer at its subpath. Spreading the measurement
+    // over the whole entry let a stale digest outlive the check that found
+    // nothing, so a skill deleted upstream read `ok` forever. Drop the old
+    // value before the new one is applied.
+    const { upstreamPinDigest: _measuredLastTime, ...carried } = entry;
     items[key] = {
-      ...entry,
+      ...carried,
       lastChecked: checkedAt,
       upstreamHead: head,
       // Compare content, never the repository commit. Two skills installed

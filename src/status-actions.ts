@@ -91,6 +91,14 @@ export function actionsForRow(
       case "output_drift":
         add(remoteVerb("apply"), "Reinstall from the cached pin.");
         break;
+      case "missing_source_commit":
+        // The cache is gone, so `apply` has nothing to reinstall from and
+        // refuses. The fetch is the only command that restores it.
+        add(
+          `${prefix} status --check-upstream`,
+          "Re-create the clone cache this machine no longer has.",
+        );
+        break;
       case "missing_upstream":
         add(
           remoteVerb("rm"),

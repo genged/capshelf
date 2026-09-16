@@ -508,16 +508,19 @@ async function warnAboutMissingLicense(
   name: string,
   owner: PreviousOwnerRecord,
 ): Promise<void> {
-  const found =
-    owner.kind === "remote" && owner.provenance.upstream !== null
-      ? await remoteLicense(owner)
-      : installedLicense(project, name);
+  const inspectedRoot =
+    owner.kind === "remote" && owner.provenance.upstream !== null;
+  const found = inspectedRoot
+    ? await remoteLicense(owner)
+    : installedLicense(project, name);
   if (found) return;
+  // The root is named only when it was read. A skills.sh row carries a `source`
+  // URL too, but capshelf clones nothing for it, so the other branch inspects
+  // the installed directory alone — claiming the root was checked would be a
+  // statement about work that never happened.
   console.error(
     `⚠ no license file in the pulled item${
-      owner.provenance.upstream === null
-        ? ""
-        : ` or at the ${owner.provenance.upstream} root`
+      inspectedRoot ? ` or at the ${owner.provenance.upstream} root` : ""
     }`,
   );
   console.error(

@@ -74,6 +74,12 @@ export interface RemoteRowFacts {
   subpath: string;
   lastChecked: string | null;
   upstreamHead: string | null;
+  /**
+   * False when this machine holds no clone of the upstream. Machine state, not
+   * project state: it decides what the row could measure, never what the
+   * project owns.
+   */
+  cachePresent: boolean;
   /** True when the shelf also tracks this name: an unfinished adopt (D18). */
   alsoTrackedInShelf: boolean;
 }

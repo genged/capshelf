@@ -49,7 +49,11 @@ export function stateLabel(state: State, source: RowSource): string {
     case "source_dirty_and_output_drift":
       return "Output drifted, shelf source uncommitted";
     case "missing_source_commit":
-      return "Pinned commit unreachable";
+      // A pulled skill reaches this state through an absent clone cache, so
+      // the shelf wording would name a commit the user cannot go looking for.
+      return source === "remote"
+        ? "Clone cache absent"
+        : "Pinned commit unreachable";
     case "source_filtered":
       return "Source uses a git filter";
     case "kept-local":
