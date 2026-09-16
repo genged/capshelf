@@ -86,15 +86,26 @@ that boundary:
   point while allowing installed copy-item bytes to differ.
 - **No implicit network I/O.** Capshelf never pushes — `promote` commits to
   your local clone and prints the `git push` you may choose to run. It never
-  fetches behind your back either. The only network operations are the clone
+  fetches behind your back either. Five network operations exist: the clone
   `init` performs for a remote upstream, the explicit `capshelf data sync`
-  command, and the Homebrew `self-update` command. `init` clones once, from
+  command, the Homebrew `self-update` command, `capshelf add <url>` including
+  `--list`, and `capshelf status --check-upstream`. `init` clones once, from
   `--data <url>` or from a committed `dataRepoUpstream`. `capshelf ui`
   listens on 127.0.0.1 and makes no outbound connection. `data sync` is the
-  single verb that talks to the data repo's remote — it fetches and fast-forwards
-  only when provably safe, and only when you run it. Nothing in
-  `status`/`apply`/`add`/`update`/`promote` can be made to pull unreviewed
-  content onto your machine.
+  single verb that talks to the data repo's `origin` — it fetches and fast-forwards
+  only when provably safe, and only when you run it. A URL on the command line
+  is the only way `add` reaches the network: no project state can make a
+  command networked. `apply`, `update`, `promote`, and a bare `status` never
+  open a connection, whatever the project holds.
+- **A pulled skill carries no review.** `capshelf add <url>` installs code from
+  a repository nobody on your team reviewed. There is no registry, no signing,
+  and no scanning. Before the install, capshelf prints the repository, the
+  commit, the subpath, the install path, the file list with sizes, the
+  description, and whether it found a license, and then asks once. A named
+  `capshelf update` asks again before it accepts new content from that
+  repository. That prompt is the whole control. Credentials stay with Git:
+  capshelf shells out to `git clone` and inherits your credential helper,
+  reads no token, calls no `gh`, and stores nothing.
 - **Declared needs are metadata, not enforcement.** Capshelf can pin and
   display expected network hosts, environment variables, and commands, but it
   does not inspect or change runtime policy and does not claim those

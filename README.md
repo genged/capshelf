@@ -329,10 +329,15 @@ Config fragments, `--pick` extraction, Pi extensions, subagents, and bundles
 have worked examples in [`docs/cli.md`](docs/cli.md); plugin marketplaces in
 [`docs/marketplaces.md`](docs/marketplaces.md).
 
-`capshelf init --data <remote-url>` bootstraps a project straight from a
+`capshelf init --data <url>` bootstraps a project straight from a
 shared data repo URL, and plain `capshelf init` connects a freshly cloned
 project through its committed `dataRepoUpstream` — both are worked through
 in [`docs/cli.md`](docs/cli.md) under Getting started.
+
+`capshelf add <url>` installs one skill from any Git repository, not only from
+your shelf. It is tracked in a gitignored record, so your teammates do not get
+it, and `capshelf share skills/<name> --adopt` is how you give it to them. See
+Remote skills in [`docs/cli.md`](docs/cli.md).
 
 ## What Capshelf manages
 
@@ -390,7 +395,8 @@ or with the runtime:
   creates and commits the catalog state those runtimes read.
 - Skills managed by `skills.sh`, Claude marketplace plugins, personal
   `~/.claude/skills/` entries, and Pi project skills under `.pi/skills/`.
-  Capshelf never edits them. It lists the first three as external state.
+  Capshelf never edits them. It lists the first three as external state, and
+  `share --adopt` is the one way a skills.sh-managed skill changes hands.
   A personal Claude skill or a Pi project skill with a managed skill's
   name hides that skill for its harness. `status` warns and `--strict`
   fails.

@@ -7,7 +7,7 @@ layer replaces another.
 |---|---|---|---|
 | Unit | `tests/` | Pure functions and schemas | Rules, parsing, and edge cases |
 | Integration | `tests/` | Modules and the CLI entry point in process | Wiring, fault injection, and coverage |
-| Smoke | `scripts/smoke-*.sh` | `bun run src/cli.ts` | Command workflows from source |
+| Smoke | `scripts/smoke-*.sh` | `bun run src/cli.ts` | Command workflows from source, including `scripts/smoke-remote.sh` for pulled skills |
 | End-to-end | `e2e/` | One compiled executable | The packaged program a user installs |
 
 Every layer needs the web UI bundle, because the CLI entry point imports it.
@@ -22,9 +22,11 @@ fault, because they never run the file the package installs. That is the gap
 the E2E layer closes.
 
 Every smoke script sources `scripts/smoke-lib.sh`, which detaches the suite
-from terminal input (`exec < /dev/null`) and passes `--yes` for consent.
-Smoke therefore proves non-interactive behavior only. Terminal behavior
-belongs to the E2E pseudo-terminal cells.
+from terminal input (`exec < /dev/null`). The library passes no flags of its
+own: a script that needs consent passes `--yes` at its own destructive call,
+and a script written on the assumption that the library supplies it refuses
+with exit 3 at the first one. Smoke therefore proves non-interactive behavior
+only. Terminal behavior belongs to the E2E pseudo-terminal cells.
 
 ## Read reuse regression coverage
 
@@ -102,7 +104,10 @@ world, the command runner, the PTY driver, the network canary, and the
 evidence report. `e2e/harness/` self-tests it, so a harness fault names the
 harness instead of surfacing as a scenario that did not prompt.
 `e2e/environments/` holds terminal and user-level cells. `e2e/scenarios/`
-holds product workflows.
+holds product workflows, including `remote-skill.test.ts`, which drives the
+pulled-skill workflow against a local bare repository standing in for a host.
+It states what stays unproved: GitHub itself, its authentication, and its rate
+limits.
 
 Each scenario and environment test prints one `evidence:` line with its labels —
 `reproduced-user-workflow`, `modeled-external-step`,

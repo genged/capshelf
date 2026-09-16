@@ -218,17 +218,17 @@ registered.
 | `data bind <path>` | bind this machine to the project's data repo clone via `.capshelf/local.json` (alias: `set-data`) | implemented |
 | `data upstream <url>` | write the committed `dataRepoUpstream` URL in `.capshelf/capshelf.json` (alias: `set-upstream`) | implemented |
 | `data path` | print the resolved local data repo path; `--json` includes the path and the normalized upstream (`null` when absent) (alias: `data-path`) | implemented |
-| `data sync` | explicitly fetch the bound data repo's `origin` and fast-forward the current branch when provably safe; the only capshelf command that performs network I/O besides the clone `init` performs for a remote upstream and `self-update` (alias: `sync-data`) | implemented |
+| `data sync` | explicitly fetch the bound data repo's `origin` and fast-forward the current branch when provably safe; one of five network operations, with the clone `init` performs for an upstream URL, `self-update`, `add <url>`, and `status --check-upstream` (alias: `sync-data`) | implemented |
 | `ls` | list items in master plus user-level runtime skills by default, in this project (`--here`), or user-level runtime skills only (`--user`); master/project listings show descriptions and `#tags` from item metadata; `--tag` filters master/project listings; appends a `bundles/` section for data-repo bundles | implemented |
 | `show <item>` | print metadata + content for one item, including relations and current/locked declared needs, plus runtime target coverage for MCP and subagents; `--target` narrows to one runtime | implemented |
 | `search <query...>` | search available items (data repo + system) and bundles by name, tags, description, and content; supports `--kind` and `--json`; zero matches exit 0 | implemented |
-| `status [<item>]` | drift / update report plus orthogonal `needsState` freshness and locked needs; subagent JSON includes deterministic per-target state; a sub-line names any runtime target an MCP or subagent item does not cover; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` shows locked-to-installed and locked-to-upstream comparisons; `--diff-view installed\|upstream\|all` selects a comparison | implemented |
-| `add [item]` | install a new item from the bound data repo, materializing exactly what the pin contains; with no item, opens the interactive picker (see The picker); MCP and subagent installs report per-runtime target coverage; an already-installed standalone item is a byte- and lock-stable no-op; `--local` installs a clone-local copy item; `--yes` authorizes collateral fragment-output loss for a new fragment, standalone or expanded from a bundle; a ref whose first segment is not an item kind is refused with exit 3 and the supported kinds, because `owner/repo` shorthand is shaped exactly like `kind/name` | implemented |
+| `status [<item>]` | drift / update report plus orthogonal `needsState` freshness and locked needs; subagent JSON includes deterministic per-target state; a sub-line names any runtime target an MCP or subagent item does not cover; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` shows locked-to-installed and locked-to-upstream comparisons; `--diff-view installed\|upstream\|all` selects a comparison; `--check-upstream` fetches every tracked remote repository and reports which pulled skills moved | implemented |
+| `add [item]` | install a new item from the bound data repo, materializing exactly what the pin contains; with no item, opens the interactive picker (see The picker); MCP and subagent installs report per-runtime target coverage; an already-installed standalone item is a byte- and lock-stable no-op; `--local` installs a clone-local copy item; `--yes` authorizes collateral fragment-output loss for a new fragment, standalone or expanded from a bundle; a ref whose first segment is not an item kind is refused with exit 3 and the supported kinds, because `owner/repo` shorthand is shaped exactly like `kind/name`; a repository URL instead of a ref installs a skill from outside the shelf, with `--as`, `--ref`, `--path`, and `--list` | implemented |
 | `rm <item>` | remove a locked data item and report every output it reconciled; clean reproducible content is prompt-free, while local edits, modes, extra paths, subagent drift, and fragment comment loss require consent or `--yes` | implemented |
 | `get-path <item>` | print the editable path; subagents and MCP support `--target`, while `--output` returns the corresponding runtime output | implemented |
 | `apply [<item>]` | reconcile project and local files with lockfiles after a full-set destructive preflight; a failing fragment target aborts every write, while an unresolvable copy or subagent item is reported and the rest still converge (exit 1); supports `--local`, `--dry-run`, and `--yes` | implemented |
 | `update [<item>...]` | bump content and declared-needs pins; needs-only changes do not reinstall unchanged content; `--merge` reconciles one explicit skill or Pi extension and pins upstream without publishing; `--local` selects clone-local scope; supports `--dry-run` and explicit drift overwrite consent with `--yes` | implemented |
-| `share [item]` | adopt a not-yet-shared on-disk item into the data repo and report the new item's runtime target coverage; subagents scan both runtime outputs by default and require `--target` with `--from`; with no item, opens the interactive picker over unmanaged config values and untracked skills, Pi extensions, and subagents (see The picker); pick-based fragment shares print and report the equivalent non-interactive command | implemented |
+| `share [item]` | adopt a not-yet-shared on-disk item into the data repo and report the new item's runtime target coverage; subagents scan both runtime outputs by default and require `--target` with `--from`; with no item, opens the interactive picker over unmanaged config values and untracked skills, Pi extensions, and subagents (see The picker); pick-based fragment shares print and report the equivalent non-interactive command; `--adopt` takes ownership of a skill installed from a repository URL or by skills.sh | implemented |
 | `move <item> --to <scope>` | move an already-tracked data item between local and project scope without changing data-repo content | implemented |
 | `promote [item]` | Push edits for a tracked data item to the data repo. Fragments promote canonical source files. `--local` selects clone-local copy items. `--stale-ok` permits an intentional overwrite. With no item, the command opens the tracked-item picker. See The picker. | implemented |
 | `keep-local <item>` | mark drifted copy-item content as intentional divergence; supports project and clone-local skills/Pi extensions, and rejects fragments; `--unset` is the only thing that clears the marker, and `promote` refuses a marked item | implemented |
@@ -254,6 +254,13 @@ there is no separate `bundle` verb family. See Bundles below.
   `marketplace sync`, and `self-update`. It authorizes only destructive changes
   enumerated by preflight; it never bypasses path safety, source cleanliness,
   fragment collisions, stale promotion, or transaction checks.
+- `--as`, `--ref`, `--path`, `--list` — supported by `add`, and only when its
+  argument is a repository URL. Each one is refused with exit 3 on a shelf item
+  ref, because it would otherwise read as accepted and be ignored.
+- `--check-upstream` — supported by `status`. One of the three surfaces that
+  reach the network, with `add <url>` and `add <url> --list`.
+- `--adopt` — supported by `share`; takes ownership of one installed skill from
+  its previous owner
 - `--user` — supported by `ls` and `status`; narrows output to user-level
   runtime skills only, without requiring a capshelf project or data repo
 - `--diff` — supported by `status`; shows local drift against the locked
@@ -1018,6 +1025,12 @@ Declining exits 0 and writes nothing. JSON and other non-TTY runs refuse with
 exit 3 unless `--yes` explicitly authorizes the listed loss. Capshelf
 revalidates the accepted snapshot immediately before writing.
 
+`share` resolves the data repo after its ref refusals, not before. In a project
+with no data-repo binding, a `share` that also hits an earlier refusal now
+reports that refusal and exits 3, where it used to report "no data repo
+configured" and exit 6. It still exits 6 when no earlier refusal applies. One
+refusal precedence, not two, and it applies with or without `--adopt`.
+
 Use `capshelf status <item> --diff` to review managed item drift. Extra ignored
 paths are listed directly because status deliberately filters them. Use
 `capshelf marketplace sync --target codex --dry-run --json` for generated
@@ -1263,7 +1276,7 @@ capshelf data sync [--json]
 
 A project command, run from the project root. `data sync` (legacy alias
 `sync-data`) is the only capshelf command that talks to the data repo's
-remote after `init` has cloned it, and only when you run it. It resolves the
+`origin` after `init` has cloned it, and only when you run it. It resolves the
 data repo through the standard chain, runs the usual upstream verification
 when the manifest declares `dataRepoUpstream` (a declared upstream is *not*
 required — it syncs whatever `origin` is), fetches `origin`, and fast-forwards
@@ -1443,6 +1456,64 @@ not project items: no project manifest or lock is changed. See
 ### skills.sh
 
 If a project has `skills-lock.json`, capshelf treats those skills as managed by `skills.sh`. `add`, `share`, `rm`, `apply`, `update`, `revert`, and `promote` refuse or skip those skill paths instead of co-managing them. `status` shows them under an `external/` group and `--strict` ignores them. This also covers skills.sh's Codex layout, where each `.claude/skills/<name>` entry is a symlink to `.agents/skills/<name>`.
+
+### Remote skills
+
+`capshelf add <url>` installs a skill from any Git repository, not only from
+your shelf. The skill is tracked in `.capshelf/remotes.lock.json`, which is
+gitignored, so a teammate who clones the project gets neither the files nor the
+record.
+
+| command | effect |
+|---|---|
+| `capshelf add <url> [--as <name>] [--ref <ref>] [--path <subpath>]` | resolve, print the facts, ask once, install, record |
+| `capshelf add <url> --list` | print the repository's skills and exit 0; write nothing |
+| `capshelf update skills/<name>` | move the pin to what the cache already holds, then apply. No network |
+| `capshelf status --check-upstream` | fetch every tracked repository and report which pins moved |
+| `capshelf share skills/<name> --adopt` | transfer ownership into the shelf and release the previous owner |
+| `capshelf rm skills/<name>` | remove the install and the record |
+
+Three surfaces reach the network and no other: `add <url>`, `add <url>
+--list`, and `status --check-upstream`. A URL on the command line is the only
+thing that makes `add` networked. No project state can. `apply`, `update`,
+`rm`, `promote`, and a bare `status` never open a connection, whatever the
+project holds.
+
+Each repository is cloned once, to
+`$XDG_DATA_HOME/capshelf/remote/<host>/<owner>/<repo>`. The path is derived
+from the upstream on every read and is never stored, so stale machine state
+cannot decide which objects a pin reads. `apply` and `update` refuse when that
+cache is absent and name `capshelf status --check-upstream`, which re-creates
+it: creating a cache inside `update` would make `update` a network command.
+A cache re-created that way clones the normalized `https` identity, because
+that is the only form the record holds. Re-cache a repository that needs SSH
+by running `capshelf add <ssh-url>` again.
+
+Discovery reads at the resolved commit through `ls-tree`, never from a
+checkout. A repository holding a root `SKILL.md` **and** subdirectory skills is
+ambiguous: capshelf never prefers one, it offers both. Without a terminal the
+command refuses and names `--list` and `--path`.
+
+Consent covers a commit, not a row. The install prompt prints the repository,
+the commit, the subpath, the install path, the file list with sizes, the
+description, and the license finding, and then asks once. A named `capshelf
+update skills/<name>` asks again before it accepts new upstream content. A bare
+`capshelf update` moves no remote pin at all and lists the rows it left alone,
+because a routine sweep across a project must not become interactive. `--yes`
+answers the question in both cases. In a non-TTY run, including `--json`, it is
+the only thing that does.
+
+A pulled skill cannot be promoted: its upstream is a repository nobody on your
+team can publish to. `promote`, `move`, `keep-local`, and `revert` all refuse
+one and name `capshelf share skills/<name> --adopt`, which vendors the
+installed bytes into your shelf, records `upstream`, `upstreamCommit`, and
+`upstreamPath` in the item's `.capshelf.yml`, and releases the remote row last.
+The same flag adopts a skills.sh-managed skill, releasing that row instead.
+After the adopt the item is an ordinary data item.
+
+Capshelf does not review pulled content. There is no registry, no signing, and
+no scanning. The consent prompt prints the facts and asks once. That is the
+whole control.
 
 ### Claude plugins
 

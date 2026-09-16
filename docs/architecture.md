@@ -112,11 +112,18 @@ the content and who owns the record.
 |---|---|---|---|
 | **system** | `bundled` — the CLI binary | the binary owns both | no — submit a PR to the capshelf repo |
 | **data** | `git-tree` — a repository, a commit, and an item root | the data repo owns the content, capshelf owns the record | yes — `share` and `promote` commit to the data repo |
+| **remote** | `git-tree` — a clone cache, a commit, and the subpath the URL named | an outside repository owns the content, capshelf owns a gitignored record | no — `share --adopt` vendors it into the shelf first |
 
-Both populations live in the same lockfile with different entry schemas (see
-Lock below). Today they differ on both axes at once, so one field could answer
-both questions. A third population separates them: a pulled skill is git-tree
-sourced like a data item and unpublishable like a system item.
+The first two populations live in the same lockfile with different entry
+schemas (see Lock below), and they differ on both axes at once, so one field
+could answer both questions. The third separates them: a pulled skill is
+git-tree sourced like a data item and unpublishable like a system item.
+
+A pulled skill is pinned by the same committed-tree digest every other item
+uses. Its record is `.capshelf/remotes.lock.json`, schema version 1, which is
+gitignored: every row is local scope, and a teammate who clones the project
+gets none of them. The version 4 project lock is untouched, so no project
+migrates because a pulled skill exists. `share --adopt` is the one exit.
 
 Both values are derived in memory when a lock entry is read
 (`src/item-source.ts`). Ownership comes from two facts already on disk: which
@@ -124,7 +131,10 @@ document holds the record, and the record's own `source` field. Nothing new is
 written, no lock format changes, and identity is untouched.
 
 A code path that asks *where are the bytes* uses `isGitTree(source)`. A path
-that asks *may the user publish this* reads the entry.
+that asks *may the user publish this* reads the entry. The item root travels in
+the content source rather than being derived from the kind and the name, and a
+pulled skill is its first non-canonical producer: its bytes live at whatever
+subpath the URL named.
 
 ### Data repo layout
 
@@ -187,11 +197,12 @@ their manifest.
 ```
 <project>/
 ├── .capshelf/
-│   ├── .gitignore            contains local.json and local.lock.json
+│   ├── .gitignore            contains local.json, local.lock.json, remotes.lock.json
 │   ├── capshelf.json         committed manifest: install mode, items, optional dataRepoUpstream
 │   ├── local.json            gitignored binding plus clone-local copy-item intent
 │   ├── capshelf.lock.json    committed lock: pinned sha + sourceCommit, tool-managed
-│   └── local.lock.json       gitignored lock for local-only items
+│   ├── local.lock.json       gitignored lock for local-only items
+│   └── remotes.lock.json     gitignored record of skills pulled from outside repos
 ├── .agents/skills/<name>/      default real skill directories
 ├── .claude/skills/<name>       default per-skill symlink to .agents/skills/<name>
 ├── .pi/extensions/<name>/      project-local Pi extension directories
@@ -202,6 +213,13 @@ their manifest.
 
 `capshelf init --claude-only` stores real skill directories directly under
 `.claude/skills/<name>/` and does not create `.agents` compatibility symlinks.
+
+Machine state lives outside the project. A skill pulled from a repository URL
+is read from a clone under
+`$XDG_DATA_HOME/capshelf/remote/<host>/<owner…>/<repo>`, beside the `data/`
+bootstrap clone and built by the same segment rule. The path is derived from
+the recorded upstream on every read and is never stored, so a stale absolute
+path can never decide which objects a pin reads.
 
 Manifest:
 ```json
