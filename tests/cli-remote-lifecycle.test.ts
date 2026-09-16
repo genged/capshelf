@@ -3,7 +3,9 @@ import { existsSync } from "node:fs";
 import { appendFile, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  addSkill,
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  commitAll,
   jsonOutput,
   objectItems,
   runInProcess,
@@ -441,6 +443,112 @@ test(
     expect(result.exitCode).toBe(0);
     const rows = objectItems(jsonOutput(result), "items");
     expect(rows.some((row) => row.key === "remote/skills/pdf")).toBe(true);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "a remote refusal after the shelf pass keeps the shelf lock in step with disk",
+  async () => {
+    // The shelf loop materializes new bytes for every target before the remote
+    // pass starts, and the remote pass refuses a cold cache by throwing. A
+    // shelf lock saved after that throw is never saved at all, so the item's
+    // files sit ahead of its pin — drift the user never introduced, which the
+    // next `apply` reverts.
+    const upstream = await upstreamWith([["skills/pdf", "Extract text"]]);
+    const world = await initRemoteProject();
+    const run = runInProcess(world.project);
+    expect(
+      (await run(["add", "skills/placeholder", "--json"], world.env)).exitCode,
+    ).toBe(0);
+    expect(
+      (await run(["add", upstream.url, "--yes", "--json"], world.env)).exitCode,
+    ).toBe(0);
+    await addSkill(world.dataRepo, "placeholder", "placeholder v2\n");
+    await commitAll(world.dataRepo, "revise placeholder");
+    await rm(cacheRootOf(world), { recursive: true });
+
+    const result = await run(
+      ["update", "skills/placeholder", "skills/pdf", "--yes", "--json"],
+      world.env,
+    );
+    expect(result.exitCode).not.toBe(0);
+    expect(
+      await readFile(
+        join(world.project, ".agents/skills/placeholder/SKILL.md"),
+        "utf-8",
+      ),
+    ).toContain("placeholder v2");
+    const status = await run(
+      ["status", "skills/placeholder", "--json"],
+      world.env,
+    );
+    expect(
+      objectItems(jsonOutput(status), "items").find(
+        (row) => row.name === "placeholder",
+      )!.state,
+    ).toBe("ok");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "share --adopt --to project reads the excluded install and drops its exclude",
+  async () => {
+    // `--to project` is required: a skill shared without `--to` lands in local
+    // scope, where the exclude is correct and stays.
+    //
+    // The exclude has to go before the adopt reads the item, not after it
+    // commits. A project-scope adopt snapshots through project Git, and the
+    // install path `add <url>` excluded reads there as an empty directory.
+    const { world, run } = await installed();
+    const excludePath = join(world.project, ".git/info/exclude");
+    expect(await readFile(excludePath, "utf-8")).toContain(
+      ".agents/skills/pdf/",
+    );
+
+    const result = await run(
+      [
+        "share",
+        "skills/pdf",
+        "--adopt",
+        "--to",
+        "project",
+        "--json",
+        "-m",
+        "adopt pdf",
+      ],
+      world.env,
+    );
+    expect(result.exitCode).toBe(0);
+    // Exit 0 alone would pass on an adopt that committed an empty tree, so the
+    // shelf copy is the assertion that can fail.
+    expect(
+      await readFile(join(world.dataRepo, "skills/pdf/SKILL.md"), "utf-8"),
+    ).toContain("name: pdf");
+    // A project-scope item still named in `.git/info/exclude` is skipped by
+    // `git add -A`, and every unpinned extra under it is misclassified, because
+    // the project scope reads Git's whole ignore stack.
+    expect(await readFile(excludePath, "utf-8")).not.toContain(
+      ".agents/skills/pdf/",
+    );
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "a bare apply sweep names the check flag when the cache is gone",
+  async () => {
+    // The named case refuses in the preflight. The sweep records that refusal
+    // and carries on to the write loop, which built a source from a path
+    // holding no repository and reported whatever git printed about it.
+    const { world, run } = await installed();
+    await rm(cacheRootOf(world), { recursive: true });
+
+    const result = await run(["apply", "--yes", "--json"], world.env);
+    const output = result.stdout.toString() + result.stderr.toString();
+    expect(output).toContain("capshelf status --check-upstream");
+    expect(output).not.toContain("not a git repository");
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );

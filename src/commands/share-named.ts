@@ -292,6 +292,18 @@ export async function shareCopyItem(
 
   if (owner !== null) await warnAboutMissingLicense(project, name, owner);
 
+  // Before the snapshot, not after the commit, and unconditional the way
+  // `move --to project` drops it. A project-scope adopt reads the installed
+  // item through project Git, and `add <url>` excludes every pulled skill's
+  // install path — so a line left in place makes Git report an empty directory
+  // and the adopt writes nothing to copy. It has to go for the destination's
+  // sake too: a project-scope item named in `.git/info/exclude` is skipped by
+  // `git add -A`, and its unpinned extras are misclassified by
+  // `visibleExtraPaths`, which reads that same ignore stack. Gating this on
+  // `localKey` missed the case entirely, because a remote row is in neither
+  // capshelf lock. A name that owns no line is a no-op here.
+  if (scope === "project") await removeLocalExcludes(project, kind, name);
+
   // Steps 10 and 11.
   const adopted = await adoptIntoDataRepo(project, dataRepo, kind, name, {
     installMode: manifest.installMode,
@@ -324,7 +336,6 @@ export async function shareCopyItem(
       if (localConfig) {
         removeLocalConfigName(localConfig, kind, name);
       }
-      await removeLocalExcludes(project, kind, name);
       localChanged = true;
     }
     await saveManifest(project, manifest);

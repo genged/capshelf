@@ -117,6 +117,10 @@ test -f "$DATA/skills/pdf/SKILL.md"
 assert_fixed_contains 'upstreamPath: skills/pdf' "$DATA/skills/pdf/.capshelf.yml"
 assert_fixed_contains '"items": {}' "$P/.capshelf/remotes.lock.json"
 test -z "$(git -C "$DATA" status --porcelain)"
+# A skill adopts into local scope unless --to says otherwise, and a local-scope
+# item keeps its exclude. The project-scope adopt, which must drop the exclude
+# before it snapshots through project Git, is covered in cli-remote-lifecycle.
+assert_fixed_contains '.agents/skills/pdf/' "$P/.git/info/exclude"
 
 # --- rm removes a pulled skill, its alias, and its row ---
 (cd "$P" && "${CLI[@]}" add "$UPSTREAM_URL" --path skills/xlsx --yes --json >/dev/null)

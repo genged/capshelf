@@ -1511,6 +1511,11 @@ installed bytes into your shelf, records `upstream`, `upstreamCommit`, and
 The same flag adopts a skills.sh-managed skill, releasing that row instead.
 After the adopt the item is an ordinary data item.
 
+The adopt lands in local scope, like every other skill share without `--to`.
+`--to project` commits the item to the project as well, so it drops the
+install path from `.git/info/exclude` that `add <url>` wrote: a project-scope
+item Git is told to ignore is never committed with the project.
+
 Capshelf does not review pulled content. There is no registry, no signing, and
 no scanning. The consent prompt prints the facts and asks once. That is the
 whole control.

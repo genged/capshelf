@@ -29,11 +29,7 @@ import {
 import { mergeNamedTrees, namedFilesEqual } from "./merge-tree";
 import type { NamedFile } from "./merge-tree";
 import { beginInstalledReconciliation } from "./promote-transaction";
-import {
-  remoteCachePath,
-  remoteCacheState,
-  resolveCachedRef,
-} from "./remote-cache";
+import { remoteCacheState, resolveCachedRef } from "./remote-cache";
 import { remoteTreeSource } from "./remote-discovery";
 import { REMOTE_ITEM_KIND, remoteKey } from "./remotes-lock";
 import type { RemoteLockEntry } from "./remotes-lock";
@@ -115,10 +111,15 @@ export async function reconcileRemoteSkill(opts: {
   env?: Record<string, string | undefined>;
   dryRun?: boolean;
 }): Promise<MaterializeResult> {
+  // The refusal belongs here, with the derivation of the path: every caller
+  // that reconciles offline needs it, and one that only built the path reported
+  // whatever git printed about a directory that is not a repository.
+  const cache = remoteCacheState(opts.entry.upstream, opts.env);
+  if (!cache.present) throw coldCacheRefusal(opts.name, opts.entry);
   return await materializeLockEntry({
     project: opts.project,
     source: remoteTreeSource(
-      remoteCachePath(opts.entry.upstream, opts.env),
+      cache.path,
       opts.entry.sourceCommit,
       opts.entry.subpath,
     ),
@@ -161,12 +162,14 @@ export function coldCacheRefusal(
   entry: RemoteLockEntry,
   detail = "has no local cache",
 ): PreconditionError {
+  // The fetch command is in the message, not only in the hint. A sweep records
+  // this refusal as a result row, and a row carries the message alone, so a
+  // hint-only instruction would never reach the one caller that cannot rerun
+  // the command to see it.
   return new PreconditionError(
-    `${remoteKey(name)} ${detail} for ${entry.upstream}`,
+    `${remoteKey(name)} ${detail} for ${entry.upstream}; fetch it with ${PRODUCT_NAME} status --check-upstream`,
     {
-      hint:
-        "update never creates a cache, because that would make it a network command\n" +
-        `  fetch it: ${PRODUCT_NAME} status --check-upstream`,
+      hint: `${PRODUCT_NAME} never creates a cache offline, because that would make this a network command`,
     },
   );
 }

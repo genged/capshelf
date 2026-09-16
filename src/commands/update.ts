@@ -512,6 +512,15 @@ export function registerUpdate(program: Command): void {
           }
         }
 
+        // Before the remote pass, not after it. The loop above already wrote
+        // the new bytes for every shelf target; `runRemoteUpdates` still
+        // refuses a cold cache and a consent-less pin move by throwing, and a
+        // save deferred past it would leave those items holding content their
+        // lock does not name — drift the user never introduced, which `apply`
+        // then reverts.
+        if (projectChanged) await saveLock(project, writableProjectLock);
+        if (localChanged) await saveLocalLock(project, writableLocalLock);
+
         // Remote rows run after the shelf pass and never share its lock, so a
         // failure in either population leaves the other converged.
         const remoteOutcome = await runRemoteUpdates({
@@ -526,9 +535,6 @@ export function registerUpdate(program: Command): void {
           yes: opts.yes === true,
         });
         results.push(...remoteOutcome.results);
-
-        if (projectChanged) await saveLock(project, writableProjectLock);
-        if (localChanged) await saveLocalLock(project, writableLocalLock);
 
         printUpdateOutput({
           project,
