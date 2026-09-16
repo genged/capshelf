@@ -57,7 +57,14 @@ export async function upstreamWith(
   return { url: `file://${barePath}`, work };
 }
 
-/** Change one skill upstream and push it, so a later check sees one new commit. */
+/**
+ * Change one skill upstream and push it, so a later check sees one new commit.
+ *
+ * The edit is the description line only. A test that merges a local edit
+ * appends to the end of the file, and rewriting the body as well would make
+ * every such merge a conflict — which would test the conflict path rather than
+ * the merge path.
+ */
 export async function pushChange(
   upstream: Upstream,
   dir: string,
@@ -65,7 +72,7 @@ export async function pushChange(
 ): Promise<void> {
   await writeFile(
     join(upstream.work, dir, "SKILL.md"),
-    skillText(dir.split("/").pop()!, description, "body, revised"),
+    skillText(dir.split("/").pop()!, description),
   );
   await commitAll(upstream.work, `revise ${dir}`);
   await $`git -C ${upstream.work} push -q origin main`.quiet();

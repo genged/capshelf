@@ -4,6 +4,7 @@ import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import {
   assertDestructivePlanUnchanged,
   confirmDestructiveChanges,
+  confirmationContext,
   createDestructiveChangePlan,
   renderDestructiveChanges,
   type DestructiveChange,
@@ -106,6 +107,23 @@ import {
 } from "../item-snapshot";
 import { mergeNamedTrees, namedFilesEqual } from "../merge-tree";
 import { beginInstalledReconciliation } from "../promote-transaction";
+import { remoteCacheState } from "../remote-cache";
+import { remoteTreeSource } from "../remote-discovery";
+import {
+  previewRemoteUpdate,
+  remoteEntryAsDataEntry,
+  updateMergeRemoteTarget,
+  updateRemoteSkill,
+} from "../remote-item";
+import {
+  REMOTE_ITEM_KIND,
+  loadRemotesLock,
+  parseRemoteKey,
+  remoteKey,
+  remoteKeysForRef,
+  saveRemotesLock,
+} from "../remotes-lock";
+import type { RemoteLockEntry, RemotesLock } from "../remotes-lock";
 
 interface UpdateOptions {
   json?: boolean;
@@ -117,6 +135,7 @@ interface UpdateOptions {
 
 type UpdateAction =
   | "updated"
+  | "skipped"
   | "would-update"
   | "already-current"
   | "reconciled"
@@ -172,11 +191,6 @@ export function registerUpdate(program: Command): void {
         cmd: Command,
       ) => {
         const refs = itemRefs ?? [];
-        if (opts.merge && opts.yes) {
-          throw new PreconditionError(
-            "--merge and --yes cannot be used together",
-          );
-        }
         if (opts.merge && refs.length !== 1) {
           throw new PreconditionError(
             "update --merge requires exactly one explicit item",
@@ -192,6 +206,23 @@ export function registerUpdate(program: Command): void {
         }
         const { project, manifest, projectLock, localLock } =
           await loadProjectContext({ cmd });
+        // A remote row is in neither capshelf lock by A3, so it is resolved
+        // here rather than by `resolveTrackedTarget`: widening that resolver
+        // would change the return type for `apply` and `status` at once.
+        const remotes = await loadRemotesLock(project);
+        const remoteTargets = resolveRemoteTargets(remotes, refs);
+        const remoteNames = new Set(remoteTargets.map((target) => target.name));
+        const shelfRefs = refs.filter(
+          (itemRef) => !remoteNames.has(parseItemRef(itemRef).name),
+        );
+        // `--merge` preserves the local edit for a shelf item, so `--yes` has
+        // nothing to authorize and the pair is refused. For a remote row
+        // `--yes` answers A9's new-content prompt, which `--merge` still asks.
+        if (opts.merge && opts.yes && remoteTargets.length === 0) {
+          throw new PreconditionError(
+            "--merge and --yes cannot be used together",
+          );
+        }
         // PIN-12: no ordinary lock write migrates. `update` reads either
         // version but writes only version 4, so it refuses here with the
         // migration command rather than rewriting entries as a side effect.
@@ -204,7 +235,7 @@ export function registerUpdate(program: Command): void {
 
         const targets: ScopedTarget[] = [];
         if (refs.length > 0) {
-          for (const itemRef of refs) {
+          for (const itemRef of shelfRefs) {
             targets.push(
               await resolveTrackedTarget(
                 project,
@@ -238,6 +269,28 @@ export function registerUpdate(program: Command): void {
           await assertRepoClean(dataRepo);
         }
 
+        if (opts.merge && remoteTargets.length === 1) {
+          const outcome = await runRemoteUpdates({
+            project,
+            manifest,
+            targets: remoteTargets,
+            remotes,
+            merge: true,
+            dryRun: opts.dryRun === true,
+            json: opts.json === true,
+            yes: opts.yes === true,
+          });
+          printUpdateOutput({
+            project,
+            dataRepo: undefined,
+            dryRun: opts.dryRun === true,
+            results: outcome.results,
+            destructivePlan: createDestructiveChangePlan([], []),
+            json: opts.json === true,
+          });
+          if (!opts.json) printRemoteAdoptGuidance(outcome.results);
+          return;
+        }
         if (opts.merge) {
           if (!dataRepo) throw new PreconditionError("data repo is required");
           const result = await updateMergeTarget({
@@ -444,8 +497,24 @@ export function registerUpdate(program: Command): void {
           }
         }
 
+        // Remote rows run after the shelf pass and never share its lock, so a
+        // failure in either population leaves the other converged.
+        const remoteOutcome = await runRemoteUpdates({
+          project,
+          manifest,
+          targets: remoteTargets,
+          remotes,
+          merge: false,
+          // The dry-run path returned above, so this pass always writes.
+          dryRun: false,
+          json: opts.json === true,
+          yes: opts.yes === true,
+        });
+        results.push(...remoteOutcome.results);
+
         if (projectChanged) await saveLock(project, writableProjectLock);
         if (localChanged) await saveLocalLock(project, writableLocalLock);
+        if (remoteOutcome.changed) await saveRemotesLock(project, remotes);
 
         printUpdateOutput({
           project,
@@ -455,11 +524,266 @@ export function registerUpdate(program: Command): void {
           destructivePlan: preflight.destructivePlan,
           json: opts.json === true,
         });
+        if (!opts.json) {
+          printRemoteAdoptGuidance(remoteOutcome.results);
+          printRemoteSkipHint(remoteOutcome.results);
+        }
         if (results.some((r) => r.action === "error")) {
           throw new ResultExitError(1);
         }
       },
     );
+}
+
+interface RemoteTarget {
+  name: string;
+  key: string;
+  /**
+   * Load-bearing, not bookkeeping. A9 forbids a bare sweep from moving a
+   * remote pin, and the enumeration below deliberately still lists every row
+   * so the sweep can report it. This flag is what stops them at the gate.
+   */
+  named: boolean;
+}
+
+function resolveRemoteTargets(
+  remotes: RemotesLock,
+  refs: string[],
+): RemoteTarget[] {
+  if (refs.length > 0) {
+    return refs.flatMap((itemRef) =>
+      remoteKeysForRef(remotes, parseItemRef(itemRef)).map((key) => ({
+        key,
+        name: parseRemoteKey(key).name,
+        named: true,
+      })),
+    );
+  }
+  return Object.keys(remotes.items).map((key) => ({
+    key,
+    name: parseRemoteKey(key).name,
+    named: false,
+  }));
+}
+
+interface RemoteUpdateOutcome {
+  results: UpdateResult[];
+  changed: boolean;
+}
+
+/**
+ * The remote half of `update`.
+ *
+ * Consent lives here rather than in `updateRemoteSkill`: that function sees no
+ * `--yes`, no `--json`, and no terminal state, so it cannot decide anything.
+ * Keeping the prompt in the command is also what lets a bare sweep return
+ * `skipped` without ever entering the write path.
+ */
+async function runRemoteUpdates(input: {
+  project: string;
+  manifest: Manifest;
+  targets: RemoteTarget[];
+  remotes: RemotesLock;
+  merge: boolean;
+  dryRun: boolean;
+  json: boolean;
+  yes: boolean;
+}): Promise<RemoteUpdateOutcome> {
+  const results: UpdateResult[] = [];
+  let changed = false;
+  for (const target of input.targets) {
+    const entry = input.remotes.items[target.key]!;
+    if (!target.named) {
+      // A9. A routine sweep across a project must not become interactive, and
+      // it must not move a pin the user has not reviewed either.
+      results.push(remoteResult(target, "skipped", entry, entry.sourceCommit));
+      continue;
+    }
+    const preview = await previewRemoteUpdate({
+      project: input.project,
+      name: target.name,
+      entry,
+    });
+    if (preview.current) {
+      results.push(
+        remoteResult(target, "already-current", entry, preview.to, entry),
+      );
+      continue;
+    }
+    if (
+      !(await confirmRemotePinMove({
+        project: input.project,
+        manifest: input.manifest,
+        name: target.name,
+        entry,
+        preview,
+        dryRun: input.dryRun,
+        json: input.json,
+        yes: input.yes,
+      }))
+    ) {
+      return { results, changed };
+    }
+    const moved = input.merge
+      ? await updateMergeRemoteTarget({
+          project: input.project,
+          name: target.name,
+          entry,
+          preview,
+          dryRun: input.dryRun,
+        })
+      : await updateRemoteSkill({
+          project: input.project,
+          name: target.name,
+          entry,
+          preview,
+          dryRun: input.dryRun,
+        });
+    results.push(
+      remoteResult(target, moved.action, entry, moved.to, moved.entry),
+    );
+    if (!input.dryRun && moved.action === "updated") {
+      input.remotes.items[target.key] = moved.entry;
+      changed = true;
+    }
+  }
+  return { results, changed };
+}
+
+/**
+ * A9's gate, and the drift gate, in one prompt.
+ *
+ * The new content is the thing consent covers, and the loss of a local edit is
+ * part of the same write. Asking twice would make `--yes` mean two different
+ * answers; the block below states both facts and the planner supplies the
+ * loss list, so the accounting is the real one.
+ */
+async function confirmRemotePinMove(input: {
+  project: string;
+  manifest: Manifest;
+  name: string;
+  entry: RemoteLockEntry;
+  preview: Awaited<ReturnType<typeof previewRemoteUpdate>>;
+  dryRun: boolean;
+  json: boolean;
+  yes: boolean;
+}): Promise<boolean> {
+  if (input.dryRun || input.yes) return true;
+  const destruction = await planRemotePinMove(input);
+  const block = [
+    `  pinned    ${input.preview.from.slice(0, 7)}  ->  ${input.preview.to.slice(0, 7)}   (from the local cache, no network)`,
+    `  files     ${input.preview.changed.length} changed`,
+    ...input.preview.changed.map((path) => `              ${path}`),
+    ...(destruction.changes.length > 0
+      ? ["", renderDestructiveChanges("Update", destruction.changes)]
+      : []),
+    "",
+    "  capshelf does not review this content. Your agent runs it with your permissions.",
+  ].join("\n");
+  const context = confirmationContext();
+  if (input.json || !context.stdinIsTTY || !context.stderrIsTTY) {
+    throw new PreconditionError(
+      `not moving ${remoteKey(input.name)} to ${input.preview.to.slice(0, 7)} without consent — it is content from a repository outside your shelf`,
+      {
+        hint: `review it, then authorize with --yes: ${PRODUCT_NAME} update ${REMOTE_ITEM_KIND}/${input.name} --yes`,
+      },
+    );
+  }
+  const answer = await context.prompt(`${block}\nMove the pin? [y/N] `);
+  if (/^(y|yes)$/i.test(answer.trim())) return true;
+  context.stderr.write("Update cancelled; no changes were written.\n");
+  return false;
+}
+
+/** What the pin move would destroy, through the planner every write uses. */
+async function planRemotePinMove(input: {
+  project: string;
+  manifest: Manifest;
+  name: string;
+  entry: RemoteLockEntry;
+  preview: Awaited<ReturnType<typeof previewRemoteUpdate>>;
+}): Promise<{ changes: DestructiveChange[] }> {
+  const pin = input.preview.pin;
+  if (pin === null) return { changes: [] };
+  const cache = remoteCacheState(input.entry.upstream);
+  const current = remoteTreeSource(
+    cache.path,
+    input.entry.sourceCommit,
+    input.entry.subpath,
+  );
+  const selected = remoteTreeSource(
+    cache.path,
+    pin.sourceCommit,
+    input.entry.subpath,
+  );
+  const next: RemoteLockEntry = {
+    ...input.entry,
+    sourceCommit: pin.sourceCommit,
+    sourcePinDigest: pin.sourcePinDigest,
+  };
+  return await planCopyDirectoryDestruction({
+    project: input.project,
+    currentSource: current,
+    selectedSource: selected,
+    manifest: input.manifest,
+    kind: REMOTE_ITEM_KIND,
+    name: input.name,
+    key: remoteKey(input.name),
+    scope: "local",
+    currentEntry: remoteEntryAsDataEntry(input.entry),
+    selectedEntry: remoteEntryAsDataEntry(next),
+    reviewCommand: `${PRODUCT_NAME} status ${REMOTE_ITEM_KIND}/${input.name} --diff-view installed`,
+    repairUnresolvableCurrent: true,
+  });
+}
+
+function remoteResult(
+  target: RemoteTarget,
+  action: UpdateAction,
+  entry: RemoteLockEntry,
+  to: string,
+  next?: RemoteLockEntry,
+): UpdateResult {
+  return {
+    key: target.key,
+    scope: "local",
+    source: "remote",
+    kind: REMOTE_ITEM_KIND,
+    name: target.name,
+    action,
+    sha: next?.sourcePinDigest ?? entry.sourcePinDigest,
+    lockedSha: entry.sourcePinDigest,
+    plannedSha: next?.sourcePinDigest ?? entry.sourcePinDigest,
+    sourceCommit: to,
+  };
+}
+
+/** A pulled skill has nowhere to promote to, so its next step is the adopt. */
+function printRemoteAdoptGuidance(results: UpdateResult[]): void {
+  for (const result of results) {
+    if (result.source !== "remote") continue;
+    if (result.action !== "updated" && result.action !== "merged") continue;
+    console.log(
+      `  promote is not available for a pulled skill. to keep it permanently: ${PRODUCT_NAME} share ${result.kind}/${result.name} --adopt`,
+    );
+  }
+}
+
+/** Once per run: a bare sweep names the command that would move these pins. */
+function printRemoteSkipHint(results: UpdateResult[]): void {
+  const skipped = results.filter(
+    (result) => result.source === "remote" && result.action === "skipped",
+  );
+  if (skipped.length === 0) return;
+  console.log(
+    `  ${skipped.length} pulled ${skipped.length === 1 ? "skill was" : "skills were"} left alone; a sweep never accepts new third-party content`,
+  );
+  console.log(
+    `  move one: ${PRODUCT_NAME} update ${skipped[0]!.kind}/${skipped[0]!.name}`,
+  );
+  console.log(
+    `  no network was used. check for newer upstreams: ${PRODUCT_NAME} status --check-upstream`,
+  );
 }
 
 async function updateMergeTarget(input: {

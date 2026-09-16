@@ -16,8 +16,9 @@ import {
 } from "../destructive-preflight";
 import { parseLockKey } from "../installed";
 import { contentSourceFor } from "../item-source";
+import type { GitTreeSource } from "../item-source";
 import { PRODUCT_NAME } from "../identity";
-import { entryIdentity } from "../lock";
+import { dataKey, entryIdentity } from "../lock";
 import type { Lock } from "../lock";
 import type { Manifest } from "../manifest";
 import { assertNoScopeCollisions } from "../status-core";
@@ -26,6 +27,20 @@ import { parseItemRef } from "../item-ref";
 import { resolveTrackedTarget } from "../targets";
 import type { ScopedTarget } from "../targets";
 import { materializeLockEntry } from "../materialize";
+import { remoteCacheState } from "../remote-cache";
+import { remoteTreeSource } from "../remote-discovery";
+import {
+  coldCacheRefusal,
+  reconcileRemoteSkill,
+  remoteEntryAsDataEntry,
+} from "../remote-item";
+import {
+  REMOTE_ITEM_KIND,
+  loadRemotesLock,
+  parseRemoteKey,
+  remoteKeysForRef,
+} from "../remotes-lock";
+import type { RemoteLockEntry, RemotesLock } from "../remotes-lock";
 import type { MaterializeResult } from "../materialize";
 import {
   findSkillsShSkill,
@@ -80,7 +95,29 @@ interface ApplyExternalSkip {
   message: string;
 }
 
-type ApplyResult = MaterializeResult | ApplyError | ApplyExternalSkip;
+/**
+ * A pulled skill's row. `MaterializeResult.source` is an `ItemSource`, which a
+ * remote row is not, so the reporting row is its own variant rather than a
+ * widening of the writer's result type.
+ */
+interface ApplyRemoteResult {
+  scope: "local";
+  key: string;
+  source: "remote";
+  kind: typeof REMOTE_ITEM_KIND;
+  name: string;
+  action: MaterializeResult["action"];
+  path: string;
+  sha: string | null;
+  currentSha?: string | null;
+  plannedSha?: string | null;
+}
+
+type ApplyResult =
+  | MaterializeResult
+  | ApplyError
+  | ApplyExternalSkip
+  | ApplyRemoteResult;
 
 interface ApplyPreflightInput {
   memo: GitReadMemo;
@@ -90,8 +127,16 @@ interface ApplyPreflightInput {
   localLock: Lock;
   dataRepo: string | undefined;
   targets: ScopedTarget[];
+  /** Pulled skills, resolved outside the capshelf locks by A3. */
+  remoteTargets: RemoteApplyTarget[];
+  remotes: RemotesLock;
   externalSkillNames: Set<string>;
   explicit: boolean;
+}
+
+interface RemoteApplyTarget {
+  name: string;
+  key: string;
 }
 
 interface ApplyPreflight {
@@ -120,9 +165,21 @@ export function registerApply(program: Command): void {
         const { project, manifest, projectLock, localLock } =
           await loadProjectContext({ cmd });
         assertNoScopeCollisions(projectLock, localLock, "applying");
+        const remotes = await loadRemotesLock(project);
+        // A remote row is resolved before the shared resolver runs: passing a
+        // ref it cannot see would throw `not tracked in this project`. Every
+        // remote row is local scope by D5, and `apply` has no project-only
+        // flag, so a bare run and `--local` both include them.
+        const remoteTargets: RemoteApplyTarget[] = (
+          itemRef === undefined
+            ? Object.keys(remotes.items)
+            : remoteKeysForRef(remotes, parseItemRef(itemRef))
+        ).map((key) => ({ key, name: parseRemoteKey(key).name }));
 
         let targets: ScopedTarget[];
-        if (itemRef) {
+        if (itemRef && remoteTargets.length > 0) {
+          targets = [];
+        } else if (itemRef) {
           targets = [
             await resolveTrackedTarget(
               project,
@@ -165,6 +222,8 @@ export function registerApply(program: Command): void {
           localLock,
           dataRepo,
           targets,
+          remoteTargets,
+          remotes,
           externalSkillNames,
           explicit: itemRef !== undefined,
         });
@@ -231,6 +290,8 @@ export function registerApply(program: Command): void {
           localLock,
           dataRepo,
           targets,
+          remoteTargets,
+          remotes,
           externalSkillNames,
           explicit: itemRef !== undefined,
         });
@@ -365,6 +426,36 @@ export function registerApply(program: Command): void {
               source: parsed.source,
               kind: parsed.kind,
               name: parsed.name,
+              action: "error",
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+
+        // A remote row converges to the pin the user already accepted, so
+        // `apply` never re-consents: A9 covers a pin *move*, and this is not
+        // one. The destructive plan above still gated any local loss.
+        for (const target of remoteTargets) {
+          const entry = remotes.items[target.key]!;
+          try {
+            results.push(
+              remoteApplyRow(
+                target,
+                entry,
+                await reconcileRemoteSkill({
+                  project,
+                  name: target.name,
+                  entry,
+                }),
+              ),
+            );
+          } catch (err) {
+            results.push({
+              scope: "local",
+              key: target.key,
+              source: "remote",
+              kind: REMOTE_ITEM_KIND,
+              name: target.name,
               action: "error",
               error: err instanceof Error ? err.message : String(err),
             });
@@ -706,6 +797,62 @@ async function planApplyPreflight(
     snapshotParts.push(...planned.snapshotParts);
   }
 
+  // Pulled skills, after the shelf pass. Their bytes are in the clone cache,
+  // so the planner takes a git-tree source at the recorded subpath: before the
+  // caller supplied one it would have planned against `skills/<name>` in the
+  // cache, which is a different tree or no tree at all.
+  for (const target of input.remoteTargets) {
+    const entry = input.remotes.items[target.key]!;
+    try {
+      const source = remoteApplySource(target.name, entry);
+      results.push(
+        remoteApplyRow(
+          target,
+          entry,
+          await materializeLockEntry({
+            project: input.project,
+            source,
+            manifest: input.manifest,
+            kind: REMOTE_ITEM_KIND,
+            name: target.name,
+            key: dataKey(REMOTE_ITEM_KIND, target.name),
+            entry: remoteEntryAsDataEntry(entry),
+            scope: "local",
+            dryRun: true,
+          }),
+        ),
+      );
+      const planned = await planCopyDirectoryDestruction({
+        project: input.project,
+        currentSource: source,
+        selectedSource: source,
+        manifest: input.manifest,
+        kind: REMOTE_ITEM_KIND,
+        name: target.name,
+        key: target.key,
+        scope: "local",
+        currentEntry: remoteEntryAsDataEntry(entry),
+        selectedEntry: remoteEntryAsDataEntry(entry),
+        reviewCommand: `${PRODUCT_NAME} status ${REMOTE_ITEM_KIND}/${target.name} --diff-view installed`,
+      });
+      changes.push(...planned.changes);
+      snapshotParts.push(...planned.snapshotParts);
+    } catch (error) {
+      // A named target's failure is the command's failure, the way a
+      // skills.sh-owned name is. A sweep records it and converges the rest.
+      if (input.explicit) throw error;
+      results.push({
+        scope: "local",
+        key: target.key,
+        source: "remote",
+        kind: REMOTE_ITEM_KIND,
+        name: target.name,
+        action: "error",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   for (const result of results) {
     snapshotParts.push(`apply-result:${JSON.stringify(result)}`);
   }
@@ -713,6 +860,16 @@ async function planApplyPreflight(
     results,
     destructivePlan: createDestructiveChangePlan(changes, snapshotParts),
   };
+}
+
+/** The cache tree a remote row reads, or the refusal that names the fetch. */
+function remoteApplySource(
+  name: string,
+  entry: RemoteLockEntry,
+): GitTreeSource {
+  const cache = remoteCacheState(entry.upstream);
+  if (!cache.present) throw coldCacheRefusal(name, entry);
+  return remoteTreeSource(cache.path, entry.sourceCommit, entry.subpath);
 }
 
 function applyError(
@@ -809,6 +966,25 @@ function printApplyOutput(opts: {
   }
 }
 
+function remoteApplyRow(
+  target: RemoteApplyTarget,
+  entry: RemoteLockEntry,
+  result: MaterializeResult,
+): ApplyRemoteResult {
+  return {
+    scope: "local",
+    key: target.key,
+    source: "remote",
+    kind: REMOTE_ITEM_KIND,
+    name: target.name,
+    action: result.action,
+    path: result.path,
+    sha: entry.sourcePinDigest,
+    ...(result.currentSha !== undefined && { currentSha: result.currentSha }),
+    ...(result.plannedSha !== undefined && { plannedSha: result.plannedSha }),
+  };
+}
+
 function printApplyResults(results: ApplyResult[]): void {
   if (results.length === 0) {
     console.log("(no items tracked)");
@@ -825,7 +1001,9 @@ function printApplyResults(results: ApplyResult[]): void {
       console.log(`  ${r.message}`);
     } else if (r.action === "kept-local") {
       console.log(`• ${id} kept local`);
-      if (r.message) console.log(`  ${r.message}`);
+      // A remote row is never kept-local: the marker is a shelf-lock field and
+      // a remote entry has none.
+      if ("message" in r && r.message) console.log(`  ${r.message}`);
     } else if (r.action === "would-reconcile") {
       console.log(`• ${id} would reconcile`);
       console.log(`  ${r.path}`);
