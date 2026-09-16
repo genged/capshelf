@@ -94,7 +94,12 @@ export function defaultClonePath(
   return join(base, PRODUCT_NAME, "data", ...cloneRelativeSegments(upstream));
 }
 
-function cloneRelativeSegments(upstream: string): string[] {
+/**
+ * The per-upstream directory segments under a cache root. Shared with the
+ * pulled-skill cache so one upstream cannot land in two differently shaped
+ * paths depending on which command created it.
+ */
+export function cloneRelativeSegments(upstream: string): string[] {
   const url = new URL(upstream);
   // host keeps a non-default port; sanitize ":" so the cache segment is a
   // plain directory name (github.com:8443 -> github.com_8443).
@@ -121,6 +126,31 @@ export interface EnsureCloneResult {
 }
 
 /**
+ * How a caller names the clone it owns, in the three refusals below.
+ *
+ * The validator is shared with the pulled-skill cache, and its repair is not:
+ * `capshelf init --data <local-path>` fixes a data repo cache and has nothing
+ * to do with a skill pulled from a URL. Duplicating the validator to change
+ * three sentences would put two origin checks in the codebase, so the wording
+ * travels instead.
+ */
+export interface ClonePathLabels {
+  /** What to call the path in a refusal. */
+  subject: string;
+  /** The repair block, already indented. */
+  repair: string;
+  /** The line the partial-clone refusal adds above `repair`. */
+  partialClone: string;
+}
+
+const DATA_REPO_CLONE_LABELS: ClonePathLabels = {
+  subject: "data repo cache path",
+  repair: `use an explicit local path with:\n  ${PRODUCT_NAME} init --data <local-path>`,
+  partialClone:
+    "the clone may be partial or corrupted; remove it and retry, or",
+};
+
+/**
  * Make sure `clonePath` holds a usable clone of `url`. Clones when the path is
  * absent; when it exists, verifies it is a git working tree whose `origin`
  * normalizes to `upstream`. Never fetches or pulls — after bootstrap the clone
@@ -130,7 +160,12 @@ export async function ensureClone(
   url: string,
   clonePath: string,
   upstream: string,
+  labels: Partial<ClonePathLabels> = {},
 ): Promise<EnsureCloneResult> {
+  const { subject, repair, partialClone } = {
+    ...DATA_REPO_CLONE_LABELS,
+    ...labels,
+  };
   if (await cloneTargetAbsent(clonePath)) {
     await mkdir(dirname(clonePath), { recursive: true });
     const clone = await cloneRepository(dirname(clonePath), url, clonePath);
@@ -142,11 +177,10 @@ export async function ensureClone(
 
   if (!(await isGitWorkTreeRoot(clonePath))) {
     throw new PreconditionError(
-      "data repo cache path already exists but is not a git working tree.\n\n" +
+      `${subject} already exists but is not a git working tree.\n\n` +
         "path:\n" +
         `  ${homeRelative(clonePath)}\n\n` +
-        "use an explicit local path with:\n" +
-        `  ${PRODUCT_NAME} init --data <local-path>`,
+        repair,
     );
   }
 
@@ -157,15 +191,14 @@ export async function ensureClone(
   if (normalizedOrigin !== upstream) {
     const found = normalizedOrigin ?? origin?.trim() ?? "(no origin remote)";
     throw new PreconditionError(
-      "data repo cache path already exists but points at a different upstream.\n\n" +
+      `${subject} already exists but points at a different upstream.\n\n` +
         "path:\n" +
         `  ${homeRelative(clonePath)}\n\n` +
         "expected:\n" +
         `  ${upstream}\n\n` +
         "found:\n" +
         `  ${found}\n\n` +
-        "use an explicit local path with:\n" +
-        `  ${PRODUCT_NAME} init --data <local-path>`,
+        repair,
     );
   }
 
@@ -174,12 +207,11 @@ export async function ensureClone(
   const head = await sourceRead(clonePath, ["rev-parse", "--verify", "HEAD"]);
   if (head.exitCode !== 0) {
     throw new PreconditionError(
-      "data repo cache path already exists but has no usable HEAD commit.\n\n" +
+      `${subject} already exists but has no usable HEAD commit.\n\n` +
         "path:\n" +
         `  ${homeRelative(clonePath)}\n\n` +
-        "the clone may be partial or corrupted; remove it and retry, or\n" +
-        "use an explicit local path with:\n" +
-        `  ${PRODUCT_NAME} init --data <local-path>`,
+        `${partialClone}\n` +
+        repair,
     );
   }
 
