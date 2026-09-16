@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join } from "node:path";
 import type { CommandResult } from "./command";
 import type { CommandOptions, WorldRunner } from "./world";
@@ -32,6 +32,70 @@ export interface DataRepoOptions {
   files?: Readonly<Record<string, string>>;
   message?: string;
   branch?: string;
+}
+
+/**
+ * Independent observation of the Git a command ran. A claim that a command
+ * stayed offline cannot rest on its exit code: capshelf reports a failed fetch
+ * instead of throwing, so a command that fetched and swallowed the error exits
+ * the same way as one that never tried.
+ */
+export interface GitRecorder {
+  /**
+   * Extra environment for the command under measurement. A command that does
+   * not receive it is not recorded, so fixture Git stays out of the log.
+   */
+  env: { PATH: string };
+  /** Every recorded invocation, as the argv git received after its own name. */
+  invocations(): Promise<string[][]>;
+  /** The subcommand of each invocation, in order. Global options are skipped. */
+  subcommands(): Promise<string[]>;
+}
+
+/** Git subcommands that reach a remote. */
+export const NETWORK_SUBCOMMANDS: readonly string[] = [
+  "fetch",
+  "clone",
+  "ls-remote",
+  "pull",
+  "push",
+];
+
+// ASCII record and unit separators. A path, a ref, or a commit message can
+// hold a newline or a tab, and neither of these.
+
+const RECORD_SEPARATOR = "\u001e";
+const UNIT_SEPARATOR = "\u001f";
+
+/** Git's own options, before the subcommand, that take a separate value. */
+const VALUED_GLOBAL_OPTIONS = new Set([
+  "-C",
+  "-c",
+  "--git-dir",
+  "--work-tree",
+  "--namespace",
+  "--exec-path",
+  "--config-env",
+]);
+
+/**
+ * The subcommand in one recorded argv, or null when the invocation carried
+ * none. `git -C <repo> --no-replace-objects rev-parse HEAD` is `rev-parse`:
+ * capshelf puts `-C` before every repository command (`src/git.ts:234`), so a
+ * reader of the first argument alone would see the option instead.
+ */
+function gitSubcommand(argv: readonly string[]): string | null {
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index];
+    if (token === undefined || token.length === 0) continue;
+    if (VALUED_GLOBAL_OPTIONS.has(token)) {
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("-")) continue;
+    return token;
+  }
+  return null;
 }
 
 export interface GitWorld {
@@ -100,6 +164,12 @@ export interface GitWorld {
   advertisedRefs(remote: string): Promise<string[]>;
   hasCommit(repo: string, commit: string): Promise<boolean>;
   isCleanWorktree(repo: string): Promise<boolean>;
+  /**
+   * Put a recording `git` on PATH and return the recorder. The shim logs the
+   * argv and then execs the real Git, so the command under measurement keeps
+   * its own exit code, streams, and signals.
+   */
+  recordInvocations(name?: string): Promise<GitRecorder>;
 }
 
 /** Path output stays unquoted so a non-ASCII cell reads the same as baseline. */
@@ -332,5 +402,48 @@ export function createGitWorld(runner: WorldRunner): GitWorld {
     },
     isCleanWorktree: async (repo) =>
       (await stdoutOf(repo, ["status", "--porcelain=v1"])).trim().length === 0,
+    recordInvocations: async (name = "git-recorder") => {
+      const real = Bun.which("git");
+      if (real === null) throw new Error("the git recorder needs git on PATH");
+      const dir = runner.path(name);
+      const log = join(dir, "invocations");
+      await mkdir(dir, { recursive: true });
+      // The argv is logged before the exec, so an invocation that fails to
+      // start is still recorded.
+      await writeFile(
+        join(dir, "git"),
+        [
+          "#!/bin/sh",
+          `printf '%s\\037' "$@" >> '${log}'`,
+          `printf '\\036' >> '${log}'`,
+          `exec '${real}' "$@"`,
+          "",
+        ].join("\n"),
+      );
+      await chmod(join(dir, "git"), 0o755);
+
+      const invocations = async (): Promise<string[][]> => {
+        const text = await readFile(log, "utf-8").catch(() => "");
+        return text
+          .split(RECORD_SEPARATOR)
+          .filter((record) => record.length > 0)
+          .map((record) => {
+            const argv = record.split(UNIT_SEPARATOR);
+            // Each invocation writes a separator after its last argument.
+            argv.pop();
+            return argv;
+          });
+      };
+
+      return {
+        env: { PATH: `${dir}:${runner.env.PATH ?? ""}` },
+        invocations,
+        subcommands: async () =>
+          (await invocations()).flatMap((argv) => {
+            const subcommand = gitSubcommand(argv);
+            return subcommand === null ? [] : [subcommand];
+          }),
+      };
+    },
   };
 }

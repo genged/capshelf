@@ -9,6 +9,7 @@ import {
   parseStatusRows,
   statusRow,
 } from "../support/assertions";
+import { NETWORK_SUBCOMMANDS } from "../support/git";
 import { declareEvidence } from "../support/report";
 import { asObject, parseJsonText } from "../support/json";
 import { E2E_TEST_TIMEOUT_MS, withWorld } from "../support/world";
@@ -34,7 +35,7 @@ test(
     declareEvidence({
       scenario: SCENARIO,
       property:
-        "add <url> installs one skill from a repository outside the shelf into a gitignored local record, a second add reports already-current and writes nothing, a bare status reports the pin while the upstream has moved and only --check-upstream sees the move, a cold-cache update refuses and leaves every owned path byte identical, and share --adopt moves ownership into the data repo and releases the remote row",
+        "add <url> installs one skill from a repository outside the shelf into a gitignored local record, a second add reports already-current and writes nothing, a bare status reports the pin while the upstream has moved and only --check-upstream sees the move, a bare update sweep runs no networked Git and moves no pin, a cold-cache update refuses and leaves every owned path byte identical, and share --adopt moves ownership into the data repo and releases the remote row",
       labels: ["reproduced-user-workflow", "modeled-external-step"],
       modeledSteps: [
         "the third-party host is a local bare repository reached over file://, standing in for github.com",
@@ -42,6 +43,7 @@ test(
       proofLimits: [
         "GitHub itself, its authentication, and its rate limits stay unproved: the suite carries no credentials and every fetch is local",
         "the cold-cache refusal is measured against a cache this test deleted, not one a real machine lost",
+        "the offline claim is measured over the Git the binary ran, so a connection opened by anything other than Git would not be seen",
       ],
     });
 
@@ -135,6 +137,33 @@ test(
           "pdf",
         ).state,
       ).toBe("ok");
+
+      // D15: one command and two flags carry every network path, and a bare
+      // update is none of them. The cache still holds the commit the install
+      // pinned, so a sweep that fetched could move the pin; this one must not.
+      // Exit 0 alone is not proof, because a failed fetch is reported rather
+      // than thrown — the Git the binary ran is what settles it.
+      const lockPath = join(project, ".capshelf", "remotes.lock.json");
+      const lockBeforeSweep = await readFile(lockPath, "utf-8");
+      const recorder = await world.git.recordInvocations();
+      expectExit(
+        await world.capshelf(project, ["update", "--json"], {
+          env: recorder.env,
+        }),
+        0,
+      );
+      const ranGit = await recorder.subcommands();
+      // A run that reached no Git at all would satisfy the filter below while
+      // measuring nothing.
+      expect(ranGit.length).toBeGreaterThan(0);
+      expect(
+        ranGit.filter((subcommand) => NETWORK_SUBCOMMANDS.includes(subcommand)),
+      ).toEqual([]);
+      expect(await readFile(lockPath, "utf-8")).toBe(lockBeforeSweep);
+      expect(
+        await readFile(join(project, ".agents/skills/pdf/SKILL.md"), "utf-8"),
+      ).toBe(PDF_V1);
+
       expectExit(
         await world.capshelf(project, ["status", "--check-upstream", "--json"]),
         0,

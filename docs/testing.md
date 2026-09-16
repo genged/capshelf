@@ -100,9 +100,9 @@ test then says that the state was constructed: it proves recovery, not that an
 interruption produces the state.
 
 `e2e/` holds four directories. `e2e/support/` is the harness library: the
-world, the command runner, the PTY driver, the network canary, and the
-evidence report. `e2e/harness/` self-tests it, so a harness fault names the
-harness instead of surfacing as a scenario that did not prompt.
+world, the command runner, the PTY driver, the network canary, the Git
+recorder, and the evidence report. `e2e/harness/` self-tests it, so a harness
+fault names the harness instead of surfacing as a scenario that did not prompt.
 `e2e/environments/` holds terminal and user-level cells. `e2e/scenarios/`
 holds product workflows, including `remote-skill.test.ts`, which drives the
 pulled-skill workflow against a local bare repository standing in for a host.
@@ -157,6 +157,15 @@ make the denial mandatory instead of measured.
 A local bare repository models Git transport and ref advertisement. It proves
 nothing about GitHub review, branch protection, or credential helpers. Those
 claims need a separate compatibility test against a real provider.
+
+A claim that one command stayed offline needs a different measurement.
+`world.git.recordInvocations()` puts a recording `git` on `PATH` for that one
+command. The shim logs the argv and then execs the real Git. Exit 0 proves
+nothing here, because capshelf reports a failed fetch instead of throwing. A
+command that fetched and swallowed the error exits like one that never tried.
+`e2e/scenarios/remote-skill.test.ts` measures a bare `update` this way. The run
+must record Git, and none of it may be `fetch`, `clone`, or `ls-remote`. A run
+that recorded no Git at all measured nothing, so the test fails on that too.
 
 ### Debugging a failure
 

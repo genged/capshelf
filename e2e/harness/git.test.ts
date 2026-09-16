@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { join } from "node:path";
 import { E2E_TEST_TIMEOUT_MS, withWorld } from "../support/world";
 
 /**
@@ -53,6 +54,66 @@ test("the local-path helper refuses a URL", async () => {
     ).rejects.toThrow("needs a path");
   });
 });
+
+/**
+ * The recorder is what an offline claim rests on, so its own failure modes are
+ * proved here: a shim that recorded nothing would make "no fetch ran" pass
+ * without measuring anything.
+ */
+test(
+  "the recorder logs the measured command, skips fixture Git, and passes the real answer through",
+  async () => {
+    await withWorld("git-recorder", async (world) => {
+      const repo = await world.git.createRepo("subject", { origin: null });
+      const head = await world.git.writeAndCommit(
+        repo,
+        { "a.txt": "a\n" },
+        "one",
+      );
+
+      const recorder = await world.git.recordInvocations();
+      // Fixture Git runs without the recorder's environment, so the log holds
+      // the subject's invocations and nothing the test itself ran.
+      await world.git.ok(repo, ["status", "--porcelain=v1"]);
+      expect(await recorder.invocations()).toEqual([]);
+
+      const measured = await world.run(
+        world.stage,
+        ["git", "-C", repo, "rev-parse", "HEAD"],
+        { env: recorder.env },
+      );
+      expect(measured.outcome).toMatchObject({ kind: "exit", exitCode: 0 });
+      expect(measured.stdout.trim()).toBe(head);
+      expect(await recorder.invocations()).toEqual([
+        ["-C", repo, "rev-parse", "HEAD"],
+      ]);
+      // Read past `-C <repo>`: capshelf puts it before every repository
+      // command, so the first argument is an option, not the subcommand.
+      expect(await recorder.subcommands()).toEqual(["rev-parse"]);
+    });
+  },
+  E2E_TEST_TIMEOUT_MS,
+);
+
+test(
+  "the recorder names a network subcommand when one runs",
+  async () => {
+    await withWorld("git-recorder-network", async (world) => {
+      const source = await world.git.createRepo("source", { origin: null });
+      await world.git.writeAndCommit(source, { "a.txt": "a\n" }, "one");
+
+      const recorder = await world.git.recordInvocations();
+      const cloned = await world.run(
+        world.stage,
+        ["git", "clone", "-q", `file://${source}`, join(world.stage, "copy")],
+        { env: recorder.env },
+      );
+      expect(cloned.outcome).toMatchObject({ kind: "exit", exitCode: 0 });
+      expect(await recorder.subcommands()).toContain("clone");
+    });
+  },
+  E2E_TEST_TIMEOUT_MS,
+);
 
 test(
   "a bare remote advertises what a project pushed to it",

@@ -89,6 +89,8 @@ export interface World {
 /** What the Git helper needs from a world. Keeps the two modules acyclic. */
 export interface WorldRunner {
   readonly stage: string;
+  /** The world environment, so a helper can extend `PATH` for one command. */
+  readonly env: Readonly<Record<string, string>>;
   path(...parts: string[]): string;
   run(
     cwd: string,
@@ -223,6 +225,7 @@ export async function createWorld(
 
   const runner: WorldRunner = {
     stage,
+    env,
     path: (...parts: string[]) => join(stage, ...parts),
     run: (cwd, command, commandOptions) =>
       runCommand(
