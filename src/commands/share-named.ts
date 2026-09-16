@@ -101,7 +101,7 @@ import {
   mergeConfigObjects,
   type ConfigObject,
 } from "../config-values";
-import { captureCommittedItemNeeds } from "../metadata";
+import { captureCommittedItemNeeds, readSidecarBytes } from "../metadata";
 import {
   isSubagentTarget,
   subagentSourceCandidates,
@@ -425,7 +425,7 @@ export async function shareCopyItem(
   console.log(`✓ ${verb} ${scope}/data/${kind}/${name} @ ${adopted.sha}`);
   console.log(`  source commit: ${adopted.sourceCommit}`);
   if (owner !== null) {
-    printAdoptProvenance(owner, kind, name);
+    await printAdoptProvenance(owner, dataRepo, kind, name, adopted.committed);
     console.log(`  released: ${ownerLabel(owner)} for ${kind}/${name}`);
   }
   printRuntimeWarnings(runtimeWarnings);
@@ -506,13 +506,40 @@ function ownerLabel(owner: PreviousOwnerRecord): string {
   return owner.kind === "remote" ? "remote row" : "skills-lock.json row";
 }
 
-function printAdoptProvenance(
+/**
+ * What the sidecar now holds, not what the adopt intended.
+ *
+ * `adoptIntoDataRepo` writes the provenance inside the commit it makes, so the
+ * converging `already-upstream` path writes nothing. Printing "provenance
+ * recorded" there claimed the origin of vendored third-party code was on
+ * record when the shelf copy might carry none — the one claim this line exists
+ * to make.
+ */
+async function printAdoptProvenance(
   owner: PreviousOwnerRecord,
+  dataRepo: string,
   kind: CopyDirectoryItemKind,
   name: string,
-): void {
+  committed: boolean,
+): Promise<void> {
   const { upstream, upstreamCommit, upstreamPath } = owner.provenance;
   if (upstream === null && upstreamCommit === null && upstreamPath === null) {
+    return;
+  }
+  if (!committed) {
+    const sidecar = await readSidecarBytes(
+      join(dataRepo, itemRepoRelPath(kind, name)),
+    );
+    const recorded =
+      sidecar !== null && /^upstream:/m.test(sidecar.toString("utf-8"));
+    console.log(
+      recorded
+        ? `  provenance already in ${itemRepoRelPath(kind, name)}/${METADATA_SIDECAR}, from the run that committed this item`
+        : `  ⚠ no provenance in ${itemRepoRelPath(kind, name)}/${METADATA_SIDECAR}; the shelf already held this content, so nothing was committed`,
+    );
+    if (!recorded) {
+      console.log(`      it came from: ${upstream ?? "(unknown)"}`);
+    }
     return;
   }
   console.log(

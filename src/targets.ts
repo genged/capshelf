@@ -57,7 +57,11 @@ export function matchRefAcrossScopes(
  * `resolveTrackedTarget` already refuses an ambiguous bare ref inside one
  * population; this is the same rule across two.
  *
- * A ref that names its kind is never ambiguous and passes through.
+ * Naming the kind does not settle it. Every remote row is kind `skills`, so
+ * `skills/pdf` is exactly as split as a bare `pdf` when the shelf tracks that
+ * name too — the D18 "an adopt did not finish" state, which `status` reports
+ * and `--strict` fails on, and which is reached by an interrupted adopt. A ref
+ * that matches only one population passes through, whatever its shape.
  */
 export function assertRefNotSplitAcrossPopulations(
   projectLock: Lock,
@@ -66,7 +70,7 @@ export function assertRefNotSplitAcrossPopulations(
   remoteKeys: readonly string[],
   opts: ScopeFilter = {},
 ): void {
-  if (ref.kind !== undefined || remoteKeys.length === 0) return;
+  if (remoteKeys.length === 0) return;
   const shelf = matchRefAcrossScopes(projectLock, localLock, ref, opts);
   if (shelf.length === 0) return;
   throw new PreconditionError(

@@ -42,7 +42,7 @@ import {
   summarizeCandidate,
 } from "../remote-discovery";
 import type { LicenseFinding, RemoteSkillCandidate } from "../remote-discovery";
-import { installRemoteSkill } from "../remote-item";
+import { installRemoteSkill, reconcileRemoteSkill } from "../remote-item";
 import { parseRemoteSkillUrl } from "../remote-url";
 import type { RemoteSkillUrl } from "../remote-url";
 import {
@@ -266,6 +266,25 @@ async function installOne(input: {
     existing.subpath === candidate.subpath &&
     existing.sourcePinDigest === pin.sourcePinDigest
   ) {
+    // The record matching the pin says nothing about the files. Reporting
+    // `already current` beside a path that was deleted or edited would make the
+    // obvious repair command a silent no-op, so the install is measured. The
+    // reconcile itself belongs to `apply`, which owns the destructive plan that
+    // gates a local edit; this only names it.
+    const measured = await reconcileRemoteSkill({
+      project,
+      name,
+      entry: existing,
+      dryRun: true,
+    });
+    if (measured.action !== "already-current") {
+      throw new PreconditionError(
+        `${REMOTE_ITEM_KIND}/${name} is already pulled from ${upstream} at this commit, but the installed files do not match it`,
+        {
+          hint: `restore them: ${PRODUCT_NAME} apply ${REMOTE_ITEM_KIND}/${name}`,
+        },
+      );
+    }
     return {
       name,
       subpath: candidate.subpath,

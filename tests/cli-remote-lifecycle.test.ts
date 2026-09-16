@@ -850,6 +850,101 @@ test(
 );
 
 test(
+  "add names apply when the record is current but the install is gone",
+  async () => {
+    // Reporting "already current" beside a path that no longer exists made the
+    // obvious repair command a silent no-op.
+    const { upstream, world, run, installPath } = await installed();
+    await rm(installPath, { recursive: true });
+
+    const result = await run(
+      ["add", upstream.url, "--path", "skills/pdf", "--yes", "--json"],
+      world.env,
+    );
+    expect(result.exitCode).toBe(3);
+    const message = result.stderr.toString();
+    expect(message).toContain("capshelf apply skills/pdf");
+    expect(message).not.toContain("already-current");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test.each([["apply"], ["update"]])(
+  "%s refuses skills/<name> when the shelf and a remote row both own it",
+  async (verb) => {
+    // The unfinished-adopt state D18 describes: `share --adopt` writes the
+    // shelf lock entry at step 11 and releases the remote row last at step 12,
+    // so a crash between them leaves both owners. Reconstructed from the real
+    // record rather than hand-authored: capture the remotes lock, adopt, then
+    // put the captured bytes back.
+    //
+    // Every remote row is kind `skills`, so naming the kind settles nothing —
+    // both populations still match, and the remote row used to win outright.
+    const { world, run, lockPath } = await installed();
+    const beforeAdopt = await readFile(lockPath, "utf-8");
+    expect(
+      (
+        await run(
+          ["share", "skills/pdf", "--adopt", "--json", "-m", "adopt pdf"],
+          world.env,
+        )
+      ).exitCode,
+    ).toBe(0);
+    await writeFile(lockPath, beforeAdopt);
+
+    // Confirm the state really is the one D18 names, or the refusal below
+    // would be proving something else.
+    const status = await run(["status", "skills/pdf", "--json"], world.env);
+    const remoteRow = objectItems(jsonOutput(status), "items").find(
+      (row) => row.source === "remote",
+    );
+    expect(remoteRow).toBeDefined();
+    expect(objectField(remoteRow!, "remote").alsoTrackedInShelf).toBe(true);
+
+    const result = await run(
+      [verb, "skills/pdf", "--yes", "--json"],
+      world.env,
+    );
+    expect(result.exitCode).toBe(3);
+    const message = result.stderr.toString();
+    expect(message).toContain("ambiguous item");
+    expect(message).toContain("remote/skills/pdf");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "a converging adopt does not claim provenance the shelf copy lacks",
+  async () => {
+    // The shelf already holds identical content, so `adoptIntoDataRepo` returns
+    // `already-upstream` before the commit that writes the sidecar. Printing
+    // "provenance recorded" there claimed the origin of third-party code was on
+    // record when the shelf copy carries none.
+    const { upstream, world, run } = await installed();
+    const body = await readFile(
+      join(world.project, ".agents/skills/pdf/SKILL.md"),
+      "utf-8",
+    );
+    await addSkill(world.dataRepo, "pdf", body);
+    await commitAll(world.dataRepo, "the same bytes, with no provenance");
+
+    const result = await run(
+      ["share", "skills/pdf", "--adopt", "-m", "adopt pdf"],
+      world.env,
+    );
+    expect(result.exitCode).toBe(0);
+    const out = result.stdout.toString();
+    expect(out).toContain("no provenance");
+    expect(out).toContain(upstream.url);
+    expect(out).not.toContain("provenance recorded");
+    expect(existsSync(join(world.dataRepo, "skills/pdf/.capshelf.yml"))).toBe(
+      false,
+    );
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
   "a refusal on the second named row keeps the first row's moved pin recorded",
   async () => {
     // The same rule as the install loop: a row whose files were rewritten must
