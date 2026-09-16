@@ -72,6 +72,7 @@ import {
   saveRemotesLock,
 } from "../remotes-lock";
 import type { RemotesLock } from "../remotes-lock";
+import { assertRefNotSplitAcrossPopulations } from "../targets";
 import type { Manifest } from "../manifest";
 
 interface RmOptions {
@@ -146,6 +147,22 @@ export function registerRm(program: Command): void {
       // by A3, so `lockKeysForRef` above found nothing for one.
       const remotes = await loadRemotesLock(project);
       const remoteKeys = remoteKeysForRef(remotes, ref);
+      // Two populations count as much as two kinds, and `rm` is exactly the
+      // verb a user reaches for in the two-owner state. Whichever side won,
+      // the other was left orphaned: the shelf path deleted the install and
+      // its lock entry while the remote row survived pointing at a directory
+      // that no longer exists, and the remote path deleted the same install
+      // out from under a shelf entry that still tracked it.
+      //
+      // Both locks, not the one `--local` selected. An adopt lands in local
+      // scope by default, so the shelf half of this state is usually the one
+      // a bare `rm` does not load.
+      assertRefNotSplitAcrossPopulations(
+        await loadLock(project),
+        await loadLocalLock(project),
+        ref,
+        remoteKeys,
+      );
       if (dataKeys.length === 0 && remoteKeys.length > 0) {
         await removeRemoteSkill({
           project,

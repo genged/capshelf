@@ -1,8 +1,10 @@
 import { NotFoundError, PreconditionError } from "./errors";
+import { PRODUCT_NAME } from "./identity";
 import { findSkillsShSkill, skillsShConflictMessage } from "./external";
 import type { ItemRef } from "./item-ref";
 import { lockKeysForRef, parseItemRef } from "./item-ref";
 import type { Lock } from "./lock";
+import { REMOTE_ITEM_KIND } from "./remotes-lock";
 
 export interface ScopedTarget {
   scope: "project" | "local";
@@ -73,11 +75,31 @@ export function assertRefNotSplitAcrossPopulations(
   if (remoteKeys.length === 0) return;
   const shelf = matchRefAcrossScopes(projectLock, localLock, ref, opts);
   if (shelf.length === 0) return;
-  throw new PreconditionError(
-    `ambiguous item "${ref.name}": found ${[
-      ...shelf.map((match) => `${match.scope}/${match.key}`),
-      ...remoteKeys,
-    ].join(", ")}; use kind/name`,
+  throw splitPopulationRefusal(ref.name, [
+    ...shelf.map((match) => `${match.scope}/${match.key}`),
+    ...remoteKeys,
+  ]);
+}
+
+/**
+ * The refusal for a name two populations hold, shared so `apply`, `update`, and
+ * `rm` cannot drift apart on it.
+ *
+ * "Use kind/name" is not the answer here and would be useless advice when both
+ * owners are `skills/<name>`. Naming `rm` would be worse than useless: `rm`
+ * refuses this state too, so the hint would send the user back to a refusal.
+ * The adopt is the one command that resolves it, and it is what `status`
+ * already prints for the same rows.
+ */
+export function splitPopulationRefusal(
+  name: string,
+  owners: readonly string[],
+): PreconditionError {
+  return new PreconditionError(
+    `ambiguous item "${name}": the shelf and a pulled copy both own it — ${owners.join(", ")}`,
+    {
+      hint: `leave one owner: ${PRODUCT_NAME} share ${REMOTE_ITEM_KIND}/${name} --adopt`,
+    },
   );
 }
 

@@ -281,6 +281,57 @@ export async function previewRemoteUpdate(opts: {
   return { from: entry.sourceCommit, to: head, changed, current: false, pin };
 }
 
+/**
+ * The freshness fields a moved pin carries.
+ *
+ * `lastChecked`, `upstreamHead`, and `upstreamPinDigest` describe one
+ * measurement of the repository. Carrying them across a pin move leaves the row
+ * claiming the upstream holds content the pin has already taken: `status` then
+ * reports `update_available` against a digest *older* than the pin, `--strict`
+ * fails, and the update it suggests answers `already-current`. Only the next
+ * check clears it.
+ *
+ * A move onto the head the check recorded consumes exactly that measurement, so
+ * the timestamp and head still hold and the digest becomes the pinned one. A
+ * move onto anything else means the cache ran ahead of the check — `add <url>`
+ * fetches a warm cache — and nothing measured is true of it, so the row goes
+ * back to never checked.
+ */
+function freshnessAfterMove(
+  entry: RemoteLockEntry,
+  movedTo: string,
+  pinnedDigest: string,
+): Pick<RemoteLockEntry, "lastChecked" | "upstreamHead" | "upstreamPinDigest"> {
+  if (entry.lastChecked === undefined || entry.upstreamHead !== movedTo) {
+    return {};
+  }
+  return {
+    lastChecked: entry.lastChecked,
+    upstreamHead: entry.upstreamHead,
+    upstreamPinDigest: pinnedDigest,
+  };
+}
+
+/** The moved row, with the previous check's measurement resolved, not carried. */
+function movedRemoteEntry(
+  entry: RemoteLockEntry,
+  pin: PinnedSource,
+): RemoteLockEntry {
+  const {
+    lastChecked: _wasChecked,
+    upstreamHead: _wasHead,
+    upstreamPinDigest: _wasDigest,
+    ...carried
+  } = entry;
+  return {
+    ...carried,
+    sourceCommit: pin.sourceCommit,
+    sourcePinDigest: pin.sourcePinDigest,
+    appliedAt: new Date().toISOString(),
+    ...freshnessAfterMove(entry, pin.sourceCommit, pin.sourcePinDigest),
+  };
+}
+
 export interface RemoteUpdateResult {
   /**
    * `skipped` is what a bare `capshelf update` returns for every remote row.
@@ -314,12 +365,7 @@ export async function updateRemoteSkill(opts: {
       entry,
     };
   }
-  const next: RemoteLockEntry = {
-    ...entry,
-    sourceCommit: preview.pin.sourceCommit,
-    sourcePinDigest: preview.pin.sourcePinDigest,
-    appliedAt: new Date().toISOString(),
-  };
+  const next = movedRemoteEntry(entry, preview.pin);
   await reconcileRemoteSkill({
     project: opts.project,
     name: opts.name,
@@ -408,12 +454,7 @@ export async function updateMergeRemoteTarget(opts: {
     );
   }
   const performedMerge = !namedFilesEqual(merged.files, upstreamFiles);
-  const next: RemoteLockEntry = {
-    ...entry,
-    sourceCommit: preview.pin.sourceCommit,
-    sourcePinDigest: preview.pin.sourcePinDigest,
-    appliedAt: new Date().toISOString(),
-  };
+  const next = movedRemoteEntry(entry, preview.pin);
   const mergeResultDigest = sourcePinDigest(
     namedFilesTreeEntries(merged.files, hashWidthOf(preview.pin.entries)),
   );

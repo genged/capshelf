@@ -945,6 +945,80 @@ test(
 );
 
 test(
+  "a pin move onto a cache the check never saw clears the stale measurement",
+  async () => {
+    // `add <url>` fetches a warm cache, so the cache can pass the head the last
+    // check recorded. Carrying that check's digest across the move left the row
+    // reporting `update_available` against a digest older than its own pin,
+    // failing --strict, and suggesting an update that answers already-current.
+    const upstream = await upstreamWith([
+      ["skills/pdf", "Extract text"],
+      ["skills/xlsx", "Read workbooks"],
+    ]);
+    const world = await initRemoteProject();
+    const run = runInProcess(world.project);
+    await run(
+      ["add", upstream.url, "--path", "skills/pdf", "--yes", "--json"],
+      world.env,
+    );
+    await pushChange(upstream, "skills/pdf", "Extract text and tables");
+    await run(["status", "--check-upstream", "--json"], world.env);
+
+    // The cache runs ahead of that check: a second install fetches it again.
+    await pushChange(upstream, "skills/pdf", "Extract text, tables, and forms");
+    await run(
+      ["add", upstream.url, "--path", "skills/xlsx", "--yes", "--json"],
+      world.env,
+    );
+    expect(
+      (await run(["update", "skills/pdf", "--yes", "--json"], world.env))
+        .exitCode,
+    ).toBe(0);
+
+    const status = await run(["status", "skills/pdf", "--json"], world.env);
+    expect(
+      objectItems(jsonOutput(status), "items").find(
+        (row) => row.name === "pdf",
+      )!.state,
+    ).toBe("ok");
+    expect(
+      (await run(["status", "--strict", "--json"], world.env)).exitCode,
+    ).toBe(0);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "rm refuses a name the shelf and a pulled copy both own",
+  async () => {
+    // Letting the shelf path win deleted the install and the lock entry while
+    // the remote row survived, pointing at a directory that no longer exists:
+    // the next `apply` put the skill straight back.
+    const { world, run, lockPath, installPath } = await installed();
+    const beforeAdopt = await readFile(lockPath, "utf-8");
+    expect(
+      (
+        await run(
+          ["share", "skills/pdf", "--adopt", "--json", "-m", "adopt pdf"],
+          world.env,
+        )
+      ).exitCode,
+    ).toBe(0);
+    await writeFile(lockPath, beforeAdopt);
+
+    const result = await run(
+      ["rm", "skills/pdf", "--yes", "--json"],
+      world.env,
+    );
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr.toString()).toContain("both own it");
+    expect(existsSync(installPath)).toBe(true);
+    expect(await readFile(lockPath, "utf-8")).toBe(beforeAdopt);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
   "a refusal on the second named row keeps the first row's moved pin recorded",
   async () => {
     // The same rule as the install loop: a row whose files were rewritten must
