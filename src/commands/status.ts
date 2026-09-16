@@ -1,7 +1,9 @@
 import type { Command, Command as CmdType } from "commander";
 import { findProjectRoot, projectRoot } from "../paths";
 import { loadLocalLock, loadLock } from "../lock";
-import { loadRemotesLock } from "../remotes-lock";
+import { loadRemotesLock, saveRemotesLock } from "../remotes-lock";
+import { checkRemoteUpstreams } from "../remote-status";
+import type { UpstreamFetchReport } from "../remote-status";
 import { loadManifest } from "../manifest";
 import { PreconditionError, ResultExitError } from "../errors";
 import { CLI_VERSION } from "../bundled";
@@ -22,6 +24,7 @@ import {
 
 interface StatusOptions {
   json?: boolean;
+  checkUpstream?: boolean;
   strict?: boolean;
   diff?: boolean;
   diffView?: string;
@@ -50,6 +53,10 @@ export function registerStatus(program: Command): void {
     .option("--project", "show committed project-scope items only")
     .option("--local", "show clone-local items only")
     .option("--user", "show user-level runtime skills only")
+    .option(
+      "--check-upstream",
+      "fetch every tracked remote repository and report which pins moved",
+    )
     .action(
       async (
         itemRef: string | undefined,
@@ -72,13 +79,25 @@ export function registerStatus(program: Command): void {
         }
         const projectLock = await loadLock(project);
         const localLock = await loadLocalLock(project);
-        const remotes = await loadRemotesLock(project);
+        const loadedRemotes = await loadRemotesLock(project);
         assertNoScopeCollisions(projectLock, localLock);
         const dataRepo = await resolveStatusDataRepo({
           override: globalOpts(cmd).data,
           manifest,
           project,
         });
+
+        // The one fetch `status` performs, and only when the flag asks for it.
+        // The freshness it measures is saved before the report is built, so
+        // the rows are computed from the record on disk.
+        const check = opts.checkUpstream
+          ? await checkRemoteUpstreams({ remotes: loadedRemotes })
+          : null;
+        if (check) {
+          if (!opts.json) printFetches(check.fetches);
+          await saveRemotesLock(project, check.remotes);
+        }
+        const remotes = check?.remotes ?? loadedRemotes;
 
         const ref = itemRef ? parseItemRef(itemRef) : undefined;
         const report = await buildStatusReport({
@@ -120,6 +139,7 @@ export function registerStatus(program: Command): void {
                 cliVersion: CLI_VERSION,
                 count: rows.length,
                 items: rows,
+                ...(check && { fetches: check.fetches }),
                 ...(opts.diff && { diffs }),
                 external,
                 externalClaudePlugins,
@@ -168,6 +188,11 @@ async function statusUser(
   }
   if (opts.diff) {
     throw new PreconditionError("--diff is not supported with --user");
+  }
+  if (opts.checkUpstream) {
+    throw new PreconditionError(
+      "--check-upstream is not supported with --user; user-level skills have no capshelf pin",
+    );
   }
 
   const ref = itemRef ? parseItemRef(itemRef) : undefined;
@@ -231,6 +256,19 @@ function printDiffs(diffs: StatusDiff[], needsChanged: boolean): void {
     }
     if (diff.note) console.log(`note: ${diff.note}`);
   }
+}
+
+/** One line per repository, before the report, the way `data sync` reports. */
+function printFetches(fetches: UpstreamFetchReport[]): void {
+  for (const fetch of fetches) {
+    const detail = !fetch.ok
+      ? `failed — ${fetch.stderr.split("\n")[0] ?? "no output"}`
+      : fetch.newCommits === null || fetch.newCommits === 0
+        ? "up to date"
+        : `${fetch.newCommits} new ${fetch.newCommits === 1 ? "commit" : "commits"}`;
+    console.log(`  fetching  ${fetch.upstream} ... ${detail}`);
+  }
+  if (fetches.length > 0) console.log("");
 }
 
 function parseDiffView(value: string | undefined): StatusDiffView {

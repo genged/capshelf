@@ -8,15 +8,26 @@
 import { describeInstallation, isTreePinned } from "./install-identity";
 import type { Lock } from "./lock";
 import { dataKey } from "./lock";
-import { remoteCachePath, remoteCacheState } from "./remote-cache";
+import {
+  ensureRemoteCache,
+  fetchRemoteCache,
+  remoteCachePath,
+  remoteCacheState,
+  resolveCachedRef,
+} from "./remote-cache";
 import { remoteTreeSource } from "./remote-discovery";
 import { remoteEntryAsDataEntry } from "./remote-item";
-import { REMOTE_ITEM_KIND, parseRemoteKey } from "./remotes-lock";
+import {
+  REMOTES_LOCK_VERSION,
+  REMOTE_ITEM_KIND,
+  parseRemoteKey,
+} from "./remotes-lock";
 import type { RemoteLockEntry, RemotesLock } from "./remotes-lock";
 import { buildStatusRow, deriveState } from "./status-core";
 import type { RemoteRowFacts, StatusRow } from "./status-core";
 import type { ItemRef } from "./item-ref";
 import { runtimeWarningsForItem } from "./runtime-warnings";
+import { itemTreeEntriesAtCommit, sourcePinDigest } from "./pin";
 
 export interface RemoteStatusInput {
   project: string;
@@ -127,6 +138,12 @@ async function buildRemoteRow(
   });
 }
 
+interface UpstreamFacts {
+  /** The identity `deriveState` compares the pin against, or null. */
+  sha: string | null;
+  changed: boolean;
+}
+
 /**
  * What the last successful check measured.
  *
@@ -139,12 +156,6 @@ async function buildRemoteRow(
  * the recorded subpath records the head with no digest, which is
  * `missing_upstream`.
  */
-interface UpstreamFacts {
-  /** The identity `deriveState` compares the pin against, or null. */
-  sha: string | null;
-  changed: boolean;
-}
-
 function upstreamFacts(entry: RemoteLockEntry): UpstreamFacts {
   if (entry.lastChecked === undefined) {
     return { sha: entry.sourcePinDigest, changed: false };
@@ -161,4 +172,156 @@ function upstreamFacts(entry: RemoteLockEntry): UpstreamFacts {
 /** The cache path a remote row reads, for a caller that has to name it. */
 export function remoteRowCachePath(entry: RemoteLockEntry): string {
   return remoteCachePath(entry.upstream);
+}
+
+export interface UpstreamFetchReport {
+  upstream: string;
+  ok: boolean;
+  head: string | null;
+  newCommits: number | null;
+  stderr: string;
+}
+
+export interface UpstreamCheckReport {
+  /** One entry per distinct upstream, in the order they were fetched. */
+  fetches: UpstreamFetchReport[];
+  /** The updated rows, ready to be saved. */
+  remotes: RemotesLock;
+}
+
+/**
+ * The one fetch a read-only command performs.
+ *
+ * Fetch per repository, decide per row. Those are two different groupings: a
+ * repository is fetched once, and each row then resolves its own `ref` and
+ * re-pins its own subpath, because two rows from one repository can sit on
+ * different branches and a moved repository head is not evidence that a
+ * particular skill moved.
+ */
+export async function checkRemoteUpstreams(opts: {
+  remotes: RemotesLock;
+}): Promise<UpstreamCheckReport> {
+  const byUpstream = new Map<string, Array<[string, RemoteLockEntry]>>();
+  for (const [key, entry] of Object.entries(opts.remotes.items)) {
+    byUpstream.set(entry.upstream, [
+      ...(byUpstream.get(entry.upstream) ?? []),
+      [key, entry],
+    ]);
+  }
+
+  const fetches: UpstreamFetchReport[] = [];
+  const items: Record<string, RemoteLockEntry> = {};
+  for (const [upstream, rows] of byUpstream) {
+    const outcome = await fetchOneUpstream(upstream, rows);
+    fetches.push(outcome.report);
+    Object.assign(items, outcome.items);
+  }
+  return { fetches, remotes: { version: REMOTES_LOCK_VERSION, items } };
+}
+
+async function fetchOneUpstream(
+  upstream: string,
+  rows: ReadonlyArray<[string, RemoteLockEntry]>,
+): Promise<{
+  report: UpstreamFetchReport;
+  items: Record<string, RemoteLockEntry>;
+}> {
+  const first = rows[0]![1];
+  const cache = remoteCacheState(upstream);
+  if (!cache.present) {
+    // The flag re-creates an absent cache through the same `ensureClone` rule
+    // the install used. `ensureClone` throws where `fetchOrigin` reports, so
+    // the failure is caught and recorded per row: one unreachable repository
+    // must not abort the check for every other one. Maintainer decision,
+    // 2026-09-16.
+    //
+    // The clone URL is the normalized identity, because that is the only form
+    // the record holds. A repository installed over SSH is therefore re-cloned
+    // over HTTPS; if that cannot authenticate, `capshelf add <ssh-url>`
+    // re-creates the cache with the URL the user typed.
+    try {
+      await ensureRemoteCache(upstream, upstream);
+    } catch (error) {
+      return {
+        report: {
+          upstream,
+          ok: false,
+          head: null,
+          newCommits: null,
+          stderr: error instanceof Error ? error.message : String(error),
+        },
+        items: Object.fromEntries(rows),
+      };
+    }
+  }
+  const path = remoteCachePath(upstream);
+  const fetched = await fetchRemoteCache(path, first.ref, first.sourceCommit);
+  if (!fetched.ok) {
+    // A failed fetch records no freshness. `lastChecked` means "last
+    // successful measurement", never "last attempt", because a fresh timestamp
+    // beside a stale head is the one thing the report must never imply.
+    return {
+      report: {
+        upstream,
+        ok: false,
+        head: fetched.head,
+        newCommits: fetched.ahead,
+        stderr: fetched.stderr,
+      },
+      items: Object.fromEntries(rows),
+    };
+  }
+
+  const checkedAt = new Date().toISOString();
+  const items: Record<string, RemoteLockEntry> = {};
+  for (const [key, entry] of rows) {
+    const head =
+      entry.ref === first.ref
+        ? fetched.head
+        : await resolveCachedRef(path, entry.ref);
+    if (head === null) {
+      items[key] = entry;
+      continue;
+    }
+    items[key] = {
+      ...entry,
+      lastChecked: checkedAt,
+      upstreamHead: head,
+      // Compare content, never the repository commit. Two skills installed
+      // from one repository share a `sourceCommit`, so a commit comparison
+      // marks both updated when either one changes.
+      ...(await measuredPinDigest(path, head, entry.subpath)),
+    };
+  }
+  return {
+    report: {
+      upstream,
+      ok: true,
+      head: fetched.head,
+      newCommits: fetched.ahead,
+      stderr: fetched.stderr,
+    },
+    items,
+  };
+}
+
+/**
+ * The item's digest at the measured head, or no digest at all when the item is
+ * no longer there. An absent digest beside a present head is `missing_upstream`.
+ */
+async function measuredPinDigest(
+  cachePath: string,
+  head: string,
+  subpath: string,
+): Promise<{ upstreamPinDigest?: string }> {
+  try {
+    const entries = await itemTreeEntriesAtCommit(
+      remoteTreeSource(cachePath, head, subpath),
+      REMOTE_ITEM_KIND,
+    );
+    if (entries.length === 0) return {};
+    return { upstreamPinDigest: sourcePinDigest(entries) };
+  } catch {
+    return {};
+  }
 }

@@ -4,13 +4,16 @@ import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  arrayField,
   jsonOutput,
   objectItems,
   runInProcess,
 } from "./cli-fixtures";
 import {
+  cacheRootOf,
   deleteUpstream,
   initRemoteProject,
+  pushChange,
   upstreamWith,
 } from "./remote-fixtures";
 import {
@@ -23,6 +26,8 @@ import type { LockV4 } from "../src/lock";
 import { gitTreeSource } from "../src/item-source";
 import { pinItemAtCommit } from "../src/pin";
 import { headSha } from "../src/git";
+import { loadRemotesLock } from "../src/remotes-lock";
+import { isConfigObject } from "../src/config-values";
 
 async function installOne() {
   const upstream = await upstreamWith([["skills/pdf", "Extract text"]]);
@@ -178,6 +183,163 @@ test(
     expect(result.stdout.toString()).toContain("an adopt did not finish");
     expect((await run(["status", "--strict"], world.env)).exitCode).toBe(4);
     expect(upstream.url).toContain("file://");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+async function installTwoRepos() {
+  const many = await upstreamWith([
+    ["skills/pdf", "Extract text"],
+    ["skills/xlsx", "Read workbooks"],
+  ]);
+  const one = await upstreamWith([["skills/sql-review", "Review SQL"]]);
+  const world = await initRemoteProject();
+  const run = runInProcess(world.project);
+  await run(
+    ["add", many.url, "--path", "skills/pdf", "--yes", "--json"],
+    world.env,
+  );
+  await run(
+    ["add", many.url, "--path", "skills/xlsx", "--yes", "--json"],
+    world.env,
+  );
+  await run(["add", one.url, "--yes", "--json"], world.env);
+  return { many, one, world, run };
+}
+
+test(
+  "--check-upstream fetches once per repository and records the result",
+  async () => {
+    const { many, world, run } = await installTwoRepos();
+    await pushChange(many, "skills/pdf", "Extract text and tables");
+
+    const before = await loadRemotesLock(world.project);
+    const result = await run(
+      ["status", "--check-upstream", "--json"],
+      world.env,
+    );
+    expect(result.exitCode).toBe(0);
+    const payload = jsonOutput(result);
+    expect(arrayField(payload, "fetches")).toHaveLength(2);
+
+    const rows = objectItems(payload, "items");
+    const pdf = rows.find((row) => row.name === "pdf")!;
+    const xlsx = rows.find((row) => row.name === "xlsx")!;
+    expect(pdf.state).toBe("update_available");
+    expect(xlsx.state).toBe("ok");
+    for (const row of rows.filter(
+      (candidate) => candidate.source === "remote",
+    )) {
+      expect(row.remote).toMatchObject({ lastChecked: expect.any(String) });
+    }
+
+    // The check records freshness. It never moves a pin. Read back through the
+    // real loader, so the assertion also proves the written file parses.
+    const after = await loadRemotesLock(world.project);
+    for (const [key, entry] of Object.entries(after.items)) {
+      expect(entry.sourceCommit).toBe(before.items[key]!.sourceCommit);
+      expect(entry.sourcePinDigest).toBe(before.items[key]!.sourcePinDigest);
+    }
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "--check-upstream with --strict exits 4 when an update is available",
+  async () => {
+    const { many, world, run } = await installTwoRepos();
+    await pushChange(many, "skills/pdf", "Extract text and tables");
+    const result = await run(
+      ["status", "--check-upstream", "--strict"],
+      world.env,
+    );
+    expect(result.exitCode).toBe(4);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "a failed fetch is reported, not thrown, and the row keeps its pin",
+  async () => {
+    const { one, world, run } = await installTwoRepos();
+    const before = await loadRemotesLock(world.project);
+    await deleteUpstream(one);
+    const result = await run(
+      ["status", "--check-upstream", "--json"],
+      world.env,
+    );
+    expect(result.exitCode).toBe(0);
+    const fetches = arrayField(jsonOutput(result), "fetches").filter(
+      isConfigObject,
+    );
+    expect(fetches.some((entry) => entry.ok === false)).toBe(true);
+    const rows = objectItems(jsonOutput(result), "items");
+    expect(rows.find((row) => row.name === "sql-review")!.state).toBe("ok");
+    // `lastChecked` means "last successful measurement", so a failed fetch
+    // records nothing: a fresh timestamp beside a stale head is the one thing
+    // the spec forbids.
+    const after = await loadRemotesLock(world.project);
+    expect(
+      after.items["remote/skills/sql-review"]!.lastChecked,
+    ).toBeUndefined();
+    expect(
+      before.items["remote/skills/sql-review"]!.lastChecked,
+    ).toBeUndefined();
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "--check-upstream with no remote rows performs no fetch and exits 0",
+  async () => {
+    const world = await initRemoteProject();
+    const result = await runInProcess(world.project)(
+      ["status", "--check-upstream"],
+      world.env,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).not.toContain("fetching");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "a cold cache whose repository is also gone reports per row and exits 0",
+  async () => {
+    // Maintainer decision: `ensureClone` throws where `fetchOrigin` reports, so
+    // the check catches the clone failure and records it as a failed fetch.
+    // One dead repository must not block the check for every other row.
+    const { one, world, run } = await installTwoRepos();
+    await rm(cacheRootOf(world), { recursive: true });
+    await deleteUpstream(one);
+    const result = await run(
+      ["status", "--check-upstream", "--json"],
+      world.env,
+    );
+    expect(result.exitCode).toBe(0);
+    const fetches = arrayField(jsonOutput(result), "fetches").filter(
+      isConfigObject,
+    );
+    expect(fetches).toHaveLength(2);
+    expect(fetches.filter((entry) => entry.ok === false)).toHaveLength(1);
+    // The reachable repository was still checked.
+    const rows = objectItems(jsonOutput(result), "items");
+    expect(rows.find((row) => row.name === "pdf")!.remote).toMatchObject({
+      lastChecked: expect.any(String),
+    });
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "--check-upstream is refused with --user",
+  async () => {
+    const world = await initRemoteProject();
+    const result = await runInProcess(world.project)(
+      ["status", "--check-upstream", "--user"],
+      world.env,
+    );
+    expect(result.exitCode).toBe(3);
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
