@@ -1482,7 +1482,10 @@ project holds.
 Each repository is cloned once, to
 `$XDG_DATA_HOME/capshelf/remote/<host>/<owner>/<repo>`. The path is derived
 from the upstream on every read and is never stored, so stale machine state
-cannot decide which objects a pin reads. `apply` and `update` refuse when that
+cannot decide which objects a pin reads. A later `add <url>` against a
+repository the machine already holds fetches it first, so the commit the
+prompt asks you to accept is the one the upstream has now. A fetch that fails
+warns and pins from the cache, which keeps `add` usable offline. `apply` and `update` refuse when that
 cache is absent and name `capshelf status --check-upstream`, which re-creates
 it: creating a cache inside `update` would make `update` a network command.
 A cache re-created that way clones the normalized `https` identity, because
@@ -1504,10 +1507,11 @@ answers the question in both cases. In a non-TTY run, including `--json`, it is
 the only thing that does.
 
 A pulled skill cannot be promoted: its upstream is a repository nobody on your
-team can publish to. `promote`, `move`, `keep-local`, and `revert` all refuse
-one and name `capshelf share skills/<name> --adopt`, which vendors the
-installed bytes into your shelf, records `upstream`, `upstreamCommit`, and
-`upstreamPath` in the item's `.capshelf.yml`, and releases the remote row last.
+team can publish to. `promote`, `move`, `keep-local`, `revert`, and a `share`
+without `--adopt` all refuse one and name `capshelf share skills/<name>
+--adopt`. That flag vendors the installed bytes into your shelf, records
+`upstream`, `upstreamCommit`, and `upstreamPath` in the item's
+`.capshelf.yml`, and releases the remote row last.
 The same flag adopts a skills.sh-managed skill, releasing that row instead.
 After the adopt the item is an ordinary data item.
 

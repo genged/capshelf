@@ -655,6 +655,19 @@ test.each([["apply"], ["update"]])(
     expect(
       (await run([verb, "skills/pdf", "--yes", "--json"], world.env)).exitCode,
     ).toBe(0);
+
+    // Both kinds named in one command: each reaches its own population. The
+    // shelf pass used to filter by bare name, so the mcp-shaped ref here was
+    // dropped without a word once the skill matched a remote row.
+    if (verb !== "update") return;
+    const both = await run(
+      [verb, "skills/pdf", "pi-extensions/pdf", "--yes", "--json"],
+      world.env,
+    );
+    expect(both.exitCode).toBe(0);
+    const keys = objectItems(jsonOutput(both), "items").map((row) => row.key);
+    expect(keys).toContain("remote/skills/pdf");
+    expect(keys).toContain("data/pi-extensions/pdf");
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
@@ -727,6 +740,111 @@ test(
     // Null here told a scripted consumer the row had no pin, when it has one.
     expect(from.sha).toBe(row.lockedSha);
     expect(from.sha).not.toBeNull();
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "share without --adopt refuses a pulled skill instead of making two owners",
+  async () => {
+    // A plain share would commit the bytes to the shelf and leave the remote
+    // row in place: the state status labels "an adopt did not finish", reached
+    // by a documented command.
+    const { world, run, lockPath } = await installed();
+    const before = await readFile(lockPath, "utf-8");
+
+    const result = await run(
+      ["share", "skills/pdf", "--json", "-m", "share pdf"],
+      world.env,
+    );
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr.toString()).toContain(
+      "capshelf share skills/pdf --adopt",
+    );
+    expect(existsSync(join(world.dataRepo, "skills/pdf"))).toBe(false);
+    expect(await readFile(lockPath, "utf-8")).toBe(before);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "a failed project-scope share puts the exclude line back",
+  async () => {
+    // The exclude has to come off before the adopt reads the item through
+    // project Git. If the adopt then fails, the install path is still owned by
+    // the remote row and must stay invisible to project Git, or the next
+    // `git add -A` commits clone-local files into the project.
+    const { world, run } = await installed();
+    const excludePath = join(world.project, ".git/info/exclude");
+    // A dirty data repo fails the adopt after the exclude is dropped.
+    await writeFile(join(world.dataRepo, "stray.txt"), "uncommitted\n");
+
+    const result = await run(
+      ["share", "skills/pdf", "--adopt", "--to", "project", "--json"],
+      world.env,
+    );
+    expect(result.exitCode).not.toBe(0);
+    expect(await readFile(excludePath, "utf-8")).toContain(
+      ".agents/skills/pdf/",
+    );
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "a second add from a cached repository pins what the upstream holds now",
+  async () => {
+    // `ensureClone` clones once and never fetches, so the second install used
+    // to resolve `main` against a cache from the first and pin a commit the
+    // repository had already moved past.
+    const upstream = await upstreamWith([
+      ["skills/pdf", "Extract text"],
+      ["skills/xlsx", "Read workbooks"],
+    ]);
+    const world = await initRemoteProject();
+    const run = runInProcess(world.project);
+    expect(
+      (
+        await run(
+          ["add", upstream.url, "--path", "skills/pdf", "--yes", "--json"],
+          world.env,
+        )
+      ).exitCode,
+    ).toBe(0);
+
+    await pushChange(upstream, "skills/xlsx", "Read workbooks and charts");
+    expect(
+      (
+        await run(
+          ["add", upstream.url, "--path", "skills/xlsx", "--yes", "--json"],
+          world.env,
+        )
+      ).exitCode,
+    ).toBe(0);
+    expect(
+      await readFile(
+        join(world.project, ".agents/skills/xlsx/SKILL.md"),
+        "utf-8",
+      ),
+    ).toContain("Read workbooks and charts");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "re-adding a moved upstream names update, not a different repository",
+  async () => {
+    const { upstream, world, run } = await installed();
+    await pushChange(upstream, "skills/pdf", "Extract text and tables");
+
+    const result = await run(
+      ["add", upstream.url, "--path", "skills/pdf", "--yes", "--json"],
+      world.env,
+    );
+    expect(result.exitCode).toBe(3);
+    const message = result.stderr.toString();
+    expect(message).toContain("capshelf update skills/pdf");
+    expect(message).not.toContain("a different repository");
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );

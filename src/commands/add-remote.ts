@@ -13,6 +13,7 @@
 import type { Command } from "commander";
 import { relative } from "node:path";
 import { PreconditionError } from "../errors";
+import { fetchOrigin } from "../git";
 import { confirmationContext } from "../destructive-change";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import { findInstallConflict, installedPath } from "../installed";
@@ -102,6 +103,22 @@ export async function addRemoteSkill(
     parsed.upstream,
     process.env,
   );
+  // `ensureClone` clones once and never fetches again, so a second `add` from
+  // a repository this machine already holds would resolve the ref against a
+  // cache of any age and ask the user to consent to a commit that is not the
+  // one upstream has. `add <url>` is documented as a network operation, so it
+  // goes to the network. A failed fetch is reported rather than fatal: the
+  // cache can still answer, and refusing would break `add` for a warm cache on
+  // a machine that is briefly offline.
+  if (!cache.cloned) {
+    const fetched = await fetchOrigin(cache.path);
+    if (!fetched.ok) {
+      console.error(
+        `⚠ could not fetch ${parsed.upstream}; pinning from the cache this machine already holds`,
+      );
+      console.error(`  ${fetched.stderr.toString().trim()}`);
+    }
+  }
   const ref = opts.ref ?? parsed.ref ?? (await defaultCachedBranch(cache.path));
   if (ref === null) {
     throw new PreconditionError(
@@ -260,7 +277,7 @@ async function installOne(input: {
     };
   }
 
-  await assertNameAvailable(project, name, remotes);
+  await assertNameAvailable(project, name, remotes, upstream);
 
   const [summary, license] = await Promise.all([
     summarizeCandidate(cachePath, commit, candidate.subpath),
@@ -316,6 +333,7 @@ async function assertNameAvailable(
   project: string,
   name: string,
   remotes: RemotesLock,
+  upstream: string,
 ): Promise<void> {
   const ref = parseItemRef(`${REMOTE_ITEM_KIND}/${name}`);
   const projectLock = await loadLock(project);
@@ -336,7 +354,21 @@ async function assertNameAvailable(
       },
     );
   }
-  if (remoteKeysForRef(remotes, ref).length > 0) {
+  const held = remoteKeysForRef(remotes, ref).map((key) => remotes.items[key]!);
+  // Same repository means the row is not a name collision at all: the caller
+  // reached here because the upstream moved past the pin, and the command that
+  // moves a pin is `update`. Naming a "different repository" would be false,
+  // and `rm`/`--as` would answer a question nobody asked.
+  const sameUpstream = held.some((entry) => entry.upstream === upstream);
+  if (sameUpstream) {
+    throw new PreconditionError(
+      `${REMOTE_ITEM_KIND}/${name} is already pulled from ${upstream}, at a different commit (.capshelf/remotes.lock.json)`,
+      {
+        hint: `move the pin instead: ${PRODUCT_NAME} update ${REMOTE_ITEM_KIND}/${name}`,
+      },
+    );
+  }
+  if (held.length > 0) {
     throw new PreconditionError(
       `${REMOTE_ITEM_KIND}/${name} is already pulled from a different repository (.capshelf/remotes.lock.json)`,
       {

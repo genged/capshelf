@@ -225,9 +225,14 @@ export function registerUpdate(program: Command): void {
             { local: opts.local },
           );
         }
-        const remoteNames = new Set(remoteTargets.map((target) => target.name));
+        // By resolved key, not by bare name. `remoteKeysForRef` matches the
+        // `skills` kind only, so `update skills/pdf mcp/pdf` would otherwise
+        // see `pdf` among the remote names and drop the mcp item from the
+        // shelf pass — neither updated nor reported, and the command still
+        // exits 0.
         const shelfRefs = refs.filter(
-          (itemRef) => !remoteNames.has(parseItemRef(itemRef).name),
+          (itemRef) =>
+            remoteKeysForRef(remotes, parseItemRef(itemRef)).length === 0,
         );
         // `--merge` preserves the local edit for a shelf item, so `--yes` has
         // nothing to authorize and the pair is refused. For a remote row

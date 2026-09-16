@@ -54,7 +54,7 @@ import {
   saveLocalConfig,
 } from "../local-config";
 import { addToManifest } from "../promote-core";
-import type { Scope } from "../promote-core";
+import type { PromoteResult, Scope } from "../promote-core";
 import {
   findPreviousOwner,
   previousOwnerFor,
@@ -62,6 +62,7 @@ import {
 } from "../previous-owner";
 import type { PreviousOwnerRecord } from "../previous-owner";
 import { remoteCacheState } from "../remote-cache";
+import { assertNotPulledSkill } from "../remote-refusal";
 import { findLicense } from "../remote-discovery";
 import { installedPath } from "../installed";
 import { PRODUCT_NAME, METADATA_SIDECAR } from "../identity";
@@ -219,6 +220,16 @@ export async function shareCopyItem(
   // Steps 4 to 7. The order is the property that makes an interrupted run
   // recoverable, and every step here runs before the data repo is resolved:
   // pulling needs no shelf, and only adopting does.
+  // A plain `share` of a pulled skill would commit its bytes to the shelf and
+  // leave the remote row in place — the two-owner state the product itself
+  // labels "an adopt did not finish" and fails `--strict` on, reached by a
+  // documented command rather than by an interruption. `--adopt` is the one
+  // path that transfers ownership, so every other shape refuses the way
+  // promote, move, keep-local, and revert do. Above the data-repo resolution,
+  // like those four: D7 allows a project with remote rows and no shelf.
+  if (opts.adopt !== true) {
+    await assertNotPulledSkill(project, { kind, name }, "sharing");
+  }
   const owner =
     opts.adopt === true ? await findPreviousOwner(project, name) : null;
   if (opts.adopt === true) {
@@ -302,21 +313,39 @@ export async function shareCopyItem(
   // `visibleExtraPaths`, which reads that same ignore stack. Gating this on
   // `localKey` missed the case entirely, because a remote row is in neither
   // capshelf lock. A name that owns no line is a no-op here.
-  if (scope === "project") await removeLocalExcludes(project, kind, name);
+  // Only a line this command actually removed is restored below. Calling
+  // `ensureLocalExcludes` unconditionally would write an exclude for an item
+  // that never had one — a project-scope share of an ordinary unmanaged
+  // directory would start hiding it from the project's own Git.
+  const excludeDropped =
+    scope === "project" && (await removeLocalExcludes(project, kind, name));
 
   // Steps 10 and 11.
-  const adopted = await adoptIntoDataRepo(project, dataRepo, kind, name, {
-    installMode: manifest.installMode,
-    message: opts.message,
-    ...((scope === "local" || localKey) && {
-      sourceScope: "local" as const,
-    }),
-    ...(opts.adopt === true && {
-      allowExistingUpstream: true,
-      allowPreviousOwner: true,
-    }),
-    ...(owner !== null && { provenance: owner.provenance }),
-  });
+  let adopted: PromoteResult;
+  try {
+    adopted = await adoptIntoDataRepo(project, dataRepo, kind, name, {
+      installMode: manifest.installMode,
+      message: opts.message,
+      ...((scope === "local" || localKey) && {
+        sourceScope: "local" as const,
+      }),
+      ...(opts.adopt === true && {
+        allowExistingUpstream: true,
+        allowPreviousOwner: true,
+      }),
+      ...(owner !== null && { provenance: owner.provenance }),
+    });
+  } catch (error) {
+    // The item still belongs to whoever owned it before this command ran, and
+    // that owner's install path is supposed to be invisible to project Git.
+    // Leaving the line removed would let the next `git add -A` commit clone-
+    // local files into the project, which is the one thing the exclude exists
+    // to stop. A restore that itself fails must not replace the real error.
+    if (excludeDropped) {
+      await ensureLocalExcludes(project, kind, name).catch(() => {});
+    }
+    throw error;
+  }
 
   const snapshot = await captureCommittedItemNeeds(dataRepo, {
     kind,

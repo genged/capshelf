@@ -159,23 +159,25 @@ export async function ensureLocalExcludes(
   );
 }
 
+/** True when a line was actually removed, so a caller can put back only that. */
 export async function removeLocalExcludes(
   project: string,
   kind: ItemKind,
   name: string,
-): Promise<void> {
+): Promise<boolean> {
   const entries = new Set(localInstallPaths(kind, name, true));
   const excludePath = await gitInfoExcludePath(project);
-  if (!excludePath || !existsSync(excludePath)) return;
+  if (!excludePath || !existsSync(excludePath)) return false;
 
   const raw = await readFile(excludePath, "utf-8");
   const trailingNewline = raw.endsWith("\n");
   const lines = raw.split(/\r?\n/);
   if (trailingNewline) lines.pop();
   const nextLines = lines.filter((line) => !entries.has(line.trim()));
-  if (nextLines.length === lines.length) return;
+  if (nextLines.length === lines.length) return false;
   const next = nextLines.join("\n");
   await atomicWriteFile(excludePath, trailingNewline ? `${next}\n` : next);
+  return true;
 }
 
 export async function assertLocalInstallPathsUntracked(
