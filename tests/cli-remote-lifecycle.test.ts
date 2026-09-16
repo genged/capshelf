@@ -16,6 +16,8 @@ import {
   recordGitInvocations,
   upstreamWith,
 } from "./remote-fixtures";
+import { remoteCachePath } from "../src/remote-cache";
+import { parseRemoteSkillUrl } from "../src/remote-url";
 
 async function installed() {
   const upstream = await upstreamWith([["skills/pdf", "Extract text"]]);
@@ -208,7 +210,8 @@ test(
 test(
   "update --merge reconciles a local edit with a moved upstream",
   async () => {
-    const { upstream, world, run, installPath } = await installed();
+    const { upstream, world, run, lockPath, installPath } = await installed();
+    const before = JSON.parse(await readFile(lockPath, "utf-8"));
     await appendFile(join(installPath, "SKILL.md"), "\n- ask about rollback\n");
     await pushChange(upstream, "skills/pdf", "Extract text and tables");
     await run(["status", "--check-upstream", "--json"], world.env);
@@ -224,6 +227,24 @@ test(
     const out = result.stdout.toString();
     expect(out).toContain("capshelf share skills/pdf --adopt");
     expect(out).not.toContain("capshelf promote");
+    // The merge moves the pin as well as the files. Asserting only the file
+    // content would pass while the lock still named the old commit, and the
+    // row would then read as drift the merge itself created.
+    const lock = JSON.parse(
+      await readFile(
+        join(world.project, ".capshelf", "remotes.lock.json"),
+        "utf-8",
+      ),
+    );
+    expect(lock.items["remote/skills/pdf"].sourceCommit).not.toBe(
+      before.items["remote/skills/pdf"].sourceCommit,
+    );
+    const status = await run(["status", "skills/pdf", "--json"], world.env);
+    expect(
+      objectItems(jsonOutput(status), "items").find(
+        (row) => row.name === "pdf",
+      )!.state,
+    ).toBe("drifted_local");
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
@@ -385,6 +406,80 @@ test.each([
     const result = await run([...argv, "--json"], world.env);
     expect(result.exitCode).toBe(3);
     expect(result.stderr.toString()).toContain("remotes.lock.json");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "update --dry-run previews the pin a real run would move",
+  async () => {
+    // The earlier dry-run test only asserts that nothing changed, which a
+    // command that does nothing at all passes trivially. This one asserts the
+    // preview reports the row, so the dry run and the real run agree.
+    const { upstream, world, run } = await installed();
+    await pushChange(upstream, "skills/pdf", "Extract text and tables");
+    await run(["status", "--check-upstream", "--json"], world.env);
+
+    const result = await run(
+      ["update", "skills/pdf", "--dry-run", "--json"],
+      world.env,
+    );
+    expect(result.exitCode).toBe(0);
+    const rows = objectItems(jsonOutput(result), "items");
+    const row = rows.find((candidate) => candidate.key === "remote/skills/pdf");
+    expect(row).toBeDefined();
+    expect(row!.action).toBe("would-update");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "a bare update --dry-run reports the remote rows the real sweep skips",
+  async () => {
+    const { world, run } = await installed();
+    const result = await run(["update", "--dry-run", "--json"], world.env);
+    expect(result.exitCode).toBe(0);
+    const rows = objectItems(jsonOutput(result), "items");
+    expect(rows.some((row) => row.key === "remote/skills/pdf")).toBe(true);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "a refusal on the second named row keeps the first row's moved pin recorded",
+  async () => {
+    // The same rule as the install loop: a row whose files were rewritten must
+    // have its pin recorded before the next row can fail the command.
+    const moving = await upstreamWith([["skills/pdf", "Extract text"]]);
+    const stalled = await upstreamWith([["skills/sql-review", "Review SQL"]]);
+    const world = await initRemoteProject();
+    const run = runInProcess(world.project);
+    await run(["add", moving.url, "--yes", "--json"], world.env);
+    await run(["add", stalled.url, "--yes", "--json"], world.env);
+    await pushChange(moving, "skills/pdf", "Extract text and tables");
+    await run(["status", "--check-upstream", "--json"], world.env);
+    // Only the second row's cache goes away, so the first row moves and the
+    // second one throws the cold-cache refusal.
+    await rm(
+      remoteCachePath(parseRemoteSkillUrl(stalled.url).upstream, world.env),
+      { recursive: true },
+    );
+
+    const result = await run(
+      ["update", "skills/pdf", "skills/sql-review", "--yes", "--json"],
+      world.env,
+    );
+    expect(result.exitCode).not.toBe(0);
+    expect(
+      await readFile(
+        join(world.project, ".agents/skills/pdf/SKILL.md"),
+        "utf-8",
+      ),
+    ).toContain("Extract text and tables");
+    // The moved row must not read as drifted: its files and its pin agree.
+    const status = await run(["status", "skills/pdf", "--json"], world.env);
+    const rows = objectItems(jsonOutput(status), "items");
+    expect(rows.find((row) => row.name === "pdf")!.state).toBe("ok");
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );

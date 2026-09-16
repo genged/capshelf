@@ -343,15 +343,30 @@ export function registerUpdate(program: Command): void {
           writableLocalLock,
         );
         if (opts.dryRun) {
+          // Remote rows preview here too. Without this a dry run on a pulled
+          // skill prints "(no items tracked)" and exits 0 while the real run
+          // would move the pin and rewrite files, so the preview would
+          // disagree with the command it previews.
+          const dryRemote = await runRemoteUpdates({
+            project,
+            manifest,
+            targets: remoteTargets,
+            remotes,
+            merge: false,
+            dryRun: true,
+            json: opts.json === true,
+            yes: opts.yes === true,
+          });
+          const dryResults = [...preflight.results, ...dryRemote.results];
           printUpdateOutput({
             project,
             dataRepo,
             dryRun: true,
-            results: preflight.results,
+            results: dryResults,
             destructivePlan: preflight.destructivePlan,
             json: opts.json === true,
           });
-          if (preflight.results.some((result) => result.action === "error")) {
+          if (dryResults.some((result) => result.action === "error")) {
             throw new ResultExitError(1);
           }
           return;
@@ -514,7 +529,6 @@ export function registerUpdate(program: Command): void {
 
         if (projectChanged) await saveLock(project, writableProjectLock);
         if (localChanged) await saveLocalLock(project, writableLocalLock);
-        if (remoteOutcome.changed) await saveRemotesLock(project, remotes);
 
         printUpdateOutput({
           project,
@@ -568,7 +582,6 @@ function resolveRemoteTargets(
 
 interface RemoteUpdateOutcome {
   results: UpdateResult[];
-  changed: boolean;
 }
 
 /**
@@ -590,7 +603,6 @@ async function runRemoteUpdates(input: {
   yes: boolean;
 }): Promise<RemoteUpdateOutcome> {
   const results: UpdateResult[] = [];
-  let changed = false;
   for (const target of input.targets) {
     const entry = input.remotes.items[target.key]!;
     if (!target.named) {
@@ -622,7 +634,7 @@ async function runRemoteUpdates(input: {
         yes: input.yes,
       }))
     ) {
-      return { results, changed };
+      return { results };
     }
     const moved = input.merge
       ? await updateMergeRemoteTarget({
@@ -644,10 +656,14 @@ async function runRemoteUpdates(input: {
     );
     if (!input.dryRun && moved.action === "updated") {
       input.remotes.items[target.key] = moved.entry;
-      changed = true;
+      // Before the next row can refuse the command. `reconcileRemoteSkill`
+      // already rewrote this row's files, so a save deferred to the end of the
+      // run would leave them holding content the pin does not name — reported
+      // as drift the user never introduced.
+      await saveRemotesLock(input.project, input.remotes);
     }
   }
-  return { results, changed };
+  return { results };
 }
 
 /**

@@ -191,10 +191,22 @@ export async function addRemoteSkill(
       remotes,
       opts,
     });
-    if (outcome === null) return;
+    // Record each install before the next one can refuse the command. A save
+    // after the loop would leave an earlier skill's files on disk with no row
+    // when a later candidate is declined or refused: invisible to every other
+    // command, and refused by the next `add` as an unmanaged path. The rest of
+    // this feature follows the same rule — write the bytes, then the record,
+    // and never leave content with no owner.
+    if (outcome !== null && outcome.action === "created") {
+      await saveRemotesLock(project, remotes);
+    }
+    if (outcome === null) {
+      if (results.length > 0)
+        printInstalled(parsed, ref, commit, results, opts);
+      return;
+    }
     results.push(outcome);
   }
-  await saveRemotesLock(project, remotes);
   printInstalled(parsed, ref, commit, results, opts);
 }
 

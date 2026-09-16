@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { $ } from "bun";
+import { existsSync } from "node:fs";
 import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -340,6 +341,32 @@ test(
       world.env,
     );
     expect(result.exitCode).toBe(3);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "--check-upstream writes nothing in a project that pulled no skills",
+  async () => {
+    // `status` is a report. With no remote rows there is nothing to record,
+    // and `saveRemotesLock` would append to `.capshelf/.gitignore`, which is a
+    // committed file: a read-only command must not dirty the worktree.
+    const world = await initRemoteProject();
+    const gitignore = join(world.project, ".capshelf", ".gitignore");
+    const before = await readFile(gitignore, "utf-8");
+    const result = await runInProcess(world.project)(
+      ["status", "--check-upstream", "--json"],
+      world.env,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(await readFile(gitignore, "utf-8")).toBe(before);
+    expect(
+      existsSync(join(world.project, ".capshelf", "remotes.lock.json")),
+    ).toBe(false);
+    const dirty = await $`git -C ${world.project} status --porcelain`
+      .quiet()
+      .text();
+    expect(dirty).not.toContain(".capshelf/.gitignore");
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );

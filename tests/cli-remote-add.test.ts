@@ -12,6 +12,7 @@ import {
 import { initRemoteProject, upstreamWith } from "./remote-fixtures";
 import { parseRemoteSkillUrl } from "../src/remote-url";
 import { setPickContext } from "../src/pick";
+import { setDestructiveConfirmationContext } from "../src/destructive-change";
 import { pickRowId } from "../src/pick-core";
 
 const initProject = initRemoteProject;
@@ -348,6 +349,53 @@ test(
     const listed = await run(["add", "skills/placeholder", "--list", "--json"]);
     expect(listed.exitCode).toBe(3);
     expect(listed.stderr.toString()).toContain("--list");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "declining the second skill keeps the first one's record",
+  async () => {
+    // The rest of the feature never leaves content with no owner: bytes are
+    // written, then the record, and a crash between two items leaves two
+    // owners rather than none. A multi-install has to follow the same rule, or
+    // the installed directory becomes invisible to every other command and a
+    // later `add` refuses it as an unmanaged path.
+    const { url } = await upstreamWith([
+      ["skills/pdf", "Extract text"],
+      ["skills/xlsx", "Read workbooks"],
+    ]);
+    const { project, env } = await initProject();
+    const answers = ["y", "n"];
+    const outerPick = setPickContext({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      capableTerminal: true,
+      prompt: async (request) => ({
+        kind: "picked",
+        refs: request.rows.map(pickRowId),
+      }),
+    });
+    const outerConfirm = setDestructiveConfirmationContext({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompt: async () => answers.shift() ?? "n",
+      stderr: { write: () => {} },
+    });
+    try {
+      await runInProcess(project)(["add", url], env);
+    } finally {
+      setPickContext(outerPick);
+      setDestructiveConfirmationContext(outerConfirm);
+    }
+
+    const installed = existsSync(join(project, ".agents/skills/pdf/SKILL.md"));
+    expect(installed).toBe(true);
+    const lock = JSON.parse(
+      await readFile(join(project, ".capshelf", "remotes.lock.json"), "utf-8"),
+    );
+    expect(Object.keys(lock.items)).toEqual(["remote/skills/pdf"]);
+    expect(existsSync(join(project, ".agents/skills/xlsx"))).toBe(false);
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
