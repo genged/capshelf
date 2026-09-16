@@ -1,3 +1,4 @@
+import { emptyRemotesLock } from "../src/remotes-lock";
 import { expect, spyOn, test } from "bun:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -112,7 +113,14 @@ async function reportFixture(withMcp = false, marker = "fixture") {
       }),
     ),
   );
-  return { project, dataRepo, manifest, projectLock, localLock: emptyLock() };
+  return {
+    project,
+    dataRepo,
+    manifest,
+    projectLock,
+    localLock: emptyLock(),
+    remotes: emptyRemotesLock(),
+  };
 }
 
 async function uncachedDiffs(input: {

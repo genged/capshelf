@@ -33,7 +33,10 @@ export function ItemPanel({
     [],
   );
   const { row } = item;
-  const showShelf =
+  // A pulled skill's upstream is a third-party repository, so it is not the
+  // shelf. The arrow and the fact row below name whichever it actually is.
+  const upstreamWord = item.source === "remote" ? "upstream" : "shelf";
+  const showUpstream =
     row.upstreamSha !== null &&
     row.upstreamSha !== row.lockedSha &&
     (row.state === "update_available" || row.state === "drifted_and_update");
@@ -89,12 +92,15 @@ export function ItemPanel({
           {item.source === "system" ? (
             <span class="chip chip-system">system</span>
           ) : null}
+          {item.source === "remote" ? (
+            <span class="chip chip-system">remote</span>
+          ) : null}
           <span class="panel-pins mono">
             <span class="muted">pinned </span>
             {shortDigest(row.lockedSha)}
-            {showShelf ? (
+            {showUpstream ? (
               <>
-                <span class="muted"> → shelf </span>
+                <span class="muted"> → {upstreamWord} </span>
                 {shortDigest(row.upstreamSha)}
               </>
             ) : null}
@@ -180,13 +186,14 @@ function Facts({ item }: { item: UiItem }): preact.JSX.Element {
         </dd>
       </div>
       <div class="fact">
-        <dt>Shelf</dt>
+        <dt>{item.source === "remote" ? "Upstream" : "Shelf"}</dt>
         <dd class="mono">
           {row.upstreamSha === null
             ? item.source === "system"
               ? "not bundled"
               : "gone"
             : shortDigest(row.upstreamSha)}
+          {row.remote ? ` · ${row.remote.upstream} ${row.remote.ref}` : ""}
           {row.upstreamDirty ? " · uncommitted changes in the data repo" : ""}
         </dd>
       </div>

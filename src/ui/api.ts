@@ -23,6 +23,8 @@ import { installedPath, parseLockKey } from "../installed";
 import { findMasterItemByRef, parseItemRef } from "../item-ref";
 import { entryIdentity, loadLocalLock, loadLock } from "../lock";
 import type { Lock } from "../lock";
+import { loadRemotesLock } from "../remotes-lock";
+import type { RemotesLock } from "../remotes-lock";
 import { loadManifest } from "../manifest";
 import type { Manifest } from "../manifest";
 import {
@@ -88,6 +90,8 @@ interface LoadedProject {
   manifest: Manifest;
   projectLock: Lock;
   localLock: Lock;
+  /** Retained so a later diff request reaches a remote row without a re-read. */
+  remotes: RemotesLock;
   dataRepo: string | null;
   rows: StatusRow[];
 }
@@ -181,9 +185,10 @@ export function createUiApi(ctx: UiContext): UiApi {
     const registered = await requireRegistered(path);
     const project = registered.path;
     const manifest = await loadManifest(project);
-    const [projectLock, localLock] = await Promise.all([
+    const [projectLock, localLock, remotes] = await Promise.all([
       loadLock(project),
       loadLocalLock(project),
+      loadRemotesLock(project),
     ]);
     assertNoScopeCollisions(projectLock, localLock);
     const dataRepo = await resolveStatusDataRepo({
@@ -196,6 +201,7 @@ export function createUiApi(ctx: UiContext): UiApi {
       manifest,
       projectLock,
       localLock,
+      remotes,
       dataRepo,
     });
     const result: LoadedProject = {
@@ -203,6 +209,7 @@ export function createUiApi(ctx: UiContext): UiApi {
       manifest,
       projectLock,
       localLock,
+      remotes,
       dataRepo,
       rows: report.rows,
     };
@@ -239,9 +246,10 @@ export function createUiApi(ctx: UiContext): UiApi {
       const registered = await requireRegistered(path);
       const project = registered.path;
       const manifest = await loadManifest(project);
-      const [projectLock, localLock] = await Promise.all([
+      const [projectLock, localLock, remotes] = await Promise.all([
         loadLock(project),
         loadLocalLock(project),
+        loadRemotesLock(project),
       ]);
       assertNoScopeCollisions(projectLock, localLock);
       const dataRepo = await resolveStatusDataRepo({
@@ -254,6 +262,7 @@ export function createUiApi(ctx: UiContext): UiApi {
         manifest,
         projectLock,
         localLock,
+        remotes,
         dataRepo,
       });
       loaded.set(project, {
@@ -261,6 +270,7 @@ export function createUiApi(ctx: UiContext): UiApi {
         manifest,
         projectLock,
         localLock,
+        remotes,
         dataRepo,
         rows: report.rows,
       });

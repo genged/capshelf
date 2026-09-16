@@ -17,8 +17,10 @@ import {
   isMetadataSidecarPath,
 } from "./master";
 import type { CopyDirectoryItemKind, ItemKind } from "./master";
-import type { ItemSource } from "./installed";
 import { installedPath } from "./installed";
+import type { RowSource } from "./status-core";
+import { remoteCacheState } from "./remote-cache";
+import { remoteTreeSource } from "./remote-discovery";
 import { contentSourceOrNull, gitTreeSource, isGitTree } from "./item-source";
 import type { ContentSource, GitTreeSource } from "./item-source";
 import { findSystemItem } from "./bundled";
@@ -48,7 +50,9 @@ import { currentSourceCommit } from "./pin";
 
 interface DiffableStatusRow {
   scope?: "project" | "local";
-  source: ItemSource;
+  source: RowSource;
+  /** Remote rows only: the cache and the item root its locked bytes are in. */
+  remote?: { upstream: string; subpath: string };
   kind: ItemKind;
   name: string;
   state: string;
@@ -144,6 +148,19 @@ export async function buildStatusDiff(
   };
 
   if (view === "upstream") {
+    // A remote row's upstream is a third-party repository, and reading its
+    // current content is a fetch. `status --diff` never fetches, so the view is
+    // unavailable rather than wrong, and it names the flag that measures it.
+    if (row.source === "remote") {
+      return {
+        ...base,
+        path: installedPath(opts.project, row.kind, row.name),
+        to: { role: "upstream", sha: null, sourceCommit: null },
+        text: null,
+        unavailableReason:
+          "an upstream diff for a pulled skill needs a fetch; run capshelf status --check-upstream first",
+      };
+    }
     if (row.source !== "data" || !isCopyDirectoryItemKind(row.kind)) {
       return {
         ...base,
@@ -591,13 +608,22 @@ async function expectedFilesForRow(
  * for such a row, and every consumer here degrades to "no diff".
  */
 function lockedContentSource(opts: StatusDiffOptions): ContentSource | null {
-  const entry =
-    opts.lock.items[`${opts.row.source}/${opts.row.kind}/${opts.row.name}`];
+  const { row } = opts;
+  // A remote row is in neither capshelf lock by A3, so looking it up there
+  // would always return null and silently report "no diff" for every pulled
+  // skill. Its bytes are in the clone cache at its own item root.
+  if (row.source === "remote") {
+    if (row.remote === undefined || row.sourceCommit === undefined) return null;
+    const cache = remoteCacheState(row.remote.upstream);
+    if (!cache.present) return null;
+    return remoteTreeSource(cache.path, row.sourceCommit, row.remote.subpath);
+  }
+  const entry = opts.lock.items[`${row.source}/${row.kind}/${row.name}`];
   if (entry === undefined) return null;
   return contentSourceOrNull({
     entry,
-    kind: opts.row.kind,
-    name: opts.row.name,
+    kind: row.kind,
+    name: row.name,
     repo: opts.dataRepo,
   });
 }

@@ -1,4 +1,5 @@
 import { $, file } from "bun";
+import { emptyRemotesLock } from "../src/remotes-lock";
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { currentPinDigest } from "./pin-fixtures";
@@ -630,6 +631,7 @@ describe("status diff helpers", () => {
         manifest,
         projectLock: lock,
         localLock: { version: 4 as const, items: {} },
+        remotes: emptyRemotesLock(),
         scope: { project: true },
       };
       const cleanReport = await buildStatusReport(reportInput);

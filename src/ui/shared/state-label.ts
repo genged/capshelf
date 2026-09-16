@@ -5,7 +5,7 @@
  * reinterprets.
  */
 import type { RuntimeWarningType } from "../../runtime-warnings";
-import type { State } from "../../status-core";
+import type { RowSource, State } from "../../status-core";
 import type { StateTone } from "./api-types";
 
 export type StateIconName =
@@ -16,7 +16,7 @@ export type StateIconName =
   | "bang"
   | "notequal";
 
-export function stateLabel(state: State, source: "data" | "system"): string {
+export function stateLabel(state: State, source: RowSource): string {
   switch (state) {
     case "ok":
       return "Up to date";
@@ -33,7 +33,13 @@ export function stateLabel(state: State, source: "data" | "system"): string {
     case "output_drift":
       return "Output drifted";
     case "missing_upstream":
-      return source === "system" ? "Gone from this CLI" : "Gone from the shelf";
+      // A pulled skill's upstream is a third-party repository, so the shelf
+      // wording would name the wrong place entirely.
+      return source === "system"
+        ? "Gone from this CLI"
+        : source === "remote"
+          ? "Gone from the upstream repo"
+          : "Gone from the shelf";
     case "upstream_dirty":
       return "Shelf edit uncommitted";
     case "source_dirty":

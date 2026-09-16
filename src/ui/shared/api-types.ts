@@ -13,7 +13,11 @@ import type {
 import type { ItemKind } from "../../master";
 import type { ItemNeeds } from "../../metadata";
 import type { InstallMode } from "../../paths";
-import type { ExternalPersonalClaudeSkill, StatusRow } from "../../status-core";
+import type {
+  ExternalPersonalClaudeSkill,
+  RowSource,
+  StatusRow,
+} from "../../status-core";
 import type { StatusDiff } from "../../status-diff";
 
 export type DiffViewName = "installed" | "upstream";
@@ -82,7 +86,7 @@ export interface UiItem {
   kind: ItemKind;
   name: string;
   scope: "project" | "local";
-  source: "data" | "system";
+  source: RowSource;
   /** The row `capshelf status --json` prints, unchanged. */
   row: StatusRow;
   /** `capshelf status --strict` would fail on this row. */

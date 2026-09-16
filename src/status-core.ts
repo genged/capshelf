@@ -57,9 +57,32 @@ export type NeedsState =
   | "unknown"
   | "unavailable";
 
+/**
+ * Which population a status row belongs to.
+ *
+ * `ItemSource` is a lock key prefix: it says which capshelf lock owns the
+ * record. A pulled skill lives in a different document, so it is not an
+ * `ItemSource` at all and `parseLockKey` is right to refuse `remote/…`. Only
+ * the reporting row widens.
+ */
+export type RowSource = ItemSource | "remote";
+
+/** Where a remote row's pin came from, for the row's detail lines. */
+export interface RemoteRowFacts {
+  upstream: string;
+  ref: string;
+  subpath: string;
+  lastChecked: string | null;
+  upstreamHead: string | null;
+  /** True when the shelf also tracks this name: an unfinished adopt (D18). */
+  alsoTrackedInShelf: boolean;
+}
+
 export interface StatusRow {
   scope: "project" | "local";
-  source: ItemSource;
+  source: RowSource;
+  /** Remote rows only: where the pin came from. */
+  remote?: RemoteRowFacts;
   kind: ItemKind;
   name: string;
   state: State;
@@ -120,7 +143,12 @@ export interface ExternalPersonalClaudeSkill {
 
 export interface StateFacts {
   kind: ItemKind;
-  /** lock entry source ("data" | "system") */
+  /**
+   * Whether this row has a real upstream to compare against, expressed as the
+   * lock entry source. This is the content model, not the record model: a
+   * remote row passes `"data"` because it does have one, and the existing
+   * drift and update logic then applies unchanged.
+   */
   source: ItemSource;
   /** true only for a data entry pinned local (kept-local) */
   local: boolean;
@@ -209,7 +237,8 @@ export interface StatusAxes {
 
 export interface BuildStatusRowInput {
   scope: "project" | "local";
-  source: ItemSource;
+  source: RowSource;
+  remote?: RemoteRowFacts;
   kind: ItemKind;
   name: string;
   entry: LockEntry;
@@ -231,6 +260,7 @@ export function buildStatusRow(input: BuildStatusRowInput): StatusRow {
   return {
     scope,
     source,
+    ...(input.remote !== undefined && { remote: input.remote }),
     kind,
     name,
     state,

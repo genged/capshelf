@@ -75,6 +75,8 @@ import {
   itemTreeEntriesAtCommit,
   type FilteredPath,
 } from "./pin";
+import { buildRemoteStatusRows } from "./remote-status";
+import type { RemotesLock } from "./remotes-lock";
 import { contentSourceOrNull, isBundled, isGitTree } from "./item-source";
 import type { GitTreeSource } from "./item-source";
 import { loadCommittedItemNeeds } from "./metadata";
@@ -109,6 +111,8 @@ export interface StatusReportInput {
    * rules.
    */
   dataRepo: string | null;
+  /** The pulled-skill record. Its rows are local scope and never committed. */
+  remotes: RemotesLock;
   ref?: ItemRef;
   scope?: StatusScope;
 }
@@ -150,7 +154,11 @@ export async function resolveStatusDataRepo(opts: {
 export function rowFailsStrict(row: StatusRow): boolean {
   return (
     (row.state !== "ok" && row.state !== "kept-local") ||
-    (row.runtimeWarnings?.some(isStrictRuntimeWarning) ?? false)
+    (row.runtimeWarnings?.some(isStrictRuntimeWarning) ?? false) ||
+    // D18: an unfinished adopt is a warning line rather than a new `State`, so
+    // every consumer that switches on state is untouched. It still has to fail
+    // strict while the condition lasts.
+    row.remote?.alsoTrackedInShelf === true
   );
 }
 
@@ -530,6 +538,21 @@ export async function buildStatusReport(
           ...codexWarningsForItem(project, kind, itemName, targetCoverage),
         ],
       }),
+    );
+  }
+
+  // Every remote row is local scope by D5, so `--project` excludes them. An
+  // unconditional append would put a gitignored row in a report that promises
+  // committed state only.
+  if (!scope.project) {
+    rows.push(
+      ...(await buildRemoteStatusRows({
+        project,
+        remotes: input.remotes,
+        projectLock,
+        localLock,
+        ...(ref !== undefined && { ref }),
+      })),
     );
   }
 

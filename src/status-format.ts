@@ -74,7 +74,9 @@ export function describe(r: StatusRow): string {
     case "missing_upstream":
       return r.source === "data"
         ? "no longer in data repo"
-        : "no longer bundled in CLI";
+        : r.source === "remote"
+          ? "no longer in the upstream repository"
+          : "no longer bundled in CLI";
     case "upstream_dirty":
       return "data repo has uncommitted changes for this item";
     case "source_dirty":
@@ -148,8 +150,13 @@ export function formatStatusHuman(input: FormatStatusHumanInput): string[] {
   );
   lines.push("");
 
-  const projectRows = rows.filter((r) => r.scope === "project");
-  const localRows = rows.filter((r) => r.scope === "local");
+  const remoteRows = rows.filter((r) => r.source === "remote");
+  const projectRows = rows.filter(
+    (r) => r.scope === "project" && r.source !== "remote",
+  );
+  const localRows = rows.filter(
+    (r) => r.scope === "local" && r.source !== "remote",
+  );
 
   if (projectRows.length > 0) {
     lines.push("project/");
@@ -162,6 +169,17 @@ export function formatStatusHuman(input: FormatStatusHumanInput): string[] {
       : "no data repo configured — pass --data, set $CAPSHELF_HOME, or run init";
     lines.push(`local/  (${repoLabel})`);
     for (const r of localRows) lines.push(...formatRow(r));
+  }
+  if (remoteRows.length > 0) {
+    if (projectRows.length > 0 || localRows.length > 0) lines.push("");
+    // D16: the word never stands alone, so the heading carries its qualifier.
+    lines.push(REMOTE_GROUP_HEADING);
+    for (const r of remoteRows) lines.push(...formatRow(r));
+    if (remoteRows.some((r) => r.remote?.lastChecked === null)) {
+      lines.push(
+        "      check for newer upstreams: capshelf status --check-upstream",
+      );
+    }
   }
   if (external.length > 0) {
     if (rows.length > 0) lines.push("");
@@ -256,17 +274,73 @@ function userSkillSurfaceLabel(surface: ExternalUserSkill["surface"]): string {
   }
 }
 
+export const REMOTE_GROUP_HEADING =
+  "remote/  (skills pinned to repos outside your shelf)";
+
 function formatRow(r: StatusRow): string[] {
   const g = glyph(r.state).padEnd(3);
-  const id = `${r.source}/${r.kind}/${r.name}`.padEnd(39);
+  // A remote row already sits under a heading that names its population, so
+  // the id drops the source prefix the shelf groups need.
+  const id = (
+    r.source === "remote"
+      ? `${r.kind}/${r.name}`
+      : `${r.source}/${r.kind}/${r.name}`
+  ).padEnd(39);
   const label = r.label ? ` ${r.label}` : "";
   return [
     `  ${g} ${id} ${shortIdentity(r.lockedSha)}${label}  ${describe(r)}`,
+    ...remoteRowDetail(r),
     ...targetCoverageGuidance(r),
     ...missingSourceCommitGuidance(r),
     ...needsStateGuidance(r),
     ...formatRuntimeWarnings(r.runtimeWarnings, "    "),
   ];
+}
+
+/**
+ * Where a pulled skill came from, and what the user can do about it.
+ *
+ * `promote` has nowhere to go for a pulled skill, so a drifted row names
+ * `share --adopt` instead. An unfinished adopt is D18's warning line.
+ */
+function remoteRowDetail(r: StatusRow): string[] {
+  const remote = r.remote;
+  if (remote === undefined) return [];
+  const freshness =
+    remote.lastChecked === null
+      ? "never checked"
+      : `checked ${remote.lastChecked.slice(0, 10)}`;
+  const lines = [
+    `      ${upstreamLabel(remote.upstream)} ${remote.ref} @ ${shortCommit(r.sourceCommit)}, ${freshness}`,
+  ];
+  if (
+    r.state === "drifted_local" ||
+    r.state === "drifted_and_update" ||
+    r.state === "drifted_and_upstream_dirty"
+  ) {
+    lines.push(
+      "      a pulled skill cannot be promoted. to keep this edit:",
+      `        capshelf share ${r.kind}/${r.name} --adopt`,
+    );
+  }
+  if (remote.alsoTrackedInShelf) {
+    lines.push(
+      `      ⚠ also tracked in your shelf as data/${r.kind}/${r.name}`,
+      `        an adopt did not finish. complete it: capshelf share ${r.kind}/${r.name} --adopt`,
+    );
+  }
+  return lines;
+}
+
+/** `owner/repo` for a hosted URL, and the whole identity for anything else. */
+function upstreamLabel(upstream: string): string {
+  try {
+    const url = new URL(upstream);
+    const segments = url.pathname.split("/").filter(Boolean);
+    return segments.length >= 2 ? segments.slice(-2).join("/") : upstream;
+  } catch {
+    return upstream;
+  }
 }
 
 /**

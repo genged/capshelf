@@ -1,6 +1,7 @@
 import type { Command, Command as CmdType } from "commander";
 import { findProjectRoot, projectRoot } from "../paths";
 import { loadLocalLock, loadLock } from "../lock";
+import { loadRemotesLock } from "../remotes-lock";
 import { loadManifest } from "../manifest";
 import { PreconditionError, ResultExitError } from "../errors";
 import { CLI_VERSION } from "../bundled";
@@ -71,6 +72,7 @@ export function registerStatus(program: Command): void {
         }
         const projectLock = await loadLock(project);
         const localLock = await loadLocalLock(project);
+        const remotes = await loadRemotesLock(project);
         assertNoScopeCollisions(projectLock, localLock);
         const dataRepo = await resolveStatusDataRepo({
           override: globalOpts(cmd).data,
@@ -84,6 +86,7 @@ export function registerStatus(program: Command): void {
           manifest,
           projectLock,
           localLock,
+          remotes,
           dataRepo,
           ref,
           scope: { project: opts.project, local: opts.local },

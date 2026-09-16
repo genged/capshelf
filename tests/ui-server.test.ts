@@ -22,10 +22,12 @@ import {
   runInProcess,
   tempDir,
   tempRepo,
+  arrayField,
   objectField,
   readJsonObject,
   stringField,
 } from "./cli-fixtures";
+import { initRemoteProject, upstreamWith } from "./remote-fixtures";
 
 const TOKEN = "0123456789abcdef0123456789abcdef";
 
@@ -396,6 +398,50 @@ describe("capshelf ui server", () => {
       await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
     }
   });
+
+  test(
+    "a pulled skill reaches the client as source: remote",
+    async () => {
+      // Its own project and its own server: the shared world above is the
+      // fixture every other test in this file reads, and a remote row in it
+      // would change their counts.
+      const upstream = await upstreamWith([["skills/pdf", "Extract text"]]);
+      const remoteWorld = await initRemoteProject();
+      expect(
+        (
+          await runInProcess(remoteWorld.project)(
+            ["add", upstream.url, "--yes", "--json"],
+            remoteWorld.env,
+          )
+        ).exitCode,
+      ).toBe(0);
+      const registryPath = join(
+        await tempDir("capshelf-ui-remote-registry-"),
+        "p.json",
+      );
+      await registerProject(remoteWorld.project, registryPath);
+      const server = startUiServer({ registryPath, token: TOKEN });
+      try {
+        const url = new URL("/api/project/status", server.url);
+        url.searchParams.set("project", remoteWorld.project);
+        const response = await fetch(url, {
+          headers: { Authorization: `Bearer ${TOKEN}` },
+        });
+        expect(response.status).toBe(200);
+        const body = parseJsonc(await response.text());
+        if (!isConfigObject(body)) throw new Error("status is not JSON");
+        const items = arrayField(body, "items")
+          .filter(isConfigObject)
+          .filter((item) => item.source === "remote");
+        expect(items).toHaveLength(1);
+        expect(items[0]!.ref).toBe("skills/pdf");
+        expect(items[0]!.id).toBe("local/remote/skills/pdf");
+      } finally {
+        await server.stop();
+      }
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
 
   test("the item id, not a second status run, selects the diff row", async () => {
     // A diff request for a project the server has not loaded yet computes
