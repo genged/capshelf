@@ -103,9 +103,13 @@ that boundary:
   commit, the subpath, the install path, the file list with sizes, the
   description, and whether it found a license, and then asks once. A named
   `capshelf update` asks again before it accepts new content from that
-  repository. That prompt is the whole control. Credentials stay with Git:
-  capshelf shells out to `git clone` and inherits your credential helper,
-  reads no token, calls no `gh`, and stores nothing.
+  repository. Repository-controlled text in that prompt — file names and the
+  item's description — has its control characters stripped, so a repository
+  cannot repaint the question it is being asked about. That prompt is the whole
+  control. Credentials stay with Git: capshelf shells out to `git clone` and
+  inherits your credential helper, reads no token, calls no `gh`, and stores
+  nothing. A URL that carries its own credential is refused rather than cloned,
+  because `git clone` would write it into the cache clone's `.git/config`.
 - **Declared needs are metadata, not enforcement.** Capshelf can pin and
   display expected network hosts, environment variables, and commands, but it
   does not inspect or change runtime policy and does not claim those

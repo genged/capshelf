@@ -288,11 +288,17 @@ export function registerUpdate(program: Command): void {
           await assertRepoClean(dataRepo);
         }
 
+        const externalSkills = await listSkillsShSkills(project);
+        const externalSkillByName = new Map(
+          externalSkills.map((skill) => [skill.name, skill]),
+        );
+
         if (opts.merge && remoteTargets.length === 1) {
           const outcome = await runRemoteUpdates({
             project,
             manifest,
             targets: remoteTargets,
+            externalSkillByName,
             remotes,
             merge: true,
             dryRun: opts.dryRun === true,
@@ -335,10 +341,6 @@ export function registerUpdate(program: Command): void {
         const results: UpdateResult[] = [];
         let projectChanged = false;
         let localChanged = false;
-        const externalSkills = await listSkillsShSkills(project);
-        const externalSkillByName = new Map(
-          externalSkills.map((skill) => [skill.name, skill]),
-        );
         const originalLock = structuredClone(projectLock);
         const fragmentNextLock = structuredClone(projectLock);
         const pendingFragmentEntries = new Map<string, LockEntryV4>();
@@ -370,6 +372,7 @@ export function registerUpdate(program: Command): void {
             project,
             manifest,
             targets: remoteTargets,
+            externalSkillByName,
             remotes,
             merge: false,
             dryRun: true,
@@ -546,6 +549,7 @@ export function registerUpdate(program: Command): void {
           project,
           manifest,
           targets: remoteTargets,
+          externalSkillByName,
           remotes,
           merge: false,
           // The dry-run path returned above, so this pass always writes.
@@ -629,6 +633,7 @@ async function runRemoteUpdates(input: {
   project: string;
   manifest: Manifest;
   targets: RemoteTarget[];
+  externalSkillByName: Map<string, ExternalSkill>;
   remotes: RemotesLock;
   merge: boolean;
   dryRun: boolean;
@@ -638,6 +643,29 @@ async function runRemoteUpdates(input: {
   const results: UpdateResult[] = [];
   for (const target of input.targets) {
     const entry = input.remotes.items[target.key]!;
+    // The external-ownership boundary the shelf pass applies in
+    // `updateOneTarget`. A remote row writes `.agents/skills/<name>`, the same
+    // path skills.sh writes, and skills.sh can claim the name after the pull.
+    // A named request is the command's failure; a sweep records the skip.
+    const external = input.externalSkillByName.get(target.name);
+    if (external) {
+      const message = skillsShConflictMessage(external);
+      if (target.named) {
+        throw new PreconditionError(
+          `not updating ${remoteKey(target.name)} — ${message}`,
+        );
+      }
+      results.push({
+        key: target.key,
+        scope: "local",
+        source: "remote",
+        kind: REMOTE_ITEM_KIND,
+        name: target.name,
+        action: "skipped-external",
+        error: message,
+      });
+      continue;
+    }
     if (!target.named) {
       // A9. A routine sweep across a project must not become interactive, and
       // it must not move a pin the user has not reviewed either.
@@ -655,19 +683,32 @@ async function runRemoteUpdates(input: {
       );
       continue;
     }
-    if (
-      !(await confirmRemotePinMove({
-        project: input.project,
-        manifest: input.manifest,
-        name: target.name,
-        entry,
-        preview,
-        dryRun: input.dryRun,
-        json: input.json,
-        yes: input.yes,
-      }))
-    ) {
-      return { results };
+    const consent = await confirmRemotePinMove({
+      project: input.project,
+      manifest: input.manifest,
+      name: target.name,
+      entry,
+      preview,
+      dryRun: input.dryRun,
+      json: input.json,
+      yes: input.yes,
+    });
+    if (!consent.approved) return { results };
+    // The prompt holds the run open for as long as the user takes to read it.
+    // An editor saving the installed item in that window would make the write
+    // destroy content the accepted loss summary never listed, so the plan is
+    // rebuilt and compared the way the shelf pass does before it writes.
+    if (consent.plan !== null) {
+      assertDestructivePlanUnchanged(
+        consent.plan,
+        await planRemotePinMove({
+          project: input.project,
+          manifest: input.manifest,
+          name: target.name,
+          entry,
+          preview,
+        }),
+      );
     }
     const mergeOutcome = input.merge
       ? await updateMergeRemoteTarget({
@@ -727,6 +768,13 @@ async function runRemoteUpdates(input: {
   return { results };
 }
 
+/** What the user accepted, and the plan they were shown accepting it. */
+interface RemoteConsent {
+  approved: boolean;
+  /** Null when nothing was shown: a dry run, or `--yes`. */
+  plan: DestructiveChangePlan | null;
+}
+
 /**
  * A9's gate, and the drift gate, in one prompt.
  *
@@ -744,8 +792,8 @@ async function confirmRemotePinMove(input: {
   dryRun: boolean;
   json: boolean;
   yes: boolean;
-}): Promise<boolean> {
-  if (input.dryRun || input.yes) return true;
+}): Promise<RemoteConsent> {
+  if (input.dryRun || input.yes) return { approved: true, plan: null };
   const destruction = await planRemotePinMove(input);
   const block = [
     `  pinned    ${input.preview.from.slice(0, 7)}  ->  ${input.preview.to.slice(0, 7)}   (from the local cache, no network)`,
@@ -767,9 +815,11 @@ async function confirmRemotePinMove(input: {
     );
   }
   const answer = await context.prompt(`${block}\nMove the pin? [y/N] `);
-  if (/^(y|yes)$/i.test(answer.trim())) return true;
+  if (/^(y|yes)$/i.test(answer.trim())) {
+    return { approved: true, plan: destruction };
+  }
   context.stderr.write("Update cancelled; no changes were written.\n");
-  return false;
+  return { approved: false, plan: null };
 }
 
 /** What the pin move would destroy, through the planner every write uses. */
@@ -779,9 +829,9 @@ async function planRemotePinMove(input: {
   name: string;
   entry: RemoteLockEntry;
   preview: Awaited<ReturnType<typeof previewRemoteUpdate>>;
-}): Promise<{ changes: DestructiveChange[] }> {
+}): Promise<DestructiveChangePlan> {
   const pin = input.preview.pin;
-  if (pin === null) return { changes: [] };
+  if (pin === null) return createDestructiveChangePlan([]);
   const cache = remoteCacheState(input.entry.upstream);
   const current = remoteTreeSource(
     cache.path,
@@ -798,7 +848,9 @@ async function planRemotePinMove(input: {
     sourceCommit: pin.sourceCommit,
     sourcePinDigest: pin.sourcePinDigest,
   };
-  return await planCopyDirectoryDestruction({
+  // The snapshot, not just the change list: `assertDestructivePlanUnchanged`
+  // compares it, and it is what notices a file edited while the prompt was up.
+  const planned = await planCopyDirectoryDestruction({
     project: input.project,
     currentSource: current,
     selectedSource: selected,
@@ -812,6 +864,7 @@ async function planRemotePinMove(input: {
     reviewCommand: `${PRODUCT_NAME} status ${REMOTE_ITEM_KIND}/${input.name} --diff-view installed`,
     repairUnresolvableCurrent: true,
   });
+  return createDestructiveChangePlan(planned.changes, planned.snapshotParts);
 }
 
 function remoteResult(

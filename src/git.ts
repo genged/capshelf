@@ -1366,8 +1366,25 @@ export interface FetchResult {
  * auth, missing remote repo) are reported, not thrown, so `sync-data` can
  * include git's stderr in its `fetch_failed` state.
  */
-export async function fetchOrigin(repo: string): Promise<FetchResult> {
-  const result = await sourceWrite(repo, ["fetch", "origin"]);
+/**
+ * `prune` is opt-in, and only the clone cache asks for it.
+ *
+ * Without pruning, a branch or tag deleted upstream keeps resolving from the
+ * stale remote-tracking ref the clone already holds, so a freshness check
+ * reports a ref that no longer exists as healthy. That matters for the pulled-
+ * skill cache, which capshelf derives and owns outright. A user's data-repo
+ * clone is not ours to prune: `--prune-tags` there would delete tags they
+ * created locally.
+ */
+export async function fetchOrigin(
+  repo: string,
+  opts: { prune?: boolean } = {},
+): Promise<FetchResult> {
+  const result = await sourceWrite(repo, [
+    "fetch",
+    ...(opts.prune === true ? ["--prune", "--prune-tags"] : []),
+    "origin",
+  ]);
   return {
     ok: result.exitCode === 0,
     stderr: result.stderr,

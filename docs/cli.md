@@ -1484,8 +1484,10 @@ Each repository is cloned once, to
 from the upstream on every read and is never stored, so stale machine state
 cannot decide which objects a pin reads. A later `add <url>` against a
 repository the machine already holds fetches it first, so the commit the
-prompt asks you to accept is the one the upstream has now. A fetch that fails
-warns and pins from the cache, which keeps `add` usable offline. `apply` and `update` refuse when that
+prompt asks you to accept is the one the upstream has now. That fetch prunes,
+so a branch or tag deleted upstream stops resolving here instead of answering
+from a stale copy. A fetch that fails warns and pins from the cache, which
+keeps `add` usable offline. `apply` and `update` refuse when that
 cache is absent and name `capshelf status --check-upstream`, which re-creates
 it: creating a cache inside `update` would make `update` a network command.
 A cache re-created that way clones the normalized `https` identity, because

@@ -165,7 +165,13 @@ function upstreamFacts(entry: RemoteLockEntry): UpstreamFacts {
   if (entry.lastChecked === undefined) {
     return { sha: entry.sourcePinDigest, changed: false };
   }
-  if (entry.upstreamPinDigest === undefined) {
+  // No head: the check reached the repository and the recorded ref was gone.
+  // No digest: the ref was there and the item was not. Both are the same answer
+  // to the only question this row asks — the upstream no longer offers it.
+  if (
+    entry.upstreamHead === undefined ||
+    entry.upstreamPinDigest === undefined
+  ) {
     return { sha: null, changed: false };
   }
   return {
@@ -285,7 +291,16 @@ async function fetchOneUpstream(
         ? fetched.head
         : await resolveCachedRef(path, entry.ref);
     if (head === null) {
-      items[key] = entry;
+      // The fetch succeeded and the ref is not there: the branch or tag was
+      // deleted upstream. Keeping the previous measurement made the row report
+      // the deleted ref as healthy forever, so the timestamp is recorded
+      // without a head, which is `missing_upstream`.
+      const {
+        upstreamHead: _wasHead,
+        upstreamPinDigest: _wasDigest,
+        ...carried
+      } = entry;
+      items[key] = { ...carried, lastChecked: checkedAt };
       continue;
     }
     // `upstreamPinDigest` is this check's measurement, never a fact carried

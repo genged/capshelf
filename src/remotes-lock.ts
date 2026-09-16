@@ -68,15 +68,14 @@ const RemoteLockEntrySchema = z
     upstreamPinDigest: SourcePinDigestSchema.optional(),
   })
   .superRefine((entry, ctx) => {
-    // A timestamp must never sit beside a head it did not measure, so the two
-    // freshness fields are written together or not at all.
-    if (
-      (entry.lastChecked === undefined) !==
-      (entry.upstreamHead === undefined)
-    )
+    // A head must never sit beside no timestamp: it would claim a measurement
+    // nothing dates. The reverse is a real state — a check that reached the
+    // repository and found the recorded ref gone — so a timestamp alone is
+    // allowed, and `upstreamFacts` reads it as `missing_upstream`.
+    if (entry.upstreamHead !== undefined && entry.lastChecked === undefined)
       ctx.addIssue({
         code: "custom",
-        message: "lastChecked and upstreamHead must both be set or both absent",
+        message: "upstreamHead requires the lastChecked it was read at",
       });
     // The measured digest may be absent while the head is present: that is a
     // check which reached the repository and found the item no longer at its

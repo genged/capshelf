@@ -320,8 +320,17 @@ export async function shareCopyItem(
   const excludeDropped =
     scope === "project" && (await removeLocalExcludes(project, kind, name));
 
-  // Steps 10 and 11.
+  // Steps 10 and 11, under one restore. The window runs until the project lock
+  // names the new owner: until then the item still belongs to whoever owned it
+  // before, and that owner's install path is supposed to be invisible to
+  // project Git. A failure anywhere in here — a dirty data repo, a rejected
+  // commit proof, an unreadable sidecar, a manifest that will not save — would
+  // otherwise leave clone-local third-party files staged by the next
+  // `git add -A`, which is the one thing the exclude exists to stop.
   let adopted: PromoteResult;
+  let snapshot: Awaited<ReturnType<typeof captureCommittedItemNeeds>>;
+  let localChanged = false;
+  let ownerEstablished = false;
   try {
     adopted = await adoptIntoDataRepo(project, dataRepo, kind, name, {
       installMode: manifest.installMode,
@@ -335,52 +344,45 @@ export async function shareCopyItem(
       }),
       ...(owner !== null && { provenance: owner.provenance }),
     });
+
+    snapshot = await captureCommittedItemNeeds(dataRepo, { kind, name });
+    if (!adopted.pin) {
+      throw new Error(`expected a verified pin for ${kind}/${name}`);
+    }
+    const entry = createDataLockEntry({ pin: adopted.pin, ...snapshot });
+    if (scope === "project") {
+      addToManifest(manifest, kind, name);
+      writableProjectLock.items[key] = preserveLabel(entry, localLock, key);
+      if (localKey) {
+        delete writableLocalLock.items[key];
+        if (localConfig) {
+          removeLocalConfigName(localConfig, kind, name);
+        }
+        localChanged = true;
+      }
+      await saveManifest(project, manifest);
+      await saveLock(project, writableProjectLock);
+      if (localChanged) {
+        await saveLocalLock(project, writableLocalLock);
+        if (localConfig) await saveLocalConfig(project, localConfig);
+      }
+    } else {
+      if (!localConfig) throw new Error("expected local manifest");
+      addLocalConfigName(localConfig, kind, name);
+      writableLocalLock.items[key] = preserveLabel(entry, localLock, key);
+      await ensureLocalExcludes(project, kind, name);
+      await saveLocalConfig(project, localConfig);
+      await saveLocalLock(project, writableLocalLock);
+    }
+    ownerEstablished = true;
   } catch (error) {
-    // The item still belongs to whoever owned it before this command ran, and
-    // that owner's install path is supposed to be invisible to project Git.
-    // Leaving the line removed would let the next `git add -A` commit clone-
-    // local files into the project, which is the one thing the exclude exists
-    // to stop. A restore that itself fails must not replace the real error.
-    if (excludeDropped) {
+    // A restore that itself fails must not replace the real error.
+    if (excludeDropped && !ownerEstablished) {
       await ensureLocalExcludes(project, kind, name).catch(() => {});
     }
     throw error;
   }
-
-  const snapshot = await captureCommittedItemNeeds(dataRepo, {
-    kind,
-    name,
-  });
-  if (!adopted.pin) {
-    throw new Error(`expected a verified pin for ${kind}/${name}`);
-  }
-  const entry = createDataLockEntry({ pin: adopted.pin, ...snapshot });
   const runtimeWarnings = runtimeWarningsForItem(project, kind, name);
-  let localChanged = false;
-  if (scope === "project") {
-    addToManifest(manifest, kind, name);
-    writableProjectLock.items[key] = preserveLabel(entry, localLock, key);
-    if (localKey) {
-      delete writableLocalLock.items[key];
-      if (localConfig) {
-        removeLocalConfigName(localConfig, kind, name);
-      }
-      localChanged = true;
-    }
-    await saveManifest(project, manifest);
-    await saveLock(project, writableProjectLock);
-    if (localChanged) {
-      await saveLocalLock(project, writableLocalLock);
-      if (localConfig) await saveLocalConfig(project, localConfig);
-    }
-  } else {
-    if (!localConfig) throw new Error("expected local manifest");
-    addLocalConfigName(localConfig, kind, name);
-    writableLocalLock.items[key] = preserveLabel(entry, localLock, key);
-    await ensureLocalExcludes(project, kind, name);
-    await saveLocalConfig(project, localConfig);
-    await saveLocalLock(project, writableLocalLock);
-  }
 
   // Step 12, last. A crash before this leaves two owners rather than none, and
   // a second run converges through `finishInterruptedAdopt` above.

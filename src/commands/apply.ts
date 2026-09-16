@@ -450,6 +450,27 @@ export function registerApply(program: Command): void {
         // one. The destructive plan above still gated any local loss.
         for (const target of remoteTargets) {
           const entry = remotes.items[target.key]!;
+          // The same external-ownership boundary the shelf loop applies above.
+          // A remote row installs to `.agents/skills/<name>`, the same path
+          // skills.sh writes, and skills.sh can claim a name after the pull —
+          // `add <url>` only checks at install time. Reconciling regardless
+          // would overwrite another tool's content, which is the one thing the
+          // no-co-management rule forbids.
+          const external = externalSkillNames.has(target.name)
+            ? await findSkillsShSkill(project, target.name)
+            : null;
+          if (external) {
+            results.push({
+              scope: "local",
+              key: target.key,
+              source: "remote",
+              kind: REMOTE_ITEM_KIND,
+              name: target.name,
+              action: "skipped-external",
+              message: skillsShConflictMessage(external),
+            });
+            continue;
+          }
           try {
             results.push(
               remoteApplyRow(

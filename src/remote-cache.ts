@@ -81,7 +81,7 @@ export async function fetchRemoteCache(
 ): Promise<RemoteFetchResult> {
   // A failed fetch is reported, never thrown: one unreachable repository must
   // not stop the check for every other row.
-  const fetched = await fetchOrigin(cachePath);
+  const fetched = await fetchOrigin(cachePath, { prune: true });
   const head = await resolveCachedRef(cachePath, ref);
   return {
     ok: fetched.ok,
@@ -109,15 +109,19 @@ export async function resolveCachedRef(
   // schema, both of which refuse an option-shaped name. A ref that did not is
   // simply unresolvable, which is what the callers already handle.
   if (!isSafeGitRef(ref)) return null;
-  for (const candidate of [
-    `refs/remotes/origin/${ref}`,
-    `refs/tags/${ref}`,
-    ref,
-  ]) {
+  for (const candidate of [`refs/remotes/origin/${ref}`, `refs/tags/${ref}`]) {
     const resolved = await resolveCommit(cachePath, candidate);
     if (resolved !== null) return resolved;
   }
-  return null;
+  // The bare name last, and never when it would resolve the clone's own local
+  // branch. `git clone` checks one out and it never moves again, so a branch
+  // deleted upstream would keep resolving from it forever — reported as a
+  // healthy ref, and pinned from by a later update. This fallback exists for a
+  // raw commit id, which no local branch can shadow.
+  if ((await resolveCommit(cachePath, `refs/heads/${ref}`)) !== null) {
+    return null;
+  }
+  return await resolveCommit(cachePath, ref);
 }
 
 /** The cache clone's own default branch, which `git clone` took from origin. */

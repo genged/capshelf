@@ -91,3 +91,44 @@ test("an empty input and a bare word are refused", () => {
   expect(() => parseRemoteSkillUrl("pdf")).toThrow();
   expect(isRemoteSkillUrl("pdf")).toBe(false);
 });
+
+test("a credential in an https URL is refused, and never echoed back", () => {
+  // git would write the URL into the cache clone's .git/config verbatim.
+  expect(() =>
+    parseRemoteSkillUrl("https://ghp_secrettoken@github.com/owner/repo"),
+  ).toThrow(/credential/);
+  expect(() =>
+    parseRemoteSkillUrl("https://ghp_secrettoken@github.com/owner/repo"),
+  ).not.toThrow(/ghp_secrettoken/);
+});
+
+test("a password in an ssh URL is refused and a bare username is not", () => {
+  expect(() =>
+    parseRemoteSkillUrl("ssh://git:hunter2@example.com/owner/repo"),
+  ).toThrow(/credential/);
+  expect(parseRemoteSkillUrl("ssh://git@example.com/owner/repo").upstream).toBe(
+    "https://example.com/owner/repo",
+  );
+  expect(parseRemoteSkillUrl("git@example.com:owner/repo").upstream).toBe(
+    "https://example.com/owner/repo",
+  );
+});
+
+test("a browser URL offers every ref/subpath split, longest ref first", () => {
+  const parsed = parseRemoteSkillUrl(
+    "https://github.com/owner/repo/tree/feature/login/skills/pdf",
+  );
+  expect(parsed.refCandidates.map((c) => c.ref)).toEqual([
+    "feature/login/skills/pdf",
+    "feature/login/skills",
+    "feature/login",
+    "feature",
+  ]);
+  expect(parsed.refCandidates[2]).toEqual({
+    ref: "feature/login",
+    subpath: "skills/pdf",
+  });
+  // The one-segment split stays the fallback for a caller that cannot resolve.
+  expect(parsed.ref).toBe("feature");
+  expect(parsed.subpath).toBe("login/skills/pdf");
+});

@@ -28,6 +28,7 @@ import {
 } from "../pin";
 import { projectRoot } from "../paths";
 import { pickItems } from "../pick";
+import { sanitizeDisplayText } from "../pick-core";
 import type { PickRow } from "../pick-core";
 import {
   defaultCachedBranch,
@@ -44,7 +45,7 @@ import {
 import type { LicenseFinding, RemoteSkillCandidate } from "../remote-discovery";
 import { installRemoteSkill, reconcileRemoteSkill } from "../remote-item";
 import { parseRemoteSkillUrl } from "../remote-url";
-import type { RemoteSkillUrl } from "../remote-url";
+import type { BrowserRefCandidate, RemoteSkillUrl } from "../remote-url";
 import {
   REMOTE_ITEM_KIND,
   loadRemotesLock,
@@ -111,7 +112,7 @@ export async function addRemoteSkill(
   // cache can still answer, and refusing would break `add` for a warm cache on
   // a machine that is briefly offline.
   if (!cache.cloned) {
-    const fetched = await fetchOrigin(cache.path);
+    const fetched = await fetchOrigin(cache.path, { prune: true });
     if (!fetched.ok) {
       console.error(
         `⚠ could not fetch ${parsed.upstream}; pinning from the cache this machine already holds`,
@@ -119,7 +120,20 @@ export async function addRemoteSkill(
       console.error(`  ${fetched.stderr.toString().trim()}`);
     }
   }
-  const ref = opts.ref ?? parsed.ref ?? (await defaultCachedBranch(cache.path));
+  // A browser URL has no delimiter between the branch and the path inside it,
+  // so the split is settled against the clone rather than guessed: the longest
+  // ref that actually exists wins. Without this, `…/tree/feature/login/skills/x`
+  // reads as ref `feature`, which silently installs from the wrong branch when
+  // one by that name also exists.
+  const browser =
+    opts.ref === undefined
+      ? await firstResolvableCandidate(cache.path, parsed.refCandidates)
+      : null;
+  const ref =
+    opts.ref ??
+    browser?.ref ??
+    parsed.ref ??
+    (await defaultCachedBranch(cache.path));
   if (ref === null) {
     throw new PreconditionError(
       `${parsed.upstream} published no default branch`,
@@ -133,7 +147,7 @@ export async function addRemoteSkill(
     });
   }
 
-  const explicitSubpath = opts.path ?? parsed.subpath;
+  const explicitSubpath = opts.path ?? browser?.subpath ?? parsed.subpath;
   const discovery =
     explicitSubpath === null || explicitSubpath === undefined
       ? await discoverRemoteSkills(cache.path, commit, parsed.repoName)
@@ -148,7 +162,9 @@ export async function addRemoteSkill(
           ],
           warnings: [],
         };
-  for (const warning of discovery.warnings) console.error(`⚠ ${warning}`);
+  // Sanitized like every other repository-controlled string here: a warning
+  // about a malformed marketplace quotes the repository's own text.
+  for (const warning of discovery.warnings) console.error(`⚠ ${safe(warning)}`);
 
   // `--list` answers a question about the repository. It returns before the
   // cardinality rule below, because "too many to install without choosing" is
@@ -414,6 +430,25 @@ async function assertNameAvailable(
  * D17: never guess. One candidate installs, several open the picker, and with
  * no terminal the command names the two flags that answer the question.
  */
+/**
+ * The first browser split whose ref exists in the clone, or null.
+ *
+ * `refCandidates` is ordered longest ref first, so a branch named
+ * `feature/login` is preferred over one named `feature` when both exist — the
+ * URL that produced this was written against the longer one.
+ */
+async function firstResolvableCandidate(
+  cachePath: string,
+  candidates: readonly BrowserRefCandidate[],
+): Promise<BrowserRefCandidate | null> {
+  for (const candidate of candidates) {
+    if ((await resolveCachedRef(cachePath, candidate.ref)) !== null) {
+      return candidate;
+    }
+  }
+  return null;
+}
+
 async function chooseCandidates(
   candidates: RemoteSkillCandidate[],
   parsed: RemoteSkillUrl,
@@ -509,20 +544,35 @@ function renderConsent(input: {
     `  repo      ${input.upstream}`,
     `  ref       ${input.ref}`,
     `  commit    ${input.commit}`,
-    `  path      ${input.candidate.subpath}${input.candidate.subpath === "." ? "  (SKILL.md at the repo root)" : ""}`,
+    `  path      ${safe(input.candidate.subpath)}${input.candidate.subpath === "." ? "  (SKILL.md at the repo root)" : ""}`,
     `  install   ${installPath}  (local scope, gitignored)`,
     `  files     ${input.summary.files.length} files, ${formatBytes(input.summary.totalBytes)}`,
     ...input.summary.files.map(
       (file) =>
-        `              ${file.path.padEnd(width)}  ${formatBytes(file.bytes)}`,
+        `              ${safe(file.path).padEnd(width)}  ${formatBytes(file.bytes)}`,
     ),
     `  license   ${describeLicense(input.license)}`,
     "",
     ...(input.candidate.description === null
       ? []
-      : [`  ${input.name}: ${input.candidate.description}`, ""]),
+      : [`  ${input.name}: ${safe(input.candidate.description)}`, ""]),
     "  capshelf does not review this content. Your agent runs it with your permissions.",
   ].join("\n");
+}
+
+/**
+ * Repository-controlled text, made safe to paint.
+ *
+ * File paths come from `ls-tree` and a description comes from the item's YAML;
+ * Git allows almost any byte in a path and YAML carries escapes freely. The
+ * consent prompt is the one gate authorizing third-party code to run with the
+ * user's permissions, so a repository able to emit ESC or OSC bytes into it
+ * could redraw the prompt's own text — hide a file from the list, fake a
+ * license line, or drive the terminal. `sanitizeDisplayText` is the same filter
+ * the picker applies to the same class of text.
+ */
+function safe(text: string): string {
+  return sanitizeDisplayText(text);
 }
 
 function describeLicense(license: LicenseFinding): string {
@@ -531,7 +581,7 @@ function describeLicense(license: LicenseFinding): string {
   const where = license.insideItem
     ? "inside the item, copied with it"
     : "at the repo root, outside the item, not copied";
-  return `${license.label ?? "unrecognized"}  (${license.path}, ${where})`;
+  return `${license.label ?? "unrecognized"}  (${safe(license.path)}, ${where})`;
 }
 
 function printCandidateList(
@@ -575,12 +625,12 @@ function printCandidateList(
   const width = Math.max(...candidates.map((c) => c.subpath.length));
   for (const candidate of candidates) {
     console.log(
-      `    ${candidate.subpath.padEnd(width)}   ${candidate.description ?? ""}`.trimEnd(),
+      `    ${safe(candidate.subpath).padEnd(width)}   ${safe(candidate.description ?? "")}`.trimEnd(),
     );
   }
   console.log("");
   console.log(
-    `  install one:   ${PRODUCT_NAME} add ${input} --path ${candidates[0]!.subpath}`,
+    `  install one:   ${PRODUCT_NAME} add ${input} --path ${safe(candidates[0]!.subpath)}`,
   );
   console.log(`  install some:  ${PRODUCT_NAME} add ${input}`);
 }

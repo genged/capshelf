@@ -22,6 +22,7 @@ import {
 } from "./remote-fixtures";
 import { remoteCachePath } from "../src/remote-cache";
 import { parseRemoteSkillUrl } from "../src/remote-url";
+import { setDestructiveConfirmationContext } from "../src/destructive-change";
 
 async function installed() {
   const upstream = await upstreamWith([["skills/pdf", "Extract text"]]);
@@ -1014,6 +1015,141 @@ test(
     expect(result.stderr.toString()).toContain("both own it");
     expect(existsSync(installPath)).toBe(true);
     expect(await readFile(lockPath, "utf-8")).toBe(beforeAdopt);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "the consent prompt cannot be repainted by repository-controlled text",
+  async () => {
+    // A file name and a description both come from the repository. The prompt
+    // is the one gate authorizing third-party code to run as the user, so a
+    // repository able to emit ESC into it could hide a file or fake a license.
+    const upstream = await upstreamWith([["skills/pdf", "Extract text"]]);
+    await writeFile(
+      join(upstream.work, "skills/pdf/SKILL.md"),
+      "---\nname: pdf\ndescription: safe\u001b[2Kfaked\n---\nbody\n",
+    );
+    await writeFile(
+      join(upstream.work, "skills/pdf/no\u001b[31mtes.md"),
+      "hidden\n",
+    );
+    await commitAll(upstream.work, "escape sequences in a name and a summary");
+    await $`git -C ${upstream.work} push -q origin main`.quiet();
+
+    const world = await initRemoteProject();
+    const run = runInProcess(world.project);
+    const listed = await run(
+      ["add", upstream.url, "--path", "skills/pdf", "--list"],
+      world.env,
+    );
+    expect(listed.exitCode).toBe(0);
+    expect(listed.stdout.toString()).not.toContain("\u001b");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "apply and update leave a pulled skill alone once skills.sh claims the name",
+  async () => {
+    // `add <url>` checks skills.sh at install time, but skills.sh can claim the
+    // name afterwards. Both tools then write `.agents/skills/pdf`, and
+    // reconciling regardless would overwrite the other tool's content.
+    const { world, run, installPath } = await installed();
+    await writeFile(
+      join(world.project, "skills-lock.json"),
+      JSON.stringify(
+        { skills: { pdf: { source: "https://skills.sh/pdf", version: "1" } } },
+        null,
+        2,
+      ),
+    );
+    await writeFile(join(installPath, "SKILL.md"), "owned by skills.sh\n");
+
+    const applied = await run(["apply", "--yes", "--json"], world.env);
+    const rows = objectItems(jsonOutput(applied), "items");
+    expect(rows.find((row) => row.key === "remote/skills/pdf")!.action).toBe(
+      "skipped-external",
+    );
+    expect(await readFile(join(installPath, "SKILL.md"), "utf-8")).toBe(
+      "owned by skills.sh\n",
+    );
+
+    const updated = await run(
+      ["update", "skills/pdf", "--yes", "--json"],
+      world.env,
+    );
+    expect(updated.exitCode).toBe(3);
+    expect(await readFile(join(installPath, "SKILL.md"), "utf-8")).toBe(
+      "owned by skills.sh\n",
+    );
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "a check records a deleted branch instead of keeping the old measurement",
+  async () => {
+    const { upstream, world, run, lockPath } = await installed();
+    await run(["status", "--check-upstream", "--json"], world.env);
+
+    // The branch the row pins goes away. Without pruning, the cache would keep
+    // resolving it from its stale remote-tracking ref and report it healthy.
+    const bare = upstream.url.replace("file://", "");
+    await $`git -C ${upstream.work} branch -M main retired`.quiet();
+    await $`git -C ${upstream.work} push -q origin retired`.quiet();
+    // The bare repo refuses to delete the branch its HEAD points at.
+    await $`git -C ${bare} symbolic-ref HEAD refs/heads/retired`.quiet();
+    await $`git -C ${upstream.work} push -q origin --delete main`.quiet();
+
+    expect(
+      (await run(["status", "--check-upstream", "--json"], world.env)).exitCode,
+    ).toBe(0);
+    const lock = JSON.parse(await readFile(lockPath, "utf-8"));
+    expect(lock.items["remote/skills/pdf"].upstreamHead).toBeUndefined();
+    expect(lock.items["remote/skills/pdf"].lastChecked).toBeDefined();
+    const status = await run(["status", "skills/pdf", "--json"], world.env);
+    expect(
+      objectItems(jsonOutput(status), "items").find(
+        (row) => row.name === "pdf",
+      )!.state,
+    ).toBe("missing_upstream");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "an edit made while the update prompt is open aborts the write",
+  async () => {
+    // The prompt holds the run open for as long as the user reads it. The loss
+    // summary they accept is computed before that wait, so the write has to
+    // check that the summary still describes the tree.
+    const { upstream, world, run, installPath } = await installed();
+    await pushChange(upstream, "skills/pdf", "Extract text and tables");
+    await run(["status", "--check-upstream", "--json"], world.env);
+
+    const outer = setDestructiveConfirmationContext({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompt: async () => {
+        // Whatever an editor would have done while the question was on screen.
+        await writeFile(join(installPath, "SKILL.md"), "edited mid-prompt\n");
+        return "y";
+      },
+      stderr: { write: () => {} },
+    });
+    const result = await (async () => {
+      try {
+        return await run(["update", "skills/pdf"], world.env);
+      } finally {
+        setDestructiveConfirmationContext(outer);
+      }
+    })();
+    expect(result.exitCode).not.toBe(0);
+    expect(result.stderr.toString()).toContain("local state changed");
+    expect(await readFile(join(installPath, "SKILL.md"), "utf-8")).toBe(
+      "edited mid-prompt\n",
+    );
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
