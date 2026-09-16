@@ -13,5 +13,6 @@ export const METADATA_SIDECAR = ".capshelf.yml";
 
 export const LOCK_FILE = "capshelf.lock.json";
 export const LOCAL_LOCK_FILE = "local.lock.json";
+export const REMOTES_LOCK_FILE = "remotes.lock.json";
 
 export const SYSTEM_SKILL_NAME = "capshelf";

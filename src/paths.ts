@@ -8,6 +8,7 @@ import {
   MANIFEST_FILE,
   METADATA_DIR,
   PRODUCT_NAME,
+  REMOTES_LOCK_FILE,
 } from "./identity";
 import { PreconditionError } from "./errors";
 
@@ -205,6 +206,10 @@ export function lockPath(project: string): string {
 
 export function localLockPath(project: string): string {
   return join(project, METADATA_DIR, LOCAL_LOCK_FILE);
+}
+
+export function remotesLockPath(project: string): string {
+  return join(project, METADATA_DIR, REMOTES_LOCK_FILE);
 }
 
 export function rootLockPath(project: string): string {

@@ -52,3 +52,58 @@ export function assertSafeItemName(name: string, context?: string): void {
     `invalid item name ${JSON.stringify(name)}${context ? ` (${context})` : ""}`,
   );
 }
+
+/**
+ * The single definition of a safe item root: a repository-relative,
+ * POSIX-separated directory an item's bytes are read from. `.` is the
+ * repository root and is the one segment that may be a bare dot.
+ *
+ * The root becomes a git pathspec and a `posix.relative` base, and for a
+ * pulled skill it arrives from a URL a user pasted. A root that escapes the
+ * repository, is absolute, or looks like a CLI option must be rejected before
+ * it reaches either.
+ */
+export function isSafeItemRoot(root: string): boolean {
+  if (root === ".") return true;
+  if (root.length === 0) return false;
+  if (root.startsWith("/") || root.startsWith("-")) return false;
+  if (root.includes("\\")) return false;
+  if (
+    [...root].some((character) =>
+      isTerminalControlCode(character.codePointAt(0)!),
+    )
+  ) {
+    return false;
+  }
+  return root
+    .split("/")
+    .every((seg) => seg !== "" && seg !== "." && seg !== "..");
+}
+
+export function assertSafeItemRoot(root: string, context?: string): void {
+  if (isSafeItemRoot(root)) return;
+  throw new Error(
+    `invalid item root ${JSON.stringify(root)}${context ? ` (${context})` : ""}`,
+  );
+}
+
+/**
+ * A branch or tag name capshelf is willing to put in a git argv. Deliberately
+ * narrower than `git check-ref-format`: capshelf only ever records a ref a
+ * user typed or a URL carried, so the useful question is whether it is a plain
+ * name rather than whether Git would tolerate it.
+ */
+export function isSafeGitRef(ref: string): boolean {
+  if (ref.length === 0) return false;
+  if (ref.startsWith("-") || ref.startsWith("/")) return false;
+  if (ref.includes("..") || ref.endsWith(".lock")) return false;
+  if (/[\s~^:?*[\]\\]/u.test(ref)) return false;
+  if (
+    [...ref].some((character) =>
+      isTerminalControlCode(character.codePointAt(0)!),
+    )
+  ) {
+    return false;
+  }
+  return ref.split("/").every((seg) => seg !== "" && !seg.startsWith("."));
+}
