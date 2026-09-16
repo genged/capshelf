@@ -108,6 +108,17 @@ export async function reconcileRemoteSkill(opts: {
   project: string;
   name: string;
   entry: RemoteLockEntry;
+  /**
+   * The pin being replaced, when this reconcile moves one.
+   *
+   * Without it `materializeLockEntry` treats the new pin as the previous one,
+   * so a path the new commit dropped is not known to have been managed. A
+   * dropped path that reads as hidden to `visibleExtraPaths` would then be
+   * preserved as the user's file and survive the update. The shelf pass in
+   * `update` supplies the same value for the same reason; `apply` converges to
+   * the pin it already holds and has none.
+   */
+  previous?: RemoteLockEntry;
   env?: Record<string, string | undefined>;
   dryRun?: boolean;
 }): Promise<MaterializeResult> {
@@ -128,6 +139,16 @@ export async function reconcileRemoteSkill(opts: {
     key: dataKey(REMOTE_ITEM_KIND, opts.name),
     entry: remoteEntryAsDataEntry(opts.entry),
     scope: "local",
+    ...(opts.previous !== undefined && {
+      previous: {
+        entry: remoteEntryAsDataEntry(opts.previous),
+        source: remoteTreeSource(
+          cache.path,
+          opts.previous.sourceCommit,
+          opts.previous.subpath,
+        ),
+      },
+    }),
     ...(opts.dryRun !== undefined && { dryRun: opts.dryRun }),
   });
 }
@@ -303,6 +324,7 @@ export async function updateRemoteSkill(opts: {
     project: opts.project,
     name: opts.name,
     entry: next,
+    previous: entry,
     dryRun: opts.dryRun,
   });
   return {

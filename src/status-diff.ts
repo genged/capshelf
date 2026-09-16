@@ -56,6 +56,11 @@ interface DiffableStatusRow {
   kind: ItemKind;
   name: string;
   state: string;
+  /**
+   * The pin the row was built from. A remote row is in neither capshelf lock
+   * by A3, so this is the only place its locked identity can be read.
+   */
+  lockedSha?: string;
   sourceCommit?: string;
   currentSha?: string | null;
   upstreamSha?: string | null;
@@ -133,9 +138,17 @@ export async function buildStatusDiff(
   }
 
   const entry = opts.lock.items[`${row.source}/${row.kind}/${row.name}`];
-  const lockedSha = entry
-    ? (("sourcePinDigest" in entry ? entry.sourcePinDigest : entry.sha) ?? null)
-    : null;
+  // A remote row is in neither capshelf lock by A3, so the lookup above always
+  // misses and the locked endpoint would report no pin for a row that has one.
+  // `lockedContentSource` already reads the cache for the diff text; this is
+  // the same fact in the endpoint metadata a scripted consumer compares.
+  const lockedSha =
+    row.source === "remote"
+      ? (row.lockedSha ?? null)
+      : entry
+        ? (("sourcePinDigest" in entry ? entry.sourcePinDigest : entry.sha) ??
+          null)
+        : null;
   const lockedCommit = row.sourceCommit ?? null;
   const base = {
     item: `${row.scope ? `${row.scope}/` : ""}${row.source}/${row.kind}/${row.name}`,

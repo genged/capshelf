@@ -47,6 +47,37 @@ export function matchRefAcrossScopes(
 }
 
 /**
+ * Refuse a bare ref that names a pulled skill and a shelf item at once.
+ *
+ * `remoteKeysForRef` matches on name alone, and `add <url>` only checks
+ * `skills/<name>` against the two locks, so a project can track `mcp/pdf` in
+ * its shelf and pull `skills/pdf` from a URL. `apply` and `update` resolve the
+ * remote row first, so without this the pulled skill would win `capshelf apply
+ * pdf` outright and leave the shelf item unconverged with nothing reported.
+ * `resolveTrackedTarget` already refuses an ambiguous bare ref inside one
+ * population; this is the same rule across two.
+ *
+ * A ref that names its kind is never ambiguous and passes through.
+ */
+export function assertRefNotSplitAcrossPopulations(
+  projectLock: Lock,
+  localLock: Lock,
+  ref: ItemRef,
+  remoteKeys: readonly string[],
+  opts: ScopeFilter = {},
+): void {
+  if (ref.kind !== undefined || remoteKeys.length === 0) return;
+  const shelf = matchRefAcrossScopes(projectLock, localLock, ref, opts);
+  if (shelf.length === 0) return;
+  throw new PreconditionError(
+    `ambiguous item "${ref.name}": found ${[
+      ...shelf.map((match) => `${match.scope}/${match.key}`),
+      ...remoteKeys,
+    ].join(", ")}; use kind/name`,
+  );
+}
+
+/**
  * Resolve a single ref to exactly one tracked target, or throw the standard
  * errors that apply and update must report identically: a skills.sh-managed
  * external skill (PreconditionError, verb-specific message), a ref that isn't

@@ -1,13 +1,14 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { appendFile, readFile, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   addSkill,
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
   commitAll,
   jsonOutput,
+  objectField,
   objectItems,
   runInProcess,
 } from "./cli-fixtures";
@@ -614,6 +615,118 @@ test(
     const output = result.stdout.toString() + result.stderr.toString();
     expect(output).toContain("capshelf status --check-upstream");
     expect(output).not.toContain("not a git repository");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test.each([["apply"], ["update"]])(
+  "%s refuses a bare ref that names a shelf item and a pulled skill",
+  async (verb) => {
+    // `add <url>` only checks `skills/<name>` against the locks, so a project
+    // can hold `pi-extensions/pdf` and pull `skills/pdf`. The remote row is
+    // resolved first, so without the guard the pulled skill wins the bare ref
+    // outright and the shelf item is silently left unconverged.
+    const upstream = await upstreamWith([["skills/pdf", "Extract text"]]);
+    const world = await initRemoteProject();
+    const run = runInProcess(world.project);
+    const extension = join(world.dataRepo, "pi/extensions/pdf");
+    await mkdir(extension, { recursive: true });
+    await writeFile(join(extension, "index.ts"), "export default {};\n");
+    await commitAll(world.dataRepo, "add a pi extension named pdf");
+    expect(
+      (await run(["add", "pi-extensions/pdf", "--json"], world.env)).exitCode,
+    ).toBe(0);
+    expect(
+      (await run(["add", upstream.url, "--yes", "--json"], world.env)).exitCode,
+    ).toBe(0);
+
+    const result = await run([verb, "pdf", "--yes", "--json"], world.env);
+    expect(result.exitCode).toBe(3);
+    const message = result.stderr.toString();
+    expect(message).toContain("ambiguous item");
+    expect(message).toContain("pi-extensions/pdf");
+    expect(message).toContain("remote/skills/pdf");
+
+    // The named forms still resolve to one population each.
+    expect(
+      (await run([verb, "pi-extensions/pdf", "--yes", "--json"], world.env))
+        .exitCode,
+    ).toBe(0);
+    expect(
+      (await run([verb, "skills/pdf", "--yes", "--json"], world.env)).exitCode,
+    ).toBe(0);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "a pin move deletes a hidden path the new commit dropped",
+  async () => {
+    // Without the previous pin, `materializeLockEntry` knows of no path the old
+    // commit managed, so a dropped file the item's own `.gitignore` hides is
+    // classified as the user's and copied forward — leaving the install holding
+    // a file the pin does not name, while the row reads `ok` because the digest
+    // covers pinned paths only.
+    //
+    // The dropping commit also edits `SKILL.md`. A commit that only deleted the
+    // hidden file would change no visible path, and `installedFilesMatch`
+    // enumerates visible files alone, so no write would happen at all and the
+    // test would pass against both implementations.
+    const upstream = await upstreamWith([["skills/pdf", "Extract text"]]);
+    await writeFile(join(upstream.work, "skills/pdf/helper.sh"), "echo old\n");
+    await commitAll(upstream.work, "ship a helper");
+    // A second commit: `git add -A` under this rule would never have staged the
+    // file it ignores. The pin reads the tree, so the helper stays pinned; only
+    // the install-side classification treats it as hidden.
+    await writeFile(join(upstream.work, "skills/pdf/.gitignore"), "*.sh\n");
+    await commitAll(upstream.work, "ignore shell helpers inside the item");
+    await $`git -C ${upstream.work} push -q origin main`.quiet();
+
+    const world = await initRemoteProject();
+    const run = runInProcess(world.project);
+    expect(
+      (await run(["add", upstream.url, "--yes", "--json"], world.env)).exitCode,
+    ).toBe(0);
+    const helper = join(world.project, ".agents/skills/pdf/helper.sh");
+    expect(existsSync(helper)).toBe(true);
+
+    await rm(join(upstream.work, "skills/pdf/helper.sh"));
+    await writeFile(
+      join(upstream.work, "skills/pdf/SKILL.md"),
+      "---\nname: pdf\ndescription: Extract text and tables\n---\nbody\n",
+    );
+    await commitAll(upstream.work, "drop the helper and revise the skill");
+    await $`git -C ${upstream.work} push -q origin main`.quiet();
+    await run(["status", "--check-upstream", "--json"], world.env);
+    expect(
+      (await run(["update", "skills/pdf", "--yes", "--json"], world.env))
+        .exitCode,
+    ).toBe(0);
+
+    expect(existsSync(helper)).toBe(false);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "status --diff reports the pin a pulled skill is locked to",
+  async () => {
+    const { world, run, installPath } = await installed();
+    await appendFile(join(installPath, "SKILL.md"), "\n- local note\n");
+
+    const result = await run(
+      ["status", "skills/pdf", "--diff", "--json"],
+      world.env,
+    );
+    expect(result.exitCode).toBe(0);
+    const report = jsonOutput(result);
+    const row = objectItems(report, "items").find(
+      (candidate) => candidate.name === "pdf",
+    )!;
+    const from = objectField(objectItems(report, "diffs")[0]!, "from");
+    // Null here told a scripted consumer the row had no pin, when it has one.
+    expect(from.sha).toBe(row.lockedSha);
+    expect(from.sha).not.toBeNull();
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );

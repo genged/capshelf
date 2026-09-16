@@ -68,7 +68,10 @@ import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
 import { PreconditionError, ResultExitError } from "../errors";
 import { assertLocalScopeSupported } from "../local-config";
 import { findMasterItemByRef, parseItemRef } from "../item-ref";
-import { resolveTrackedTarget } from "../targets";
+import {
+  assertRefNotSplitAcrossPopulations,
+  resolveTrackedTarget,
+} from "../targets";
 import type { ScopedTarget } from "../targets";
 import {
   assertNoPreservedPathCollisions,
@@ -212,6 +215,16 @@ export function registerUpdate(program: Command): void {
         // would change the return type for `apply` and `status` at once.
         const remotes = await loadRemotesLock(project);
         const remoteTargets = resolveRemoteTargets(remotes, refs);
+        for (const itemRef of refs) {
+          const ref = parseItemRef(itemRef);
+          assertRefNotSplitAcrossPopulations(
+            projectLock,
+            localLock,
+            ref,
+            remoteKeysForRef(remotes, ref),
+            { local: opts.local },
+          );
+        }
         const remoteNames = new Set(remoteTargets.map((target) => target.name));
         const shelfRefs = refs.filter(
           (itemRef) => !remoteNames.has(parseItemRef(itemRef).name),

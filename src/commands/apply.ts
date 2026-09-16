@@ -24,7 +24,10 @@ import type { Manifest } from "../manifest";
 import { assertNoScopeCollisions } from "../status-core";
 import { PreconditionError, ResultExitError } from "../errors";
 import { parseItemRef } from "../item-ref";
-import { resolveTrackedTarget } from "../targets";
+import {
+  assertRefNotSplitAcrossPopulations,
+  resolveTrackedTarget,
+} from "../targets";
 import type { ScopedTarget } from "../targets";
 import { materializeLockEntry } from "../materialize";
 import { remoteCacheState } from "../remote-cache";
@@ -175,6 +178,16 @@ export function registerApply(program: Command): void {
             ? Object.keys(remotes.items)
             : remoteKeysForRef(remotes, parseItemRef(itemRef))
         ).map((key) => ({ key, name: parseRemoteKey(key).name }));
+
+        if (itemRef) {
+          assertRefNotSplitAcrossPopulations(
+            projectLock,
+            localLock,
+            parseItemRef(itemRef),
+            remoteTargets.map((target) => target.key),
+            { local: opts.local },
+          );
+        }
 
         let targets: ScopedTarget[];
         if (itemRef && remoteTargets.length > 0) {
