@@ -126,6 +126,26 @@ export async function loadClaudeMarketplaceAtHead(
   return parseClaudeMarketplace(raw.toString("utf8"));
 }
 
+/**
+ * The document at an arbitrary commit, for a repository capshelf does not own.
+ *
+ * A parse failure stays a throw here. Whether a caller can continue without
+ * the document is the caller's question: discovery in a third-party repository
+ * warns and carries on, and the shelf's own commands do not.
+ */
+export async function loadClaudeMarketplaceAtCommit(
+  repo: string,
+  commit: string,
+): Promise<ClaudeMarketplace> {
+  let raw: Buffer;
+  try {
+    raw = await showAtCommit(repo, commit, ".claude-plugin/marketplace.json");
+  } catch {
+    throw new NotFoundError("Claude marketplace is not present at that commit");
+  }
+  return parseClaudeMarketplace(raw.toString("utf8"));
+}
+
 function parseClaudeMarketplace(raw: string): ClaudeMarketplace {
   let parsed: unknown;
   try {
