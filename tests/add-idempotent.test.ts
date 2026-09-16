@@ -239,8 +239,12 @@ describe("standalone add convergence", () => {
       expect(stderr).toContain('"vercel-labs" is not an item kind');
       expect(stderr).toContain("owner/repo shorthand is ambiguous");
       expect(stderr).toContain("capshelf add skills/agent-skills");
-      // The hint must not promise a command that does not exist yet.
-      expect(stderr).not.toContain("https://github.com");
+      // The URL form now exists, so the hint names it. The positive assertion
+      // lives in `tests/cli-remote-add.test.ts`, where the command it names is
+      // actually run.
+      expect(stderr).toContain(
+        "capshelf add https://github.com/vercel-labs/agent-skills",
+      );
 
       // A refusal leaves owned state byte identical.
       expect(await file(lockPath).text()).toBe(lockBefore);

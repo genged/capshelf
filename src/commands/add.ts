@@ -107,6 +107,8 @@ import type {
   FragmentTarget,
 } from "../fragments";
 import { isBundleRef, loadBundleStrict, memberRef } from "../bundles";
+import { isRemoteSkillUrl } from "../remote-url";
+import { addRemoteSkill } from "./add-remote";
 import { loadPickCatalog } from "../pick-catalog";
 import {
   pickItems,
@@ -135,6 +137,29 @@ interface AddOptions {
   local?: boolean;
   target?: string;
   yes?: boolean;
+  /** Remote URL only. Refused on every shelf-item path below. */
+  as?: string;
+  ref?: string;
+  path?: string;
+  list?: boolean;
+}
+
+/** The four flags that mean nothing without a URL, for one shared refusal. */
+const REMOTE_ONLY_FLAGS = ["--as", "--ref", "--path", "--list"] as const;
+
+function assertNoRemoteOnlyFlags(opts: AddOptions, subject: string): void {
+  for (const [flag, value] of [
+    ["--as", opts.as],
+    ["--ref", opts.ref],
+    ["--path", opts.path],
+    ["--list", opts.list],
+  ] as const) {
+    if (value !== undefined) {
+      throw new PreconditionError(
+        `add ${flag} applies to a repository URL only; ${subject}`,
+      );
+    }
+  }
 }
 
 /** Everything the single-item installer needs; loaded once per command. */
@@ -175,6 +200,13 @@ export function registerAdd(program: Command): void {
       "--target <target>",
       "target selection is not supported for add; subagents install all targets",
     )
+    .option("--as <name>", "install the remote skill under a different name")
+    .option("--ref <ref>", "branch or tag to install from (remote URL only)")
+    .option(
+      "--path <subpath>",
+      "repository subdirectory to install (remote URL only)",
+    )
+    .option("--list", "list a repository's skills and exit (remote URL only)")
     .option("--json", "output JSON")
     .action(
       async (itemRef: string | undefined, opts: AddOptions, cmd: Command) => {
@@ -188,6 +220,10 @@ export function registerAdd(program: Command): void {
               "add --target is not supported; subagents and bundles install all available targets",
             );
           }
+          assertNoRemoteOnlyFlags(
+            opts,
+            `it names none (${REMOTE_ONLY_FLAGS.join(", ")} need a URL)`,
+          );
           // `--json` names a scripted caller, and a script cannot answer a
           // prompt. Refusing beats printing a picker to stderr and an empty
           // result to stdout, which reads as "the shelf is empty".
@@ -240,9 +276,19 @@ async function addOne(
         "add --target is not supported; subagents and bundles install all available targets",
       );
     }
+    assertNoRemoteOnlyFlags(opts, `${itemRef} names a bundle`);
     await addBundle(bundleName, opts, cmd);
     return;
   }
+
+  // A URL is classified before the ref parser runs, the same way a bundle ref
+  // is: the parser reserves ":" and would refuse every URL in its own argument.
+  if (isRemoteSkillUrl(itemRef)) {
+    await addRemoteSkill(itemRef, opts, cmd);
+    return;
+  }
+
+  assertNoRemoteOnlyFlags(opts, `${itemRef} names a shelf item`);
 
   const shorthand = nonKindRefRefusal(itemRef);
   if (shorthand) throw shorthand;
@@ -1279,8 +1325,8 @@ function nonKindRefRefusal(itemRef: string): PreconditionError | null {
     {
       hint:
         "owner/repo shorthand is ambiguous with kind/name here\n" +
-        `  name a shelf item instead: capshelf add skills/${name}\n` +
-        "  or run capshelf ls to see the shelf",
+        `  pass the full URL: capshelf add https://github.com/${kind}/${name}\n` +
+        `  or name a shelf item instead: capshelf add skills/${name}`,
     },
   );
 }

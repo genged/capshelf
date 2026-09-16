@@ -161,6 +161,20 @@ export async function askQuestion(
   return await context.prompt(message);
 }
 
+/**
+ * The confirmation context in force.
+ *
+ * A consent gate that is not a destructive-change plan — the pulled-skill
+ * install gate, where nothing is destroyed and the question is whether to run
+ * someone else's code — still has to ask through this one seam, or it becomes
+ * a second prompt mechanism with its own untestable TTY branch.
+ */
+export function confirmationContext(): DestructiveConfirmationContext {
+  return (
+    installedConfirmationContext ?? defaultDestructiveConfirmationContext()
+  );
+}
+
 export async function confirmDestructiveChanges(
   plan: DestructiveChangePlan,
   options: DestructiveConfirmationOptions,
