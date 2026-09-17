@@ -130,7 +130,7 @@ describe("actionsForRow", () => {
   });
 });
 
-describe("actionsForRow for a pulled skill", () => {
+describe("actionsForRow for a remote skill", () => {
   const remoteRow = (overrides: Partial<StatusRow> & { state: State }) =>
     row({
       scope: "local",
@@ -148,11 +148,11 @@ describe("actionsForRow for a pulled skill", () => {
       ...overrides,
     });
 
-  test("an up-to-date pulled skill has nothing to run", () => {
+  test("an up-to-date remote skill has nothing to run", () => {
     expect(actionsForRow(remoteRow({ state: "ok" }))).toEqual([]);
   });
 
-  test("a drifted pulled skill is adopted or reapplied, never promoted", () => {
+  test("a drifted remote skill is adopted or reapplied, never promoted", () => {
     const actions = commands(
       actionsForRow(remoteRow({ state: "drifted_local" })),
     );
@@ -165,7 +165,7 @@ describe("actionsForRow for a pulled skill", () => {
     expect(actions.join(" ")).not.toContain("revert");
   });
 
-  test("a drifted pulled skill with an update offers the merge first", () => {
+  test("a drifted remote skill with an update offers the merge first", () => {
     expect(
       commands(actionsForRow(remoteRow({ state: "drifted_and_update" }))),
     ).toEqual([
@@ -181,7 +181,7 @@ describe("actionsForRow for a pulled skill", () => {
     ).toEqual(["capshelf update skills/pdf"]);
   });
 
-  test("a pulled skill gone upstream offers removal, never a shelf command", () => {
+  test("a remote skill gone upstream offers removal, never a shelf command", () => {
     const actions = commands(
       actionsForRow(remoteRow({ state: "missing_upstream" })),
     );
@@ -216,7 +216,7 @@ describe("actionsForRow for a pulled skill", () => {
     expect(actions).toEqual(["capshelf share skills/pdf --adopt"]);
   });
 
-  test("a pulled skill never gets the needs-update action", () => {
+  test("a remote skill never gets the needs-update action", () => {
     expect(
       commands(
         actionsForRow(

@@ -96,7 +96,7 @@ export function defaultClonePath(
 
 /**
  * The per-upstream directory segments under a cache root. Shared with the
- * pulled-skill cache so one upstream cannot land in two differently shaped
+ * remote-skill cache so one upstream cannot land in two differently shaped
  * paths depending on which command created it.
  */
 export function cloneRelativeSegments(upstream: string): string[] {
@@ -128,7 +128,7 @@ export interface EnsureCloneResult {
 /**
  * How a caller names the clone it owns, in the three refusals below.
  *
- * The validator is shared with the pulled-skill cache, and its repair is not:
+ * The validator is shared with the remote-skill cache, and its repair is not:
  * `capshelf init --data <local-path>` fixes a data repo cache and has nothing
  * to do with a skill pulled from a URL. Duplicating the validator to change
  * three sentences would put two origin checks in the codebase, so the wording

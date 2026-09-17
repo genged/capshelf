@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# One non-interactive pass over the pulled-skill workflow: install from a
+# One non-interactive pass over the remote-skill workflow: install from a
 # repository URL, list, report offline, check the upstream, move the pin, and
 # transfer ownership into the shelf.
 #
@@ -122,7 +122,7 @@ test -z "$(git -C "$DATA" status --porcelain)"
 # before it snapshots through project Git, is covered in cli-remote-lifecycle.
 assert_fixed_contains '.agents/skills/pdf/' "$P/.git/info/exclude"
 
-# --- rm removes a pulled skill, its alias, and its row ---
+# --- rm removes a remote skill, its alias, and its row ---
 (cd "$P" && "${CLI[@]}" add "$UPSTREAM_URL" --path skills/xlsx --yes --json >/dev/null)
 test -f "$P/.agents/skills/xlsx/SKILL.md"
 (cd "$P" && "${CLI[@]}" rm skills/xlsx --yes --json > "$TMP/rm.json")

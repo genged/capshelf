@@ -220,7 +220,7 @@ export async function shareCopyItem(
   // Steps 4 to 7. The order is the property that makes an interrupted run
   // recoverable, and every step here runs before the data repo is resolved:
   // pulling needs no shelf, and only adopting does.
-  // A plain `share` of a pulled skill would commit its bytes to the shelf and
+  // A plain `share` of a remote skill would commit its bytes to the shelf and
   // leave the remote row in place — the two-owner state the product itself
   // labels "an adopt did not finish" and fails `--strict` on, reached by a
   // documented command rather than by an interruption. `--adopt` is the one
@@ -305,7 +305,7 @@ export async function shareCopyItem(
 
   // Before the snapshot, not after the commit, and unconditional the way
   // `move --to project` drops it. A project-scope adopt reads the installed
-  // item through project Git, and `add <url>` excludes every pulled skill's
+  // item through project Git, and `add <url>` excludes every remote skill's
   // install path — so a line left in place makes Git report an empty directory
   // and the adopt writes nothing to copy. It has to go for the destination's
   // sake too: a project-scope item named in `.git/info/exclude` is skipped by
@@ -577,7 +577,7 @@ async function warnAboutMissingLicense(
   // the installed directory alone — claiming the root was checked would be a
   // statement about work that never happened.
   console.error(
-    `⚠ no license file in the pulled item${
+    `⚠ no license file in the remote item${
       inspectedRoot ? ` or at the ${owner.provenance.upstream} root` : ""
     }`,
   );

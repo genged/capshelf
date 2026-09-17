@@ -90,11 +90,11 @@ export async function addRemoteSkill(
 ): Promise<void> {
   if (opts.target) {
     throw new PreconditionError(
-      "add --target is not supported; a pulled skill installs one directory",
+      "add --target is not supported; a remote skill installs one directory",
     );
   }
   // Deliberately not `loadAddContext`: that resolves a data repo, and D7 says
-  // a pulled skill needs none.
+  // a remote skill needs none.
   const project = projectRoot();
   const parsed = parseRemoteSkillUrl(input);
 

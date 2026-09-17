@@ -474,7 +474,7 @@ export function registerRm(program: Command): void {
 }
 
 /**
- * Remove a pulled skill: the install, its compatibility alias, its exclude
+ * Remove a remote skill: the install, its compatibility alias, its exclude
  * lines, and its row.
  *
  * A cold cache must not stop this. The locked file set is only used to label a

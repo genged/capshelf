@@ -400,7 +400,7 @@ describe("capshelf ui server", () => {
   });
 
   test(
-    "a pulled skill reaches the client as source: remote",
+    "a remote skill reaches the client as source: remote",
     async () => {
       // Its own project and its own server: the shared world above is the
       // fixture every other test in this file reads, and a remote row in it

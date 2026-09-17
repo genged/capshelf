@@ -33,7 +33,7 @@ export function ItemPanel({
     [],
   );
   const { row } = item;
-  // A pulled skill's upstream is a third-party repository, so it is not the
+  // A remote skill's upstream is a third-party repository, so it is not the
   // shelf. The arrow and the fact row below name whichever it actually is.
   const upstreamWord = item.source === "remote" ? "upstream" : "shelf";
   const showUpstream =

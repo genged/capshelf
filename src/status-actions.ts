@@ -53,7 +53,7 @@ export function actionsForRow(
   };
   const system = row.source === "system";
 
-  // A pulled skill gets its own branch rather than falling through the
+  // A remote skill gets its own branch rather than falling through the
   // shelf-owned one. Every command below that names the shelf — `promote`,
   // `keep-local`, `revert` — refuses for a remote row, so listing them would
   // turn the status output into a set of dead ends the user is invited to run.

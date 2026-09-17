@@ -93,14 +93,14 @@ test(
 );
 
 /**
- * A pulled skill opens its own gate, not the destructive-change planner above:
+ * A remote skill opens its own gate, not the destructive-change planner above:
  * a fresh install destroys nothing, so the question is new. It is also the one
  * gate that authorizes content nobody on the team reviewed to run with the
  * user's permissions, so both answers are driven on a terminal here. Every
  * other cell reaches this path with `--yes`, which never asks.
  */
 test(
-  "with a terminal, a pulled skill states its facts, asks once, and a refusal writes nothing",
+  "with a terminal, a remote skill states its facts, asks once, and a refusal writes nothing",
   async () => {
     declareEvidence({
       scenario: SCENARIO,
@@ -167,7 +167,7 @@ test(
       expectOutputContains(declined, "does not review this content");
       expectOutputContains(declined, "Install it? [y/N]");
       expectOutputContains(declined, "nothing was installed");
-      expectSameState(before, await snapshot(), "a declined pulled skill");
+      expectSameState(before, await snapshot(), "a declined remote skill");
 
       const accepted = await runInPty(
         world,

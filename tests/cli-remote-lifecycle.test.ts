@@ -621,11 +621,11 @@ test(
 );
 
 test.each([["apply"], ["update"]])(
-  "%s refuses a bare ref that names a shelf item and a pulled skill",
+  "%s refuses a bare ref that names a shelf item and a remote skill",
   async (verb) => {
     // `add <url>` only checks `skills/<name>` against the locks, so a project
     // can hold `pi-extensions/pdf` and pull `skills/pdf`. The remote row is
-    // resolved first, so without the guard the pulled skill wins the bare ref
+    // resolved first, so without the guard the remote skill wins the bare ref
     // outright and the shelf item is silently left unconverged.
     const upstream = await upstreamWith([["skills/pdf", "Extract text"]]);
     const world = await initRemoteProject();
@@ -723,7 +723,7 @@ test(
 );
 
 test(
-  "status --diff reports the pin a pulled skill is locked to",
+  "status --diff reports the pin a remote skill is locked to",
   async () => {
     const { world, run, installPath } = await installed();
     await appendFile(join(installPath, "SKILL.md"), "\n- local note\n");
@@ -746,7 +746,7 @@ test(
 );
 
 test(
-  "share without --adopt refuses a pulled skill instead of making two owners",
+  "share without --adopt refuses a remote skill instead of making two owners",
   async () => {
     // A plain share would commit the bytes to the shelf and leave the remote
     // row in place: the state status labels "an adopt did not finish", reached
@@ -990,7 +990,7 @@ test(
 );
 
 test(
-  "rm refuses a name the shelf and a pulled copy both own",
+  "rm refuses a name the shelf and a remote copy both own",
   async () => {
     // Letting the shelf path win deleted the install and the lock entry while
     // the remote row survived, pointing at a directory that no longer exists:
@@ -1050,7 +1050,7 @@ test(
 );
 
 test(
-  "apply and update leave a pulled skill alone once skills.sh claims the name",
+  "apply and update leave a remote skill alone once skills.sh claims the name",
   async () => {
     // `add <url>` checks skills.sh at install time, but skills.sh can claim the
     // name afterwards. Both tools then write `.agents/skills/pdf`, and

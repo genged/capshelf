@@ -61,7 +61,7 @@ export type NeedsState =
  * Which population a status row belongs to.
  *
  * `ItemSource` is a lock key prefix: it says which capshelf lock owns the
- * record. A pulled skill lives in a different document, so it is not an
+ * record. A remote skill lives in a different document, so it is not an
  * `ItemSource` at all and `parseLockKey` is right to refuse `remote/…`. Only
  * the reporting row widens.
  */

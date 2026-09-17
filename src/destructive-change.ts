@@ -164,7 +164,7 @@ export async function askQuestion(
 /**
  * The confirmation context in force.
  *
- * A consent gate that is not a destructive-change plan — the pulled-skill
+ * A consent gate that is not a destructive-change plan — the remote-skill
  * install gate, where nothing is destroyed and the question is whether to run
  * someone else's code — still has to ask through this one seam, or it becomes
  * a second prompt mechanism with its own untestable TTY branch.

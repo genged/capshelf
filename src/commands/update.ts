@@ -364,7 +364,7 @@ export function registerUpdate(program: Command): void {
           writableLocalLock,
         );
         if (opts.dryRun) {
-          // Remote rows preview here too. Without this a dry run on a pulled
+          // Remote rows preview here too. Without this a dry run on a remote
           // skill prints "(no items tracked)" and exits 0 while the real run
           // would move the pin and rewrite files, so the preview would
           // disagree with the command it previews.
@@ -888,13 +888,13 @@ function remoteResult(
   };
 }
 
-/** A pulled skill has nowhere to promote to, so its next step is the adopt. */
+/** A remote skill has nowhere to promote to, so its next step is the adopt. */
 function printRemoteAdoptGuidance(results: UpdateResult[]): void {
   for (const result of results) {
     if (result.source !== "remote") continue;
     if (result.action !== "updated" && result.action !== "merged") continue;
     console.log(
-      `  promote is not available for a pulled skill. to keep it permanently: ${PRODUCT_NAME} share ${result.kind}/${result.name} --adopt`,
+      `  promote is not available for a remote skill. to keep it permanently: ${PRODUCT_NAME} share ${result.kind}/${result.name} --adopt`,
     );
   }
 }
@@ -906,7 +906,7 @@ function printRemoteSkipHint(results: UpdateResult[]): void {
   );
   if (skipped.length === 0) return;
   console.log(
-    `  ${skipped.length} pulled ${skipped.length === 1 ? "skill was" : "skills were"} left alone; a sweep never accepts new third-party content`,
+    `  ${skipped.length} remote ${skipped.length === 1 ? "skill was" : "skills were"} left alone; a sweep never accepts new third-party content`,
   );
   console.log(
     `  move one: ${PRODUCT_NAME} update ${skipped[0]!.kind}/${skipped[0]!.name}`,
@@ -1980,7 +1980,7 @@ function printUpdateResults(results: UpdateResult[]): void {
       console.log(`  base: ${r.mergeBase}`);
       console.log(`  upstream pin: ${r.mergedUpstreamCommit}`);
       console.log(`  installed result: ${r.mergeResultSha}`);
-      // A pulled skill has no `--local` form and nowhere to promote to, so both
+      // A remote skill has no `--local` form and nowhere to promote to, so both
       // lines are built for its one shape. `printRemoteAdoptGuidance` names the
       // adopt for it after the loop.
       const scopeFlag =

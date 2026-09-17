@@ -171,7 +171,7 @@ export async function buildStatusDiff(
         to: { role: "upstream", sha: null, sourceCommit: null },
         text: null,
         unavailableReason:
-          "an upstream diff for a pulled skill needs a fetch; run capshelf status --check-upstream first",
+          "an upstream diff for a remote skill needs a fetch; run capshelf status --check-upstream first",
       };
     }
     if (row.source !== "data" || !isCopyDirectoryItemKind(row.kind)) {
@@ -623,7 +623,7 @@ async function expectedFilesForRow(
 function lockedContentSource(opts: StatusDiffOptions): ContentSource | null {
   const { row } = opts;
   // A remote row is in neither capshelf lock by A3, so looking it up there
-  // would always return null and silently report "no diff" for every pulled
+  // would always return null and silently report "no diff" for every remote
   // skill. Its bytes are in the clone cache at its own item root.
   if (row.source === "remote") {
     if (row.remote === undefined || row.sourceCommit === undefined) return null;

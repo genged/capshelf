@@ -1,5 +1,5 @@
 /**
- * Pin, install, and reconcile one pulled skill.
+ * Pin, install, and reconcile one remote skill.
  *
  * A remote row reuses the copy-directory machinery rather than growing a second
  * reconciler. `materializeLockEntry` and `copyDirectoryReconciliationFiles`
@@ -196,10 +196,10 @@ export function coldCacheRefusal(
 }
 
 /**
- * The refusal a verb with nowhere to publish prints for a pulled skill.
+ * The refusal a verb with nowhere to publish prints for a remote skill.
  *
  * `promote`, `move`, `keep-local`, and `revert` all act on an item the shelf
- * owns. A pulled skill's upstream is a repository nobody on the team can
+ * owns. A remote skill's upstream is a repository nobody on the team can
  * publish to, and its record is a different document, so `share --adopt` is the
  * one exit. Every verb prints the same two facts, so they cannot drift apart.
  */
@@ -209,7 +209,7 @@ export function remoteVerbRefusal(
 ): PreconditionError {
   const ref = `${REMOTE_ITEM_KIND}/${name}`;
   return new PreconditionError(
-    `not ${verb} ${ref} — it is a pulled skill, tracked in ${METADATA_DIR}/${REMOTES_LOCK_FILE} rather than in your shelf`,
+    `not ${verb} ${ref} — it is a remote skill, tracked in ${METADATA_DIR}/${REMOTES_LOCK_FILE} rather than in your shelf`,
     {
       hint:
         `take ownership of it first: ${PRODUCT_NAME} share ${ref} --adopt\n` +

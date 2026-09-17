@@ -56,7 +56,7 @@ export function describe(r: StatusRow): string {
     case "ok":
       return "up-to-date";
     case "missing_source_commit":
-      // A pulled skill's source is a clone cache on this machine, not the
+      // A remote skill's source is a clone cache on this machine, not the
       // shelf. Naming the data repo would send the user to a repository that
       // never held the item.
       return r.source === "remote"
@@ -303,9 +303,9 @@ function formatRow(r: StatusRow): string[] {
 }
 
 /**
- * Where a pulled skill came from, and what the user can do about it.
+ * Where a remote skill came from, and what the user can do about it.
  *
- * `promote` has nowhere to go for a pulled skill, so a drifted row names
+ * `promote` has nowhere to go for a remote skill, so a drifted row names
  * `share --adopt` instead. An unfinished adopt is D18's warning line.
  */
 function remoteRowDetail(r: StatusRow): string[] {
@@ -331,7 +331,7 @@ function remoteRowDetail(r: StatusRow): string[] {
     r.state === "drifted_and_upstream_dirty"
   ) {
     lines.push(
-      "      a pulled skill cannot be promoted. to keep this edit:",
+      "      a remote skill cannot be promoted. to keep this edit:",
       `        capshelf share ${r.kind}/${r.name} --adopt`,
     );
   }

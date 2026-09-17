@@ -97,7 +97,7 @@ export function registerStatus(program: Command): void {
           if (!opts.json) printFetches(check.fetches);
           // Only when something was measured. `checkRemoteUpstreams` produces
           // one entry per distinct upstream, so an empty list means the project
-          // holds no pulled skills — and `saveRemotesLock` would then create the
+          // holds no remote skills — and `saveRemotesLock` would then create the
           // record *and* append a line to the committed `.capshelf/.gitignore`,
           // leaving a dirty worktree behind a command that only reports.
           if (check.fetches.length > 0) {

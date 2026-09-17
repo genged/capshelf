@@ -116,14 +116,14 @@ the content and who owns the record.
 
 The first two populations live in the same lockfile with different entry
 schemas (see Lock below), and they differ on both axes at once, so one field
-could answer both questions. The third separates them: a pulled skill is
+could answer both questions. The third separates them: a remote skill is
 git-tree sourced like a data item and unpublishable like a system item.
 
-A pulled skill is pinned by the same committed-tree digest every other item
+A remote skill is pinned by the same committed-tree digest every other item
 uses. Its record is `.capshelf/remotes.lock.json`, schema version 1, which is
 gitignored: every row is local scope, and a teammate who clones the project
 gets none of them. The version 4 project lock is untouched, so no project
-migrates because a pulled skill exists. `share --adopt` is the one exit.
+migrates because a remote skill exists. `share --adopt` is the one exit.
 
 Both values are derived in memory when a lock entry is read
 (`src/item-source.ts`). Ownership comes from two facts already on disk: which
@@ -133,7 +133,7 @@ written, no lock format changes, and identity is untouched.
 A code path that asks *where are the bytes* uses `isGitTree(source)`. A path
 that asks *may the user publish this* reads the entry. The item root travels in
 the content source rather than being derived from the kind and the name, and a
-pulled skill is its first non-canonical producer: its bytes live at whatever
+remote skill is its first non-canonical producer: its bytes live at whatever
 subpath the URL named.
 
 ### Data repo layout

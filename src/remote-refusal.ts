@@ -1,5 +1,5 @@
 /**
- * The one gate the shelf-owning verbs share for a pulled skill.
+ * The one gate the shelf-owning verbs share for a remote skill.
  *
  * `promote`, `move`, `keep-local`, and `revert` each resolve a ref against the
  * capshelf locks, and a remote row is in neither by A3. Without this gate each

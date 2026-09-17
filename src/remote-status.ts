@@ -1,5 +1,5 @@
 /**
- * Status rows for pulled skills.
+ * Status rows for remote skills.
  *
  * Offline by construction. Everything here reads the clone cache the install
  * left behind and the record in `.capshelf/remotes.lock.json`; `status

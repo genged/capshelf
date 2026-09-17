@@ -222,7 +222,7 @@ registered.
 | `ls` | list items in master plus user-level runtime skills by default, in this project (`--here`), or user-level runtime skills only (`--user`); master/project listings show descriptions and `#tags` from item metadata; `--tag` filters master/project listings; appends a `bundles/` section for data-repo bundles | implemented |
 | `show <item>` | print metadata + content for one item, including relations and current/locked declared needs, plus runtime target coverage for MCP and subagents; `--target` narrows to one runtime | implemented |
 | `search <query...>` | search available items (data repo + system) and bundles by name, tags, description, and content; supports `--kind` and `--json`; zero matches exit 0 | implemented |
-| `status [<item>]` | drift / update report plus orthogonal `needsState` freshness and locked needs; subagent JSON includes deterministic per-target state; a sub-line names any runtime target an MCP or subagent item does not cover; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` shows locked-to-installed and locked-to-upstream comparisons; `--diff-view installed\|upstream\|all` selects a comparison; `--check-upstream` fetches every tracked remote repository and reports which pulled skills moved | implemented |
+| `status [<item>]` | drift / update report plus orthogonal `needsState` freshness and locked needs; subagent JSON includes deterministic per-target state; a sub-line names any runtime target an MCP or subagent item does not cover; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` shows locked-to-installed and locked-to-upstream comparisons; `--diff-view installed\|upstream\|all` selects a comparison; `--check-upstream` fetches every tracked remote repository and reports which remote skills moved | implemented |
 | `add [item]` | install a new item from the bound data repo, materializing exactly what the pin contains; with no item, opens the interactive picker (see The picker); MCP and subagent installs report per-runtime target coverage; an already-installed standalone item is a byte- and lock-stable no-op; `--local` installs a clone-local copy item; `--yes` authorizes collateral fragment-output loss for a new fragment, standalone or expanded from a bundle; a ref whose first segment is not an item kind is refused with exit 3 and the supported kinds, because `owner/repo` shorthand is shaped exactly like `kind/name`; a repository URL instead of a ref installs a skill from outside the shelf, with `--as`, `--ref`, `--path`, and `--list` | implemented |
 | `rm <item>` | remove a locked data item and report every output it reconciled; clean reproducible content is prompt-free, while local edits, modes, extra paths, subagent drift, and fragment comment loss require consent or `--yes` | implemented |
 | `get-path <item>` | print the editable path; subagents and MCP support `--target`, while `--output` returns the corresponding runtime output | implemented |
@@ -1508,7 +1508,7 @@ because a routine sweep across a project must not become interactive. `--yes`
 answers the question in both cases. In a non-TTY run, including `--json`, it is
 the only thing that does.
 
-A pulled skill cannot be promoted: its upstream is a repository nobody on your
+A remote skill cannot be promoted: its upstream is a repository nobody on your
 team can publish to. `promote`, `move`, `keep-local`, `revert`, and a `share`
 without `--adopt` all refuse one and name `capshelf share skills/<name>
 --adopt`. That flag vendors the installed bytes into your shelf, records
@@ -1522,7 +1522,7 @@ The adopt lands in local scope, like every other skill share without `--to`.
 install path from `.git/info/exclude` that `add <url>` wrote: a project-scope
 item Git is told to ignore is never committed with the project.
 
-Capshelf does not review pulled content. There is no registry, no signing, and
+Capshelf does not review a remote skill. There is no registry, no signing, and
 no scanning. The consent prompt prints the facts and asks once. That is the
 whole control.
 

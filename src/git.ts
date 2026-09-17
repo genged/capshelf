@@ -1371,7 +1371,7 @@ export interface FetchResult {
  *
  * Without pruning, a branch or tag deleted upstream keeps resolving from the
  * stale remote-tracking ref the clone already holds, so a freshness check
- * reports a ref that no longer exists as healthy. That matters for the pulled-
+ * reports a ref that no longer exists as healthy. That matters for the remote-
  * skill cache, which capshelf derives and owns outright. A user's data-repo
  * clone is not ours to prune: `--prune-tags` there would delete tags they
  * created locally.

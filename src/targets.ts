@@ -49,12 +49,12 @@ export function matchRefAcrossScopes(
 }
 
 /**
- * Refuse a bare ref that names a pulled skill and a shelf item at once.
+ * Refuse a bare ref that names a remote skill and a shelf item at once.
  *
  * `remoteKeysForRef` matches on name alone, and `add <url>` only checks
  * `skills/<name>` against the two locks, so a project can track `mcp/pdf` in
  * its shelf and pull `skills/pdf` from a URL. `apply` and `update` resolve the
- * remote row first, so without this the pulled skill would win `capshelf apply
+ * remote row first, so without this the remote skill would win `capshelf apply
  * pdf` outright and leave the shelf item unconverged with nothing reported.
  * `resolveTrackedTarget` already refuses an ambiguous bare ref inside one
  * population; this is the same rule across two.
@@ -96,7 +96,7 @@ export function splitPopulationRefusal(
   owners: readonly string[],
 ): PreconditionError {
   return new PreconditionError(
-    `ambiguous item "${name}": the shelf and a pulled copy both own it — ${owners.join(", ")}`,
+    `ambiguous item "${name}": the shelf and a remote copy both own it — ${owners.join(", ")}`,
     {
       hint: `leave one owner: ${PRODUCT_NAME} share ${REMOTE_ITEM_KIND}/${name} --adopt`,
     },

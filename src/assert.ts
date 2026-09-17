@@ -59,7 +59,7 @@ export function assertSafeItemName(name: string, context?: string): void {
  * repository root and is the one segment that may be a bare dot.
  *
  * The root becomes a git pathspec and a `posix.relative` base, and for a
- * pulled skill it arrives from a URL a user pasted. A root that escapes the
+ * remote skill it arrives from a URL a user pasted. A root that escapes the
  * repository, is absolute, or looks like a CLI option must be rejected before
  * it reaches either.
  */

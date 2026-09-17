@@ -99,7 +99,7 @@ interface ApplyExternalSkip {
 }
 
 /**
- * A pulled skill's row. `MaterializeResult.source` is an `ItemSource`, which a
+ * A remote skill's row. `MaterializeResult.source` is an `ItemSource`, which a
  * remote row is not, so the reporting row is its own variant rather than a
  * widening of the writer's result type.
  */
@@ -130,7 +130,7 @@ interface ApplyPreflightInput {
   localLock: Lock;
   dataRepo: string | undefined;
   targets: ScopedTarget[];
-  /** Pulled skills, resolved outside the capshelf locks by A3. */
+  /** Remote skills, resolved outside the capshelf locks by A3. */
   remoteTargets: RemoteApplyTarget[];
   remotes: RemotesLock;
   externalSkillNames: Set<string>;
@@ -831,7 +831,7 @@ async function planApplyPreflight(
     snapshotParts.push(...planned.snapshotParts);
   }
 
-  // Pulled skills, after the shelf pass. Their bytes are in the clone cache,
+  // Remote skills, after the shelf pass. Their bytes are in the clone cache,
   // so the planner takes a git-tree source at the recorded subpath: before the
   // caller supplied one it would have planned against `skills/<name>` in the
   // cache, which is a different tree or no tree at all.

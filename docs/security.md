@@ -97,7 +97,7 @@ that boundary:
   is the only way `add` reaches the network: no project state can make a
   command networked. `apply`, `update`, `promote`, and a bare `status` never
   open a connection, whatever the project holds.
-- **A pulled skill carries no review.** `capshelf add <url>` installs code from
+- **A remote skill carries no review.** `capshelf add <url>` installs code from
   a repository nobody on your team reviewed. There is no registry, no signing,
   and no scanning. Before the install, capshelf prints the repository, the
   commit, the subpath, the install path, the file list with sizes, the

@@ -7,7 +7,7 @@ layer replaces another.
 |---|---|---|---|
 | Unit | `tests/` | Pure functions and schemas | Rules, parsing, and edge cases |
 | Integration | `tests/` | Modules and the CLI entry point in process | Wiring, fault injection, and coverage |
-| Smoke | `scripts/smoke-*.sh` | `bun run src/cli.ts` | Command workflows from source, including `scripts/smoke-remote.sh` for pulled skills |
+| Smoke | `scripts/smoke-*.sh` | `bun run src/cli.ts` | Command workflows from source, including `scripts/smoke-remote.sh` for remote skills |
 | End-to-end | `e2e/` | One compiled executable | The packaged program a user installs |
 
 Every layer needs the web UI bundle, because the CLI entry point imports it.
@@ -105,7 +105,7 @@ recorder, and the evidence report. `e2e/harness/` self-tests it, so a harness
 fault names the harness instead of surfacing as a scenario that did not prompt.
 `e2e/environments/` holds terminal and user-level cells. `e2e/scenarios/`
 holds product workflows, including `remote-skill.test.ts`, which drives the
-pulled-skill workflow against a local bare repository standing in for a host.
+remote-skill workflow against a local bare repository standing in for a host.
 It states what stays unproved: GitHub itself, its authentication, and its rate
 limits.
 
@@ -188,7 +188,7 @@ performance assertion.
 Some cells need a terminal, because a consent prompt and the pickers behave
 differently on one. The picker cells cover the `init`, `add`, `share`, and
 `promote` entry points. The consent cells cover two gates. One is the
-destructive-change planner. The other is the question a pulled skill asks
+destructive-change planner. The other is the question a remote skill asks
 before it installs content nobody on the team reviewed. Those cells open a
 pseudo-terminal through `e2e/support/pty-driver.py`. They need `python3` on
 `PATH`, and they fail with that message when it is absent. The captured output

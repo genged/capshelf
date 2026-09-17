@@ -33,7 +33,7 @@ export function stateLabel(state: State, source: RowSource): string {
     case "output_drift":
       return "Output drifted";
     case "missing_upstream":
-      // A pulled skill's upstream is a third-party repository, so the shelf
+      // A remote skill's upstream is a third-party repository, so the shelf
       // wording would name the wrong place entirely.
       return source === "system"
         ? "Gone from this CLI"
@@ -49,7 +49,7 @@ export function stateLabel(state: State, source: RowSource): string {
     case "source_dirty_and_output_drift":
       return "Output drifted, shelf source uncommitted";
     case "missing_source_commit":
-      // A pulled skill reaches this state through an absent clone cache, so
+      // A remote skill reaches this state through an absent clone cache, so
       // the shelf wording would name a commit the user cannot go looking for.
       return source === "remote"
         ? "Clone cache absent"

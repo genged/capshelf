@@ -111,7 +111,7 @@ export interface StatusReportInput {
    * rules.
    */
   dataRepo: string | null;
-  /** The pulled-skill record. Its rows are local scope and never committed. */
+  /** The remote-skill record. Its rows are local scope and never committed. */
   remotes: RemotesLock;
   ref?: ItemRef;
   scope?: StatusScope;
