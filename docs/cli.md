@@ -1479,6 +1479,193 @@ thing that makes `add` networked. No project state can. `apply`, `update`,
 `rm`, `promote`, and a bare `status` never open a connection, whatever the
 project holds.
 
+#### Looking before you install
+
+`--list` reports the repository and writes nothing:
+
+```bash
+capshelf add https://github.com/acme/pdf-skills --list
+```
+
+```text
+  repo      https://github.com/acme/pdf-skills
+  ref       main
+  commit    cd91e33a2bddb67988805af8ec3bb045f88c4377
+  found     2 skills
+
+    skills/pdf    Extract text from PDF files
+    skills/xlsx   Read and write workbooks
+
+  install one:   capshelf add https://github.com/acme/pdf-skills --path skills/pdf
+  install some:  capshelf add https://github.com/acme/pdf-skills
+```
+
+Discovery reads at the resolved commit through `ls-tree`, never from a
+checkout. A repository holding a root `SKILL.md` **and** subdirectory skills is
+ambiguous: capshelf never prefers one, it offers both.
+
+One candidate installs. Several open the picker. Without a terminal the
+command refuses and names the two flags that answer the question:
+
+```text
+✗ 2 skills found in https://github.com/acme/pdf-skills; name one with --path
+  list them: capshelf add https://github.com/acme/pdf-skills --list
+```
+
+#### The install prompt
+
+Consent covers a commit, not a row. The prompt prints the repository, the
+commit, the subpath, the install path, the file list with sizes, the
+description, and the license finding, and then asks once:
+
+```bash
+capshelf add https://github.com/acme/pdf-skills --path skills/pdf
+```
+
+```text
+  repo      https://github.com/acme/pdf-skills
+  ref       main
+  commit    cd91e33a2bddb67988805af8ec3bb045f88c4377
+  path      skills/pdf
+  install   .agents/skills/pdf  (local scope, gitignored)
+  files     2 files, 143 B
+              SKILL.md    103 B
+              extract.py  40 B
+  license   MIT  (LICENSE, at the repo root, outside the item, not copied)
+
+  pdf: Extract text and tables from PDF files
+
+  capshelf does not review this content. Your agent runs it with your permissions.
+Install it? [y/N]
+```
+
+An accepted install reports where the files went and who does not get them:
+
+```text
+✓ added local/remote/skills/pdf @ b265cade3978
+  source commit: cd91e33a2bddb67988805af8ec3bb045f88c4377
+  /home/mg/code/my-app/.agents/skills/pdf
+  not committed, so your teammates do not get it
+  to give it to the team: capshelf share skills/pdf --adopt
+```
+
+A named `capshelf update skills/<name>` asks again before it accepts new
+upstream content. A bare `capshelf update` moves no remote pin at all, because
+a routine sweep across a project must not become interactive. `--yes` answers
+the question in both cases. In a non-TTY run, including `--json`, it is the
+only thing that does.
+
+`--as <name>` installs under a different name. A second `add` of the same URL
+and commit reports `= already current` and writes nothing. Capshelf measures
+the installed files before it says that, so a deleted or edited install is
+refused with a pointer to `capshelf apply`.
+
+A browser URL carries the ref and the subpath already:
+`https://github.com/acme/pdf-skills/tree/main/skills/pdf`. A branch name that
+holds a slash is settled against the clone, so `tree/feature/login/skills/pdf`
+installs from `feature/login` when that branch exists.
+
+#### What the project records
+
+The record is `.capshelf/remotes.lock.json`, schema version 1:
+
+```json
+{
+  "version": 1,
+  "items": {
+    "remote/skills/pdf": {
+      "upstream": "https://github.com/acme/pdf-skills",
+      "ref": "main",
+      "subpath": "skills/pdf",
+      "sourceCommit": "cd91e33a2bddb67988805af8ec3bb045f88c4377",
+      "sourcePinDigest": "b265cade397852737c1367f77be5c62e4ba17bda955fa87d2e1ced0fea5d50a4",
+      "appliedAt": "2026-09-17T12:29:39.584Z"
+    }
+  }
+}
+```
+
+The first `add <url>` appends one line to the committed
+`.capshelf/.gitignore`, and adds the install paths to `.git/info/exclude` as
+every clone-local item does:
+
+```text
+local.json
+local.lock.json
+remotes.lock.json
+```
+
+```text
+.agents/skills/pdf/
+.claude/skills/pdf
+```
+
+The project lock is untouched and stays at version 4. `status` reports these
+rows in their own group:
+
+```text
+/home/mg/code/my-app  (2 items)
+
+project/
+  ✓   system/skills/capshelf                  57e5655fc9a5  up-to-date
+
+remote/  (skills pinned to repos outside your shelf)
+  ✓   skills/pdf                              b265cade3978  up-to-date
+      acme/pdf-skills main @ cd91e33, never checked
+      check for newer upstreams: capshelf status --check-upstream
+```
+
+In `status --json` the row carries `"source": "remote"` and a `remote` block
+with `upstream`, `ref`, `subpath`, `lastChecked`, `upstreamHead`,
+`cachePresent`, and `alsoTrackedInShelf`.
+
+#### Checking and moving a pin
+
+Only `--check-upstream` sees that a repository moved:
+
+```bash
+capshelf status --check-upstream
+```
+
+```text
+  fetching  https://github.com/acme/pdf-skills ... 1 new commit
+
+remote/  (skills pinned to repos outside your shelf)
+  ⚠   skills/pdf                              b265cade3978  update available → cd91e33a2bddb...
+      acme/pdf-skills main @ cd91e33, checked 2026-09-17
+```
+
+A row whose skill left the repository says so, and `--strict` exits 4:
+
+```text
+  !   skills/sheets                           73f93f51ec58  no longer in the upstream repository
+      acme/pdf-skills main @ cd91e33, checked 2026-09-17
+```
+
+A bare `capshelf update` lists the rows it left alone:
+
+```text
+• local/remote/skills/pdf skipped
+  locked: 7111f850df36
+  planned: 7111f850df36
+  source commit: 7b306acc7cd3ffc74beaa93ca7fe5b6cbde49aea
+  1 remote skill was left alone; a sweep never accepts new third-party content
+  move one: capshelf update skills/pdf
+  no network was used. check for newer upstreams: capshelf status --check-upstream
+```
+
+A named `update` asks again, then moves the pin offline from the cache:
+
+```text
+✓ local/remote/skills/pdf updated
+  locked: 7111f850df36
+  planned: b265cade3978
+  source commit: cd91e33a2bddb67988805af8ec3bb045f88c4377
+  promote is not available for a remote skill. to keep it permanently: capshelf share skills/pdf --adopt
+```
+
+#### The clone cache
+
 Each repository is cloned once, to
 `$XDG_DATA_HOME/capshelf/remote/<host>/<owner>/<repo>`. The path is derived
 from the upstream on every read and is never stored, so stale machine state
@@ -1494,28 +1681,59 @@ A cache re-created that way clones the normalized `https` identity, because
 that is the only form the record holds. Re-cache a repository that needs SSH
 by running `capshelf add <ssh-url>` again.
 
-Discovery reads at the resolved commit through `ls-tree`, never from a
-checkout. A repository holding a root `SKILL.md` **and** subdirectory skills is
-ambiguous: capshelf never prefers one, it offers both. Without a terminal the
-command refuses and names `--list` and `--path`.
+A machine with no cache still has the files. It cannot compare them to the
+pin:
 
-Consent covers a commit, not a row. The install prompt prints the repository,
-the commit, the subpath, the install path, the file list with sizes, the
-description, and the license finding, and then asks once. A named `capshelf
-update skills/<name>` asks again before it accepts new upstream content. A bare
-`capshelf update` moves no remote pin at all and lists the rows it left alone,
-because a routine sweep across a project must not become interactive. `--yes`
-answers the question in both cases. In a non-TTY run, including `--json`, it is
-the only thing that does.
+```text
+remote/  (skills pinned to repos outside your shelf)
+  !   skills/pdf                              b265cade3978  no clone cache on this machine — run: capshelf status --check-upstream
+      acme/pdf-skills main @ cd91e33, never checked
+      no clone cache on this machine, so the installed files cannot be
+      compared against the pin. re-create it:
+        capshelf status --check-upstream
+```
+
+```text
+✗ remote/skills/pdf has no local cache for https://github.com/acme/pdf-skills; fetch it with capshelf status --check-upstream
+  capshelf never creates a cache offline, because that would make this a network command
+```
+
+#### Taking ownership
 
 A remote skill cannot be promoted: its upstream is a repository nobody on your
 team can publish to. `promote`, `move`, `keep-local`, `revert`, and a `share`
-without `--adopt` all refuse one and name `capshelf share skills/<name>
---adopt`. That flag vendors the installed bytes into your shelf, records
-`upstream`, `upstreamCommit`, and `upstreamPath` in the item's
-`.capshelf.yml`, and releases the remote row last.
+without `--adopt` all refuse one, and each names the same two ways out:
+
+```text
+✗ not promoting skills/pdf — it is a remote skill, tracked in .capshelf/remotes.lock.json rather than in your shelf
+  take ownership of it first: capshelf share skills/pdf --adopt
+  or remove it: capshelf rm skills/pdf
+```
+
+`--adopt` vendors the installed bytes into your shelf, records `upstream`,
+`upstreamCommit`, and `upstreamPath` in the item's `.capshelf.yml`, and
+releases the remote row last:
+
+```bash
+capshelf share skills/pdf --adopt -m "adopt the pdf skill"
+```
+
+```text
+✓ adopted local/data/skills/pdf @ b265cade397852737c1367f77be5c62e4ba17bda955fa87d2e1ced0fea5d50a4
+  source commit: 00601f977178fc77b2933c4e07e911d3f87a5070
+  provenance recorded in skills/pdf/.capshelf.yml:
+      upstream:       https://github.com/acme/pdf-skills
+      upstreamCommit: cd91e33a2bddb67988805af8ec3bb045f88c4377
+      upstreamPath:   skills/pdf
+  released: remote row for skills/pdf
+
+committed to local data repo:
+  /home/mg/code/agent-config
+```
+
 The same flag adopts a skills.sh-managed skill, releasing that row instead.
-After the adopt the item is an ordinary data item.
+After the adopt the item is an ordinary data item, and `status` shows it in
+the shelf group.
 
 The adopt lands in local scope, like every other skill share without `--to`.
 `--to project` commits the item to the project as well, so it drops the
@@ -1646,17 +1864,6 @@ The error names the canonical source path and commit
 outputs or project metadata. `status` reports the error instead of a healthy
 fragment row (`tests/fragment-source-read.test.ts:44`).
 Restore the missing Git objects from a healthy data-repo clone, then retry.
-
-### Git read measurements
-
-Set `CAPSHELF_GIT_MEASURE=1` to emit structured Git read records and an exit
-summary to stderr (`src/git-measure.ts:11`). Standard output keeps its normal
-format. Records include repository paths, outcomes, and subprocess counts.
-Only source-read operations include arguments. Batch records include requested blob IDs, without blob contents.
-
-```bash
-CAPSHELF_GIT_MEASURE=1 capshelf status --json > status.json 2> git-reads.jsonl
-```
 
 ### Interrupted initialization
 

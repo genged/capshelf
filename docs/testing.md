@@ -55,8 +55,7 @@ These integration tests pair read counts with output and failure assertions:
   damaged copy publication, and rollback after a second fragment write fails
   (`tests/writer-read-memo.test.ts:198`, `:239`, `:300`, `:369`).
 
-Use these tests to check reuse boundaries. For manual investigation, use the
-[Git read diagnostics](cli.md#git-read-measurements).
+Use these tests to check reuse boundaries.
 
 ## The end-to-end layer
 
