@@ -74,8 +74,9 @@ More info: `docs/architecture.md`, `docs/cli.md`, `docs/testing.md`
   against that compiled file; `make e2e` is the same. `bun run e2e:run`
   requires `CAPSHELF_E2E_BIN` and never builds, so a release lane can point it
   at an extracted archive.
-- `make check` runs typecheck, lint, the release-docs freeze check, unit
-  tests, all smoke tests, plus the end-to-end suite.
+- `make check` runs typecheck, lint, the release-docs freeze check, the
+  doc-citation check, unit tests, all smoke tests, plus the end-to-end suite.
+  `make check-doc-citations` runs the last one on its own.
 - `bun run src/cli.ts <verb> [args]` runs the CLI from source.
 - `bun run build` or `make build` compiles `dist/capshelf`.
 - `make install` builds and copies the binary to `~/.local/bin/capshelf`
@@ -151,6 +152,16 @@ difference visible instead of relying on care.
   `file:line`. Anything uncited is a hypothesis and says so ("expected",
   "probably", "unverified"). This applies hardest to claims that *nothing*
   breaks: "deleting this loses nothing" needs the enumeration that shows it.
+- **Published documentation carries no line numbers.** The rule above is for
+  documents a reviewer acts on once, which live under `local/` or in Git
+  history. `docs/` and `README.md` are read by users who cannot act on a line
+  number, and the number is wrong as soon as anyone edits the file above it.
+  Sixty-seven such citations landed in `docs/` in one release cycle, and ten
+  pointed at a blank line, a closing brace, or an unrelated comment before that
+  release shipped. State the behavior there, and put the `file:line` in the
+  commit message or the record under `local/`. A bare path is fine: it names a
+  thing that keeps its name. `make check` enforces this through
+  `./scripts/check-doc-citations.sh`.
 - **Verify before you depend on it.** Read the file before asserting what it
   does. A grep hit is evidence a string exists, not evidence of behavior; an
   anchored regex that finds nothing is evidence of nothing at all. When a claim

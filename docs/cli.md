@@ -1026,9 +1026,8 @@ exit 3 unless `--yes` explicitly authorizes the listed loss. Capshelf
 revalidates the accepted snapshot immediately before writing.
 
 `share` resolves the data repo after its ref refusals, not before. In a project
-with no data-repo binding, a `share` that also hits an earlier refusal now
-reports that refusal and exits 3, where it used to report "no data repo
-configured" and exit 6. It still exits 6 when no earlier refusal applies. One
+with no data-repo binding, a `share` that also hits an earlier refusal reports
+that refusal and exits 3. It exits 6 only when no earlier refusal applies. One
 refusal precedence, not two, and it applies with or without `--adopt`.
 
 Use `capshelf status <item> --diff` to review managed item drift. Extra ignored
@@ -1856,14 +1855,17 @@ propose-upstream recipe, and the CI gate built on this state.
 ### Unreadable fragment sources
 
 A committed fragment source must be a regular file. An absent optional source
-is valid. An empty directory, unreadable blob, or parse error is refused.
-The error names the canonical source path and commit
-(`src/fragments.ts:300`).
+is valid. An empty directory, unreadable blob, or parse error is refused, and
+the error names the canonical source path and the commit:
+
+```text
+✗ cannot read settings/team/settings.json at cd91e33a2bddb67988805af8ec3bb045f88c4377
+```
 
 `apply` and `update` refuse an unreadable pinned fragment before writing its
 outputs or project metadata. `status` reports the error instead of a healthy
-fragment row (`tests/fragment-source-read.test.ts:44`).
-Restore the missing Git objects from a healthy data-repo clone, then retry.
+fragment row. Restore the missing Git objects from a healthy data-repo clone,
+then retry.
 
 ### Interrupted initialization
 

@@ -611,71 +611,31 @@ only after all target writes succeed. Configuration maps use own data
 properties throughout merge and serialization so valid keys such as
 `__proto__` and `constructor` are not lost or mistaken for inherited values.
 
-Each status report owns its Git memo and repository observations
-(`src/status-report.ts:227`). It retains successful HEAD and object-directory
-observations within that report (`src/status-report.ts:231`, `:369`). A failed
-observation leaves its slot empty, so later rows retry those reads.
-The report also shares fragment contribution state by scope and output target
-(`src/status-report.ts:235`, `:702`). Report rows remain sequential
-(`src/status-report.ts:236`).
+### Read reuse within one command
 
-One status diff collection reuses each fragment output plan. The collection
-owns the cache, so a later collection reads the project and repository again
-(`src/status-report.ts:563`). Lock object identity separates project and local
-scope (`src/status-report.ts:573`). The fragment target identity separates each
-generated output (`src/status-report.ts:578`). Direct diff calls use a fresh planner
-(`src/status-diff.ts:238`).
+A command used to read the same Git object once per row that needed it. It now
+reuses reads, under a boundary narrow enough that reuse can never change an
+answer. Four rules hold it:
 
-Each `apply` invocation owns one immutable Git read memo
-(`src/commands/apply.ts:156`). Ordinary `update` owns one memo in its command
-context (`src/commands/update.ts:271`). Both commands share it across initial
-planning, consent revalidation, and fragment execution
-(`src/commands/apply.ts:159`, `src/commands/apply.ts:225`,
-`src/commands/apply.ts:367`, `src/commands/update.ts:281`,
-`src/commands/update.ts:338`, `src/commands/update.ts:389`).
-Fragment planning shares that memo across old and next contributions
-(`src/fragments.ts:535`, `src/fragments.ts:543`).
+- **One memo per invocation.** `status`, `apply`, `update`, and `add` each
+  create one and share it across planning, consent revalidation, and
+  execution. A later command starts an empty one, so no command answers from
+  the previous command's view of the repository.
+- **Immutable reads only.** A read enters the memo only when a full SHA-1 or
+  SHA-256 object name identifies it. The key carries the repository and the
+  arguments as well, so two repositories and two pathspecs never share an
+  entry. Anything named by a ref, a branch, or a path is not eligible.
+- **Failures are never reused.** A failed read leaves nothing behind, so the
+  next caller asks Git again. An object deleted between two commands is
+  therefore still refused by the second one.
+- **Anything that must see current state stays outside.** Repository
+  cleanliness, the current bytes of a generated output during planning and
+  again before the first write, and installed bytes before a copy transaction
+  commits are all read live, every time.
 
-Each named `add` creates a memo when it loads its context
-(`src/commands/add.ts:351`). Standalone planning and installation share that
-memo (`src/commands/add.ts:284`, `src/commands/add.ts:537`,
-`src/commands/add.ts:567`). Bundle collision preflight, consent planning,
-and member installation share the invocation memo
-(`src/commands/add.ts:966`, `src/commands/add.ts:995`,
-`src/commands/add.ts:1030`, `src/bundle-install.ts:346`,
-`src/bundle-install.ts:368`). Interactive add keeps the memo across context
-reloads, selected bundles, and selected items
-(`src/commands/add.ts:1103`, `src/commands/add.ts:1147`,
-`src/commands/add.ts:1207`). These reloads still read project state
-(`src/commands/add.ts:353`). An exported `installDataItem` call without
-`opts.memo` creates a fresh memo, even when its caller reuses the context
-(`src/commands/add.ts:636`). Fragment source cleanliness and consent
-revalidation remain live (`src/commands/add.ts:507`,
-`src/commands/add.ts:657`, `src/commands/add.ts:1015`,
-`src/commands/add.ts:1273`).
-
-Memo keys require a full SHA-1 or SHA-256 object name and include the repository
-(`src/git-read-memo.ts:11`). Tree keys also include flags and pathspecs
-(`src/git.ts:755`). Trees enter the memo after record parsing
-(`src/git.ts:768`). Blobs enter after header, type, and length checks
-(`src/git.ts:833`). Failed reads leave the failed object uncached, so a retry
-reads it again (`src/git.ts:818`, `src/git.ts:868`). A later writer invocation
-creates a fresh memo (`src/commands/apply.ts:156`, `src/commands/update.ts:272`).
-An object removed after a successful read can remain available in that memo
-(`src/git.ts:818`).
-Deletion between commands causes a fresh read and refusal
-(`tests/writer-read-memo.test.ts:158`).
-Callers that omit the optional memo keep independent reads
-(`src/fragments.ts:133`, `src/pin.ts:254`).
-
-The memo stores only immutable Git reads (`src/git-read-memo.ts:4`).
-Planning reads current
-output bytes each time (`src/fragments.ts:530`). Publication checks those bytes
-again before its first write (`src/fragments.ts:606`). Update still resolves
-the selected commit and checks filters outside the memo
-(`src/pin.ts:256`, `src/pin.ts:275`). Its repository cleanliness check remains
-outside the memo (`src/commands/update.ts:233`). Copy publication still verifies
-installed bytes before committing its transaction (`src/materialize.ts:749`).
+The status report adds one narrower reuse of its own: it merges each shared
+fragment output once per report rather than once per item. A failed repository
+observation leaves its slot empty, so later rows retry it.
 
 ### The object model
 

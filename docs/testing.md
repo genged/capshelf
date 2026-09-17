@@ -30,32 +30,23 @@ only. Terminal behavior belongs to the E2E pseudo-terminal cells.
 
 ## Read reuse regression coverage
 
-These integration tests pair read counts with output and failure assertions:
+Read reuse is the one optimization that can silently change an answer, so
+three integration suites count Git reads *and* assert the output and the
+failures in the same test. A test that only counted reads would pass while the
+command reported the wrong thing.
 
-- Status reports merge each shared fragment output once and retain
-  each item's target set (`tests/status-read-amplification.test.ts:144`, `:290`).
-  Repeated reports observe output deletion and changed requirements
-  (`tests/status-read-amplification.test.ts:144`, `:175`).
-  Injected HEAD and object-directory failures check retry behavior
-  (`tests/status-read-amplification.test.ts:175`, `:223`).
-- Diff collections reuse output plans and compare complete results with
-  independent direct calls (`tests/status-read-amplification.test.ts:322`,
-  `:426`, `:495`). Cases vary lock content, scope, project, repository, and
-  dirty shared-output sources. Direct and collected calls also detect later
-  output edits, malformed JSON, and missing commits
-  (`tests/status-diff.test.ts:590`).
-- Writer tests count successful immutable Git requests for `apply`, `update`,
-  and standalone, bundle, and interactive fragment adds
-  (`tests/writer-read-memo.test.ts:87`, `:422`). Repeated commands check fresh
-  reads, unchanged bytes, and `already-current` results
-  (`tests/writer-read-memo.test.ts:87`). Removing a blob between invocations
-  must cause refusal, including calls that reuse an exported install context
-  (`tests/writer-read-memo.test.ts:157`, `:495`).
-- Writer fault injection checks edits during confirmation, changed HEAD,
-  damaged copy publication, and rollback after a second fragment write fails
-  (`tests/writer-read-memo.test.ts:198`, `:239`, `:300`, `:369`).
+- `tests/git-read-memo.test.ts` holds the key rules: what is eligible for
+  reuse, and what separates two entries.
+- `tests/status-read-amplification.test.ts` covers reports and diff
+  collections, including injected repository failures and the retry they must
+  produce.
+- `tests/writer-read-memo.test.ts` covers `apply`, `update`, and `add`, and
+  injects faults that reuse could hide: an edit during confirmation, a changed
+  HEAD, a blob deleted between invocations, and rollback after a second
+  fragment write fails.
 
-Use these tests to check reuse boundaries.
+Add to these when you move a reuse boundary. The boundary itself is described
+in [`docs/architecture.md`](architecture.md).
 
 ## The end-to-end layer
 
@@ -237,55 +228,38 @@ The pull-request lane type-checks, runs the unit and smoke suites, builds
 separate lint job in the same workflow runs Biome and the Oxlint anti-slop
 check.
 
-A release needs a version tag and a successful Test run for the same commit.
-Only same-repository `push` and `workflow_dispatch` runs count.
-Pull-request results cannot authorize publication.
-See `scripts/require-green-test-run.sh:27`.
+A release needs two things for the same commit: a version tag, and a
+successful Test run. Only same-repository `push` and `workflow_dispatch` runs
+count, because a pull-request run checks out the commit merged into its base
+and so says nothing about the commit a tag points at.
 
-The Release workflow responds to tag pushes, manual requests, and successful
-Test completion events. Either event order works:
+The two can arrive in either order, and the Release workflow waits rather than
+fails:
 
 ```text
 Tag first  -> defer -> Test completes -> release
 Test first -> no tag -> tag arrives   -> release
 ```
 
-The completion event supplies the tested SHA. Discovery selects version tags
-that point to that SHA, including tags from later API pages.
-Failed Test runs and runs from forks skip discovery.
-See `.github/workflows/release.yml:7` and
-`scripts/resolve-release-request.sh:7`.
+Deferring holds no runner open. A successful Test completion starts a new
+Release run, supplies the tested SHA, and the workflow looks for version tags
+pointing at it. A commit with no Test run at all also defers: push it to
+`main`, or start Test manually on a ref that points to it.
 
-The previous gate failed when Test was still running. The gate now defers
-without keeping a runner active. Successful Test completion starts a new
-Release run. Short coordination jobs still consume runner time.
-A missing Test run also defers. Push that commit to `main` or start Test
-manually on a ref that points to it.
-See `scripts/require-green-test-run.sh:40` and
-`scripts/prepare-release.sh:26`.
+Release jobs share a concurrency group per resolved tag, so a duplicate
+request cannot publish twice. A request whose tag is already published skips
+validation and packaging, and a draft release resumes.
 
-Release jobs use a concurrency group for each resolved tag. The group covers
-the reusable release workflow, including publication.
-After entering the group, a request checks whether its tag is already published.
-Published releases skip validation and packaging. Draft releases can resume.
-See `.github/workflows/release.yml:50`,
-`.github/workflows/release-lane.yml:17`, and `scripts/prepare-release.sh:18`.
+An eligible release repeats the source tests, builds each candidate archive,
+and validates it on a matching native runner before publication: checksum,
+`capshelf --version`, and the E2E suite against the extracted file. Build and
+validation check out the pinned SHA, and publication re-checks that the tag
+still points at it. Only the publish job can write releases.
 
-An eligible release repeats the source tests and builds each candidate archive.
-It validates those archives on matching native runners before publication.
-The checks include checksums, the executable version, and the E2E suite.
-Build and validation jobs check out the pinned SHA. Publication checks the tag
-again and uses the validated archives.
-See `.github/workflows/release-lane.yml:39`, `:47`, `:101`, and `:156`.
-
-The caller grants write permission to the reusable release job. The called
-workflow limits its default permission to read. Its publish job can write releases.
-See `.github/workflows/release.yml:53` and
-`.github/workflows/release-lane.yml:13`, `:160`.
-
-GitHub requires the completion-triggered workflow on the default branch.
-Merge the workflow change into `main` before relying on automatic resumption.
-See [GitHub workflow_run documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run).
+GitHub only delivers the completion event for a workflow on the default
+branch, so a change to this coordination must reach `main` before anything
+relies on it. See the
+[`workflow_run` documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run).
 
 A run on `main` is never cancelled by a later push: pushes group by commit,
 so each one is independent. Grouping them by branch would not be enough,
@@ -293,8 +267,7 @@ because a *queued* run is cancelled when a newer run joins its group — rapid
 pushes would keep the first and the last and discard everything between. Note
 that one push carrying several commits is still one run, on the tip: the
 commits under it receive no Test run from that push. A release for one of
-those commits defers until it has a successful eligible run
-(`scripts/require-green-test-run.sh:40`).
+those commits defers until it has a successful eligible run.
 
 One lane defines "does this commit work": `.github/workflows/test-lane.yml`.
 The pull-request lane calls it, the release calls it before packaging, and a
@@ -320,7 +293,7 @@ The two release gates are shell scripts with their own tests
 (`tests/release-gate-scripts.test.ts`), not logic embedded in YAML:
 `require-green-test-run.sh` and `require-unmoved-tag.sh`.
 
-Release coordination tests execute the shell scripts with GitHub API fixtures.
-They cover both event orders, duplicate requests, pagination, and API failures.
-These tests do not exercise GitHub event delivery or its concurrency scheduler.
-See `tests/release-coordination.test.ts:1`.
+`tests/release-coordination.test.ts` runs those scripts against GitHub API
+fixtures, covering both event orders, duplicate requests, pagination, and API
+failures. It states what stays unproved: GitHub's own event delivery and its
+concurrency scheduler.
