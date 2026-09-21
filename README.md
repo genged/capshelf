@@ -117,8 +117,13 @@ missing, the diff behind each state, and the command to run.
 ### 1. Install Capshelf
 
 ```bash
+brew trust --formula genged/tap/capshelf
 brew install genged/tap/capshelf
 ```
+
+Homebrew requires trust for formulae from third-party taps. Run the trust
+command once per machine. Without that entry, `brew upgrade` skips Capshelf
+and says nothing about it.
 
 Capshelf also needs `git` 2.40 or newer on your `PATH`.
 

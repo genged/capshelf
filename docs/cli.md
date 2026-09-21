@@ -22,8 +22,13 @@ runs on top of it, and `docs/marketplaces.md` covers plugin catalogs.
 ## Install
 
 ```
+brew trust --formula genged/tap/capshelf
 brew install genged/tap/capshelf
 ```
+
+Homebrew requires trust for formulae from third-party taps. The trust command
+runs once per machine. Without that entry, `brew upgrade` skips Capshelf and
+says nothing about it.
 
 The release-script and source install paths are in the
 [README](../README.md) Quickstart. Dev loop:
