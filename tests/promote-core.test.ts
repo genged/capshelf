@@ -515,9 +515,16 @@ describe("syncTrackedIntoDataRepo promotion safety", () => {
     const indexBefore = await readFile(join(dataRepo, ".git", "index"));
     const lockBefore = structuredClone(lock);
 
-    await expect(
+    const error = await rejection(
       syncTrackedIntoDataRepo(project, dataRepo, "skills", "hello", lock, {}),
-    ).rejects.toThrow(/required SKILL\.md is not Git-visible/);
+      PreconditionError,
+    );
+    expect(error.message).toBe(
+      'not promoting skills/hello — required SKILL.md is hidden by the ignore rule ".agents/skills/hello/" in .gitignore:1',
+    );
+    expect(error.hint).toContain(
+      '"capshelf move skills/hello --to local" and then "capshelf promote skills/hello --local"',
+    );
 
     expect(await headSha(dataRepo)).toBe(headBefore);
     expect(await readFile(join(dataRepo, ".git", "index"))).toEqual(

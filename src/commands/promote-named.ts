@@ -7,7 +7,7 @@ import type { Command } from "commander";
 import { printShareUpstreamGuidance } from "./share-named";
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
-import { dirname, join, posix } from "node:path";
+import { dirname, join, posix, relative } from "node:path";
 import { atomicWriteFile, lstatOrNull } from "../fs-utils";
 import { homeRelative, shellArg } from "../paths";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
@@ -47,6 +47,7 @@ import {
   headSha,
   lastTouchingContentCommit,
   originRemoteUrl,
+  projectIgnoreRule,
   resolveCommit,
   showAtCommit,
   statusPorcelain,
@@ -833,6 +834,21 @@ export async function syncTrackedIntoDataRepo(
     );
   }
   if (!snapshot.files.includes(requiredFile)) {
+    const rule =
+      snapshot.source === "git-visible"
+        ? await projectIgnoreRule(
+            project,
+            relative(project, join(localPath, requiredFile)),
+          )
+        : null;
+    if (rule) {
+      throw new PreconditionError(
+        `not promoting ${kind}/${name} — required ${requiredFile} is hidden by the ignore rule "${rule.pattern}" in ${rule.source}:${rule.line}`,
+        {
+          hint: `A project-scope promote reads only the files that Git can see. Remove the rule, or run "${PRODUCT_NAME} move ${kind}/${name} --to local" and then "${PRODUCT_NAME} promote ${kind}/${name} --local".`,
+        },
+      );
+    }
     throw new PreconditionError(
       `not promoting ${kind}/${name} — required ${requiredFile} is not Git-visible in the installed snapshot`,
     );

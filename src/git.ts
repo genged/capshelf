@@ -363,8 +363,9 @@ export async function sourceWriteText(
 export async function projectPolicy(
   repo: string,
   args: string[],
+  options: Pick<GitRunOptions, "stdin"> = {},
 ): Promise<GitInvocation> {
-  return await runGit({ profile: "project-policy", repo }, args);
+  return await runGit({ profile: "project-policy", repo }, args, options);
 }
 
 export async function projectPolicyText(
@@ -1043,6 +1044,34 @@ export async function projectVisibleFilesUnderPath(
     literalPathspec(normalized),
   ]);
   return await presentFilesRelativeTo(project, normalized, out);
+}
+
+export interface IgnoreRule {
+  /** The file that holds the rule, as git reports it. */
+  source: string;
+  line: number;
+  pattern: string;
+}
+
+/**
+ * The project ignore rule that hides `relPath`, or null when no rule matches.
+ * This only diagnoses an error that the caller already has. A git failure
+ * returns null, so the diagnosis cannot replace the original error.
+ */
+export async function projectIgnoreRule(
+  project: string,
+  relPath: string,
+): Promise<IgnoreRule | null> {
+  // `-z` requires `--stdin`. The output is `source NUL line NUL pattern NUL path NUL`.
+  const result = await projectPolicy(
+    project,
+    ["check-ignore", "--verbose", "-z", "--stdin"],
+    { stdin: `${normalizeGitPath(relPath)}\0` },
+  );
+  if (result.exitCode !== 0) return null;
+  const [source, line, pattern] = result.stdout.toString("utf-8").split("\0");
+  if (!source || !line || pattern === undefined) return null;
+  return { source, line: Number(line), pattern };
 }
 
 /**
