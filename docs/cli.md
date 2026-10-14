@@ -262,8 +262,8 @@ there is no separate `bundle` verb family. See Bundles below.
 - `--as`, `--ref`, `--path`, `--list` — supported by `add`, and only when its
   argument is a repository URL. Each one is refused with exit 3 on a shelf item
   ref, because it would otherwise read as accepted and be ignored.
-- `--check-upstream` — supported by `status`. One of the three surfaces that
-  reach the network, with `add <url>` and `add <url> --list`.
+- `--check-upstream`: supported by `status`. It is one of the five network
+  operations. The full list is in [`docs/security.md`](security.md).
 - `--adopt` — supported by `share`; takes ownership of one installed skill from
   its previous owner
 - `--user` — supported by `ls` and `status`; narrows output to user-level
@@ -1340,6 +1340,10 @@ stdin and stderr are TTYs, `CI` is unset, `NODE_ENV` is not `test`,
 `self-update`, or a `--json` invocation, and the running executable resolves to
 the Homebrew-managed `capshelf` binary.
 
+The check runs `brew outdated`. Homebrew can update its own data over the
+network before that command answers. So the check can reach the network on
+any command. A failed check writes no cache, so the next command tries again.
+
 Source installs are not upgraded automatically. Update them manually:
 
 ```bash
@@ -1472,21 +1476,23 @@ record.
 | command | effect |
 |---|---|
 | `capshelf add <url> [--as <name>] [--ref <ref>] [--path <subpath>]` | resolve, print the facts, ask once, install, record |
-| `capshelf add <url> --list` | print the repository's skills and exit 0; write nothing |
+| `capshelf add <url> --list` | print the repository's skills and exit 0. Install nothing and leave the project unchanged. The clone cache is created or fetched |
 | `capshelf update skills/<name>` | move the pin to what the cache already holds, then apply. No network |
 | `capshelf status --check-upstream` | fetch every tracked repository and report which pins moved |
 | `capshelf share skills/<name> --adopt` | transfer ownership into the shelf and release the previous owner |
 | `capshelf rm skills/<name>` | remove the install and the record |
 
-Three surfaces reach the network and no other: `add <url>`, `add <url>
---list`, and `status --check-upstream`. A URL on the command line is the only
-thing that makes `add` networked. No project state can. `apply`, `update`,
+Of the remote-skill commands, three reach the network: `add <url>`, `add
+<url> --list`, and `status --check-upstream`. A URL on the command line is the
+only thing that makes `add` networked. No project state can. `apply`, `update`,
 `rm`, `promote`, and a bare `status` never open a connection, whatever the
-project holds.
+project holds. The startup update check of an interactive Homebrew install is
+the one exception. See Binary self-update.
 
 #### Looking before you install
 
-`--list` reports the repository and writes nothing:
+`--list` reports the repository. It installs nothing and does not change the
+project. Like any `add <url>`, it creates or fetches the clone cache:
 
 ```bash
 capshelf add https://github.com/acme/pdf-skills --list

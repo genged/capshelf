@@ -3,7 +3,8 @@
 This page describes capshelf's security position for teams and organizations
 deciding whether to adopt shared agent capabilities. The short version:
 capshelf deliberately has almost no security machinery of its own. It pins
-content, refuses to act on the network implicitly, and makes drift loud —
+content, reaches the network only on request (with one Homebrew exception,
+described below), and makes drift loud —
 and it delegates every trust decision to the git hosting that already owns
 your data repo. Whether that is enough depends on how you run that repo.
 
@@ -84,9 +85,10 @@ that boundary:
   moved data-repo HEAD changes nothing until a project opts in with `update`.
   `keep-local` is an explicit exception: it preserves the pin as a recovery
   point while allowing installed copy-item bytes to differ.
-- **No implicit network I/O.** Capshelf never pushes — `promote` commits to
-  your local clone and prints the `git push` you may choose to run. It never
-  fetches behind your back either. Five network operations exist: the clone
+- **Network I/O only on request, with one exception.** Capshelf never
+  pushes. `promote` commits to your local clone and prints the `git push`
+  you may choose to run. It does not fetch the data repo behind your back
+  either. Five network operations exist: the clone
   `init` performs for a remote upstream, the explicit `capshelf data sync`
   command, the Homebrew `self-update` command, `capshelf add <url>` including
   `--list`, and `capshelf status --check-upstream`. `init` clones once, from
@@ -96,7 +98,12 @@ that boundary:
   only when provably safe, and only when you run it. A URL on the command line
   is the only way `add` reaches the network: no project state can make a
   command networked. `apply`, `update`, `promote`, and a bare `status` never
-  open a connection, whatever the project holds.
+  open a connection, whatever the project holds. The exception is the startup
+  update check of an interactive Homebrew install. Any command can first run
+  `brew outdated` to offer an update, and Homebrew can update its own data
+  over the network before it answers. A successful check is cached for 24
+  hours. A failed check runs again on the next command. `CI`, `--json`, and
+  `CAPSHELF_NO_SELF_UPDATE=1` turn the check off.
 - **A remote skill carries no review.** `capshelf add <url>` installs code from
   a repository nobody on your team reviewed. There is no registry, no signing,
   and no scanning. Before the install, capshelf prints the repository, the
