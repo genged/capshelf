@@ -100,6 +100,8 @@ interface Installed {
   action: "created" | "already-current";
   files: number;
   license: string | null;
+  /** Set when the installed skill came from a plugin. */
+  plugin?: SkillPluginFacts;
 }
 
 export async function addRemoteSkill(
@@ -167,22 +169,25 @@ export async function addRemoteSkill(
   }
 
   const explicitSubpath = opts.path ?? browser?.subpath ?? parsed.subpath;
-  // D10: `--list` with a plugin path lists that plugin, so the lookup runs
-  // before `candidateAtSubpath`'s single-skill read — but only behind
-  // `--list`. A bare `--path` (no `--list`) still goes straight to
-  // `candidateAtSubpath`; a D5 refusal for a plugin root named without
-  // `--list` is not implemented here.
-  const pluginScope =
-    explicitSubpath !== null &&
-    explicitSubpath !== undefined &&
-    opts.list === true
-      ? await pluginAtSubpath(
-          cache.path,
-          commit,
-          explicitSubpath,
-          parsed.repoName,
-        )
-      : null;
+  const hasExplicitSubpath =
+    explicitSubpath !== null && explicitSubpath !== undefined;
+  // D10 and D5 share one lookup: `--list` with a plugin path lists that
+  // plugin, and a bare `--path` (no `--list`) at the same path refuses before
+  // `candidateAtSubpath` ever reads it as a single skill.
+  const pluginScope = hasExplicitSubpath
+    ? await pluginAtSubpath(
+        cache.path,
+        commit,
+        explicitSubpath,
+        parsed.repoName,
+      )
+    : null;
+  if (pluginScope !== null && opts.list !== true) {
+    for (const warning of pluginScope.warnings) {
+      console.error(`⚠ ${safe(`${warning.path} ${warning.message}`)}`);
+    }
+    throw pluginRootRefusal(input, pluginScope);
+  }
   const discovery: RemoteDiscovery =
     pluginScope !== null
       ? {
@@ -191,7 +196,7 @@ export async function addRemoteSkill(
           skipped: [],
           warnings: pluginScope.warnings,
         }
-      : explicitSubpath === null || explicitSubpath === undefined
+      : !hasExplicitSubpath
         ? await discoverRemoteSkills(cache.path, commit, parsed.repoName)
         : {
             candidates: [
@@ -232,7 +237,7 @@ export async function addRemoteSkill(
     throw new PreconditionError(
       `no skill found in ${parsed.upstream} at ${ref}`,
       {
-        hint: "capshelf looks for SKILL.md at the repository root and under skills/, .claude/skills/, and .agents/skills/",
+        hint: "capshelf looks for SKILL.md at the repository root and under skills/, .claude/skills/, and .agents/skills/ and in plugins named by .claude-plugin/marketplace.json or .agents/plugins/marketplace.json",
       },
     );
   }
@@ -263,6 +268,7 @@ export async function addRemoteSkill(
       );
     }
   }
+  assertNoNameCollision(input, selected);
 
   const remotes = await loadRemotesLock(project);
   const results: Installed[] = [];
@@ -295,6 +301,97 @@ export async function addRemoteSkill(
     results.push(outcome);
   }
   printInstalled(parsed, ref, commit, results, opts);
+}
+
+/**
+ * `src/cli.ts`'s `reportError` prints a `CliError`'s `hint` as `` `  ${hint}` ``
+ * — one leading two-space indent, added once, before the string's first
+ * character. A hint built from several desired on-screen lines must omit
+ * that indent from its own first line (the renderer supplies it) and spell
+ * every later line's indent itself, because nothing is added after an
+ * embedded `\n`.
+ */
+function multilineHint(lines: readonly string[]): string {
+  const [first, ...rest] = lines;
+  return [(first ?? "").replace(/^ {2}/, ""), ...rest].join("\n");
+}
+
+/**
+ * D5: `--path`, or a browser URL subpath, naming a plugin directory refuses
+ * before it is read as a single skill. D11: it names no Claude or Codex
+ * command. The install command it offers names the plugin's first skill in
+ * subpath order, the same order `describeCandidates` sorts every other
+ * candidate list.
+ */
+function pluginRootRefusal(
+  url: string,
+  scope: {
+    plugin: DiscoveredPlugin;
+    candidates: RemoteSkillCandidate[];
+  },
+): PreconditionError {
+  const source = safe(scope.plugin.source);
+  if (scope.candidates.length === 0) {
+    return new PreconditionError(`${source} is a plugin with no skills`, {
+      hint: "capshelf cannot install a whole plugin",
+    });
+  }
+  const skillLines = scope.candidates.map((candidate) =>
+    `    ${safe(candidate.subpath)}   ${usesLabel(candidate.plugin)}`.trimEnd(),
+  );
+  const installCommand = safe(
+    shellCommand([
+      PRODUCT_NAME,
+      "add",
+      url,
+      "--path",
+      scope.candidates[0]!.subpath,
+    ]),
+  );
+  return new PreconditionError(
+    `${source} is a plugin, not a skill. It holds ${scope.candidates.length} ${plural(scope.candidates.length, "skill")}:`,
+    {
+      hint: multilineHint([
+        ...skillLines,
+        `  install the skill: ${installCommand}`,
+        "  capshelf cannot install a whole plugin",
+      ]),
+    },
+  );
+}
+
+/**
+ * D6: two or more selected skills that would install under the same name
+ * collide, and the check runs after `--as` is resolved and before any
+ * project write — `loadRemotesLock` included, so a refused install leaves no
+ * trace. `<subpath>` and `<name>` in the hint are literal placeholders, not
+ * one of the actual colliding values, because a group can hold more than two
+ * and no single pair is "the" example; they are not shell-quoted, because
+ * they are not real arguments.
+ */
+function assertNoNameCollision(
+  url: string,
+  selected: readonly Selected[],
+): void {
+  const byName = new Map<string, Selected[]>();
+  for (const entry of selected) {
+    const group = byName.get(entry.name);
+    if (group === undefined) byName.set(entry.name, [entry]);
+    else group.push(entry);
+  }
+  for (const [name, group] of byName) {
+    if (group.length < 2) continue;
+    const subpaths = group
+      .map((entry) => safe(entry.candidate.subpath))
+      .join(", ");
+    const prefix = shellCommand([PRODUCT_NAME, "add", url]);
+    throw new PreconditionError(
+      `${group.length} selected skills would install as "${safe(name)}": ${subpaths}`,
+      {
+        hint: `install them one at a time: ${safe(prefix)} --path <subpath> --as <name>`,
+      },
+    );
+  }
 }
 
 async function installOne(input: {
@@ -363,6 +460,7 @@ async function installOne(input: {
       action: "already-current",
       files: pin.entries.length,
       license: null,
+      plugin: candidate.plugin,
     };
   }
 
@@ -411,6 +509,7 @@ async function installOne(input: {
     action: result.action,
     files: result.files,
     license: license.label,
+    plugin: candidate.plugin,
   };
 }
 
@@ -503,6 +602,18 @@ async function firstResolvableCandidate(
   return null;
 }
 
+/**
+ * The picker row's `detail`: the plugin's source directory, plus the "uses"
+ * label when it names anything, so a picker row carries the same facts the
+ * consent prompt and `--list` show.
+ */
+function pickDetail(candidate: RemoteSkillCandidate): string {
+  if (candidate.plugin === undefined) return candidate.subpath;
+  const uses = usesLabel(candidate.plugin);
+  const source = candidate.plugin.plugin.source;
+  return uses === "" ? source : `${source} · ${uses}`;
+}
+
 async function chooseCandidates(
   candidates: RemoteSkillCandidate[],
   parsed: RemoteSkillUrl,
@@ -518,7 +629,7 @@ async function chooseCandidates(
     }),
     tags: [],
     installed: false,
-    detail: candidate.subpath,
+    detail: pickDetail(candidate),
   }));
   const picked = await pickItems({
     rows,
@@ -542,6 +653,17 @@ async function chooseCandidates(
   });
 }
 
+/**
+ * D4/D7: `--yes` skips the prompt, so this is the only place that block
+ * reaches a `--yes` install — on stderr, never stdout, so `--json` still
+ * parses. It prints nothing when the skill is not a plugin skill, or uses
+ * nothing outside itself and every file was checked.
+ */
+function printPluginFactsWarning(facts: SkillPluginFacts | undefined): void {
+  if (!factsWarnOnInstall(facts)) return;
+  for (const line of renderPluginFacts(facts!)) console.error(line);
+}
+
 async function confirmInstall(input: {
   project: string;
   upstream: string;
@@ -556,7 +678,10 @@ async function confirmInstall(input: {
   license: LicenseFinding;
   opts: RemoteAddOptions;
 }): Promise<boolean> {
-  if (input.opts.yes === true) return true;
+  if (input.opts.yes === true) {
+    printPluginFactsWarning(input.candidate.plugin);
+    return true;
+  }
   const context = confirmationContext();
   const block = renderConsent(input);
   if (input.opts.json === true || !context.stdinIsTTY || !context.stderrIsTTY) {
@@ -594,24 +719,50 @@ function renderConsent(input: {
     ...input.summary.files.map((file) => file.path.length),
     1,
   );
+  const facts = input.candidate.plugin;
+  const filesCount = input.summary.files.length;
   return [
     `  repo      ${input.upstream}`,
     `  ref       ${input.ref}`,
     `  commit    ${input.commit}`,
     `  path      ${safe(input.candidate.subpath)}${input.candidate.subpath === "." ? "  (SKILL.md at the repo root)" : ""}`,
+    ...(facts === undefined ? [] : [pluginLine(facts)]),
     `  install   ${installPath}  (local scope, gitignored)`,
-    `  files     ${input.summary.files.length} files, ${formatBytes(input.summary.totalBytes)}`,
+    `  files     ${filesCount} ${plural(filesCount, "file")}, ${formatBytes(input.summary.totalBytes)}`,
     ...input.summary.files.map(
       (file) =>
         `              ${safe(file.path).padEnd(width)}  ${formatBytes(file.bytes)}`,
     ),
     `  license   ${describeLicense(input.license)}`,
     "",
+    ...(factsWarnOnInstall(facts) ? [...renderPluginFacts(facts!), ""] : []),
     ...(input.candidate.description === null
       ? []
       : [`  ${input.name}: ${safe(input.candidate.description)}`, ""]),
     "  capshelf does not review this content. Your agent runs it with your permissions.",
   ].join("\n");
+}
+
+/**
+ * `  plugin    <name>` and, when the skill uses nothing outside itself and
+ * every file was checked, a note that says so — the same condition that
+ * decides whether `renderPluginFacts` prints anything at all.
+ */
+function pluginLine(facts: SkillPluginFacts): string {
+  const noParts = facts.usesPluginParts.length === 0 && facts.factsComplete;
+  return `  plugin    ${safe(facts.plugin.name)}${noParts ? "  (no parts outside the skill)" : ""}`;
+}
+
+/**
+ * Whether the consent prompt (and the `--yes`/`--json` stderr echo of the
+ * same text) owes the reader the `renderPluginFacts` block: a plugin skill
+ * that uses something outside itself, or whose facts could not all be read.
+ */
+function factsWarnOnInstall(facts: SkillPluginFacts | undefined): boolean {
+  return (
+    facts !== undefined &&
+    (facts.usesPluginParts.length > 0 || !facts.factsComplete)
+  );
 }
 
 /**
@@ -667,6 +818,52 @@ const USE_PART_LABELS: Record<PluginFactReason, string> = {
   "plugin-workflows": "workflows",
   "outside-links": "outside links",
 };
+
+/** The widest `USE_PART_LABELS` value, so every reason row in
+ * `renderPluginFacts` lines its refs up in one column. */
+const FACT_LABEL_WIDTH = Math.max(
+  ...Object.values(USE_PART_LABELS).map((label) => label.length),
+);
+
+// A template string, not interpolation: this is the literal text the facts
+// block prints, the plugin-root variable name a skill's own source reads.
+const PLUGIN_ROOT_VARIABLE = `\${CLAUDE_PLUGIN_ROOT}`;
+
+/**
+ * The consent prompt's facts block: what a plugin skill reaches outside its
+ * own directory, by reason, and what that costs an install that copies the
+ * skill directory only. Exported so `src/commands/update.ts` can print the
+ * same block when a skill's plugin facts change at the new commit.
+ *
+ * Pure: the caller decides whether anything here is worth printing at all
+ * (`factsWarnOnInstall`) — this only renders the lines once that is decided.
+ */
+export function renderPluginFacts(facts: SkillPluginFacts): string[] {
+  const lines: string[] = [
+    `  ! this skill uses parts of the ${safe(facts.plugin.name)} plugin that are not installed:`,
+  ];
+  for (const use of facts.usesPluginParts) {
+    const refs = use.refs.map(safe).join(", ");
+    const suffix =
+      use.reason === "plugin-root"
+        ? ` ${use.refs.length === 1 ? "reads" : "read"} ${PLUGIN_ROOT_VARIABLE}`
+        : "";
+    lines.push(
+      `      ${USE_PART_LABELS[use.reason].padEnd(FACT_LABEL_WIDTH)}${refs}${suffix}`,
+    );
+  }
+  lines.push(
+    `    ${facts.filesOutsideSkill} ${plural(facts.filesOutsideSkill, "file")} outside the skill directory ${facts.filesOutsideSkill === 1 ? "is" : "are"} not copied.`,
+  );
+  lines.push("    The skill can fail or run with less than it expects.");
+  if (!facts.factsComplete) {
+    const unread = facts.unread.length;
+    lines.push(
+      `    ${unread} ${plural(unread, "file")} ${unread === 1 ? "was" : "were"} not checked, so this list can be incomplete.`,
+    );
+  }
+  return lines;
+}
 
 /**
  * The reason text for one skipped catalog entry (`external-source` excluded
@@ -1144,6 +1341,15 @@ function printInstalled(
               path: first.path,
               license: first.license,
               files: first.files,
+              ...(first.plugin !== undefined && {
+                plugin: {
+                  name: first.plugin.plugin.name,
+                  source: first.plugin.plugin.source,
+                  catalogs: first.plugin.plugin.catalogs,
+                },
+                usesPluginParts: first.plugin.usesPluginParts,
+                factsComplete: first.plugin.factsComplete,
+              }),
             }
           : {
               verb: "add",
@@ -1161,6 +1367,15 @@ function printInstalled(
                 path: result.path,
                 license: result.license,
                 files: result.files,
+                ...(result.plugin !== undefined && {
+                  plugin: {
+                    name: result.plugin.plugin.name,
+                    source: result.plugin.plugin.source,
+                    catalogs: result.plugin.plugin.catalogs,
+                  },
+                  usesPluginParts: result.plugin.usesPluginParts,
+                  factsComplete: result.plugin.factsComplete,
+                }),
               })),
             },
         null,

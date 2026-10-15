@@ -9,16 +9,19 @@
  */
 import { expect, test } from "bun:test";
 import { $ } from "bun";
-import { mkdir, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
   arrayField,
   jsonOutput,
+  objectField,
   objectItems,
   runInProcess,
   stringField,
 } from "./cli-fixtures";
+import type { CliResult } from "./cli-fixtures";
 import { claudeCatalog } from "./plugin-fixtures";
 import type { PluginSpec } from "./plugin-fixtures";
 import {
@@ -29,6 +32,8 @@ import {
 import { renderCandidateList } from "../src/commands/add-remote";
 import { setDestructiveConfirmationContext } from "../src/destructive-change";
 import type { DestructiveConfirmationContext } from "../src/destructive-change";
+import { setPickContext } from "../src/pick";
+import { pickRowId } from "../src/pick-core";
 import type { DiscoveredPlugin } from "../src/plugin-discovery";
 import type {
   RemoteDiscovery,
@@ -81,6 +86,48 @@ function threePluginsCatalog() {
     { name: "heavy", source: "./plugins/heavy" },
     { name: "empty", source: "./plugins/empty" },
   ]);
+}
+
+/** Two plugins that each hold a skill directory named `x`, so their default
+ * install name collides (D6). */
+function duplicateNamePlugins(): PluginSpec[] {
+  return [
+    { dir: "plugins/a", skills: [{ name: "x", description: "A's x" }] },
+    { dir: "plugins/b", skills: [{ name: "x", description: "B's x" }] },
+  ];
+}
+
+function duplicateNameCatalog() {
+  return claudeCatalog([
+    { name: "a", source: "./plugins/a" },
+    { name: "b", source: "./plugins/b" },
+  ]);
+}
+
+/**
+ * Every regular file under `root`, as `relativePath:base64Content`, sorted —
+ * a before/after comparison proves a refused command left the project
+ * untouched without trusting `git status`, which a refusal might not even
+ * dirty. `.git` is excluded: its own internal bookkeeping (packed-refs,
+ * reflogs) can change between two reads of a repository nothing else wrote to.
+ */
+async function projectSnapshot(root: string): Promise<string[]> {
+  const out: string[] = [];
+  async function walk(dir: string, rel: string): Promise<void> {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name === ".git") continue;
+      const abs = join(dir, entry.name);
+      const relPath = rel === "" ? entry.name : `${rel}/${entry.name}`;
+      if (entry.isDirectory()) {
+        await walk(abs, relPath);
+      } else if (entry.isFile()) {
+        out.push(`${relPath}:${(await readFile(abs)).toString("base64")}`);
+      }
+    }
+  }
+  await walk(root, "");
+  return out.sort();
 }
 
 test(
@@ -797,6 +844,268 @@ test(
     expect(stdout).not.toContain("one plugin:");
     expect(stdout).toContain(
       `  everything:   capshelf add ${url} --list --json`,
+    );
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "D5: a plugin root at --path refuses, names the skill and its uses, and leaves the project untouched",
+  async () => {
+    const { url } = await pluginUpstream(threePlugins(), {
+      claude: threePluginsCatalog(),
+    });
+    const { project, env } = await initProject();
+    const before = await projectSnapshot(project);
+    const result = await runInProcess(project)(
+      ["add", url, "--path", "plugins/heavy"],
+      env,
+    );
+    expect(result.exitCode).toBe(3);
+    const stderr = result.stderr.toString();
+    expect(stderr).toContain(
+      "plugins/heavy is a plugin, not a skill. It holds 1 skill:",
+    );
+    expect(stderr).toContain(
+      "plugins/heavy/skills/worker   uses plugin root, agents, outside links",
+    );
+    expect(stderr).toContain(
+      `install the skill: capshelf add ${url} --path plugins/heavy/skills/worker`,
+    );
+    expect(stderr).toContain("capshelf cannot install a whole plugin");
+    expect(stderr).not.toContain("claude plugin");
+    expect(stderr).not.toContain("codex plugin");
+    const after = await projectSnapshot(project);
+    expect(after).toEqual(before);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "D5: a plugin root with no skills refuses with 'is a plugin with no skills'",
+  async () => {
+    const { url } = await pluginUpstream(threePlugins(), {
+      claude: threePluginsCatalog(),
+    });
+    const { project, env } = await initProject();
+    const result = await runInProcess(project)(
+      ["add", url, "--path", "plugins/empty"],
+      env,
+    );
+    expect(result.exitCode).toBe(3);
+    const stderr = result.stderr.toString();
+    expect(stderr).toContain("plugins/empty is a plugin with no skills");
+    expect(stderr).toContain("capshelf cannot install a whole plugin");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "D6: two selected skills with the same install name refuse before any project write",
+  async () => {
+    const { url } = await pluginUpstream(duplicateNamePlugins(), {
+      claude: duplicateNameCatalog(),
+    });
+    const { project, env } = await initProject();
+    const outer = setPickContext({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      capableTerminal: true,
+      prompt: async (request) => ({
+        kind: "picked",
+        refs: request.rows.map(pickRowId),
+      }),
+    });
+    let result: CliResult;
+    try {
+      result = await runInProcess(project)(["add", url, "--yes"], env);
+    } finally {
+      setPickContext(outer);
+    }
+    expect(result.exitCode).toBe(3);
+    const stderr = result.stderr.toString();
+    expect(stderr).toContain(
+      '2 selected skills would install as "x": plugins/a/skills/x, plugins/b/skills/x',
+    );
+    expect(stderr).toContain(
+      `install them one at a time: capshelf add ${url} --path <subpath> --as <name>`,
+    );
+    expect(existsSync(join(project, ".capshelf", "remotes.lock.json"))).toBe(
+      false,
+    );
+    expect(existsSync(join(project, ".agents", "skills", "x"))).toBe(false);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "D6: listing two same-name skills is not an error",
+  async () => {
+    const { url } = await pluginUpstream(duplicateNamePlugins(), {
+      claude: duplicateNameCatalog(),
+    });
+    const { project, env } = await initProject();
+    const result = await runInProcess(project)(["add", url, "--list"], env);
+    expect(result.exitCode).toBe(0);
+    const stdout = result.stdout.toString();
+    expect(stdout).toContain("plugins/a");
+    expect(stdout).toContain("plugins/b");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "D6: selecting one of two same-name skills installs normally",
+  async () => {
+    const { url } = await pluginUpstream(duplicateNamePlugins(), {
+      claude: duplicateNameCatalog(),
+    });
+    const { project, env } = await initProject();
+    const outer = setPickContext({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      capableTerminal: true,
+      prompt: async (request) => ({
+        kind: "picked",
+        refs: request.rows
+          .filter((row) => row.id === "plugins/a/skills/x")
+          .map(pickRowId),
+      }),
+    });
+    let result: CliResult;
+    try {
+      result = await runInProcess(project)(["add", url, "--yes"], env);
+    } finally {
+      setPickContext(outer);
+    }
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(join(project, ".agents/skills/x/SKILL.md"))).toBe(true);
+    const lock = JSON.parse(
+      await readFile(join(project, ".capshelf", "remotes.lock.json"), "utf-8"),
+    );
+    expect(Object.keys(lock.items)).toEqual(["remote/skills/x"]);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+interface ConsentHarness {
+  context: DestructiveConfirmationContext;
+  prompts: string[];
+}
+
+/** A TTY confirmation context for the per-skill consent prompt
+ * (`confirmInstall`), answering "n" so the run exits 0 without installing. */
+function consentContext(): ConsentHarness {
+  const prompts: string[] = [];
+  return {
+    context: {
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      prompt: async (message) => {
+        prompts.push(message);
+        return "n";
+      },
+      stderr: { write: () => {} },
+    },
+    prompts,
+  };
+}
+
+test(
+  "consent for a skill with facts names the plugin and the facts that reach outside it",
+  async () => {
+    const { url } = await pluginUpstream(threePlugins(), {
+      claude: threePluginsCatalog(),
+    });
+    const { project, env } = await initProject();
+    const { context, prompts } = consentContext();
+    const result = await runWithConfirmation(
+      project,
+      env,
+      ["add", url, "--path", "plugins/heavy/skills/worker"],
+      context,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(prompts).toHaveLength(1);
+    const prompt = prompts[0]!;
+    expect(prompt).toContain("plugin    heavy");
+    expect(prompt).toContain(
+      "! this skill uses parts of the heavy plugin that are not installed:",
+    );
+    // The agent fact names the agent the skill's text refers to ("assistant"),
+    // not the skill's own name ("worker") — the self-reference exclusion in
+    // `src/plugin-facts.ts` means the skill's own name never appears here.
+    expect(prompt).toContain("agents       assistant");
+    expect(prompt).toContain("files outside the skill directory");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "consent for a skill with no facts shows '(no parts outside the skill)' and the singular file count",
+  async () => {
+    const { url } = await pluginUpstream(threePlugins(), {
+      claude: threePluginsCatalog(),
+    });
+    const { project, env } = await initProject();
+    const { context, prompts } = consentContext();
+    const result = await runWithConfirmation(
+      project,
+      env,
+      ["add", url, "--path", "plugins/plain/skills/plain"],
+      context,
+    );
+    expect(result.exitCode).toBe(0);
+    const prompt = prompts[0]!;
+    expect(prompt).toContain("plugin    plain  (no parts outside the skill)");
+    expect(prompt).toContain("1 file,");
+    expect(prompt).not.toContain("uses parts of the plain plugin");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "--yes --json installing a skill with facts prints the facts block to stderr and usesPluginParts in the JSON row",
+  async () => {
+    const { url } = await pluginUpstream(threePlugins(), {
+      claude: threePluginsCatalog(),
+    });
+    const { project, env } = await initProject();
+    const result = await runInProcess(project)(
+      ["add", url, "--path", "plugins/heavy/skills/worker", "--yes", "--json"],
+      env,
+    );
+    expect(result.exitCode).toBe(0);
+    const stderr = result.stderr.toString();
+    expect(stderr).toContain(
+      "! this skill uses parts of the heavy plugin that are not installed:",
+    );
+    expect(stderr).toContain("files outside the skill directory");
+    const payload = jsonOutput(result);
+    expect(arrayField(payload, "usesPluginParts")).toHaveLength(3);
+    expect(stringField(objectField(payload, "plugin"), "name")).toBe("heavy");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "the no-skill hint names both plugin catalog paths",
+  async () => {
+    const { url } = await pluginUpstream(
+      [
+        {
+          dir: "plugins/empty",
+          skills: [],
+          files: { "commands/c.md": "# c\n" },
+        },
+      ],
+      { claude: claudeCatalog([{ name: "empty", source: "./plugins/empty" }]) },
+    );
+    const { project, env } = await initProject();
+    const result = await runInProcess(project)(["add", url], env);
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr.toString()).toContain(
+      "capshelf looks for SKILL.md at the repository root and under skills/, .claude/skills/, and .agents/skills/ and in plugins named by .claude-plugin/marketplace.json or .agents/plugins/marketplace.json",
     );
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
