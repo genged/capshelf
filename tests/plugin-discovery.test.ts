@@ -17,7 +17,7 @@ async function discover(repo: string): Promise<PluginInventory> {
   const entries = await lsTreeEntriesForPathspecs(repo, "HEAD", [
     literalPathspec("."),
   ]);
-  return discoverPlugins(repo, "HEAD", entries);
+  return discoverPlugins(repo, entries);
 }
 
 test("normalizeCatalogPath strips ./ and a trailing /, and rejects an escape", () => {
@@ -352,7 +352,7 @@ test("a manifest skills field adds extra children, and a direct skill itself", a
   expect(f?.skillDirs).toEqual(["plugins/f/one"]);
 });
 
-test("a manifest skills path that leaves the plugin warns and adds nothing", async () => {
+test("a manifest skills path that is unsafe or leaves the plugin warns and adds nothing", async () => {
   const repo = await tempRepo("capshelf-plugin-manifest-escape-");
   await writePlugins(
     repo,
@@ -373,7 +373,8 @@ test("a manifest skills path that leaves the plugin warns and adds nothing", asy
   expect(inventory.warnings).toEqual([
     {
       path: "plugins/g/.claude-plugin/plugin.json",
-      message: "skills path ./../other/skills leaves the plugin; skipped",
+      message:
+        "skills path ./../other/skills is unsafe or leaves the plugin; skipped",
     },
   ]);
 });

@@ -104,7 +104,7 @@ export async function discoverRemoteSkills(
     if (origin !== null) found.set(dir, origin);
   }
 
-  const inventory = await discoverPlugins(repo, commit, entries);
+  const inventory = await discoverPlugins(repo, entries);
 
   // D2: today's rule for an entry with a `skills` array, or `source: "./"`.
   for (const dir of inventory.legacySkillDirs) {
@@ -200,7 +200,7 @@ export async function candidateAtSubpath(
     throw new PreconditionError(`no ${SKILL_FILE} at ${skillPath}`);
   }
 
-  const plugin = await pluginOwningSkillDir(repo, commit, entries, subpath);
+  const plugin = await pluginOwningSkillDir(repo, entries, subpath);
   if (plugin !== null) {
     const facts = await collectPluginFacts(
       repo,
@@ -246,7 +246,7 @@ export async function pluginAtSubpath(
   const entries = await lsTreeEntriesForPathspecs(repo, commit, [
     literalPathspec("."),
   ]);
-  const inventory = await discoverPlugins(repo, commit, entries);
+  const inventory = await discoverPlugins(repo, entries);
   let plugin = inventory.plugins.find((p) => p.source === subpath);
   let manifestWarnings: DiscoveryWarning[] = [];
   if (plugin === undefined) {
@@ -293,11 +293,10 @@ export async function pluginAtSubpath(
  */
 async function pluginOwningSkillDir(
   repo: string,
-  commit: string,
   entries: readonly GitTreeEntry[],
   subpath: string,
 ): Promise<DiscoveredPlugin | null> {
-  const inventory = await discoverPlugins(repo, commit, entries);
+  const inventory = await discoverPlugins(repo, entries);
   const cataloged = inventory.plugins.find((plugin) =>
     plugin.skillDirs.includes(subpath),
   );

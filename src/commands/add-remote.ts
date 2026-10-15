@@ -669,17 +669,6 @@ async function chooseCandidates(
   });
 }
 
-/**
- * D4/D7: `--yes` skips the prompt, so this is the only place that block
- * reaches a `--yes` install — on stderr, never stdout, so `--json` still
- * parses. It prints nothing when the skill is not a plugin skill, or uses
- * nothing outside itself and every file was checked.
- */
-function printPluginFactsWarning(facts: SkillPluginFacts | undefined): void {
-  if (!factsWarnOnInstall(facts)) return;
-  for (const line of renderPluginFacts(facts!)) console.error(line);
-}
-
 async function confirmInstall(input: {
   project: string;
   upstream: string;
@@ -695,7 +684,13 @@ async function confirmInstall(input: {
   opts: RemoteAddOptions;
 }): Promise<boolean> {
   if (input.opts.yes === true) {
-    printPluginFactsWarning(input.candidate.plugin);
+    // D4/D7: `--yes` skips the prompt, so this is the only place the facts
+    // block reaches a `--yes` install. It goes to stderr, never stdout, so
+    // `--json` still parses.
+    const facts = input.candidate.plugin;
+    if (factsWarnOnInstall(facts)) {
+      for (const line of renderPluginFacts(facts!)) console.error(line);
+    }
     return true;
   }
   const context = confirmationContext();
@@ -1326,13 +1321,7 @@ function printCandidateListJson(
           description: candidate.description,
           origin: candidate.origin,
           ...(candidate.plugin !== undefined && {
-            plugin: {
-              name: candidate.plugin.plugin.name,
-              source: candidate.plugin.plugin.source,
-              catalogs: candidate.plugin.plugin.catalogs,
-            },
-            usesPluginParts: candidate.plugin.usesPluginParts,
-            factsComplete: candidate.plugin.factsComplete,
+            ...pluginJsonFields(candidate.plugin),
             ...(candidate.plugin.unread.length > 0 && {
               unread: candidate.plugin.unread,
             }),
@@ -1352,6 +1341,22 @@ function printCandidateListJson(
       2,
     ),
   );
+}
+
+/**
+ * D7: the fields a plugin skill adds to a JSON row, the same in the `--list`
+ * rows and in the install result rows.
+ */
+function pluginJsonFields(facts: SkillPluginFacts) {
+  return {
+    plugin: {
+      name: facts.plugin.name,
+      source: facts.plugin.source,
+      catalogs: facts.plugin.catalogs,
+    },
+    usesPluginParts: facts.usesPluginParts,
+    factsComplete: facts.factsComplete,
+  };
 }
 
 function printInstalled(
@@ -1382,15 +1387,7 @@ function printInstalled(
               path: first.path,
               license: first.license,
               files: first.files,
-              ...(first.plugin !== undefined && {
-                plugin: {
-                  name: first.plugin.plugin.name,
-                  source: first.plugin.plugin.source,
-                  catalogs: first.plugin.plugin.catalogs,
-                },
-                usesPluginParts: first.plugin.usesPluginParts,
-                factsComplete: first.plugin.factsComplete,
-              }),
+              ...(first.plugin !== undefined && pluginJsonFields(first.plugin)),
             }
           : {
               verb: "add",
@@ -1408,15 +1405,8 @@ function printInstalled(
                 path: result.path,
                 license: result.license,
                 files: result.files,
-                ...(result.plugin !== undefined && {
-                  plugin: {
-                    name: result.plugin.plugin.name,
-                    source: result.plugin.plugin.source,
-                    catalogs: result.plugin.plugin.catalogs,
-                  },
-                  usesPluginParts: result.plugin.usesPluginParts,
-                  factsComplete: result.plugin.factsComplete,
-                }),
+                ...(result.plugin !== undefined &&
+                  pluginJsonFields(result.plugin)),
               })),
             },
         null,

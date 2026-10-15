@@ -200,13 +200,13 @@ function parseManifest(raw: string): PluginManifest {
  * 1), and a parse failure warns and yields nothing. Shared by the Claude and
  * the Codex catalog, which otherwise differ only in their path and parser.
  */
-async function readCatalog<T>(
+function readCatalog<T>(
   path: string,
   entry: GitTreeEntry | undefined,
   blobs: ReadonlyMap<string, Buffer>,
   parse: (raw: string) => T,
   warnings: DiscoveryWarning[],
-): Promise<T | undefined> {
+): T | undefined {
   if (entry === undefined) return undefined;
   if (!isRegularFile(entry)) {
     warnings.push({
@@ -252,14 +252,14 @@ async function readCatalogs(
       ? await catFileBlobs(repo, blobIds)
       : new Map<string, Buffer>();
 
-  const claudeDocument = await readCatalog(
+  const claudeDocument = readCatalog(
     CLAUDE_CATALOG_PATH,
     claudeEntry,
     blobs,
     parseClaudeMarketplace,
     warnings,
   );
-  const codexDocument = await readCatalog(
+  const codexDocument = readCatalog(
     CODEX_CATALOG_PATH,
     codexEntry,
     blobs,
@@ -506,10 +506,6 @@ function filterNestedPlugins(
 
 // ------------------------------------------------------------------- rule 7
 
-function isWithinPluginDir(path: string, dir: string): boolean {
-  return dir === "." || path === dir || path.startsWith(`${dir}/`);
-}
-
 function hasRegularEntryAt(
   entries: readonly GitTreeEntry[],
   path: string,
@@ -557,20 +553,18 @@ function computeSkillDirs(
       : [manifest.skills];
     for (const rawSkill of rawList) {
       if (!isConfigString(rawSkill)) continue;
+      // D13: `normalizeCatalogPath` refuses a `..` segment and an absolute
+      // path, so a path it accepts, joined to `dir`, stays inside the plugin.
+      // One refusal covers both reasons, so the warning names both.
       const normalized = normalizeCatalogPath(rawSkill);
-      const joined =
-        normalized === null
-          ? null
-          : normalized === "."
-            ? dir
-            : pluginPath(dir, normalized);
-      if (joined === null || !isWithinPluginDir(joined, dir)) {
+      if (normalized === null) {
         warnings.push({
           path: manifestPath,
-          message: `skills path ${rawSkill} leaves the plugin; skipped`,
+          message: `skills path ${rawSkill} is unsafe or leaves the plugin; skipped`,
         });
         continue;
       }
+      const joined = normalized === "." ? dir : pluginPath(dir, normalized);
       if (hasRegularEntryAt(entries, pluginPath(joined, SKILL_FILE))) {
         skillDirs.add(joined);
       } else {
@@ -728,7 +722,6 @@ export async function describePluginDirectory(
  */
 export async function discoverPlugins(
   repo: string,
-  commit: string,
   entries: readonly GitTreeEntry[],
 ): Promise<PluginInventory> {
   const warnings: DiscoveryWarning[] = [];

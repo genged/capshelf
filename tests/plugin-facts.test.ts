@@ -175,7 +175,7 @@ test("a NUL blob is skipped and factsComplete stays true", async () => {
   );
   await commitAll(repo, "nul blob");
   const entries = await treeEntries(repo);
-  const inventory = await discoverPlugins(repo, "HEAD", entries);
+  const inventory = await discoverPlugins(repo, entries);
   const facts = await collectPluginFacts(repo, entries, inventory.plugins);
   const fact = facts.get("plugins/n/skills/one")!;
   expect(fact.factsComplete).toBe(true);
@@ -202,7 +202,7 @@ test("a blob over 1 MB is unread over-1mb and the skill is factsComplete: false"
   );
   await commitAll(repo, "over 1mb");
   const entries = await treeEntries(repo);
-  const inventory = await discoverPlugins(repo, "HEAD", entries);
+  const inventory = await discoverPlugins(repo, entries);
   const facts = await collectPluginFacts(repo, entries, inventory.plugins);
   const fact = facts.get("plugins/o/skills/one")!;
   expect(fact.unread).toEqual([{ path: "big.txt", why: "over-1mb" }]);
@@ -237,7 +237,7 @@ test("collectPluginFactsWithLimits: over-1mb does not inflate the total, and the
   );
   await commitAll(repo, "budget");
   const entries = await treeEntries(repo);
-  const inventory = await discoverPlugins(repo, "HEAD", entries);
+  const inventory = await discoverPlugins(repo, entries);
   // Budget: SKILL.md (skillSize) + b-ok.txt (5) + 10 bytes of slack. a-big.bin
   // must not count against it (over-1mb), or b-ok.txt would overflow too.
   // c-overflow.txt (20 bytes) genuinely overflows the remaining 10-byte
@@ -275,7 +275,7 @@ test("filesOutsideSkill counts blobs under the plugin dir outside the one skill"
   );
   await commitAll(repo, "outside");
   const entries = await treeEntries(repo);
-  const inventory = await discoverPlugins(repo, "HEAD", entries);
+  const inventory = await discoverPlugins(repo, entries);
   const facts = await collectPluginFacts(repo, entries, inventory.plugins);
   const fact = facts.get("plugins/q/skills/one")!;
   expect(fact.filesOutsideSkill).toBe(2);
@@ -299,7 +299,7 @@ test("an unread workflow file marks every skill of that plugin factsComplete: fa
   );
   await commitAll(repo, "workflow unread");
   const entries = await treeEntries(repo);
-  const inventory = await discoverPlugins(repo, "HEAD", entries);
+  const inventory = await discoverPlugins(repo, entries);
   const facts = await collectPluginFacts(repo, entries, inventory.plugins);
   const one = facts.get("plugins/w/skills/one")!;
   const two = facts.get("plugins/w/skills/two")!;
@@ -336,7 +336,7 @@ test("a skill directory that equals its plugin directory does not list an unread
   );
   await commitAll(repo, "root skill");
   const entries = await treeEntries(repo);
-  const inventory = await discoverPlugins(repo, "HEAD", entries);
+  const inventory = await discoverPlugins(repo, entries);
   expect(inventory.plugins[0]?.skillDirs).toEqual(["plugins/z"]);
   const facts = await collectPluginFacts(repo, entries, inventory.plugins);
   const fact = facts.get("plugins/z")!;
@@ -370,7 +370,7 @@ test("a skill's own plugin-agents and plugin-workflows facts, end to end through
   );
   await commitAll(repo, "e2e");
   const entries = await treeEntries(repo);
-  const inventory = await discoverPlugins(repo, "HEAD", entries);
+  const inventory = await discoverPlugins(repo, entries);
   const facts = await collectPluginFacts(repo, entries, inventory.plugins);
   const fact = facts.get("plugins/r/skills/rev")!;
   expect(fact.factsComplete).toBe(true);
@@ -410,7 +410,7 @@ test("a workflow's meta name is used when it differs from the stem", async () =>
   );
   await commitAll(repo, "meta name");
   const entries = await treeEntries(repo);
-  const inventory = await discoverPlugins(repo, "HEAD", entries);
+  const inventory = await discoverPlugins(repo, entries);
   const facts = await collectPluginFacts(repo, entries, inventory.plugins);
   const fact = facts.get("plugins/s/skills/stat")!;
   expect(fact.usesPluginParts).toEqual([
@@ -439,7 +439,7 @@ test("an agent stem comes only from a .md file; a non-.md file in agents/ gives 
   );
   await commitAll(repo, "agent ext");
   const entries = await treeEntries(repo);
-  const inventory = await discoverPlugins(repo, "HEAD", entries);
+  const inventory = await discoverPlugins(repo, entries);
   const facts = await collectPluginFacts(repo, entries, inventory.plugins);
   const fact = facts.get("plugins/u/skills/one")!;
   expect(fact.usesPluginParts).toEqual([]);
@@ -462,7 +462,7 @@ test("onlySkillDirs limits the result to the requested skill directories", async
   );
   await commitAll(repo, "only");
   const entries = await treeEntries(repo);
-  const inventory = await discoverPlugins(repo, "HEAD", entries);
+  const inventory = await discoverPlugins(repo, entries);
   const facts = await collectPluginFacts(
     repo,
     entries,
