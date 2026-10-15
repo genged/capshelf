@@ -168,12 +168,15 @@ export async function candidateAtSubpath(
       { hint: "name a directory inside the repository, without `..`" },
     );
   }
-  const skillPath = itemFilePath(subpath, SKILL_FILE);
-  const skillEntries = await lsTreeEntriesForPathspecs(repo, commit, [
-    literalPathspec(skillPath),
+  // One full-tree read, reused below for the SKILL.md check and the plugin
+  // lookup — not a narrow read of just `skillPath` followed by a second,
+  // full one.
+  const entries = await lsTreeEntriesForPathspecs(repo, commit, [
+    literalPathspec("."),
   ]);
+  const skillPath = itemFilePath(subpath, SKILL_FILE);
   // D14: a symlinked or gitlinked SKILL.md is "no SKILL.md".
-  const skillEntry = skillEntries.find((entry) => entry.path === skillPath);
+  const skillEntry = entries.find((entry) => entry.path === skillPath);
   if (skillEntry === undefined || !isRegularFile(skillEntry)) {
     throw new PreconditionError(
       `no ${SKILL_FILE} at ${skillPath} in that repository at ${commit}`,
@@ -197,9 +200,6 @@ export async function candidateAtSubpath(
     throw new PreconditionError(`no ${SKILL_FILE} at ${skillPath}`);
   }
 
-  const entries = await lsTreeEntriesForPathspecs(repo, commit, [
-    literalPathspec("."),
-  ]);
   const plugin = await pluginOwningSkillDir(repo, commit, entries, subpath);
   if (plugin !== null) {
     const facts = await collectPluginFacts(
@@ -218,6 +218,12 @@ export async function candidateAtSubpath(
  * D10 and D5: the plugin whose source equals `subpath`, with candidates for
  * its skills and their facts. Null when `subpath` names no plugin at all,
  * cataloged or manifest-only.
+ *
+ * `warnings` is `inventory.warnings` plus, only for the manifest-only
+ * fallback, that one `describePluginDirectory` call's own warnings — the
+ * cataloged branch's warnings are already inside `inventory.warnings`,
+ * because `discoverPlugins` calls `describePluginDirectory` for every kept
+ * plugin itself.
  */
 export async function pluginAtSubpath(
   repo: string,
@@ -227,16 +233,33 @@ export async function pluginAtSubpath(
 ): Promise<{
   plugin: DiscoveredPlugin;
   candidates: RemoteSkillCandidate[];
+  warnings: DiscoveryWarning[];
 } | null> {
+  // D2/D12: the repository root is always legacy, never a plugin — a
+  // catalog source normalizing to "." routes through `legacySkillDirs`
+  // (`isLegacyClaudePlugin`), so no cataloged plugin ever has `source: "."`.
+  // A manifest at the root must not turn `--path .` into a plugin lookup
+  // either: a repository whose root is also a plugin keeps today's `--path .`
+  // behavior (controller ruling).
+  if (subpath === ".") return null;
+
   const entries = await lsTreeEntriesForPathspecs(repo, commit, [
     literalPathspec("."),
   ]);
   const inventory = await discoverPlugins(repo, commit, entries);
   let plugin = inventory.plugins.find((p) => p.source === subpath);
+  let manifestWarnings: DiscoveryWarning[] = [];
   if (plugin === undefined) {
     if (!hasPluginManifest(entries, subpath)) return null;
-    plugin = (await describePluginDirectory(repo, entries, subpath, {}, []))
-      .plugin;
+    const described = await describePluginDirectory(
+      repo,
+      entries,
+      subpath,
+      {},
+      [],
+    );
+    plugin = described.plugin;
+    manifestWarnings = described.warnings;
   }
 
   const facts = await collectPluginFacts(repo, entries, [plugin]);
@@ -252,7 +275,11 @@ export async function pluginAtSubpath(
     const fact = facts.get(candidate.subpath);
     if (fact !== undefined) candidate.plugin = fact;
   }
-  return { plugin, candidates };
+  return {
+    plugin,
+    candidates,
+    warnings: [...inventory.warnings, ...manifestWarnings],
+  };
 }
 
 /**

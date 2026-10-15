@@ -9,7 +9,6 @@ import {
   normalizeCatalogPath,
   type PluginInventory,
 } from "../src/plugin-discovery";
-import { discoverRemoteSkills } from "../src/remote-discovery";
 import { addSkill, commitAll, tempRepo } from "./cli-fixtures";
 import { claudeCatalog, codexCatalog, writePlugins } from "./plugin-fixtures";
 import { skillText } from "./remote-fixtures";
@@ -538,15 +537,22 @@ test("a Claude catalog that does not parse warns, and the Codex catalog still li
   );
   await commitAll(repo, "bad claude catalog");
   const inventory = await discover(repo);
-  // M1 (Task 4): `discoverRemoteSkills` now returns this same inventory's
-  // `warnings` array (`src/remote-discovery.ts`), so the two must be the
-  // very same warning rather than two independently built strings.
-  const old = await discoverRemoteSkills(repo, "HEAD");
   expect(inventory.plugins.map((p) => p.source)).toEqual(["plugins/l"]);
-  expect(inventory.warnings).toHaveLength(1);
-  expect(inventory.warnings[0]?.path).toBe(".claude-plugin/marketplace.json");
-  expect(old.warnings).toHaveLength(1);
-  expect(old.warnings[0]).toEqual(inventory.warnings[0]);
+  // M1 (Fix round 1): a hardcoded literal oracle, not a comparison against
+  // another code path. The expected text is `loadClaudeMarketplaceAtCommit`'s
+  // actual thrown message for this exact fixture, captured by running it
+  // against the pre-Task-4 code at `d8b8168` with this repository's own
+  // `node_modules` (zod 3.25.76, pinned identically at `d8b8168` and here —
+  // `git show d8b8168:bun.lock` and `git show HEAD:bun.lock` agree). That
+  // function is unchanged since: `git diff d8b8168 HEAD --
+  // src/claude-marketplace.ts` only adds an `export` keyword, no body change.
+  expect(inventory.warnings).toEqual([
+    {
+      path: ".claude-plugin/marketplace.json",
+      message:
+        "is present and could not be read: invalid Claude marketplace: Required; Required; Expected array, received string",
+    },
+  ]);
 });
 
 test("hasPluginManifest and describePluginDirectory work for a directory no catalog names (Ruling A)", async () => {

@@ -116,6 +116,55 @@ test("a marketplace document names a directory no other rule found", async () =>
   });
 });
 
+// D2 "exactly as today": a legacy `skills` entry follows the rules the
+// deleted `marketplaceDirectories` used (`src/remote-discovery.ts` at
+// `d8b8168`), not D12's unified path rule.
+test("a legacy skills entry with a literal /SKILL.md suffix strips only that suffix", async () => {
+  const repo = await tempRepo("capshelf-discovery-market-skillmd-");
+  await skillAt(repo, "packages/review", "Reviews migrations");
+  await mkdir(join(repo, ".claude-plugin"), { recursive: true });
+  await writeFile(
+    join(repo, ".claude-plugin", "marketplace.json"),
+    JSON.stringify({
+      name: "example",
+      owner: { name: "example" },
+      plugins: [
+        {
+          name: "review",
+          source: "https://example.invalid/other",
+          skills: ["./packages/review/SKILL.md"],
+        },
+      ],
+    }),
+  );
+  await commitAll(repo, "marketplace skill.md suffix");
+  const { candidates } = await discoverRemoteSkills(repo, "HEAD");
+  expect(candidates.map((c) => c.subpath)).toEqual(["packages/review"]);
+});
+
+test("a legacy skills entry with no leading ./ is dropped, not resolved", async () => {
+  const repo = await tempRepo("capshelf-discovery-market-nodotslash-");
+  await skillAt(repo, "packages/review", "Reviews migrations");
+  await mkdir(join(repo, ".claude-plugin"), { recursive: true });
+  await writeFile(
+    join(repo, ".claude-plugin", "marketplace.json"),
+    JSON.stringify({
+      name: "example",
+      owner: { name: "example" },
+      plugins: [
+        {
+          name: "review",
+          source: "https://example.invalid/other",
+          skills: ["packages/review"],
+        },
+      ],
+    }),
+  );
+  await commitAll(repo, "marketplace no leading dot slash");
+  const { candidates } = await discoverRemoteSkills(repo, "HEAD");
+  expect(candidates).toEqual([]);
+});
+
 test("a directory without SKILL.md is not a candidate", async () => {
   const repo = await tempRepo("capshelf-discovery-empty-");
   await mkdir(join(repo, "skills", "notaskill"), { recursive: true });
@@ -283,6 +332,76 @@ test("candidateAtSubpath fills plugin facts for a plugin skill directory", async
     "plugins/a/skills/s",
   );
   expect(candidate.plugin?.plugin.name).toBe("a");
+});
+
+// D2/D12 + controller ruling: the repository root is always legacy. A root
+// manifest must not turn `--path .` into a plugin lookup, so a repository
+// whose root is also a plugin keeps today's `--path .` behavior.
+test('pluginAtSubpath(".") is always null, even with a root manifest', async () => {
+  const repo = await tempRepo("capshelf-discovery-root-manifest-");
+  await skillAt(repo, ".", "Root skill");
+  await mkdir(join(repo, ".claude-plugin"), { recursive: true });
+  await writeFile(
+    join(repo, ".claude-plugin", "plugin.json"),
+    JSON.stringify({ name: "root-plugin" }),
+  );
+  await commitAll(repo, "root manifest");
+  expect(await pluginAtSubpath(repo, "HEAD", ".")).toBeNull();
+});
+
+test('candidateAtSubpath(".") never attaches plugin facts from a root manifest', async () => {
+  const repo = await tempRepo("capshelf-discovery-root-manifest-candidate-");
+  await skillAt(repo, ".", "Root skill");
+  await mkdir(join(repo, ".claude-plugin"), { recursive: true });
+  await writeFile(
+    join(repo, ".claude-plugin", "plugin.json"),
+    JSON.stringify({ name: "root-plugin" }),
+  );
+  await commitAll(repo, "root manifest candidate");
+  const candidate = await candidateAtSubpath(repo, "HEAD", ".");
+  expect(candidate.origin).toBe("root");
+  expect(candidate.plugin).toBeUndefined();
+});
+
+// Fix round 1, item 6: the manifest-only fallback for a plugin no catalog
+// names at all, exercised through both candidateAtSubpath and pluginAtSubpath.
+test("candidateAtSubpath fills manifest-only plugin facts for an uncataloged plugin's skill", async () => {
+  const repo = await tempRepo("capshelf-discovery-manifestonly-candidate-");
+  await writePlugins(
+    repo,
+    [
+      {
+        dir: "tools/p",
+        manifestName: "pp",
+        skills: [{ name: "s", description: "S" }],
+      },
+    ],
+    {},
+  );
+  await commitAll(repo, "manifest-only plugin");
+  const candidate = await candidateAtSubpath(repo, "HEAD", "tools/p/skills/s");
+  expect(candidate.plugin?.plugin.name).toBe("pp");
+  expect(candidate.plugin?.plugin.catalogs).toEqual([]);
+});
+
+test("pluginAtSubpath finds an uncataloged, manifest-only plugin with its skill", async () => {
+  const repo = await tempRepo("capshelf-discovery-manifestonly-pluginat-");
+  await writePlugins(
+    repo,
+    [
+      {
+        dir: "tools/p",
+        manifestName: "pp",
+        skills: [{ name: "s", description: "S" }],
+      },
+    ],
+    {},
+  );
+  await commitAll(repo, "manifest-only plugin");
+  const found = await pluginAtSubpath(repo, "HEAD", "tools/p");
+  expect(found?.plugin.name).toBe("pp");
+  expect(found?.plugin.catalogs).toEqual([]);
+  expect(found?.candidates.map((c) => c.subpath)).toEqual(["tools/p/skills/s"]);
 });
 
 test("a license inside the item and one at the root are distinguished", async () => {

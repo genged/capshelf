@@ -288,12 +288,23 @@ function isLegacyClaudePlugin(plugin: ClaudePlugin): boolean {
   );
 }
 
+/**
+ * D2: "exactly as today" — the rules the deleted `marketplaceDirectories`
+ * used (`src/remote-discovery.ts` at `d8b8168`, lines 321-333), not D12's
+ * unified path rule. A `skills` entry must start with `./` (a bare name is
+ * dropped, not resolved against anything); only a literal trailing
+ * `/SKILL.md` is stripped, and no trailing `/` is. `normalizeCatalogPath`
+ * does both of those differently and must not be reused here.
+ */
 function addLegacySkillDirs(plugin: ClaudePlugin, out: string[]): void {
   if (!Array.isArray(plugin.skills)) return;
   for (const skill of plugin.skills) {
-    if (!isConfigString(skill)) continue;
-    const normalized = normalizeCatalogPath(skill);
-    if (normalized !== null) out.push(normalized);
+    if (!isConfigString(skill) || !skill.startsWith("./")) continue;
+    const ref = skill.slice(2);
+    const dir = ref.endsWith(`/${SKILL_FILE}`)
+      ? ref.slice(0, -(SKILL_FILE.length + 1))
+      : ref;
+    if (isSafeItemRoot(dir)) out.push(dir);
   }
 }
 

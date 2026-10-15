@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { $ } from "bun";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -198,6 +198,37 @@ test(
       false,
     );
     expect(existsSync(join(project, ".agents/skills/pdf"))).toBe(false);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+// A10 at the CLI layer: the printed line must stay byte-identical to the
+// line `src/remote-discovery.ts`'s deleted `marketplaceDirectories` used to
+// build directly, now that `add-remote.ts`'s warning loop assembles it from
+// `{ path, message }` instead of a preformatted string
+// (`src/commands/add-remote.ts:165-169`).
+test(
+  "a malformed Claude catalog warns on stderr with its exact text and still lists",
+  async () => {
+    const { url, work } = await upstreamWith([["skills/pdf", "Extract text"]]);
+    await mkdir(join(work, ".claude-plugin"), { recursive: true });
+    await writeFile(
+      join(work, ".claude-plugin", "marketplace.json"),
+      '{"plugins": "not an array"}',
+    );
+    await $`git -C ${work} add -A`.quiet();
+    await $`git -C ${work} commit -qm "bad marketplace"`.quiet();
+    await $`git -C ${work} push -q origin main`.quiet();
+    const { project, env } = await initProject();
+    const result = await runInProcess(project)(
+      ["add", url, "--list", "--json"],
+      env,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.toString()).toContain(
+      "⚠ .claude-plugin/marketplace.json is present and could not be read: invalid Claude marketplace: Required; Required; Expected array, received string",
+    );
+    expect(arrayField(jsonOutput(result), "skills")).toHaveLength(1);
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
