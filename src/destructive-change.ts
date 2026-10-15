@@ -248,7 +248,10 @@ function defaultDestructiveConfirmationContext(): DestructiveConfirmationContext
     stdinIsTTY: process.stdin.isTTY === true,
     stderrIsTTY: process.stderr.isTTY === true,
     stdoutIsTTY: process.stdout.isTTY === true,
-    terminalRows: process.stdout.rows ?? null,
+    // `0` means "a terminal is attached but did not report a height" on some
+    // hosts; D9 cannot compare a listing's length against that, so it is
+    // folded into "unknown" the same as a missing value.
+    terminalRows: process.stdout.rows || null,
     prompt: async (message) => {
       const readline = createInterface({
         input: process.stdin,
@@ -259,11 +262,17 @@ function defaultDestructiveConfirmationContext(): DestructiveConfirmationContext
         // closed pipe or `< /dev/null` fires the interface's `close` event
         // right away, but the question promise neither resolves nor rejects
         // — it hangs forever. Racing it against `close` turns that hang into
-        // a rejection, which every caller here already treats as "no" (D9 of
-        // the remote discovery spec, and the consent prompt above).
+        // a rejection instead. Before this fix every prompt through this
+        // context hung forever on EOF or Ctrl-C; now it does not. Most
+        // callers — `confirmInstall`, `confirmRemotePinMove`,
+        // `confirmDestructiveChanges`, and a direct `askQuestion` — do not
+        // catch this rejection, so it reaches `main`'s handler, which prints
+        // it and exits 1 before any write (`reportError`, `src/cli.ts:127`).
+        // Only the D9 "show all" question (`confirmShowAllSkills`,
+        // `src/commands/add-remote.ts`) catches it and treats it as "no".
         const closedBeforeAnswer = new Promise<never>((_, reject) => {
           readline.once("close", () =>
-            reject(new Error("prompt closed before an answer (EOF)")),
+            reject(new Error("prompt closed before an answer")),
           );
         });
         return await Promise.race([

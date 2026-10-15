@@ -990,8 +990,12 @@ async function printCandidateList(
   // D9: a long plugin listing asks before it floods the terminal. A pipe,
   // `--json` (already handled above), and `--yes` print the full list with no
   // question, so scripts and `| less` work as today. A listing with no
-  // plugin skill never asks, which is what keeps a capshelf-shaped shelf
-  // byte-identical in a terminal too (D2).
+  // plugin *skill* never asks — `discovery.plugins` also holds a
+  // commands-only plugin, which must not count — which is what keeps a
+  // capshelf-shaped shelf byte-identical in a terminal too (D2).
+  const skillPlugins = discovery.plugins.filter(
+    (plugin) => plugin.skillDirs.length > 0,
+  );
   const context = confirmationContext();
   const askBeforeShowingAll =
     opts.yes !== true &&
@@ -1000,7 +1004,8 @@ async function printCandidateList(
     context.stderrIsTTY &&
     context.terminalRows !== null &&
     context.terminalRows !== undefined &&
-    discovery.plugins.length > 0 &&
+    context.terminalRows > 0 &&
+    skillPlugins.length > 0 &&
     lines.length > context.terminalRows;
   if (!askBeforeShowingAll) {
     for (const line of lines) console.log(line);
@@ -1017,13 +1022,20 @@ async function printCandidateList(
     for (const line of lines.slice(summaryLength)) console.log(line);
     return;
   }
-  // The "no" answer, D9: the plugin-scoped command (D10) names the first
-  // plugin in listing order, so the user has a short next step instead of
-  // the whole list.
-  const firstPlugin = discovery.plugins[0]!;
-  console.log(
-    `  one plugin:   ${safe(shellCommand([PRODUCT_NAME, "add", input, "--list", "--path", firstPlugin.source]))}`,
-  );
+  // The "no" answer, D9. When the listing is already scoped to one plugin
+  // (D10), naming that same plugin back would repeat the command the user
+  // just ran, so only the JSON command prints. Otherwise the plugin-scoped
+  // command names the first plugin *with a skill* in listing order — a
+  // commands-only plugin has nothing to install — so the user has a short
+  // next step instead of the whole list.
+  if (scope === "repository") {
+    // SAFETY: `askBeforeShowingAll` already required `skillPlugins.length >
+    // 0` above, in this same function, with no intervening mutation.
+    const firstPlugin = skillPlugins[0]!;
+    console.log(
+      `  one plugin:   ${safe(shellCommand([PRODUCT_NAME, "add", input, "--list", "--path", firstPlugin.source]))}`,
+    );
+  }
   console.log(
     `  everything:   ${safe(shellCommand([PRODUCT_NAME, "add", input, "--list", "--json"]))}`,
   );

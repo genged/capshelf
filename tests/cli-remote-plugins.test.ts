@@ -492,6 +492,15 @@ test(
     expect(stdout).toContain(
       `install one:   capshelf add ${url} --path plugins/plain/skills/plain`,
     );
+    // The question's line count is `renderCandidateList(...).lines.length`
+    // (`src/commands/add-remote.ts`), and answering "" here prints every one
+    // of those lines via one `console.log` call each — the summary half, then
+    // the rest — so the total lines this run printed must equal the number
+    // the question quoted.
+    const match = /\((\d+) lines\)/.exec(prompts[0]!);
+    expect(match).not.toBeNull();
+    const totalPrintedLines = stdout.split("\n").length - 1;
+    expect(Number(match![1])).toBe(totalPrintedLines);
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
@@ -521,6 +530,16 @@ test(
     );
     expect(stdout).not.toContain("  plugins/heavy");
     expect(stdout).not.toContain("install one:");
+    // The summary block (through the `found` line) always prints, and it
+    // prints before the "no" text, not instead of it.
+    const foundIndex = stdout.indexOf("  found     2 skills in 3 plugins");
+    const noTextIndex = stdout.indexOf("  one plugin:");
+    expect(foundIndex).toBeGreaterThanOrEqual(0);
+    expect(noTextIndex).toBeGreaterThan(foundIndex);
+    // No skill row — only a plugin group header carries this text — reached
+    // stdout: the descriptions below only appear on a skill's own row.
+    expect(stdout).not.toContain("Plain skill");
+    expect(stdout).not.toContain("Heavy skill");
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
@@ -663,6 +682,122 @@ test(
     expect(result.exitCode).toBe(0);
     expect(prompts).toHaveLength(0);
     expect(result.stdout.toString()).toContain("skills/pdf");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "D9: a commands-only plugin never asks, even with enough layout skills to exceed the terminal",
+  async () => {
+    // `discovery.plugins` holds a plugin with no skill directories too; D9
+    // must count plugins that have a skill, not every catalog entry.
+    const { url, work } = await upstreamWith([
+      ["skills/a", "A"],
+      ["skills/b", "B"],
+      ["skills/c", "C"],
+      ["skills/d", "D"],
+      ["skills/e", "E"],
+      ["skills/f", "F"],
+    ]);
+    await mkdir(join(work, ".claude-plugin"), { recursive: true });
+    await writeFile(
+      join(work, ".claude-plugin", "marketplace.json"),
+      JSON.stringify({
+        name: "example",
+        owner: { name: "example" },
+        plugins: [{ name: "cmds", source: "./plugins/cmds" }],
+      }),
+    );
+    await mkdir(join(work, "plugins", "cmds", "commands"), {
+      recursive: true,
+    });
+    await writeFile(join(work, "plugins", "cmds", "commands", "c.md"), "# c\n");
+    await $`git -C ${work} add -A`.quiet();
+    await $`git -C ${work} commit -qm "commands-only plugin"`.quiet();
+    await $`git -C ${work} push -q origin main`.quiet();
+
+    const { project, env } = await initProject();
+    const { context, prompts } = d9Context([], { terminalRows: 5 });
+    const result = await runWithConfirmation(
+      project,
+      env,
+      ["add", url, "--list"],
+      context,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(prompts).toHaveLength(0);
+    const stdout = result.stdout.toString();
+    expect(stdout).toContain("no skills  plugins/cmds");
+    expect(stdout).toContain("skills/a");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "D9: 'no' names the first plugin with a skill, skipping a commands-only plugin listed first",
+  async () => {
+    const { url } = await pluginUpstream(
+      [
+        {
+          dir: "plugins/empty",
+          skills: [],
+          files: { "commands/c.md": "# c\n" },
+        },
+        {
+          dir: "plugins/withskills",
+          skills: [
+            { name: "a", description: "A" },
+            { name: "b", description: "B" },
+          ],
+        },
+      ],
+      {
+        claude: claudeCatalog([
+          { name: "empty", source: "./plugins/empty" },
+          { name: "withskills", source: "./plugins/withskills" },
+        ]),
+      },
+    );
+    const { project, env } = await initProject();
+    const { context, prompts } = d9Context(["n"], { terminalRows: 3 });
+    const result = await runWithConfirmation(
+      project,
+      env,
+      ["add", url, "--list"],
+      context,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(prompts).toHaveLength(1);
+    const stdout = result.stdout.toString();
+    expect(stdout).toContain(
+      `  one plugin:   capshelf add ${url} --list --path plugins/withskills`,
+    );
+    expect(stdout).not.toContain("--path plugins/empty");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "D9: a plugin-scoped listing's 'no' text omits the redundant plugin command",
+  async () => {
+    const { url } = await pluginUpstream(threePlugins(), {
+      claude: threePluginsCatalog(),
+    });
+    const { project, env } = await initProject();
+    const { context, prompts } = d9Context(["n"], { terminalRows: 3 });
+    const result = await runWithConfirmation(
+      project,
+      env,
+      ["add", url, "--list", "--path", "plugins/heavy"],
+      context,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(prompts).toHaveLength(1);
+    const stdout = result.stdout.toString();
+    expect(stdout).not.toContain("one plugin:");
+    expect(stdout).toContain(
+      `  everything:   capshelf add ${url} --list --json`,
+    );
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );

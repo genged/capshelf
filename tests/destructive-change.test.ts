@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   DESTRUCTIVE_CHANGE_REASON_LABELS,
@@ -236,8 +236,9 @@ describe("the default confirmation context's prompt on EOF", () => {
   // below tell apart from the expected clean exit.
   test("rejects instead of hanging, within the spawn timeout", async () => {
     const dir = await tempDir("capshelf-eof-probe-");
-    const scriptPath = join(dir, "ask-on-eof.ts");
-    const scriptSource = `import { askQuestion } from ${JSON.stringify(DESTRUCTIVE_CHANGE_MODULE_PATH)};
+    try {
+      const scriptPath = join(dir, "ask-on-eof.ts");
+      const scriptSource = `import { askQuestion } from ${JSON.stringify(DESTRUCTIVE_CHANGE_MODULE_PATH)};
 try {
   const answer = await askQuestion("Prompt? ");
   console.log("RESOLVED:" + JSON.stringify(answer));
@@ -245,17 +246,20 @@ try {
   console.log("REJECTED:" + String(error));
 }
 `;
-    await writeFile(scriptPath, scriptSource);
-    const proc = spawn({
-      cmd: [process.execPath, scriptPath],
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: 5000,
-    });
-    await proc.exited;
-    expect(proc.signalCode).toBeNull();
-    const stdout = await new Response(proc.stdout).text();
-    expect(stdout).toContain("REJECTED:");
+      await writeFile(scriptPath, scriptSource);
+      const proc = spawn({
+        cmd: [process.execPath, scriptPath],
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 5000,
+      });
+      await proc.exited;
+      expect(proc.signalCode).toBeNull();
+      const stdout = await new Response(proc.stdout).text();
+      expect(stdout).toContain("REJECTED:");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   }, 10_000);
 });
