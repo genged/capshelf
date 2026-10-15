@@ -400,6 +400,12 @@ ambiguous. Capshelf prefers neither. It offers both. Without a terminal the
 command refuses and names `--list` and `--path`. Answer it with `--path
 <subpath>`, not with a guess.
 
+A plugin repository groups skills under a plugin directory. `add <url>
+--list --json` reports `usesPluginParts` for each plugin skill: the parts
+outside the skill directory it reads or calls. Read this before you install.
+A skill-only install never copies those parts. The skill can fail, or run
+with less than it expects, without them.
+
 Each repository is cloned once, to
 `$XDG_DATA_HOME/capshelf/remote/<host>/<owner>/<repo>`. A later `add <url>`
 against a repository the machine already holds fetches it first. The commit in

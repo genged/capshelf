@@ -57,6 +57,117 @@ assert_fixed_contains '"skills/xlsx"' "$TMP/list.json"
 test ! -e "$P/.capshelf/remotes.lock.json"
 test ! -e "$P/.agents/skills/pdf"
 
+# --- a plugin-layout upstream: two plugins, one with an agent reference ---
+PLUGIN_UPSTREAM_WORK="$TMP/plugin-upstream-work"
+PLUGIN_UPSTREAM="$TMP/plugin-upstream.git"
+mkdir -p "$PLUGIN_UPSTREAM_WORK/plugins/plain/skills/plain" \
+  "$PLUGIN_UPSTREAM_WORK/plugins/heavy/skills/worker" \
+  "$PLUGIN_UPSTREAM_WORK/plugins/heavy/agents" \
+  "$PLUGIN_UPSTREAM_WORK/.claude-plugin"
+printf '%s\n' '---' 'name: plain' 'description: Plain skill' '---' '' 'body' \
+  > "$PLUGIN_UPSTREAM_WORK/plugins/plain/skills/plain/SKILL.md"
+printf '%s\n' '---' 'name: worker' 'description: Heavy skill' '---' '' \
+  'Dispatches `assistant` for review.' \
+  > "$PLUGIN_UPSTREAM_WORK/plugins/heavy/skills/worker/SKILL.md"
+printf '%s\n' agent > "$PLUGIN_UPSTREAM_WORK/plugins/heavy/agents/assistant.md"
+cat > "$PLUGIN_UPSTREAM_WORK/.claude-plugin/marketplace.json" <<'JSON'
+{
+  "name": "fixture",
+  "owner": { "name": "fixture" },
+  "plugins": [
+    { "name": "plain", "source": "./plugins/plain" },
+    { "name": "heavy", "source": "./plugins/heavy" }
+  ]
+}
+JSON
+init_git_repo "$PLUGIN_UPSTREAM_WORK"
+configure_git_user "$PLUGIN_UPSTREAM_WORK"
+git -C "$PLUGIN_UPSTREAM_WORK" add -A
+git -C "$PLUGIN_UPSTREAM_WORK" commit -qm "two plugins"
+git -C "$PLUGIN_UPSTREAM_WORK" branch -M main
+git clone -q --bare "$PLUGIN_UPSTREAM_WORK" "$PLUGIN_UPSTREAM"
+git -C "$PLUGIN_UPSTREAM_WORK" remote add origin "$PLUGIN_UPSTREAM"
+PLUGIN_URL="file://$(canonical_path "$PLUGIN_UPSTREAM")"
+
+# --- add --list --json: the plugins array, and the facts on the plugin skill ---
+(cd "$P" && "${CLI[@]}" add "$PLUGIN_URL" --list --json > "$TMP/plugin-list.json")
+assert_fixed_contains '"plugins": [' "$TMP/plugin-list.json"
+assert_fixed_contains '"source": "plugins/plain"' "$TMP/plugin-list.json"
+assert_fixed_contains '"source": "plugins/heavy"' "$TMP/plugin-list.json"
+assert_fixed_contains '"usesPluginParts"' "$TMP/plugin-list.json"
+
+# --- --path <plugin root> refuses, exit 3, names the skill and its uses ---
+set +e
+(cd "$P" && "${CLI[@]}" add "$PLUGIN_URL" --path plugins/heavy --yes --json \
+  > "$TMP/plugin-root.json" 2>&1)
+PLUGIN_ROOT_EXIT=$?
+set -e
+if [ "$PLUGIN_ROOT_EXIT" -ne 3 ]; then
+  echo "expected add --path <plugin root> to exit 3, got $PLUGIN_ROOT_EXIT"
+  exit 1
+fi
+assert_fixed_contains 'is a plugin, not a skill' "$TMP/plugin-root.json"
+assert_fixed_contains 'install the skill: capshelf add' "$TMP/plugin-root.json"
+test ! -e "$P/.agents/skills/worker"
+
+# --- --path <skill> --yes installs the skill directory only ---
+(cd "$P" && "${CLI[@]}" add "$PLUGIN_URL" --path plugins/heavy/skills/worker --yes --json \
+  > "$TMP/plugin-skill.json" 2> "$TMP/plugin-skill.err")
+assert_fixed_contains '"usesPluginParts"' "$TMP/plugin-skill.json"
+test -f "$P/.agents/skills/worker/SKILL.md"
+test ! -e "$P/.agents/skills/worker/agents"
+assert_fixed_contains 'uses parts of the heavy plugin' "$TMP/plugin-skill.err"
+
+# --- D9 PTY: a listing taller than a 3-row terminal asks before it shows the
+#     rest. `script` opens a real pty, so the terminal-rows gate actually
+#     fires, which a piped non-tty run never would. ---
+CLI_STR="$(printf '%q ' "${CLI[@]}")"
+D9_CMD="cd '$P' && $CLI_STR add '$PLUGIN_URL' --list"
+echo n | script -qec "stty rows 3; $D9_CMD" /dev/null > "$TMP/d9.txt"
+assert_fixed_contains 'Show all 2 skills' "$TMP/d9.txt"
+assert_fixed_contains 'one plugin:   capshelf add' "$TMP/d9.txt"
+assert_fixed_contains 'everything:   capshelf add' "$TMP/d9.txt"
+assert_fixed_not_contains 'install one:' "$TMP/d9.txt"
+
+# --- D9 PTY: Ctrl-C ---
+# The design says Ctrl-C at this question acts as "no", the same as EOF
+# (closing stdin with Ctrl-D, which the command above answered correctly
+# through the readline 'close' race). A real terminal does not deliver Ctrl-C
+# that way: with no SIGINT handler installed anywhere in the CLI, the tty line
+# discipline sends SIGINT straight to the process, which dies before Node's
+# readline ever sees a keystroke. The run below exits by signal (130), not
+# "as no" (0). This is a real gap between the design and the binary — see the
+# task report — not fixed here.
+set +e
+printf '\003' | timeout 15 script -qec "stty rows 3; $D9_CMD" /dev/null \
+  > "$TMP/d9-ctrlc.txt" 2>&1
+CTRLC_EXIT=$?
+set -e
+if [ "$CTRLC_EXIT" -eq 0 ]; then
+  echo "Ctrl-C at the D9 question exited 0; the known SIGINT gap may be fixed now — update docs/cli.md and this comment"
+  exit 1
+fi
+
+# The one invariant that must hold either way: a process killed mid-prompt
+# leaves no half-finished install. The D9 question never writes by itself, so
+# this reuses the same signal against the per-skill consent prompt, which
+# does gate a real write, with the as-yet-uninstalled `plain` skill.
+INSTALL_CMD="cd '$P' && $CLI_STR add '$PLUGIN_URL' --path plugins/plain/skills/plain"
+cp "$P/.capshelf/remotes.lock.json" "$TMP/remotes-before-ctrlc.json"
+set +e
+printf '\003' | timeout 15 script -qec "$INSTALL_CMD" /dev/null \
+  > "$TMP/install-ctrlc.txt" 2>&1
+INSTALL_CTRLC_EXIT=$?
+set -e
+if [ "$INSTALL_CTRLC_EXIT" -eq 0 ]; then
+  echo "Ctrl-C at the install prompt exited 0; the known SIGINT gap may be fixed now — update docs/cli.md and this comment"
+  exit 1
+fi
+cmp -s "$TMP/remotes-before-ctrlc.json" "$P/.capshelf/remotes.lock.json"
+test ! -e "$P/.agents/skills/plain"
+
+(cd "$P" && "${CLI[@]}" rm skills/worker --yes --json >/dev/null)
+
 # --- two candidates without a terminal refuse and name the two flags ---
 if (cd "$P" && "${CLI[@]}" add "$UPSTREAM_URL" --yes --json > "$TMP/ambiguous.json" 2>&1); then
   echo "expected add to refuse an ambiguous repository"

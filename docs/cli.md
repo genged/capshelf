@@ -1027,9 +1027,12 @@ preflight boundary. Before the first write, Capshelf plans the complete
 operation and lists managed content drift, executable-mode changes, extra
 local paths, subagent target drift, managed fragment drift, config-comment
 loss, or dirty generated projection paths. Interactive human output asks once.
-Declining exits 0 and writes nothing. JSON and other non-TTY runs refuse with
-exit 3 unless `--yes` explicitly authorizes the listed loss. Capshelf
-revalidates the accepted snapshot immediately before writing.
+Declining exits 0 and writes nothing. When stdin closes before an answer, for
+example at Ctrl-D, the prompt exits 1 and writes nothing instead. This also
+covers a remote-skill install, a remote-skill update, and the share picker's
+name question. JSON and other non-TTY runs refuse with exit 3 unless `--yes`
+explicitly authorizes the listed loss. Capshelf revalidates the accepted
+snapshot immediately before writing.
 
 `share` resolves the data repo after its ref refusals, not before. In a project
 with no data-repo binding, a `share` that also hits an earlier refusal reports
@@ -1523,6 +1526,127 @@ command refuses and names the two flags that answer the question:
   list them: capshelf add https://github.com/acme/pdf-skills --list
 ```
 
+#### Plugins in the repository
+
+Discovery also reads two plugin catalogs, `.claude-plugin/marketplace.json`
+and `.agents/plugins/marketplace.json`. An entry in either file can name a
+plugin directory. Capshelf then looks for skills under `<plugin>/skills/*/`,
+and under any path a plugin manifest adds through its own `skills` field.
+
+A capshelf-published shelf lists exactly as it did before this feature, in a
+terminal and in a pipe. Capshelf's own catalog entries set `source: "./"`
+with an explicit `skills` array. Discovery still treats that shape as plain
+layout and attaches no plugin facts to it.
+
+A catalog entry that names a bare directory, with no leading `./`, resolves
+only against that catalog document's own `metadata.pluginRoot`. With no
+`pluginRoot`, or an unsafe one, capshelf skips the entry and warns. It never
+falls back to the repository root.
+
+A catalog `source`, a `metadata.pluginRoot`, and a manifest `skills` path all
+follow one rule. Strip one leading `./` and one trailing `/`. What remains
+must stay inside the repository, with no `..` segment. A path that fails
+this check is skipped, with a warning naming the reason. A manifest `skills`
+path that names a directory outside its own plugin is skipped the same way.
+The plugin's other paths still count.
+
+Discovery reads a catalog, a manifest, and a `SKILL.md` only when each is a
+regular file. A symlink or a submodule in that place counts as absent, with
+a warning. When one plugin directory sits inside another, the outer one
+wins: the inner directory is skipped, with a warning. A plugin's name comes
+from its own manifest first, then its Claude catalog entry, then its Codex
+catalog entry, then its directory name. When two of these disagree, `--list`
+warns and names the one it chose.
+
+A plugin skill can use parts outside its own directory: a script at the
+plugin root, a sibling agent, or a workflow. `--list` reports four checks
+for this, under one "uses" column: `plugin root`, `agents`, `workflows`, and
+`outside links`. The checks read text only, so they read wrong in both
+directions. They over-report: a skill that only offers an agent's name as a
+choice still matches. They under-report too: a script path written without
+the plugin-root variable stays invisible. A fact never blocks an install.
+The install prompt and a `--yes` install both print the same block, and the
+decision stays with you.
+
+```bash
+capshelf add https://github.com/acme/agent-plugins --list
+```
+
+```text
+  repo      https://github.com/acme/agent-plugins
+  ref       main
+  commit    7b306acc7cd3ffc74beaa93ca7fe5b6cbde49aea
+  found     1 skill in 1 plugin  (.claude-plugin/marketplace.json)
+            1 uses plugin parts outside the skill directory
+
+  plugins/ocr
+    scan                         uses plugin root   Extracts text from a scanned page
+
+  1 skill uses plugin parts that live outside the skill directory.
+  --path copies the skill directory only. Those parts are not installed.
+
+  install one:   capshelf add https://github.com/acme/agent-plugins --path plugins/ocr/skills/scan
+  install some:  capshelf add https://github.com/acme/agent-plugins
+  details:       capshelf add https://github.com/acme/agent-plugins --list --json
+```
+
+`--list --path <subpath>`, where `<subpath>` is a plugin directory, lists
+only that plugin's skills, with the same facts and the same `install one`
+example. A directory counts as a plugin here even with no catalog entry, as
+long as it carries a `.claude-plugin/plugin.json` or a
+`.codex-plugin/plugin.json`.
+
+A listing taller than the terminal, holding at least one plugin skill, asks
+once before it prints the rest:
+
+```text
+Show all 12 skills (34 lines)? [Y/n] n
+  one plugin:   capshelf add https://github.com/acme/agent-plugins --list --path plugins/ocr
+  everything:   capshelf add https://github.com/acme/agent-plugins --list --json
+```
+
+Enter or `y` shows the full list. `n` prints a shorter next command instead.
+Closed input, such as Ctrl-D or Ctrl-C, counts as `n` too. A pipe, `--json`,
+and `--yes` skip the question and print everything, so a script never waits
+on it. The question counts only a plugin that holds a skill. A
+commands-only or workflows-only plugin never triggers it.
+
+`--path <subpath>` naming a plugin directory, not a skill, refuses:
+
+```text
+✗ plugins/ocr is a plugin, not a skill. It holds 1 skill:
+    plugins/ocr/skills/scan   uses plugin root
+  install the skill: capshelf add https://github.com/acme/agent-plugins --path plugins/ocr/skills/scan
+  capshelf cannot install a whole plugin
+```
+
+The repository root is never read as a plugin this way. `--path .` keeps
+its plain behavior even when the root itself carries a plugin manifest.
+
+Two skills chosen in one `add` that would install under the same name also
+refuse, before any project write:
+
+```text
+✗ 2 selected skills would install as "x": plugins/a/skills/x, plugins/b/skills/x
+  install them one at a time: capshelf add <url> --path <subpath> --as <name>
+```
+
+Both refusals exit 3, the same code every other `add <url>` precondition
+refusal uses.
+
+`--list --json` adds fields to a skill row that comes from a plugin. `plugin`
+names its `name`, `source`, and `catalogs`. `usesPluginParts` lists one entry
+per matching check, each with a `reason` and its `refs`. `factsComplete` is a
+boolean. `unread` is present only when a file was skipped, each entry naming
+a `path` and a `why` of `over-1mb` or `budget`. `factsComplete: false` means
+some files were not checked. It does not mean the skill uses nothing.
+
+Three more top-level arrays sit beside `skills`, always, even when empty.
+`plugins` has one row per plugin directory, with its `name`, `source`,
+`catalogs`, `ships`, and its skill count. `skipped` has one row per catalog
+entry discovery could not read, with a `reason`. `warnings` has one row per
+document that did not parse, or whose name disagreed with another.
+
 #### The install prompt
 
 Consent covers a commit, not a row. The prompt prints the repository, the
@@ -1674,6 +1798,11 @@ A named `update` asks again, then moves the pin offline from the cache:
   source commit: cd91e33a2bddb67988805af8ec3bb045f88c4377
   promote is not available for a remote skill. to keep it permanently: capshelf share skills/pdf --adopt
 ```
+
+When the moved skill is a plugin skill, this prompt shows the same plugin
+facts, read at the new commit. A commit that changes only a file outside
+the skill directory does not ask at all. `update` reports `already-current`
+instead.
 
 #### The clone cache
 
