@@ -25,8 +25,10 @@ import { catFileBlobs } from "./git";
 import type { GitTreeEntry } from "./git";
 import { z } from "zod";
 
-const CLAUDE_CATALOG_PATH = ".claude-plugin/marketplace.json";
-const CODEX_CATALOG_PATH = ".agents/plugins/marketplace.json";
+/** Exported for Task 5's `--list` `found` line, which names the catalog(s)
+ * that named a plugin (`src/commands/add-remote.ts`). */
+export const CLAUDE_CATALOG_PATH = ".claude-plugin/marketplace.json";
+export const CODEX_CATALOG_PATH = ".agents/plugins/marketplace.json";
 const CLAUDE_MANIFEST_REL = ".claude-plugin/plugin.json";
 const CODEX_MANIFEST_REL = ".codex-plugin/plugin.json";
 /** D15's manifest-name order: the Claude manifest, then the Codex one. */

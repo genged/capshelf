@@ -11,6 +11,7 @@ import { $ } from "bun";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { ConfigValue } from "../src/config-values";
 import {
   addSkill,
   commitAll,
@@ -18,6 +19,8 @@ import {
   tempDir,
   tempRepo,
 } from "./cli-fixtures";
+import { writePlugins } from "./plugin-fixtures";
+import type { PluginSpec } from "./plugin-fixtures";
 
 export interface Upstream {
   /** The clone URL a test passes to `capshelf add`. */
@@ -34,6 +37,20 @@ export function skillText(
   return `---\nname: ${name}\ndescription: ${description}\n---\n${body}\n`;
 }
 
+/**
+ * Commit whatever `work` holds, rename its branch to `main`, and clone it
+ * bare. `git init` here creates `master`; every test names one ref, so the
+ * branch is renamed before the bare clone rather than assumed.
+ */
+async function finalizeUpstream(work: string): Promise<Upstream> {
+  await $`git -C ${work} branch -M main`.quiet();
+  const bare = await tempDir("capshelf-remote-bare-");
+  const barePath = join(bare, "repo.git");
+  await $`git clone -q --bare ${work} ${barePath}`.quiet();
+  await $`git -C ${work} remote add origin ${barePath}`.quiet();
+  return { url: `file://${barePath}`, work };
+}
+
 /** A bare repository holding one skill per entry, on branch `main`. */
 export async function upstreamWith(
   dirs: ReadonlyArray<readonly [string, string]>,
@@ -47,14 +64,18 @@ export async function upstreamWith(
     );
   }
   await commitAll(work, "skills");
-  // `git init` here creates `master`; every test names one ref, so the branch
-  // is renamed before the bare clone rather than assumed.
-  await $`git -C ${work} branch -M main`.quiet();
-  const bare = await tempDir("capshelf-remote-bare-");
-  const barePath = join(bare, "repo.git");
-  await $`git clone -q --bare ${work} ${barePath}`.quiet();
-  await $`git -C ${work} remote add origin ${barePath}`.quiet();
-  return { url: `file://${barePath}`, work };
+  return finalizeUpstream(work);
+}
+
+/** A bare repository holding the given plugins and catalogs, on branch `main`. */
+export async function pluginUpstream(
+  plugins: readonly PluginSpec[],
+  catalogs: { claude?: ConfigValue; codex?: ConfigValue },
+): Promise<Upstream> {
+  const work = await tempRepo("capshelf-remote-plugin-src-", { origin: null });
+  await writePlugins(work, plugins, catalogs);
+  await commitAll(work, "plugins");
+  return finalizeUpstream(work);
 }
 
 /**

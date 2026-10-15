@@ -6,7 +6,15 @@
 import { dirname, join } from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import type { ConfigObject, ConfigValue } from "../src/config-values";
-import { skillText } from "./remote-fixtures";
+
+/**
+ * Not imported from `./remote-fixtures`: that file imports `writePlugins`
+ * from here (`pluginUpstream`), and a mutual import would be a module cycle.
+ * Kept byte-identical to `remote-fixtures.ts`'s own `skillText`.
+ */
+function skillText(name: string, description: string, body = "body"): string {
+  return `---\nname: ${name}\ndescription: ${description}\n---\n${body}\n`;
+}
 
 export interface PluginSpec {
   /** Repository-relative plugin directory, e.g. "plugins/rust-review". */

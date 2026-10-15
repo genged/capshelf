@@ -31,6 +31,18 @@ import { pickItems } from "../pick";
 import { sanitizeDisplayText } from "../pick-core";
 import type { PickRow } from "../pick-core";
 import {
+  CLAUDE_CATALOG_PATH,
+  CODEX_CATALOG_PATH,
+  lastSegment,
+  PLUGIN_PARTS,
+} from "../plugin-discovery";
+import type {
+  DiscoveredPlugin,
+  PluginCatalog,
+  SkippedEntry,
+} from "../plugin-discovery";
+import type { PluginFactReason, SkillPluginFacts } from "../plugin-facts";
+import {
   defaultCachedBranch,
   ensureRemoteCache,
   resolveCachedRef,
@@ -39,10 +51,15 @@ import {
   candidateAtSubpath,
   discoverRemoteSkills,
   findLicense,
+  pluginAtSubpath,
   remoteTreeSource,
   summarizeCandidate,
 } from "../remote-discovery";
-import type { LicenseFinding, RemoteSkillCandidate } from "../remote-discovery";
+import type {
+  LicenseFinding,
+  RemoteDiscovery,
+  RemoteSkillCandidate,
+} from "../remote-discovery";
 import { installRemoteSkill, reconcileRemoteSkill } from "../remote-item";
 import { parseRemoteSkillUrl } from "../remote-url";
 import type { BrowserRefCandidate, RemoteSkillUrl } from "../remote-url";
@@ -56,6 +73,7 @@ import {
 import type { RemotesLock } from "../remotes-lock";
 import { isSafeItemName } from "../assert";
 import { isSystemItemName } from "../bundled";
+import { shellCommand } from "../shell-quote";
 
 export interface RemoteAddOptions {
   json?: boolean;
@@ -148,22 +166,44 @@ export async function addRemoteSkill(
   }
 
   const explicitSubpath = opts.path ?? browser?.subpath ?? parsed.subpath;
-  const discovery =
-    explicitSubpath === null || explicitSubpath === undefined
-      ? await discoverRemoteSkills(cache.path, commit, parsed.repoName)
-      : {
-          candidates: [
-            await candidateAtSubpath(
-              cache.path,
-              commit,
-              explicitSubpath,
-              parsed.repoName,
-            ),
-          ],
-          plugins: [],
+  // D10: `--list` with a plugin path lists that plugin, so the lookup runs
+  // before `candidateAtSubpath`'s single-skill read — but only behind
+  // `--list`. A bare `--path` (no `--list`) still goes straight to
+  // `candidateAtSubpath`; the D5 refusal for a plugin root is Task 7's job.
+  const pluginScope =
+    explicitSubpath !== null &&
+    explicitSubpath !== undefined &&
+    opts.list === true
+      ? await pluginAtSubpath(
+          cache.path,
+          commit,
+          explicitSubpath,
+          parsed.repoName,
+        )
+      : null;
+  const discovery: RemoteDiscovery =
+    pluginScope !== null
+      ? {
+          candidates: pluginScope.candidates,
+          plugins: [pluginScope.plugin],
           skipped: [],
-          warnings: [],
-        };
+          warnings: pluginScope.warnings,
+        }
+      : explicitSubpath === null || explicitSubpath === undefined
+        ? await discoverRemoteSkills(cache.path, commit, parsed.repoName)
+        : {
+            candidates: [
+              await candidateAtSubpath(
+                cache.path,
+                commit,
+                explicitSubpath,
+                parsed.repoName,
+              ),
+            ],
+            plugins: [],
+            skipped: [],
+            warnings: [],
+          };
   // Sanitized like every other repository-controlled string here: a warning
   // about a malformed catalog or manifest quotes the repository's own text.
   for (const warning of discovery.warnings) {
@@ -174,7 +214,15 @@ export async function addRemoteSkill(
   // cardinality rule below, because "too many to install without choosing" is
   // not a reason to refuse to say what is there.
   if (opts.list === true) {
-    printCandidateList(input, parsed, ref, commit, discovery.candidates, opts);
+    printCandidateList(
+      input,
+      parsed,
+      ref,
+      commit,
+      discovery,
+      pluginScope !== null ? { plugin: pluginScope.plugin } : "repository",
+      opts,
+    );
     return;
   }
 
@@ -588,55 +636,368 @@ function describeLicense(license: LicenseFinding): string {
   return `${license.label ?? "unrecognized"}  (${safe(license.path)}, ${where})`;
 }
 
+/** Ruling E: singular everywhere a count can be one. */
+function plural(count: number, word: string): string {
+  return count === 1 ? word : `${word}s`;
+}
+
+/**
+ * Ruling C: the skill row's "uses" column. "" when the candidate is not a
+ * plugin skill or matches none of the four checks and its facts are
+ * complete. Shared with Tasks 6 and 7.
+ */
+export function usesLabel(facts: SkillPluginFacts | undefined): string {
+  if (facts === undefined) return "";
+  const reasons = facts.usesPluginParts.map(
+    (use) => USE_PART_LABELS[use.reason],
+  );
+  if (reasons.length === 0) {
+    return facts.factsComplete ? "" : "facts incomplete";
+  }
+  const labels = facts.factsComplete
+    ? reasons
+    : [...reasons, "facts incomplete"];
+  return `uses ${labels.join(", ")}`;
+}
+
+const USE_PART_LABELS: Record<PluginFactReason, string> = {
+  "plugin-root": "plugin root",
+  "plugin-agents": "agents",
+  "plugin-workflows": "workflows",
+  "outside-links": "outside links",
+};
+
+/** The reason text for one skipped catalog entry (`external-source` excluded — it becomes the `elsewhere` summary line, not a warning). */
+function skipReasonText(entry: SkippedEntry): string {
+  const source = entry.source ?? entry.name;
+  switch (entry.reason) {
+    case "unsafe-path":
+      return `unsafe source ${source}`;
+    case "missing":
+      return `${source} does not exist at this commit`;
+    case "not-a-file":
+      return `${source} is a symlink or submodule`;
+    case "nested-plugin":
+      return `${source} is inside another plugin`;
+    case "external-source":
+      // The caller filters this reason out; the elsewhere line covers it.
+      return `external source ${source}`;
+  }
+}
+
+/**
+ * Ruling B. `summaryLength` is the line count up to and including the
+ * `elsewhere` line, or the last header line present when there is no
+ * `elsewhere` line, plus the one blank line printed after it. Task 6 slices
+ * `lines` at `summaryLength` for the D9 "ask before a long list" summary.
+ */
+export interface CandidateListRender {
+  lines: string[];
+  summaryLength: number;
+}
+
+/**
+ * The `--list` text output, as plain lines, with no console calls — Task 6
+ * reuses this for the D9 summary, and Task 7 for the picker's plugin detail.
+ */
+export function renderCandidateList(input: {
+  url: string;
+  upstream: string;
+  ref: string;
+  commit: string;
+  discovery: RemoteDiscovery;
+  scope: "repository" | { plugin: DiscoveredPlugin };
+}): CandidateListRender {
+  const lines: string[] = [
+    `  repo      ${safe(input.upstream)}`,
+    `  ref       ${input.ref}`,
+    `  commit    ${input.commit}`,
+  ];
+  if (input.scope === "repository") {
+    return renderRepositoryList(lines, input.url, input.discovery);
+  }
+  return renderPluginList(
+    lines,
+    input.url,
+    input.discovery,
+    input.scope.plugin,
+  );
+}
+
+/** The `found 0 skills` early return, and the layout-only format unchanged
+ * by byte, for a repository with no plugin at all. */
+function renderRepositoryList(
+  lines: string[],
+  url: string,
+  discovery: RemoteDiscovery,
+): CandidateListRender {
+  const candidates = discovery.candidates;
+  if (discovery.plugins.length === 0) {
+    lines.push(
+      `  found     ${candidates.length} ${plural(candidates.length, "skill")}`,
+    );
+    if (candidates.length === 0) return { lines, summaryLength: lines.length };
+    lines.push("");
+    const width = Math.max(...candidates.map((c) => c.subpath.length));
+    for (const candidate of candidates) {
+      lines.push(
+        `    ${safe(candidate.subpath).padEnd(width)}   ${safe(candidate.description ?? "")}`.trimEnd(),
+      );
+    }
+    lines.push("");
+    lines.push(
+      `  install one:   ${shellCommand([PRODUCT_NAME, "add", url, "--path", candidates[0]!.subpath])}`,
+    );
+    lines.push(`  install some:  ${shellCommand([PRODUCT_NAME, "add", url])}`);
+    return { lines, summaryLength: lines.length };
+  }
+
+  const catalogsUsed = new Set<PluginCatalog>();
+  for (const plugin of discovery.plugins) {
+    for (const catalog of plugin.catalogs) catalogsUsed.add(catalog);
+  }
+  const catalogPaths = [
+    ...(catalogsUsed.has("claude") ? [CLAUDE_CATALOG_PATH] : []),
+    ...(catalogsUsed.has("codex") ? [CODEX_CATALOG_PATH] : []),
+  ];
+  const usingCount = candidates.filter(
+    (c) => c.plugin !== undefined && c.plugin.usesPluginParts.length > 0,
+  ).length;
+
+  lines.push(
+    `  found     ${candidates.length} ${plural(candidates.length, "skill")} in ${discovery.plugins.length} ${plural(discovery.plugins.length, "plugin")}` +
+      (catalogPaths.length > 0 ? `  (${catalogPaths.join(", ")})` : ""),
+  );
+  if (usingCount > 0) {
+    lines.push(
+      `            ${usingCount} use plugin parts outside the skill directory`,
+    );
+  }
+  const noSkillPlugins = discovery.plugins.filter(
+    (p) => p.skillDirs.length === 0,
+  );
+  if (noSkillPlugins.length > 0) {
+    const dirs = noSkillPlugins.map((p) => safe(p.source)).join(", ");
+    const ships = PLUGIN_PARTS.filter((part) =>
+      noSkillPlugins.some((p) => p.ships.includes(part)),
+    );
+    const shipsSuffix = ships.length > 0 ? `  (${ships.join(", ")} only)` : "";
+    lines.push(`  no skills  ${dirs}${shipsSuffix}`);
+  }
+  const elsewhere = discovery.skipped.filter(
+    (s) => s.reason === "external-source",
+  );
+  if (elsewhere.length > 0) {
+    lines.push(
+      `  elsewhere  ${elsewhere.map((s) => safe(s.name)).join(", ")}  (sources outside this repository, not read)`,
+    );
+  }
+  lines.push("");
+  if (candidates.length === 0) {
+    lines.pop();
+    return { lines, summaryLength: lines.length };
+  }
+  const summaryLength = lines.length;
+
+  const layout = candidates.filter((c) => c.plugin === undefined);
+  const renderOrder: RemoteSkillCandidate[] = [...layout];
+  if (layout.length > 0) {
+    const width = Math.max(...layout.map((c) => c.subpath.length));
+    for (const candidate of layout) {
+      lines.push(
+        `    ${safe(candidate.subpath).padEnd(width)}   ${safe(candidate.description ?? "")}`.trimEnd(),
+      );
+    }
+    lines.push("");
+  }
+
+  const pluginRows = candidates.filter((c) => c.plugin !== undefined);
+  const nameWidth =
+    pluginRows.length > 0
+      ? Math.max(...pluginRows.map((c) => lastSegment(c.subpath).length))
+      : 0;
+  const usesWidth =
+    pluginRows.length > 0
+      ? Math.max(...pluginRows.map((c) => usesLabel(c.plugin).length))
+      : 0;
+  for (const plugin of discovery.plugins) {
+    const rows = pluginRows.filter(
+      (c) => c.plugin!.plugin.source === plugin.source,
+    );
+    if (rows.length === 0) continue;
+    const shipsSuffix =
+      plugin.ships.length > 0
+        ? `   also ships: ${plugin.ships.join(", ")}`
+        : "";
+    lines.push(`  ${safe(plugin.source)}${shipsSuffix}`);
+    for (const candidate of rows) {
+      renderOrder.push(candidate);
+      lines.push(
+        `    ${lastSegment(candidate.subpath).padEnd(nameWidth)}   ${usesLabel(candidate.plugin).padEnd(usesWidth)}   ${safe(candidate.description ?? "")}`.trimEnd(),
+      );
+    }
+    lines.push("");
+  }
+
+  if (usingCount > 0) {
+    lines.push(
+      `  ${usingCount} ${plural(usingCount, "skill")} ${usingCount === 1 ? "uses" : "use"} plugin parts that live outside the skill directory.`,
+    );
+    lines.push(
+      "  --path copies the skill directory only. Those parts are not installed.",
+    );
+    lines.push("");
+  }
+
+  const firstSubpath = firstSubpathWithNoFacts(renderOrder).subpath;
+  lines.push(
+    `  install one:   ${shellCommand([PRODUCT_NAME, "add", url, "--path", firstSubpath])}`,
+  );
+  lines.push(`  install some:  ${shellCommand([PRODUCT_NAME, "add", url])}`);
+  lines.push(
+    `  details:       ${shellCommand([PRODUCT_NAME, "add", url, "--list", "--json"])}`,
+  );
+  return { lines, summaryLength };
+}
+
+/** D10: `--list --path <plugin dir>` lists one plugin's skills. */
+function renderPluginList(
+  lines: string[],
+  url: string,
+  discovery: RemoteDiscovery,
+  plugin: DiscoveredPlugin,
+): CandidateListRender {
+  const candidates = discovery.candidates;
+  const shipsSuffix =
+    plugin.ships.length > 0 ? `   also ships: ${plugin.ships.join(", ")}` : "";
+  lines.push(
+    `  found     ${candidates.length} ${plural(candidates.length, "skill")} in ${safe(plugin.source)}${shipsSuffix}`,
+  );
+  lines.push("");
+  if (candidates.length === 0) {
+    lines.pop();
+    return { lines, summaryLength: lines.length };
+  }
+  const summaryLength = lines.length;
+
+  const nameWidth = Math.max(
+    ...candidates.map((c) => lastSegment(c.subpath).length),
+  );
+  const usesWidth = Math.max(
+    ...candidates.map((c) => usesLabel(c.plugin).length),
+  );
+  for (const candidate of candidates) {
+    lines.push(
+      `    ${lastSegment(candidate.subpath).padEnd(nameWidth)}   ${usesLabel(candidate.plugin).padEnd(usesWidth)}   ${safe(candidate.description ?? "")}`.trimEnd(),
+    );
+  }
+  lines.push("");
+  const firstSubpath = firstSubpathWithNoFacts(candidates).subpath;
+  lines.push(
+    `  install one:   ${shellCommand([PRODUCT_NAME, "add", url, "--path", firstSubpath])}`,
+  );
+  return { lines, summaryLength };
+}
+
+/**
+ * The first plugin skill in listing order with no `usesPluginParts` and
+ * complete facts, for the "install one" example. Falls back to the first
+ * candidate in that order when none qualifies — which may itself be a
+ * layout skill with no plugin facts at all.
+ */
+function firstSubpathWithNoFacts(
+  renderOrder: readonly RemoteSkillCandidate[],
+): RemoteSkillCandidate {
+  const noFacts = renderOrder.find(
+    (c) =>
+      c.plugin !== undefined &&
+      c.plugin.usesPluginParts.length === 0 &&
+      c.plugin.factsComplete,
+  );
+  // `renderOrder` is only ever built from a non-empty candidate list by both
+  // callers, so the fallback always finds one.
+  return noFacts ?? renderOrder[0]!;
+}
+
 function printCandidateList(
   input: string,
   parsed: RemoteSkillUrl,
   ref: string,
   commit: string,
-  candidates: RemoteSkillCandidate[],
+  discovery: RemoteDiscovery,
+  scope: "repository" | { plugin: DiscoveredPlugin },
   opts: RemoteAddOptions,
 ): void {
-  if (opts.json === true) {
-    console.log(
-      JSON.stringify(
-        {
-          verb: "add",
-          source: "remote",
-          repo: parsed.upstream,
-          ref,
-          commit,
-          skills: candidates.map((candidate) => ({
-            subpath: candidate.subpath,
-            name: candidate.defaultName,
-            description: candidate.description,
-            origin: candidate.origin,
-          })),
-        },
-        null,
-        2,
-      ),
+  // Skipped entries other than `external-source` (which becomes the
+  // `elsewhere` summary line) are warnings about catalog entries this
+  // listing could not read.
+  for (const entry of discovery.skipped) {
+    if (entry.reason === "external-source") continue;
+    console.error(
+      `⚠ ${safe(`${entry.catalog} catalog entry "${entry.name}": ${skipReasonText(entry)}, skipped`)}`,
     );
+  }
+  if (opts.json === true) {
+    printCandidateListJson(parsed, ref, commit, discovery);
     return;
   }
-  console.log(`  repo      ${parsed.upstream}`);
-  console.log(`  ref       ${ref}`);
-  console.log(`  commit    ${commit}`);
+  const { lines } = renderCandidateList({
+    url: input,
+    upstream: parsed.upstream,
+    ref,
+    commit,
+    discovery,
+    scope,
+  });
+  for (const line of lines) console.log(line);
+}
+
+function printCandidateListJson(
+  parsed: RemoteSkillUrl,
+  ref: string,
+  commit: string,
+  discovery: RemoteDiscovery,
+): void {
   console.log(
-    `  found     ${candidates.length} ${candidates.length === 1 ? "skill" : "skills"}`,
+    JSON.stringify(
+      {
+        verb: "add",
+        source: "remote",
+        repo: parsed.upstream,
+        ref,
+        commit,
+        skills: discovery.candidates.map((candidate) => ({
+          subpath: candidate.subpath,
+          name: candidate.defaultName,
+          description: candidate.description,
+          origin: candidate.origin,
+          ...(candidate.plugin !== undefined && {
+            plugin: {
+              name: candidate.plugin.plugin.name,
+              source: candidate.plugin.plugin.source,
+              catalogs: candidate.plugin.plugin.catalogs,
+            },
+            usesPluginParts: candidate.plugin.usesPluginParts,
+            factsComplete: candidate.plugin.factsComplete,
+            ...(candidate.plugin.unread.length > 0 && {
+              unread: candidate.plugin.unread,
+            }),
+          }),
+        })),
+        plugins: discovery.plugins.map((plugin) => ({
+          name: plugin.name,
+          source: plugin.source,
+          catalogs: plugin.catalogs,
+          ships: plugin.ships,
+          skills: plugin.skillDirs.length,
+        })),
+        skipped: discovery.skipped,
+        warnings: discovery.warnings,
+      },
+      null,
+      2,
+    ),
   );
-  if (candidates.length === 0) return;
-  console.log("");
-  const width = Math.max(...candidates.map((c) => c.subpath.length));
-  for (const candidate of candidates) {
-    console.log(
-      `    ${safe(candidate.subpath).padEnd(width)}   ${safe(candidate.description ?? "")}`.trimEnd(),
-    );
-  }
-  console.log("");
-  console.log(
-    `  install one:   ${PRODUCT_NAME} add ${input} --path ${safe(candidates[0]!.subpath)}`,
-  );
-  console.log(`  install some:  ${PRODUCT_NAME} add ${input}`);
 }
 
 function printInstalled(
