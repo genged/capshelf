@@ -216,7 +216,10 @@ export async function addRemoteSkill(
             ],
             plugins: [],
             skipped: [],
-            warnings: [],
+            // Set only for a self-skill plugin root (`pluginRootIsAlsoASkill`).
+            // Its catalog or manifest can still warn, and this install reads
+            // that plugin.
+            warnings: pluginScope?.warnings ?? [],
           };
   // Sanitized like every other repository-controlled string here: a warning
   // about a malformed catalog or manifest quotes the repository's own text.
@@ -970,10 +973,14 @@ function renderRepositoryList(
   discovery: RemoteDiscovery,
 ): CandidateListRender {
   const candidates = discovery.candidates;
+  const elsewhere = elsewhereLine(discovery);
   if (discovery.plugins.length === 0) {
     lines.push(
       `  found     ${candidates.length} ${plural(candidates.length, "skill")}`,
     );
+    // D3: a catalog can name only sources outside this repository. A
+    // capshelf shelf names none, so its listing stays as it was (D2).
+    if (elsewhere !== null) lines.push(elsewhere);
     if (candidates.length === 0) return { lines, summaryLength: lines.length };
     lines.push("");
     const width = Math.max(...candidates.map((c) => c.subpath.length));
@@ -992,8 +999,11 @@ function renderRepositoryList(
     return { lines, summaryLength: lines.length };
   }
 
+  // The plugin count and the catalogs beside it name only plugins that hold
+  // a skill. A commands-only plugin gets the `no skills` line instead.
+  const skillPlugins = discovery.plugins.filter(hasSkills);
   const catalogsUsed = new Set<PluginCatalog>();
-  for (const plugin of discovery.plugins) {
+  for (const plugin of skillPlugins) {
     for (const catalog of plugin.catalogs) catalogsUsed.add(catalog);
   }
   const catalogPaths = [
@@ -1004,18 +1014,20 @@ function renderRepositoryList(
     (c) => c.plugin !== undefined && c.plugin.usesPluginParts.length > 0,
   ).length;
 
+  const inPlugins =
+    skillPlugins.length === 0
+      ? ""
+      : ` in ${skillPlugins.length} ${plural(skillPlugins.length, "plugin")}` +
+        (catalogPaths.length > 0 ? `  (${catalogPaths.join(", ")})` : "");
   lines.push(
-    `  found     ${candidates.length} ${plural(candidates.length, "skill")} in ${discovery.plugins.length} ${plural(discovery.plugins.length, "plugin")}` +
-      (catalogPaths.length > 0 ? `  (${catalogPaths.join(", ")})` : ""),
+    `  found     ${candidates.length} ${plural(candidates.length, "skill")}${inPlugins}`,
   );
   if (usingCount > 0) {
     lines.push(
       `            ${usingCount} ${usingCount === 1 ? "uses" : "use"} plugin parts outside the skill directory`,
     );
   }
-  const noSkillPlugins = discovery.plugins.filter(
-    (p) => p.skillDirs.length === 0,
-  );
+  const noSkillPlugins = discovery.plugins.filter((p) => !hasSkills(p));
   if (noSkillPlugins.length > 0) {
     const dirs = noSkillPlugins.map((p) => safe(p.source)).join(", ");
     // Each part in the order its first no-skill plugin ships it, not
@@ -1033,14 +1045,7 @@ function renderRepositoryList(
       ships.length > 0 ? `  (${englishJoin(ships)} only)` : "";
     lines.push(`  no skills  ${dirs}${shipsSuffix}`);
   }
-  const elsewhere = discovery.skipped.filter(
-    (s) => s.reason === "external-source",
-  );
-  if (elsewhere.length > 0) {
-    lines.push(
-      `  elsewhere  ${elsewhere.map((s) => safe(s.name)).join(", ")}  (sources outside this repository, not read)`,
-    );
-  }
+  if (elsewhere !== null) lines.push(elsewhere);
   lines.push("");
   if (candidates.length === 0) {
     lines.pop();
@@ -1109,6 +1114,24 @@ function renderRepositoryList(
     `  details:       ${safe(shellCommand([PRODUCT_NAME, "add", url, "--list", "--json"]))}`,
   );
   return { lines, summaryLength };
+}
+
+/**
+ * Whether a plugin holds a skill. Every plugin count in the listing uses this
+ * one test: the `found` line, the `no skills` line, and the D9 question.
+ */
+function hasSkills(plugin: DiscoveredPlugin): boolean {
+  return plugin.skillDirs.length > 0;
+}
+
+/** D3: one line that names every catalog entry whose source is outside this
+ * repository, or null when there is none. */
+function elsewhereLine(discovery: RemoteDiscovery): string | null {
+  const elsewhere = discovery.skipped.filter(
+    (s) => s.reason === "external-source",
+  );
+  if (elsewhere.length === 0) return null;
+  return `  elsewhere  ${elsewhere.map((s) => safe(s.name)).join(", ")}  (sources outside this repository, not read)`;
 }
 
 /** D10: `--list --path <plugin dir>` lists one plugin's skills. */
@@ -1207,9 +1230,7 @@ async function printCandidateList(
   // plugin *skill* never asks — `discovery.plugins` also holds a
   // commands-only plugin, which must not count — which is what keeps a
   // capshelf-shaped shelf byte-identical in a terminal too (D2).
-  const skillPlugins = discovery.plugins.filter(
-    (plugin) => plugin.skillDirs.length > 0,
-  );
+  const skillPlugins = discovery.plugins.filter(hasSkills);
   const context = confirmationContext();
   const askBeforeShowingAll =
     opts.yes !== true &&
@@ -1238,10 +1259,10 @@ async function printCandidateList(
   }
   // The "no" answer, D9. When the listing is already scoped to one plugin
   // (D10), naming that same plugin back would repeat the command the user
-  // just ran, so only the JSON command prints. Otherwise the plugin-scoped
-  // command names the first plugin *with a skill* in listing order — a
-  // commands-only plugin has nothing to install — so the user has a short
-  // next step instead of the whole list.
+  // just ran, so only the JSON command prints, in the same scope. Otherwise
+  // the plugin-scoped command names the first plugin *with a skill* in
+  // listing order — a commands-only plugin has nothing to install — so the
+  // user has a short next step instead of the whole list.
   if (scope === "repository") {
     // SAFETY: `askBeforeShowingAll` already required `skillPlugins.length >
     // 0` above, in this same function, with no intervening mutation.
@@ -1250,8 +1271,10 @@ async function printCandidateList(
       `  one plugin:   ${safe(shellCommand([PRODUCT_NAME, "add", input, "--list", "--path", firstPlugin.source]))}`,
     );
   }
+  const scopeArgs =
+    scope === "repository" ? [] : ["--path", scope.plugin.source];
   console.log(
-    `  everything:   ${safe(shellCommand([PRODUCT_NAME, "add", input, "--list", "--json"]))}`,
+    `  everything:   ${safe(shellCommand([PRODUCT_NAME, "add", input, "--list", ...scopeArgs, "--json"]))}`,
   );
 }
 

@@ -1602,6 +1602,12 @@ capshelf add https://github.com/acme/agent-plugins --list
   details:       capshelf add https://github.com/acme/agent-plugins --list --json
 ```
 
+The `found` line counts only the plugins that hold a skill. A plugin with no
+skill, such as a plugin with only commands, goes on a `no skills` line. A
+catalog entry can name a source outside this repository, such as a GitHub
+repository. Capshelf does not read that source. `--list` names each such
+entry on one `elsewhere` line.
+
 `--list --path <subpath>`, where `<subpath>` is a plugin directory, lists
 only that plugin's skills, with the same facts and the same `install one`
 example. A directory counts as a plugin here even with no catalog entry, as
@@ -1618,6 +1624,8 @@ Show all 2 skills (18 lines)? [Y/n] n
 ```
 
 Enter or `y` shows the full list. `n` prints a shorter next command instead.
+In a listing of one plugin (`--list --path <plugin>`), `n` prints only the
+JSON command for that plugin.
 Closed input, such as Ctrl-D, counts as `n` too. Ctrl-C stops the command
 with exit 130. A pipe, `--json`, and `--yes` skip the question and print
 everything, so a script never waits on it. The question counts only a

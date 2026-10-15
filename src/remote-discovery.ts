@@ -303,8 +303,15 @@ async function pluginOwningSkillDir(
   );
   if (cataloged !== undefined) return cataloged;
 
+  // The repository root is never a plugin (D2), so a root manifest gives
+  // `skills/<x>` no plugin. `discoverRemoteSkills` agrees: it reads plugins
+  // only from the catalogs, and a catalog source at the root is legacy.
   const pluginDir = pluginDirFromSkillPath(subpath);
-  if (pluginDir === null || !hasPluginManifest(entries, pluginDir)) {
+  if (
+    pluginDir === null ||
+    pluginDir === "." ||
+    !hasPluginManifest(entries, pluginDir)
+  ) {
     return null;
   }
   const { plugin } = await describePluginDirectory(

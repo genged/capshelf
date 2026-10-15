@@ -334,9 +334,9 @@ test("candidateAtSubpath fills plugin facts for a plugin skill directory", async
   expect(candidate.plugin?.plugin.name).toBe("a");
 });
 
-// D2/D12 + controller ruling: the repository root is always legacy. A root
-// manifest must not turn `--path .` into a plugin lookup, so a repository
-// whose root is also a plugin keeps today's `--path .` behavior.
+// D2/D12: the repository root is always legacy. A root manifest must not
+// turn `--path .` into a plugin lookup, so a repository whose root is also a
+// plugin keeps today's `--path .` behavior.
 test('pluginAtSubpath(".") is always null, even with a root manifest', async () => {
   const repo = await tempRepo("capshelf-discovery-root-manifest-");
   await skillAt(repo, ".", "Root skill");
@@ -363,7 +363,27 @@ test('candidateAtSubpath(".") never attaches plugin facts from a root manifest',
   expect(candidate.plugin).toBeUndefined();
 });
 
-// Fix round 1, item 6: the manifest-only fallback for a plugin no catalog
+// The root is never a plugin, so a root manifest gives a layout skill no
+// plugin facts. `--path` and the full listing must agree on this.
+test("a root manifest gives skills/<x> no plugin facts at --path or in the listing", async () => {
+  const repo = await tempRepo("capshelf-discovery-root-manifest-skill-");
+  await skillAt(repo, "skills/x", "X");
+  await mkdir(join(repo, ".claude-plugin"), { recursive: true });
+  await writeFile(
+    join(repo, ".claude-plugin", "plugin.json"),
+    JSON.stringify({ name: "root-plugin" }),
+  );
+  await commitAll(repo, "root manifest with a layout skill");
+  const candidate = await candidateAtSubpath(repo, "HEAD", "skills/x");
+  expect(candidate.origin).toBe("skills");
+  expect(candidate.plugin).toBeUndefined();
+  const listed = await discoverRemoteSkills(repo, "HEAD");
+  expect(listed.candidates.map((c) => [c.subpath, c.plugin])).toEqual([
+    ["skills/x", undefined],
+  ]);
+});
+
+// The manifest-only fallback for a plugin no catalog
 // names at all, exercised through both candidateAtSubpath and pluginAtSubpath.
 test("candidateAtSubpath fills manifest-only plugin facts for an uncataloged plugin's skill", async () => {
   const repo = await tempRepo("capshelf-discovery-manifestonly-candidate-");

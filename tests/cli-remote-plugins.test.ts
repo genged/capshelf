@@ -369,6 +369,37 @@ test(
 );
 
 test(
+  "a catalog with only an external-source entry names it in the elsewhere line",
+  async () => {
+    const { url, work } = await pluginUpstream([], {
+      claude: claudeCatalog([
+        {
+          name: "faraway",
+          source: { source: "github", repo: "owner/faraway" },
+        },
+      ]),
+    });
+    const commit = (
+      await $`git -C ${work} rev-parse HEAD`.quiet().text()
+    ).trim();
+    const { project, env } = await initProject();
+    const result = await runInProcess(project)(["add", url, "--list"], env);
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout.toString()).toBe(
+      [
+        `  repo      ${url}`,
+        "  ref       main",
+        `  commit    ${commit}`,
+        "  found     0 skills",
+        "  elsewhere  faraway  (sources outside this repository, not read)",
+        "",
+      ].join("\n"),
+    );
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
   "a skipped catalog entry other than external-source warns on stderr with its reason",
   async () => {
     const { url } = await pluginUpstream(
@@ -480,7 +511,7 @@ test("renderCandidateList's summaryLength stops right after the summary block's 
     "  repo      https://example.invalid/repo",
     "  ref       main",
     "  commit    abc123",
-    "  found     1 skill in 2 plugins  (.claude-plugin/marketplace.json)",
+    "  found     1 skill in 1 plugin  (.claude-plugin/marketplace.json)",
     "  no skills  plugins/b  (commands only)",
     "",
   ]);
@@ -603,7 +634,9 @@ test(
     expect(stdout).not.toContain("install one:");
     // The summary block (through the `found` line) always prints, and it
     // prints before the "no" text, not instead of it.
-    const foundIndex = stdout.indexOf("  found     2 skills in 3 plugins");
+    // `plugins/empty` ships no skill, so the count names only the two
+    // plugins that do.
+    const foundIndex = stdout.indexOf("  found     2 skills in 2 plugins");
     const noTextIndex = stdout.indexOf("  one plugin:");
     expect(foundIndex).toBeGreaterThanOrEqual(0);
     expect(noTextIndex).toBeGreaterThan(foundIndex);
@@ -798,6 +831,9 @@ test(
     expect(result.exitCode).toBe(0);
     expect(prompts).toHaveLength(0);
     const stdout = result.stdout.toString();
+    // No plugin holds a skill, so the found line names no plugin count and
+    // no catalog.
+    expect(stdout.split("\n")).toContain("  found     6 skills");
     expect(stdout).toContain("no skills  plugins/cmds");
     expect(stdout).toContain("skills/a");
   },
@@ -866,9 +902,12 @@ test(
     expect(prompts).toHaveLength(1);
     const stdout = result.stdout.toString();
     expect(stdout).not.toContain("one plugin:");
+    // The JSON command stays in the plugin's scope. The whole-repository
+    // command would show more than the user asked for.
     expect(stdout).toContain(
-      `  everything:   capshelf add ${url} --list --json`,
+      `  everything:   capshelf add ${url} --list --path plugins/heavy --json`,
     );
+    expect(stdout).not.toContain(`capshelf add ${url} --list --json`);
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
@@ -940,6 +979,27 @@ test(
     const payload = jsonOutput(result);
     expect(stringField(payload, "name")).toBe("x");
     expect(stringField(objectField(payload, "plugin"), "name")).toBe("x");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "D5: a self-skill plugin root prints the plugin's warnings before it installs",
+  async () => {
+    // The catalog names the plugin "y" and its manifest names it "x", so
+    // reading the plugin warns about the disagreement.
+    const { url } = await pluginUpstream(selfSkillPlugin(), {
+      claude: claudeCatalog([{ name: "y", source: "./plugins/x" }]),
+    });
+    const { project, env } = await initProject();
+    const result = await runInProcess(project)(
+      ["add", url, "--path", "plugins/x", "--yes", "--json"],
+      env,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(result.stderr.toString()).toContain(
+      "⚠ plugins/x catalogs and manifests name it y; shown as x",
+    );
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
