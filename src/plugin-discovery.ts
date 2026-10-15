@@ -127,11 +127,11 @@ export function hasPluginManifest(
 }
 
 /** `dir/rel`, or `rel` alone when `dir` is the repository root. */
-function pluginPath(dir: string, rel: string): string {
+export function pluginPath(dir: string, rel: string): string {
   return dir === "." ? rel : `${dir}/${rel}`;
 }
 
-function lastSegment(path: string): string {
+export function lastSegment(path: string): string {
   return path.split("/").at(-1) ?? path;
 }
 
