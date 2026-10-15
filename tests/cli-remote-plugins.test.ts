@@ -27,6 +27,7 @@ import type { PluginSpec } from "./plugin-fixtures";
 import {
   initRemoteProject,
   pluginUpstream,
+  skillText,
   upstreamWith,
 } from "./remote-fixtures";
 import { renderCandidateList } from "../src/commands/add-remote";
@@ -1263,6 +1264,90 @@ test(
     expect(result.stderr.toString()).toContain(
       "capshelf looks for SKILL.md at the repository root and under skills/, .claude/skills/, and .agents/skills/ and in plugins named by .claude-plugin/marketplace.json or .agents/plugins/marketplace.json",
     );
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+async function installedHeavySkill() {
+  const upstream = await pluginUpstream(threePlugins(), {
+    claude: threePluginsCatalog(),
+  });
+  const { project, env } = await initProject();
+  const run = runInProcess(project);
+  expect(
+    (
+      await run(
+        [
+          "add",
+          upstream.url,
+          "--path",
+          "plugins/heavy/skills/worker",
+          "--as",
+          "heavy",
+          "--yes",
+          "--json",
+        ],
+        env,
+      )
+    ).exitCode,
+  ).toBe(0);
+  return { upstream, project, env, run };
+}
+
+test(
+  "update shows the plugin facts read at the new commit when a remote skill's pin would move",
+  async () => {
+    const { upstream, project, env, run } = await installedHeavySkill();
+    // Not `pushChange`: it rewrites the body to a generic placeholder, which
+    // would also erase the facts this test means to see survive the move —
+    // the description changes (so the pin moves) and the body, with its
+    // plugin-root read, agent reference, and outside link, stays as it was.
+    await writeFile(
+      join(upstream.work, "plugins/heavy/skills/worker", "SKILL.md"),
+      skillText("worker", "Heavy skill, revised", HEAVY_BODY),
+    );
+    await $`git -C ${upstream.work} add -A`.quiet();
+    await $`git -C ${upstream.work} commit -qm "revise the heavy skill description"`.quiet();
+    await $`git -C ${upstream.work} push -q origin main`.quiet();
+    await run(["status", "--check-upstream", "--json"], env);
+
+    const { context, prompts } = consentContext();
+    const result = await runWithConfirmation(
+      project,
+      env,
+      ["update", "skills/heavy"],
+      context,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain(
+      "! this skill uses parts of the heavy plugin that are not installed:",
+    );
+    expect(prompts[0]).toContain("agents         assistant");
+    expect(prompts[0]).toContain("outside links  ../../AGENTS.md");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "update never prompts, and reports already-current, when only a file outside the skill directory changed",
+  async () => {
+    const { upstream, env, run } = await installedHeavySkill();
+    // Only the plugin's agent file changes; the skill directory itself, and
+    // so its pin digest, stays the same — the rule this prompt must keep.
+    await writeFile(
+      join(upstream.work, "plugins", "heavy", "agents", "assistant.md"),
+      "a different agent\n",
+    );
+    await $`git -C ${upstream.work} add -A`.quiet();
+    await $`git -C ${upstream.work} commit -qm "revise the plugin agent file"`.quiet();
+    await $`git -C ${upstream.work} push -q origin main`.quiet();
+    await run(["status", "--check-upstream", "--json"], env);
+
+    const result = await run(["update", "skills/heavy", "--json"], env);
+    expect(result.exitCode).toBe(0);
+    const rows = objectItems(jsonOutput(result), "items");
+    expect(rows[0]!.action).toBe("already-current");
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );

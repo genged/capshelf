@@ -111,7 +111,7 @@ import {
 import { mergeNamedTrees, namedFilesEqual } from "../merge-tree";
 import { beginInstalledReconciliation } from "../promote-transaction";
 import { remoteCacheState } from "../remote-cache";
-import { remoteTreeSource } from "../remote-discovery";
+import { candidateAtSubpath, remoteTreeSource } from "../remote-discovery";
 import {
   previewRemoteUpdate,
   remoteEntryAsDataEntry,
@@ -128,6 +128,7 @@ import {
   saveRemotesLock,
 } from "../remotes-lock";
 import type { RemoteLockEntry, RemotesLock } from "../remotes-lock";
+import { factsWarnOnInstall, renderPluginFacts } from "./add-remote";
 
 interface UpdateOptions {
   json?: boolean;
@@ -795,6 +796,10 @@ async function confirmRemotePinMove(input: {
 }): Promise<RemoteConsent> {
   if (input.dryRun || input.yes) return { approved: true, plan: null };
   const destruction = await planRemotePinMove(input);
+  const factsLines = await remotePinMoveFactsLines(
+    input.entry,
+    input.preview.to,
+  );
   const block = [
     `  pinned    ${input.preview.from.slice(0, 7)}  ->  ${input.preview.to.slice(0, 7)}   (from the local cache, no network)`,
     `  files     ${input.preview.changed.length} changed`,
@@ -803,6 +808,7 @@ async function confirmRemotePinMove(input: {
       ? ["", renderDestructiveChanges("Update", destruction.changes)]
       : []),
     "",
+    ...(factsLines.length > 0 ? [...factsLines, ""] : []),
     "  capshelf does not review this content. Your agent runs it with your permissions.",
   ].join("\n");
   const context = confirmationContext();
@@ -820,6 +826,35 @@ async function confirmRemotePinMove(input: {
   }
   context.stderr.write("Update cancelled; no changes were written.\n");
   return { approved: false, plan: null };
+}
+
+/**
+ * The plugin-facts block for the pin-move prompt, read at the commit the pin
+ * would move to — never at the pinned commit, which is what the user already
+ * saw when the row was installed.
+ *
+ * The facts only inform the reader; they never decide whether the pin moves.
+ * A read failure (the subpath gone at that commit, an unsafe name, anything
+ * `candidateAtSubpath` throws) must not fail the update, so it is caught here
+ * and reported as one line instead.
+ */
+async function remotePinMoveFactsLines(
+  entry: RemoteLockEntry,
+  commit: string,
+): Promise<string[]> {
+  const cache = remoteCacheState(entry.upstream);
+  const candidate = await candidateAtSubpath(
+    cache.path,
+    commit,
+    entry.subpath,
+  ).catch(() => null);
+  if (candidate === null) {
+    return [`  plugin facts could not be read at ${commit.slice(0, 7)}`];
+  }
+  const facts = candidate.plugin;
+  return facts !== undefined && factsWarnOnInstall(facts)
+    ? renderPluginFacts(facts)
+    : [];
 }
 
 /** What the pin move would destroy, through the planner every write uses. */

@@ -767,11 +767,13 @@ function pluginLine(facts: SkillPluginFacts): string {
 }
 
 /**
- * Whether the consent prompt (and the `--yes`/`--json` stderr echo of the
- * same text) owes the reader the `renderPluginFacts` block: a plugin skill
- * that uses something outside itself, or whose facts could not all be read.
+ * Whether a consent prompt (install's, or `src/commands/update.ts`'s pin-move
+ * prompt) owes the reader the `renderPluginFacts` block: a plugin skill that
+ * uses something outside itself, or whose facts could not all be read.
  */
-function factsWarnOnInstall(facts: SkillPluginFacts | undefined): boolean {
+export function factsWarnOnInstall(
+  facts: SkillPluginFacts | undefined,
+): boolean {
   return (
     facts !== undefined &&
     (facts.usesPluginParts.length > 0 || !facts.factsComplete)
