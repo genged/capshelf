@@ -8,11 +8,10 @@
  * assembles one `SkillPluginFacts` per skill directory.
  *
  * Rule numbers in comments refer to the task brief; `D<n>` refers to the
- * design's numbered decisions. Ruling D (controller): every `unread` path is
+ * design's numbered decisions. Every `unread` path is
  * `posix.relative(skillDir, blobPath)`, not the literal `../../workflows/<f>`
- * the brief first wrote — that literal is only correct for a skill at
- * `<plugin>/skills/<x>`, and a manifest `skills` path can put a skill
- * anywhere inside its plugin (`src/plugin-discovery.ts` rule 7).
+ * a skill at `<plugin>/skills/<x>` would suggest — a manifest `skills` path
+ * can put a skill anywhere inside its plugin (`src/plugin-discovery.ts` rule 7).
  */
 import { posix } from "node:path";
 import { catFileBlobs, catFileSizes } from "./git";
@@ -377,10 +376,10 @@ export async function collectPluginFactsWithLimits(
         if (why !== undefined) unread.push({ path: relPath, why });
       }
       // Rule 5: an unread workflow file makes every skill of this plugin
-      // incomplete too (Ruling D for the path). Skip one already under this
-      // skill's own directory — the loop above already counted it, and a
-      // skill directory can equal its plugin directory (manifest `skills:
-      // "./"`), which puts a workflow blob under both.
+      // incomplete too. Skip one already under this skill's own directory —
+      // the loop above already counted it, and a skill directory can equal
+      // its plugin directory (manifest `skills: "./"`), which puts a
+      // workflow blob under both.
       const skillPrefix = `${skillDir}/`;
       for (const workflowPath of unreadWorkflowPaths) {
         if (workflowPath.startsWith(skillPrefix)) continue;

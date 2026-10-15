@@ -34,11 +34,11 @@ import {
   CLAUDE_CATALOG_PATH,
   CODEX_CATALOG_PATH,
   lastSegment,
-  PLUGIN_PARTS,
 } from "../plugin-discovery";
 import type {
   DiscoveredPlugin,
   PluginCatalog,
+  PluginPart,
   SkippedEntry,
 } from "../plugin-discovery";
 import type { PluginFactReason, SkillPluginFacts } from "../plugin-facts";
@@ -169,7 +169,8 @@ export async function addRemoteSkill(
   // D10: `--list` with a plugin path lists that plugin, so the lookup runs
   // before `candidateAtSubpath`'s single-skill read — but only behind
   // `--list`. A bare `--path` (no `--list`) still goes straight to
-  // `candidateAtSubpath`; the D5 refusal for a plugin root is Task 7's job.
+  // `candidateAtSubpath`; a D5 refusal for a plugin root named without
+  // `--list` is not implemented here.
   const pluginScope =
     explicitSubpath !== null &&
     explicitSubpath !== undefined &&
@@ -636,15 +637,14 @@ function describeLicense(license: LicenseFinding): string {
   return `${license.label ?? "unrecognized"}  (${safe(license.path)}, ${where})`;
 }
 
-/** Ruling E: singular everywhere a count can be one. */
+/** Singular everywhere a count can be one: "1 skill", "2 skills". */
 function plural(count: number, word: string): string {
   return count === 1 ? word : `${word}s`;
 }
 
 /**
- * Ruling C: the skill row's "uses" column. "" when the candidate is not a
- * plugin skill or matches none of the four checks and its facts are
- * complete. Shared with Tasks 6 and 7.
+ * The skill row's "uses" column. "" when the candidate is not a plugin
+ * skill or matches none of the four checks and its facts are complete.
  */
 export function usesLabel(facts: SkillPluginFacts | undefined): string {
   if (facts === undefined) return "";
@@ -667,29 +667,52 @@ const USE_PART_LABELS: Record<PluginFactReason, string> = {
   "outside-links": "outside links",
 };
 
-/** The reason text for one skipped catalog entry (`external-source` excluded — it becomes the `elsewhere` summary line, not a warning). */
+/**
+ * The reason text for one skipped catalog entry (`external-source` excluded
+ * — it becomes the `elsewhere` summary line, not a warning). `entry.source`
+ * is absent for some `unsafe-path` entries (for example a Codex `local`
+ * source with no `path` at all); the text then leaves the source out
+ * rather than naming the entry itself as its source.
+ */
 function skipReasonText(entry: SkippedEntry): string {
-  const source = entry.source ?? entry.name;
+  const source = entry.source;
   switch (entry.reason) {
     case "unsafe-path":
-      return `unsafe source ${source}`;
+      return source === undefined ? "unsafe source" : `unsafe source ${source}`;
     case "missing":
-      return `${source} does not exist at this commit`;
+      return source === undefined
+        ? "does not exist at this commit"
+        : `${source} does not exist at this commit`;
     case "not-a-file":
-      return `${source} is a symlink or submodule`;
+      return source === undefined
+        ? "is a symlink or submodule"
+        : `${source} is a symlink or submodule`;
     case "nested-plugin":
-      return `${source} is inside another plugin`;
+      return source === undefined
+        ? "is inside another plugin"
+        : `${source} is inside another plugin`;
     case "external-source":
       // The caller filters this reason out; the elsewhere line covers it.
-      return `external source ${source}`;
+      return "external source";
   }
 }
 
 /**
- * Ruling B. `summaryLength` is the line count up to and including the
- * `elsewhere` line, or the last header line present when there is no
- * `elsewhere` line, plus the one blank line printed after it. Task 6 slices
- * `lines` at `summaryLength` for the D9 "ask before a long list" summary.
+ * Join parts as English prose: one part alone, two joined by "and", three
+ * or more comma-separated with a final "and".
+ */
+function englishJoin(parts: readonly string[]): string {
+  if (parts.length <= 1) return parts.join("");
+  if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
+  return `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
+}
+
+/**
+ * `summaryLength` is the line count up to and including the `elsewhere`
+ * line, or the last header line present when there is no `elsewhere` line,
+ * plus the one blank line printed after it. A caller can slice `lines` at
+ * this index to print the D9 "ask before a long list" summary before
+ * asking whether to show the rest.
  */
 export interface CandidateListRender {
   lines: string[];
@@ -697,8 +720,8 @@ export interface CandidateListRender {
 }
 
 /**
- * The `--list` text output, as plain lines, with no console calls — Task 6
- * reuses this for the D9 summary, and Task 7 for the picker's plugin detail.
+ * The `--list` text output, as plain lines, with no console calls — exported
+ * so the D9 summary and the picker's plugin detail can reuse these lines.
  */
 export function renderCandidateList(input: {
   url: string;
@@ -710,7 +733,7 @@ export function renderCandidateList(input: {
 }): CandidateListRender {
   const lines: string[] = [
     `  repo      ${safe(input.upstream)}`,
-    `  ref       ${input.ref}`,
+    `  ref       ${safe(input.ref)}`,
     `  commit    ${input.commit}`,
   ];
   if (input.scope === "repository") {
@@ -746,9 +769,11 @@ function renderRepositoryList(
     }
     lines.push("");
     lines.push(
-      `  install one:   ${shellCommand([PRODUCT_NAME, "add", url, "--path", candidates[0]!.subpath])}`,
+      `  install one:   ${safe(shellCommand([PRODUCT_NAME, "add", url, "--path", candidates[0]!.subpath]))}`,
     );
-    lines.push(`  install some:  ${shellCommand([PRODUCT_NAME, "add", url])}`);
+    lines.push(
+      `  install some:  ${safe(shellCommand([PRODUCT_NAME, "add", url]))}`,
+    );
     return { lines, summaryLength: lines.length };
   }
 
@@ -770,7 +795,7 @@ function renderRepositoryList(
   );
   if (usingCount > 0) {
     lines.push(
-      `            ${usingCount} use plugin parts outside the skill directory`,
+      `            ${usingCount} ${usingCount === 1 ? "uses" : "use"} plugin parts outside the skill directory`,
     );
   }
   const noSkillPlugins = discovery.plugins.filter(
@@ -778,10 +803,19 @@ function renderRepositoryList(
   );
   if (noSkillPlugins.length > 0) {
     const dirs = noSkillPlugins.map((p) => safe(p.source)).join(", ");
-    const ships = PLUGIN_PARTS.filter((part) =>
-      noSkillPlugins.some((p) => p.ships.includes(part)),
-    );
-    const shipsSuffix = ships.length > 0 ? `  (${ships.join(", ")} only)` : "";
+    // Each part in the order its first no-skill plugin ships it, not
+    // `PLUGIN_PARTS`'s own order: "plugins/insecure-defaults,
+    // plugins/git-cleanup  (commands and workflows only)" names `commands`
+    // first because `insecure-defaults` (listed first) ships it, even
+    // though `PLUGIN_PARTS` puts `workflows` ahead of `commands`.
+    const ships: PluginPart[] = [];
+    for (const plugin of noSkillPlugins) {
+      for (const part of plugin.ships) {
+        if (!ships.includes(part)) ships.push(part);
+      }
+    }
+    const shipsSuffix =
+      ships.length > 0 ? `  (${englishJoin(ships)} only)` : "";
     lines.push(`  no skills  ${dirs}${shipsSuffix}`);
   }
   const elsewhere = discovery.skipped.filter(
@@ -833,7 +867,7 @@ function renderRepositoryList(
     for (const candidate of rows) {
       renderOrder.push(candidate);
       lines.push(
-        `    ${lastSegment(candidate.subpath).padEnd(nameWidth)}   ${usesLabel(candidate.plugin).padEnd(usesWidth)}   ${safe(candidate.description ?? "")}`.trimEnd(),
+        `    ${safe(lastSegment(candidate.subpath)).padEnd(nameWidth)}   ${usesLabel(candidate.plugin).padEnd(usesWidth)}   ${safe(candidate.description ?? "")}`.trimEnd(),
       );
     }
     lines.push("");
@@ -851,11 +885,13 @@ function renderRepositoryList(
 
   const firstSubpath = firstSubpathWithNoFacts(renderOrder).subpath;
   lines.push(
-    `  install one:   ${shellCommand([PRODUCT_NAME, "add", url, "--path", firstSubpath])}`,
+    `  install one:   ${safe(shellCommand([PRODUCT_NAME, "add", url, "--path", firstSubpath]))}`,
   );
-  lines.push(`  install some:  ${shellCommand([PRODUCT_NAME, "add", url])}`);
   lines.push(
-    `  details:       ${shellCommand([PRODUCT_NAME, "add", url, "--list", "--json"])}`,
+    `  install some:  ${safe(shellCommand([PRODUCT_NAME, "add", url]))}`,
+  );
+  lines.push(
+    `  details:       ${safe(shellCommand([PRODUCT_NAME, "add", url, "--list", "--json"]))}`,
   );
   return { lines, summaryLength };
 }
@@ -888,13 +924,13 @@ function renderPluginList(
   );
   for (const candidate of candidates) {
     lines.push(
-      `    ${lastSegment(candidate.subpath).padEnd(nameWidth)}   ${usesLabel(candidate.plugin).padEnd(usesWidth)}   ${safe(candidate.description ?? "")}`.trimEnd(),
+      `    ${safe(lastSegment(candidate.subpath)).padEnd(nameWidth)}   ${usesLabel(candidate.plugin).padEnd(usesWidth)}   ${safe(candidate.description ?? "")}`.trimEnd(),
     );
   }
   lines.push("");
   const firstSubpath = firstSubpathWithNoFacts(candidates).subpath;
   lines.push(
-    `  install one:   ${shellCommand([PRODUCT_NAME, "add", url, "--path", firstSubpath])}`,
+    `  install one:   ${safe(shellCommand([PRODUCT_NAME, "add", url, "--path", firstSubpath]))}`,
   );
   return { lines, summaryLength };
 }

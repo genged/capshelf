@@ -25,8 +25,8 @@ import { catFileBlobs } from "./git";
 import type { GitTreeEntry } from "./git";
 import { z } from "zod";
 
-/** Exported for Task 5's `--list` `found` line, which names the catalog(s)
- * that named a plugin (`src/commands/add-remote.ts`). */
+/** Exported so `add --list`'s `found` line can name the catalog(s) that
+ * named a plugin (`src/commands/add-remote.ts`). */
 export const CLAUDE_CATALOG_PATH = ".claude-plugin/marketplace.json";
 export const CODEX_CATALOG_PATH = ".agents/plugins/marketplace.json";
 const CLAUDE_MANIFEST_REL = ".claude-plugin/plugin.json";
@@ -683,9 +683,8 @@ async function readManifests(
 /**
  * Rules 7, 8, and 9 for one plugin directory: its skill dirs, its name, and
  * the parts it ships. `discoverPlugins` calls this once per kept directory,
- * after rule 6's nesting filter. Task 4 (plugins-on-the-shelf) calls it
- * directly for a manifest-only directory that no catalog names, with
- * `catalogs: []`.
+ * after rule 6's nesting filter. Also called directly for a manifest-only
+ * directory that no catalog names, with `catalogs: []`.
  *
  * `manifestBlobs` lets a caller that already batched every manifest's bytes
  * (as `discoverPlugins` does, to keep one `cat-file` process for all of

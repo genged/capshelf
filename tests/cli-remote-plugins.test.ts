@@ -1,6 +1,6 @@
 /**
  * `capshelf add <url> --list`, text and JSON, for a repository that publishes
- * Claude/Codex plugins — Task 5 of the plugin-aware remote discovery plan.
+ * Claude/Codex plugins.
  *
  * Fixtures use `pluginUpstream` (`tests/remote-fixtures.ts`), which writes
  * plugin directories with `writePlugins` (`tests/plugin-fixtures.ts`) and
@@ -26,6 +26,12 @@ import {
   pluginUpstream,
   upstreamWith,
 } from "./remote-fixtures";
+import { renderCandidateList } from "../src/commands/add-remote";
+import type { DiscoveredPlugin } from "../src/plugin-discovery";
+import type {
+  RemoteDiscovery,
+  RemoteSkillCandidate,
+} from "../src/remote-discovery";
 
 const initProject = initRemoteProject;
 
@@ -128,6 +134,24 @@ test(
 );
 
 test(
+  "--list --json on a repository with no plugin has empty plugin arrays",
+  async () => {
+    const { url } = await upstreamWith([["skills/pdf", "Extract text"]]);
+    const { project, env } = await initProject();
+    const result = await runInProcess(project)(
+      ["add", url, "--list", "--json"],
+      env,
+    );
+    expect(result.exitCode).toBe(0);
+    const payload = jsonOutput(result);
+    expect(arrayField(payload, "plugins")).toEqual([]);
+    expect(arrayField(payload, "skipped")).toEqual([]);
+    expect(arrayField(payload, "warnings")).toEqual([]);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
   "--list --path lists one plugin only, with the real singular rule",
   async () => {
     const { url } = await pluginUpstream(threePlugins(), {
@@ -150,13 +174,36 @@ test(
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
 
+test(
+  "--list --path plugins/heavy --json reports only that plugin and its skills",
+  async () => {
+    const { url } = await pluginUpstream(threePlugins(), {
+      claude: threePluginsCatalog(),
+    });
+    const { project, env } = await initProject();
+    const result = await runInProcess(project)(
+      ["add", url, "--list", "--path", "plugins/heavy", "--json"],
+      env,
+    );
+    expect(result.exitCode).toBe(0);
+    const payload = jsonOutput(result);
+    const plugins = arrayField(payload, "plugins");
+    expect(plugins).toHaveLength(1);
+    const skills = objectItems(payload, "skills");
+    expect(skills).toHaveLength(1);
+    expect(stringField(skills[0]!, "name")).toBe("worker");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
 // D2: a capshelf-shaped shelf (a legacy `source: "./"` entry with a `skills`
 // array, plus a generated Codex catalog entry under `codex/generated/`) must
 // list exactly as it did before this feature. The expected text below is the
 // literal output of `bun run src/cli.ts add <url> --list` at `d8b8168` (the
-// commit before Task 1), run against this same fixture shape in a scratch
-// worktree, with the URL and commit substituted for this run's own values —
-// both differ on every run because the fixture repository is created fresh.
+// commit before plugin discovery existed), run against this same fixture
+// shape in a scratch worktree, with the URL and commit substituted for this
+// run's own values — both differ on every run because the fixture
+// repository is created fresh.
 test(
   "a capshelf-shaped shelf with a generated Codex catalog lists byte-identical to before this feature",
   async () => {
@@ -213,6 +260,7 @@ test(
         "",
       ].join("\n"),
     );
+    expect(result.stderr.toString()).toBe("");
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
@@ -304,3 +352,64 @@ test(
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
+
+test("renderCandidateList's summaryLength stops right after the summary block's blank line", () => {
+  const candidate: RemoteSkillCandidate = {
+    subpath: "plugins/a/skills/x",
+    defaultName: "x",
+    description: "X",
+    origin: "marketplace",
+    plugin: {
+      plugin: {
+        name: "a",
+        source: "plugins/a",
+        catalogs: ["claude"],
+        ships: [],
+      },
+      usesPluginParts: [],
+      factsComplete: true,
+      unread: [],
+      filesOutsideSkill: 0,
+    },
+  };
+  const pluginA: DiscoveredPlugin = {
+    name: "a",
+    source: "plugins/a",
+    catalogs: ["claude"],
+    ships: [],
+    skillDirs: ["plugins/a/skills/x"],
+  };
+  const pluginB: DiscoveredPlugin = {
+    name: "b",
+    source: "plugins/b",
+    catalogs: ["claude"],
+    ships: ["commands"],
+    skillDirs: [],
+  };
+  const discovery: RemoteDiscovery = {
+    candidates: [candidate],
+    plugins: [pluginA, pluginB],
+    skipped: [],
+    warnings: [],
+  };
+  const { lines, summaryLength } = renderCandidateList({
+    url: "https://example.invalid/repo",
+    upstream: "https://example.invalid/repo",
+    ref: "main",
+    commit: "abc123",
+    discovery,
+    scope: "repository",
+  });
+  // `b` has no skill directory, so it only appears in the "no skills" line,
+  // not as a group — the summary block ends right after that line and the
+  // one blank line, before `a`'s group starts.
+  expect(lines.slice(0, summaryLength)).toEqual([
+    "  repo      https://example.invalid/repo",
+    "  ref       main",
+    "  commit    abc123",
+    "  found     1 skill in 2 plugins  (.claude-plugin/marketplace.json)",
+    "  no skills  plugins/b  (commands only)",
+    "",
+  ]);
+  expect(lines[summaryLength]).toBe("  plugins/a");
+});
