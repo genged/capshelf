@@ -182,14 +182,21 @@ export async function addRemoteSkill(
         parsed.repoName,
       )
     : null;
-  if (pluginScope !== null && opts.list !== true) {
+  // A plugin whose manifest names its own directory as a skill (`"skills":
+  // "./"`) installs exactly as it did before this feature: `explicitSubpath`
+  // is the plugin's source *and* one of its own `skillDirs`, so it is not a
+  // plugin *root* in the D5 sense, even though `pluginAtSubpath` found it.
+  const pluginRootIsAlsoASkill =
+    hasExplicitSubpath &&
+    (pluginScope?.plugin.skillDirs.includes(explicitSubpath) ?? false);
+  if (pluginScope !== null && opts.list !== true && !pluginRootIsAlsoASkill) {
     for (const warning of pluginScope.warnings) {
       console.error(`⚠ ${safe(`${warning.path} ${warning.message}`)}`);
     }
     throw pluginRootRefusal(input, pluginScope);
   }
   const discovery: RemoteDiscovery =
-    pluginScope !== null
+    pluginScope !== null && (opts.list === true || !pluginRootIsAlsoASkill)
       ? {
           candidates: pluginScope.candidates,
           plugins: [pluginScope.plugin],
@@ -379,19 +386,25 @@ function assertNoNameCollision(
     if (group === undefined) byName.set(entry.name, [entry]);
     else group.push(entry);
   }
-  for (const [name, group] of byName) {
-    if (group.length < 2) continue;
-    const subpaths = group
-      .map((entry) => safe(entry.candidate.subpath))
-      .join(", ");
-    const prefix = shellCommand([PRODUCT_NAME, "add", url]);
-    throw new PreconditionError(
-      `${group.length} selected skills would install as "${safe(name)}": ${subpaths}`,
-      {
-        hint: `install them one at a time: ${safe(prefix)} --path <subpath> --as <name>`,
-      },
-    );
-  }
+  // Every colliding name, not only the first found — a picker selection can
+  // reuse more than one name at once, and naming only one would send the
+  // user back here a second time for the next.
+  const collisionLines = [...byName.entries()]
+    .filter(([, group]) => group.length >= 2)
+    .map(([name, group]) => {
+      const subpaths = group
+        .map((entry) => safe(entry.candidate.subpath))
+        .join(", ");
+      return `${group.length} selected skills would install as "${safe(name)}": ${subpaths}`;
+    });
+  if (collisionLines.length === 0) return;
+  const prefix = shellCommand([PRODUCT_NAME, "add", url]);
+  throw new PreconditionError(collisionLines[0]!, {
+    hint: multilineHint([
+      ...collisionLines.slice(1),
+      `  install them one at a time: ${safe(prefix)} --path <subpath> --as <name>`,
+    ]),
+  });
 }
 
 async function installOne(input: {
@@ -819,12 +832,6 @@ const USE_PART_LABELS: Record<PluginFactReason, string> = {
   "outside-links": "outside links",
 };
 
-/** The widest `USE_PART_LABELS` value, so every reason row in
- * `renderPluginFacts` lines its refs up in one column. */
-const FACT_LABEL_WIDTH = Math.max(
-  ...Object.values(USE_PART_LABELS).map((label) => label.length),
-);
-
 // A template string, not interpolation: this is the literal text the facts
 // block prints, the plugin-root variable name a skill's own source reads.
 const PLUGIN_ROOT_VARIABLE = `\${CLAUDE_PLUGIN_ROOT}`;
@@ -842,6 +849,14 @@ export function renderPluginFacts(facts: SkillPluginFacts): string[] {
   const lines: string[] = [
     `  ! this skill uses parts of the ${safe(facts.plugin.name)} plugin that are not installed:`,
   ];
+  // The column width is the widest label *present in this block*, plus a
+  // two-space gutter — not the widest of all four possible labels. Basing it
+  // on every possible label would give "outside links" (already the widest)
+  // zero gutter of its own whenever it is the longest one shown.
+  const labelWidth =
+    Math.max(
+      ...facts.usesPluginParts.map((use) => USE_PART_LABELS[use.reason].length),
+    ) + 2;
   for (const use of facts.usesPluginParts) {
     const refs = use.refs.map(safe).join(", ");
     const suffix =
@@ -849,7 +864,7 @@ export function renderPluginFacts(facts: SkillPluginFacts): string[] {
         ? ` ${use.refs.length === 1 ? "reads" : "read"} ${PLUGIN_ROOT_VARIABLE}`
         : "";
     lines.push(
-      `      ${USE_PART_LABELS[use.reason].padEnd(FACT_LABEL_WIDTH)}${refs}${suffix}`,
+      `      ${USE_PART_LABELS[use.reason].padEnd(labelWidth)}${refs}${suffix}`,
     );
   }
   lines.push(

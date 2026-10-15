@@ -105,6 +105,29 @@ function duplicateNameCatalog() {
 }
 
 /**
+ * A plugin whose manifest names its own directory as a skill
+ * (`"skills": "./"`), so `plugins/x` is both the plugin's `source` and one
+ * of its own `skillDirs` — the shape D5 must not mistake for a plugin root.
+ */
+function selfSkillPlugin(): PluginSpec[] {
+  return [
+    {
+      dir: "plugins/x",
+      manifestName: "x",
+      manifestSkills: "./",
+      skills: [],
+      files: {
+        "SKILL.md": "---\nname: x\ndescription: Self-skill plugin\n---\nbody\n",
+      },
+    },
+  ];
+}
+
+function selfSkillCatalog() {
+  return claudeCatalog([{ name: "x", source: "./plugins/x" }]);
+}
+
+/**
  * Every regular file under `root`, as `relativePath:base64Content`, sorted —
  * a before/after comparison proves a refused command left the project
  * untouched without trusting `git status`, which a refusal might not even
@@ -901,12 +924,34 @@ test(
 );
 
 test(
+  "D5: a plugin root that is also one of its own skill directories installs normally",
+  async () => {
+    const { url } = await pluginUpstream(selfSkillPlugin(), {
+      claude: selfSkillCatalog(),
+    });
+    const { project, env } = await initProject();
+    const result = await runInProcess(project)(
+      ["add", url, "--path", "plugins/x", "--yes", "--json"],
+      env,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(existsSync(join(project, ".agents/skills/x/SKILL.md"))).toBe(true);
+    const payload = jsonOutput(result);
+    expect(stringField(payload, "name")).toBe("x");
+    expect(stringField(objectField(payload, "plugin"), "name")).toBe("x");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
   "D6: two selected skills with the same install name refuse before any project write",
   async () => {
     const { url } = await pluginUpstream(duplicateNamePlugins(), {
       claude: duplicateNameCatalog(),
     });
     const { project, env } = await initProject();
+    const excludePath = join(project, ".git", "info", "exclude");
+    const excludeBefore = await readFile(excludePath, "utf-8");
     const outer = setPickContext({
       stdinIsTTY: true,
       stderrIsTTY: true,
@@ -934,6 +979,59 @@ test(
       false,
     );
     expect(existsSync(join(project, ".agents", "skills", "x"))).toBe(false);
+    // `ensureLocalExcludes` writes this file; the refusal runs before any
+    // install reaches it, so it must be untouched too.
+    expect(await readFile(excludePath, "utf-8")).toBe(excludeBefore);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "D6: every colliding name is named, not only the first",
+  async () => {
+    const { url } = await pluginUpstream(
+      [
+        { dir: "plugins/a", skills: [{ name: "x", description: "A's x" }] },
+        { dir: "plugins/b", skills: [{ name: "x", description: "B's x" }] },
+        { dir: "plugins/c", skills: [{ name: "y", description: "C's y" }] },
+        { dir: "plugins/d", skills: [{ name: "y", description: "D's y" }] },
+      ],
+      {
+        claude: claudeCatalog([
+          { name: "a", source: "./plugins/a" },
+          { name: "b", source: "./plugins/b" },
+          { name: "c", source: "./plugins/c" },
+          { name: "d", source: "./plugins/d" },
+        ]),
+      },
+    );
+    const { project, env } = await initProject();
+    const outer = setPickContext({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      capableTerminal: true,
+      prompt: async (request) => ({
+        kind: "picked",
+        refs: request.rows.map(pickRowId),
+      }),
+    });
+    let result: CliResult;
+    try {
+      result = await runInProcess(project)(["add", url, "--yes"], env);
+    } finally {
+      setPickContext(outer);
+    }
+    expect(result.exitCode).toBe(3);
+    const stderr = result.stderr.toString();
+    expect(stderr).toContain(
+      '2 selected skills would install as "x": plugins/a/skills/x, plugins/b/skills/x',
+    );
+    expect(stderr).toContain(
+      '2 selected skills would install as "y": plugins/c/skills/y, plugins/d/skills/y',
+    );
+    expect(stderr).toContain(
+      `install them one at a time: capshelf add ${url} --path <subpath> --as <name>`,
+    );
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
@@ -1035,7 +1133,10 @@ test(
     // The agent fact names the agent the skill's text refers to ("assistant"),
     // not the skill's own name ("worker") — the self-reference exclusion in
     // `src/plugin-facts.ts` means the skill's own name never appears here.
-    expect(prompt).toContain("agents       assistant");
+    // The column width is the widest label *present* (here, "outside links",
+    // 13 chars) plus 2 — so "agents" and "plugin root" pad to 15, not 13.
+    expect(prompt).toContain("agents         assistant");
+    expect(prompt).toContain("outside links  ../../AGENTS.md");
     expect(prompt).toContain("files outside the skill directory");
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
@@ -1080,10 +1181,65 @@ test(
     expect(stderr).toContain(
       "! this skill uses parts of the heavy plugin that are not installed:",
     );
+    expect(stderr).toContain("outside links  ../../AGENTS.md");
     expect(stderr).toContain("files outside the skill directory");
     const payload = jsonOutput(result);
     expect(arrayField(payload, "usesPluginParts")).toHaveLength(3);
     expect(stringField(objectField(payload, "plugin"), "name")).toBe("heavy");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "the multi-result JSON carries plugin fields only on the plugin skill's row",
+  async () => {
+    const { url, work } = await pluginUpstream(threePlugins(), {
+      claude: threePluginsCatalog(),
+    });
+    await mkdir(join(work, "skills", "pdf"), { recursive: true });
+    await writeFile(
+      join(work, "skills", "pdf", "SKILL.md"),
+      "---\nname: pdf\ndescription: Extract text\n---\nbody\n",
+    );
+    await $`git -C ${work} add -A`.quiet();
+    await $`git -C ${work} commit -qm "add a layout skill"`.quiet();
+    await $`git -C ${work} push -q origin main`.quiet();
+
+    const { project, env } = await initProject();
+    const outer = setPickContext({
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      capableTerminal: true,
+      prompt: async (request) => ({
+        kind: "picked",
+        refs: request.rows
+          .filter((row) => row.name === "pdf" || row.name === "worker")
+          .map(pickRowId),
+      }),
+    });
+    let result: CliResult;
+    try {
+      result = await runInProcess(project)(
+        ["add", url, "--yes", "--json"],
+        env,
+      );
+    } finally {
+      setPickContext(outer);
+    }
+    expect(result.exitCode).toBe(0);
+    const payload = jsonOutput(result);
+    const items = objectItems(payload, "items");
+    expect(items).toHaveLength(2);
+    const pdfRow = items.find((item) => stringField(item, "name") === "pdf")!;
+    const workerRow = items.find(
+      (item) => stringField(item, "name") === "worker",
+    )!;
+    expect(pdfRow.plugin).toBeUndefined();
+    expect(pdfRow.usesPluginParts).toBeUndefined();
+    expect(pdfRow.factsComplete).toBeUndefined();
+    expect(stringField(objectField(workerRow, "plugin"), "name")).toBe("heavy");
+    expect(arrayField(workerRow, "usesPluginParts")).toHaveLength(3);
+    expect(workerRow.factsComplete).toBe(true);
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
