@@ -24,13 +24,18 @@ const MARKETPLACE = JSON.stringify({
   ],
 });
 
+const WORKER_USES_PLUGIN_PARTS = [
+  { reason: "plugin-root", refs: ["SKILL.md"] },
+  { reason: "plugin-agents", refs: ["assistant"] },
+];
+
 test(
   "a plugin repository lists its plugins, refuses a plugin root at --path, and installs one plugin skill with its facts",
   async () => {
     declareEvidence({
       scenario: SCENARIO,
       property:
-        "add <url> --list --json reports the plugins array for a repository published through a Claude plugin catalog, add <url> --path <plugin root> refuses with exit 3 and leaves the project byte-identical, and add <url> --path <skill> --yes installs the skill directory only and carries usesPluginParts in its JSON result",
+        "add <url> --list --json reports the plugins array for a repository published through a Claude plugin catalog, add <url> --path <plugin root> refuses with exit 3 and leaves the project byte-identical, add <url> --path <skill> --yes installs the skill directory only and carries usesPluginParts in its JSON result, and a second add of the same skill reports already-current and writes nothing",
       labels: ["reproduced-user-workflow", "modeled-external-step"],
       modeledSteps: [
         "the third-party host is a local bare repository reached over file://, standing in for github.com",
@@ -43,7 +48,7 @@ test(
     await withWorld(SCENARIO, async (world) => {
       // The third-party plugin repository: two plugins under one Claude
       // catalog, one of them (heavy) holding a skill that reaches outside its
-      // own directory through the plugin-root variable and a namespaced
+      // own directory through the plugin-root variable and a backticked
       // agent reference.
       const upstream = await world.git.createBareRemote("plugin-host");
       const upstreamWork = await world.git.createDataRepo({
@@ -74,7 +79,7 @@ test(
         0,
       );
 
-      // List: both plugins, and the worker skill's facts.
+      // List: both plugins, and the worker skill's exact facts.
       const listed = await world.capshelf(project, [
         "add",
         upstream.url,
@@ -94,9 +99,9 @@ test(
       const workerRow = listedSkills.find(
         (skill) => asString(skill.name, "skill name") === "worker",
       )!;
-      expect(
-        asArray(workerRow.usesPluginParts, "usesPluginParts"),
-      ).not.toHaveLength(0);
+      expect(asArray(workerRow.usesPluginParts, "usesPluginParts")).toEqual(
+        WORKER_USES_PLUGIN_PARTS,
+      );
 
       // Refuse a plugin root at --path. Safe failure: the project, Git
       // included, does not change.
@@ -134,15 +139,16 @@ test(
         "--json",
       ]);
       expectExit(installed, 0);
+      expect(installed.stderr).toContain(
+        "! this skill uses parts of the heavy plugin",
+      );
       const installPayload = asObject(
         parseJsonText(installed.stdout, "add --path --yes --json"),
         "add --path --yes --json",
       );
-      const usesPluginParts = asArray(
-        installPayload.usesPluginParts,
-        "usesPluginParts",
-      );
-      expect(usesPluginParts.length).toBeGreaterThan(0);
+      expect(
+        asArray(installPayload.usesPluginParts, "usesPluginParts"),
+      ).toEqual(WORKER_USES_PLUGIN_PARTS);
       expect(
         asString(asObject(installPayload.plugin, "plugin").name, "plugin.name"),
       ).toBe("heavy");
@@ -155,6 +161,30 @@ test(
         WORKER_SKILL,
       );
       expect(await readdir(installDir)).toEqual(["SKILL.md"]);
+
+      // The null second run: byte-stable, and strict status stays clean.
+      const afterInstall = await captureOwnedState(world, {
+        projectFiles: project,
+        projectGit: project,
+      });
+      const again = await world.capshelf(project, [
+        "add",
+        upstream.url,
+        "--path",
+        "plugins/heavy/skills/worker",
+        "--yes",
+        "--json",
+      ]);
+      expectExit(again, 0);
+      expect(again.stdout).toContain('"action": "already-current"');
+      expectSameState(
+        afterInstall,
+        await captureOwnedState(world, {
+          projectFiles: project,
+          projectGit: project,
+        }),
+        "a second add of the same plugin skill",
+      );
 
       expectExit(
         await world.capshelf(project, ["status", "--strict", "--json"]),

@@ -96,7 +96,10 @@ assert_fixed_contains '"source": "plugins/plain"' "$TMP/plugin-list.json"
 assert_fixed_contains '"source": "plugins/heavy"' "$TMP/plugin-list.json"
 assert_fixed_contains '"usesPluginParts"' "$TMP/plugin-list.json"
 
-# --- --path <plugin root> refuses, exit 3, names the skill and its uses ---
+# --- --path <plugin root> refuses, exit 3, names the skill and its uses, and
+#     leaves the project untouched: no remotes.lock.json exists yet, before
+#     or after the refusal ---
+test ! -e "$P/.capshelf/remotes.lock.json"
 set +e
 (cd "$P" && "${CLI[@]}" add "$PLUGIN_URL" --path plugins/heavy --yes --json \
   > "$TMP/plugin-root.json" 2>&1)
@@ -109,6 +112,7 @@ fi
 assert_fixed_contains 'is a plugin, not a skill' "$TMP/plugin-root.json"
 assert_fixed_contains 'install the skill: capshelf add' "$TMP/plugin-root.json"
 test ! -e "$P/.agents/skills/worker"
+test ! -e "$P/.capshelf/remotes.lock.json"
 
 # --- --path <skill> --yes installs the skill directory only ---
 (cd "$P" && "${CLI[@]}" add "$PLUGIN_URL" --path plugins/heavy/skills/worker --yes --json \
@@ -118,53 +122,55 @@ test -f "$P/.agents/skills/worker/SKILL.md"
 test ! -e "$P/.agents/skills/worker/agents"
 assert_fixed_contains 'uses parts of the heavy plugin' "$TMP/plugin-skill.err"
 
-# --- D9 PTY: a listing taller than a 3-row terminal asks before it shows the
-#     rest. `script` opens a real pty, so the terminal-rows gate actually
-#     fires, which a piped non-tty run never would. ---
-CLI_STR="$(printf '%q ' "${CLI[@]}")"
-D9_CMD="cd '$P' && $CLI_STR add '$PLUGIN_URL' --list"
-echo n | script -qec "stty rows 3; $D9_CMD" /dev/null > "$TMP/d9.txt"
-assert_fixed_contains 'Show all 2 skills' "$TMP/d9.txt"
-assert_fixed_contains 'one plugin:   capshelf add' "$TMP/d9.txt"
-assert_fixed_contains 'everything:   capshelf add' "$TMP/d9.txt"
-assert_fixed_not_contains 'install one:' "$TMP/d9.txt"
+# --- PTY cases: these need a real terminal, so they run only when `script`
+#     and `timeout` are both on PATH. Neither is required for the
+#     non-interactive behavior this suite otherwise proves. ---
+if command -v script >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+  CLI_STR="$(printf '%q ' "${CLI[@]}")"
+  D9_CMD="cd '$P' && $CLI_STR add '$PLUGIN_URL' --list"
 
-# --- D9 PTY: Ctrl-C ---
-# The design says Ctrl-C at this question acts as "no", the same as EOF
-# (closing stdin with Ctrl-D, which the command above answered correctly
-# through the readline 'close' race). A real terminal does not deliver Ctrl-C
-# that way: with no SIGINT handler installed anywhere in the CLI, the tty line
-# discipline sends SIGINT straight to the process, which dies before Node's
-# readline ever sees a keystroke. The run below exits by signal (130), not
-# "as no" (0). This is a real gap between the design and the binary — see the
-# task report — not fixed here.
-set +e
-printf '\003' | timeout 15 script -qec "stty rows 3; $D9_CMD" /dev/null \
-  > "$TMP/d9-ctrlc.txt" 2>&1
-CTRLC_EXIT=$?
-set -e
-if [ "$CTRLC_EXIT" -eq 0 ]; then
-  echo "Ctrl-C at the D9 question exited 0; the known SIGINT gap may be fixed now — update docs/cli.md and this comment"
-  exit 1
-fi
+  # --- D9 PTY: a listing taller than a 3-row terminal asks before it shows
+  #     the rest. `script` opens a real pty, so the terminal-rows gate
+  #     actually fires, which a piped non-tty run never would. ---
+  echo n | timeout 15 script -qec "stty rows 3; $D9_CMD" /dev/null > "$TMP/d9.txt"
+  assert_fixed_contains 'Show all 2 skills' "$TMP/d9.txt"
+  assert_fixed_contains 'one plugin:   capshelf add' "$TMP/d9.txt"
+  assert_fixed_contains 'everything:   capshelf add' "$TMP/d9.txt"
+  assert_fixed_not_contains 'install one:' "$TMP/d9.txt"
 
-# The one invariant that must hold either way: a process killed mid-prompt
-# leaves no half-finished install. The D9 question never writes by itself, so
-# this reuses the same signal against the per-skill consent prompt, which
-# does gate a real write, with the as-yet-uninstalled `plain` skill.
-INSTALL_CMD="cd '$P' && $CLI_STR add '$PLUGIN_URL' --path plugins/plain/skills/plain"
-cp "$P/.capshelf/remotes.lock.json" "$TMP/remotes-before-ctrlc.json"
-set +e
-printf '\003' | timeout 15 script -qec "$INSTALL_CMD" /dev/null \
-  > "$TMP/install-ctrlc.txt" 2>&1
-INSTALL_CTRLC_EXIT=$?
-set -e
-if [ "$INSTALL_CTRLC_EXIT" -eq 0 ]; then
-  echo "Ctrl-C at the install prompt exited 0; the known SIGINT gap may be fixed now — update docs/cli.md and this comment"
-  exit 1
+  # --- D9 PTY: Ctrl-C stops the command by SIGINT, exit 130. This is the
+  #     documented contract (docs/cli.md, Remote skills): only end of input
+  #     (Ctrl-D, closed stdin) answers this question as "no", which the case
+  #     above already proved. ---
+  set +e
+  printf '\003' | timeout 15 script -qec "stty rows 3; $D9_CMD" /dev/null \
+    > "$TMP/d9-ctrlc.txt" 2>&1
+  CTRLC_EXIT=$?
+  set -e
+  if [ "$CTRLC_EXIT" -ne 130 ]; then
+    echo "expected Ctrl-C at the D9 question to exit 130, got $CTRLC_EXIT"
+    exit 1
+  fi
+
+  # --- Ctrl-C at the per-skill install prompt: same contract. The install
+  #     stays safe either way, because the prompt gates every write; this
+  #     uses the as-yet-uninstalled `plain` skill to prove it. ---
+  INSTALL_CMD="cd '$P' && $CLI_STR add '$PLUGIN_URL' --path plugins/plain/skills/plain"
+  cp "$P/.capshelf/remotes.lock.json" "$TMP/remotes-before-ctrlc.json"
+  set +e
+  printf '\003' | timeout 15 script -qec "$INSTALL_CMD" /dev/null \
+    > "$TMP/install-ctrlc.txt" 2>&1
+  INSTALL_CTRLC_EXIT=$?
+  set -e
+  if [ "$INSTALL_CTRLC_EXIT" -ne 130 ]; then
+    echo "expected Ctrl-C at the install prompt to exit 130, got $INSTALL_CTRLC_EXIT"
+    exit 1
+  fi
+  cmp -s "$TMP/remotes-before-ctrlc.json" "$P/.capshelf/remotes.lock.json"
+  test ! -e "$P/.agents/skills/plain"
+else
+  echo "skip: PTY cases need 'script' and 'timeout' on PATH; neither is installed here"
 fi
-cmp -s "$TMP/remotes-before-ctrlc.json" "$P/.capshelf/remotes.lock.json"
-test ! -e "$P/.agents/skills/plain"
 
 (cd "$P" && "${CLI[@]}" rm skills/worker --yes --json >/dev/null)
 

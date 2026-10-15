@@ -263,8 +263,11 @@ function defaultDestructiveConfirmationContext(): DestructiveConfirmationContext
         // right away, but the question promise neither resolves nor rejects
         // — it hangs forever. Racing it against `close` turns that hang into
         // a rejection instead. Before this fix every prompt through this
-        // context hung forever on EOF or Ctrl-C; now it does not. Most
-        // callers — `confirmInstall`, `confirmRemotePinMove`,
+        // context hung forever on EOF (a closed pipe or `< /dev/null`); now
+        // it does not. A real terminal's Ctrl-C is a different path: the
+        // kernel's tty driver delivers SIGINT directly and this code never
+        // runs, so the process exits by signal (130), not through this race.
+        // Most callers — `confirmInstall`, `confirmRemotePinMove`,
         // `confirmDestructiveChanges`, and a direct `askQuestion` — do not
         // catch this rejection, so it reaches `main`'s handler, which prints
         // it and exits 1 before any write (`reportError`, `src/cli.ts:127`).

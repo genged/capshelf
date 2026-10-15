@@ -404,7 +404,8 @@ A plugin repository groups skills under a plugin directory. `add <url>
 --list --json` reports `usesPluginParts` for each plugin skill: the parts
 outside the skill directory it reads or calls. Read this before you install.
 A skill-only install never copies those parts. The skill can fail, or run
-with less than it expects, without them.
+with less than it expects, without them. Tell the user which parts it
+leaves out before you pass `--yes`.
 
 Each repository is cloned once, to
 `$XDG_DATA_HOME/capshelf/remote/<host>/<owner>/<repo>`. A later `add <url>`

@@ -1257,8 +1257,9 @@ async function printCandidateList(
 
 /**
  * D9's question. Loops on anything that is not an explicit yes or no, and a
- * rejected prompt — EOF, Ctrl-C closes readline — counts as "no" the same as
- * typing it.
+ * rejected prompt — closed input (EOF) — counts as "no" the same as typing
+ * it. A real Ctrl-C never reaches here: the terminal's own SIGINT kills the
+ * process first, so that case exits by signal (130), not as "no".
  */
 async function confirmShowAllSkills(
   context: DestructiveConfirmationContext,

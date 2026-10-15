@@ -1028,11 +1028,13 @@ operation and lists managed content drift, executable-mode changes, extra
 local paths, subagent target drift, managed fragment drift, config-comment
 loss, or dirty generated projection paths. Interactive human output asks once.
 Declining exits 0 and writes nothing. When stdin closes before an answer, for
-example at Ctrl-D, the prompt exits 1 and writes nothing instead. This also
-covers a remote-skill install, a remote-skill update, and the share picker's
-name question. JSON and other non-TTY runs refuse with exit 3 unless `--yes`
-explicitly authorizes the listed loss. Capshelf revalidates the accepted
-snapshot immediately before writing.
+example at Ctrl-D, the prompt exits 1 and writes nothing instead. The same is
+true of the remote-skill install and remote-skill update prompts. The share
+picker's own name question is the exception. Closed input there also exits
+1, but an item already shared in the same run stays shared. JSON and other
+non-TTY runs refuse with exit 3 unless `--yes` explicitly authorizes the
+listed loss. Capshelf revalidates the accepted snapshot immediately before
+writing.
 
 `share` resolves the data repo after its ref refusals, not before. In a project
 with no data-repo binding, a `share` that also hits an earlier refusal reports
@@ -1533,10 +1535,10 @@ and `.agents/plugins/marketplace.json`. An entry in either file can name a
 plugin directory. Capshelf then looks for skills under `<plugin>/skills/*/`,
 and under any path a plugin manifest adds through its own `skills` field.
 
-A capshelf-published shelf lists exactly as it did before this feature, in a
-terminal and in a pipe. Capshelf's own catalog entries set `source: "./"`
-with an explicit `skills` array. Discovery still treats that shape as plain
-layout and attaches no plugin facts to it.
+Capshelf's own catalog entries set `source: "./"` with an explicit `skills`
+array. Discovery reads that shape as plain layout, not as a plugin, and
+attaches no plugin facts to it. A capshelf-published shelf therefore lists
+with no plugin grouping at all, the same in a terminal and in a pipe.
 
 A catalog entry that names a bare directory, with no leading `./`, resolves
 only against that catalog document's own `metadata.pluginRoot`. With no
@@ -1547,16 +1549,20 @@ A catalog `source`, a `metadata.pluginRoot`, and a manifest `skills` path all
 follow one rule. Strip one leading `./` and one trailing `/`. What remains
 must stay inside the repository, with no `..` segment. A path that fails
 this check is skipped, with a warning naming the reason. A manifest `skills`
-path that names a directory outside its own plugin is skipped the same way.
-The plugin's other paths still count.
+path that names a directory outside its own plugin is skipped the same way,
+with its own warning. The plugin's other paths still count.
 
 Discovery reads a catalog, a manifest, and a `SKILL.md` only when each is a
-regular file. A symlink or a submodule in that place counts as absent, with
-a warning. When one plugin directory sits inside another, the outer one
-wins: the inner directory is skipped, with a warning. A plugin's name comes
-from its own manifest first, then its Claude catalog entry, then its Codex
-catalog entry, then its directory name. When two of these disagree, `--list`
-warns and names the one it chose.
+regular file. A symlink or a submodule counts as absent either way. For a
+catalog or a manifest, that also warns. For a skill's own `SKILL.md`, it
+does not: discovery only sees one less skill there.
+
+When one plugin directory sits inside another, the outer one wins. The
+inner directory is skipped instead, named in `--list --json`'s `skipped`
+array with reason `nested-plugin`. A plugin's name comes from its own
+manifest first, then its Claude catalog entry, then its Codex catalog
+entry, then its directory name. When two of these disagree, `--list` warns
+and names the one it chose.
 
 A plugin skill can use parts outside its own directory: a script at the
 plugin root, a sibling agent, or a workflow. `--list` reports four checks
@@ -1575,17 +1581,20 @@ capshelf add https://github.com/acme/agent-plugins --list
 ```text
   repo      https://github.com/acme/agent-plugins
   ref       main
-  commit    7b306acc7cd3ffc74beaa93ca7fe5b6cbde49aea
-  found     1 skill in 1 plugin  (.claude-plugin/marketplace.json)
+  commit    0b5f8f29c9523c3f2844aca3f1624f4a606fd634
+  found     2 skills in 2 plugins  (.claude-plugin/marketplace.json)
             1 uses plugin parts outside the skill directory
 
-  plugins/ocr
-    scan                         uses plugin root   Extracts text from a scanned page
+  plugins/plain
+    plain                               Plain skill
+
+  plugins/heavy   also ships: agents, scripts
+    worker   uses plugin root, agents   Heavy skill
 
   1 skill uses plugin parts that live outside the skill directory.
   --path copies the skill directory only. Those parts are not installed.
 
-  install one:   capshelf add https://github.com/acme/agent-plugins --path plugins/ocr/skills/scan
+  install one:   capshelf add https://github.com/acme/agent-plugins --path plugins/plain/skills/plain
   install some:  capshelf add https://github.com/acme/agent-plugins
   details:       capshelf add https://github.com/acme/agent-plugins --list --json
 ```
@@ -1600,23 +1609,24 @@ A listing taller than the terminal, holding at least one plugin skill, asks
 once before it prints the rest:
 
 ```text
-Show all 12 skills (34 lines)? [Y/n] n
-  one plugin:   capshelf add https://github.com/acme/agent-plugins --list --path plugins/ocr
+Show all 2 skills (18 lines)? [Y/n] n
+  one plugin:   capshelf add https://github.com/acme/agent-plugins --list --path plugins/plain
   everything:   capshelf add https://github.com/acme/agent-plugins --list --json
 ```
 
 Enter or `y` shows the full list. `n` prints a shorter next command instead.
-Closed input, such as Ctrl-D or Ctrl-C, counts as `n` too. A pipe, `--json`,
-and `--yes` skip the question and print everything, so a script never waits
-on it. The question counts only a plugin that holds a skill. A
-commands-only or workflows-only plugin never triggers it.
+Closed input, such as Ctrl-D, counts as `n` too. Ctrl-C stops the command
+with exit 130. A pipe, `--json`, and `--yes` skip the question and print
+everything, so a script never waits on it. The question counts only a
+plugin that holds a skill. A commands-only or workflows-only plugin never
+triggers it.
 
 `--path <subpath>` naming a plugin directory, not a skill, refuses:
 
 ```text
-✗ plugins/ocr is a plugin, not a skill. It holds 1 skill:
-    plugins/ocr/skills/scan   uses plugin root
-  install the skill: capshelf add https://github.com/acme/agent-plugins --path plugins/ocr/skills/scan
+✗ plugins/heavy is a plugin, not a skill. It holds 1 skill:
+    plugins/heavy/skills/worker   uses plugin root, agents
+  install the skill: capshelf add https://github.com/acme/agent-plugins --path plugins/heavy/skills/worker
   capshelf cannot install a whole plugin
 ```
 
@@ -1628,7 +1638,7 @@ refuse, before any project write:
 
 ```text
 ✗ 2 selected skills would install as "x": plugins/a/skills/x, plugins/b/skills/x
-  install them one at a time: capshelf add <url> --path <subpath> --as <name>
+  install them one at a time: capshelf add https://github.com/acme/agent-plugins --path <subpath> --as <name>
 ```
 
 Both refusals exit 3, the same code every other `add <url>` precondition
@@ -1643,9 +1653,12 @@ some files were not checked. It does not mean the skill uses nothing.
 
 Three more top-level arrays sit beside `skills`, always, even when empty.
 `plugins` has one row per plugin directory, with its `name`, `source`,
-`catalogs`, `ships`, and its skill count. `skipped` has one row per catalog
+`catalogs`, `ships`, and a `skills` count. `skipped` has one row per catalog
 entry discovery could not read, with a `reason`. `warnings` has one row per
-document that did not parse, or whose name disagreed with another.
+problem discovery found. A catalog or a manifest can fail to parse. Either
+one can be a symlink or a submodule instead of a file. A manifest `skills`
+path can leave its own plugin. Two sources can also name one plugin two
+different names.
 
 #### The install prompt
 
