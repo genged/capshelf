@@ -806,6 +806,14 @@ export class GitBlobReadError extends Error {
   }
 }
 
+function assertValidObjectNames(ids: readonly string[]): void {
+  for (const id of ids) {
+    if (!/^[0-9a-f]{40,64}$/.test(id)) {
+      throw new Error(`invalid git object name: ${id}`);
+    }
+  }
+}
+
 export async function catFileBlobs(
   repo: string,
   blobIds: Iterable<string>,
@@ -821,11 +829,7 @@ export async function catFileBlobs(
     else out.set(id, Buffer.from(cached));
   }
   if (ids.length === 0) return out;
-  for (const id of ids) {
-    if (!/^[0-9a-f]{40,64}$/.test(id)) {
-      throw new Error(`invalid git object name: ${id}`);
-    }
-  }
+  assertValidObjectNames(ids);
   try {
     const stdout = await sourceReadBuffer(repo, ["cat-file", "--batch"], {
       stdin: `${ids.join("\n")}\n`,
@@ -894,11 +898,7 @@ export async function catFileSizes(
   const ids = [...new Set(blobIds)];
   const sizes = new Map<string, number>();
   if (ids.length === 0) return sizes;
-  for (const id of ids) {
-    if (!/^[0-9a-f]{40,64}$/.test(id)) {
-      throw new Error(`invalid git object name: ${id}`);
-    }
-  }
+  assertValidObjectNames(ids);
   const out = await sourceReadText(repo, ["cat-file", "--batch-check"], {
     stdin: `${ids.join("\n")}\n`,
   });

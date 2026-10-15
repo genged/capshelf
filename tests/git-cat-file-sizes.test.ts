@@ -26,3 +26,18 @@ test("catFileSizes returns the byte size of each blob with one process", async (
 test("catFileSizes with no ids runs nothing and returns an empty map", async () => {
   expect((await catFileSizes("/nonexistent", [])).size).toBe(0);
 });
+
+test("catFileSizes returns only existing blobs, missing ids are absent from the map", async () => {
+  const repo = await tempRepo("capshelf-missing-");
+  await writeFile(join(repo, "file.txt"), "content");
+  await commitAll(repo, "one file");
+  const entries = await lsTreeEntriesForPathspecs(repo, "HEAD", [
+    literalPathspec("."),
+  ]);
+  const realId = entries.find((e) => e.path === "file.txt")!.object;
+  const missingId = "0000000000000000000000000000000000000000";
+  const sizes = await catFileSizes(repo, [realId, missingId]);
+  expect(sizes.has(realId)).toBe(true);
+  expect(sizes.has(missingId)).toBe(false);
+  expect(sizes.size).toBe(1);
+});
