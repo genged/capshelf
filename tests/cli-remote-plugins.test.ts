@@ -639,7 +639,7 @@ test(
 );
 
 test(
-  "D9: a rejected prompt (EOF, Ctrl-C) acts as 'no'",
+  "D9: a rejected prompt (end of input) acts as 'no'",
   async () => {
     const { url } = await pluginUpstream(threePlugins(), {
       claude: threePluginsCatalog(),

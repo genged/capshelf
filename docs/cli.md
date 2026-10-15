@@ -1028,13 +1028,16 @@ operation and lists managed content drift, executable-mode changes, extra
 local paths, subagent target drift, managed fragment drift, config-comment
 loss, or dirty generated projection paths. Interactive human output asks once.
 Declining exits 0 and writes nothing. When stdin closes before an answer, for
-example at Ctrl-D, the prompt exits 1 and writes nothing instead. The same is
-true of the remote-skill install and remote-skill update prompts. The share
-picker's own name question is the exception. Closed input there also exits
-1, but an item already shared in the same run stays shared. JSON and other
-non-TTY runs refuse with exit 3 unless `--yes` explicitly authorizes the
-listed loss. Capshelf revalidates the accepted snapshot immediately before
-writing.
+example at Ctrl-D, the prompt exits 1 and writes nothing instead. A
+single-skill remote install or a single named remote update keeps that
+promise. Naming several skills changes that. The install loop and the
+update loop both record each skill before the next one's prompt. A closed
+prompt there still exits 1. A skill already installed or updated earlier in
+the same run stays that way. The share picker's own name question works the
+same way. Closed input there also exits 1, but an item already shared in
+the same run stays shared. JSON and other non-TTY runs refuse with exit 3
+unless `--yes` explicitly authorizes the listed loss. Capshelf revalidates
+the accepted snapshot immediately before writing.
 
 `share` resolves the data repo after its ref refusals, not before. In a project
 with no data-repo binding, a `share` that also hits an earlier refusal reports
