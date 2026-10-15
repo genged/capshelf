@@ -12,12 +12,7 @@
  */
 import { basename, posix } from "node:path";
 import { isSafeItemName, isSafeItemRoot } from "./assert";
-import {
-  loadClaudeMarketplaceAtCommit,
-  type ClaudePlugin,
-} from "./claude-marketplace";
-import { isConfigString } from "./config-values";
-import { NotFoundError, PreconditionError } from "./errors";
+import { PreconditionError } from "./errors";
 import {
   catFileBlobs,
   literalPathspec,
@@ -27,9 +22,21 @@ import type { GitTreeEntry } from "./git";
 import type { GitTreeSource } from "./item-source";
 import { extractFrontmatter, parseFrontmatter } from "./metadata";
 import { itemTreeEntriesAtCommit } from "./pin";
+import { collectPluginFacts } from "./plugin-facts";
+import type { SkillPluginFacts } from "./plugin-facts";
+import {
+  describePluginDirectory,
+  discoverPlugins,
+  hasPluginManifest,
+  isRegularFile,
+} from "./plugin-discovery";
+import type {
+  DiscoveredPlugin,
+  DiscoveryWarning,
+  SkippedEntry,
+} from "./plugin-discovery";
 
 const SKILL_FILE = "SKILL.md";
-const MARKETPLACE_PATH = ".claude-plugin/marketplace.json";
 
 /** Where a candidate came from, and the precedence when two rules agree. */
 export type RemoteCandidateOrigin =
@@ -66,12 +73,16 @@ export interface RemoteSkillCandidate {
   description: string | null;
   /** Where the candidate came from, for the `--list` heading. */
   origin: RemoteCandidateOrigin;
+  /** Set when this candidate is a skill directory of a plugin. */
+  plugin?: SkillPluginFacts;
 }
 
 export interface RemoteDiscovery {
   candidates: RemoteSkillCandidate[];
-  /** A10: a marketplace document that is present and does not parse. */
-  warnings: string[];
+  plugins: DiscoveredPlugin[];
+  skipped: SkippedEntry[];
+  /** A10: a catalog or manifest document that is present and does not parse. */
+  warnings: DiscoveryWarning[];
 }
 
 /** Every candidate at `commit`, sorted by subpath. Reads only through ls-tree. */
@@ -93,10 +104,22 @@ export async function discoverRemoteSkills(
     if (origin !== null) found.set(dir, origin);
   }
 
-  const warnings: string[] = [];
-  for (const dir of await marketplaceDirectories(repo, commit, warnings)) {
+  const inventory = await discoverPlugins(repo, commit, entries);
+
+  // D2: today's rule for an entry with a `skills` array, or `source: "./"`.
+  for (const dir of inventory.legacySkillDirs) {
     if (!skillDirs.has(dir)) continue;
     if (!found.has(dir)) found.set(dir, "marketplace");
+  }
+
+  // Discovery rule 7: a directory a layout rule already found keeps that
+  // origin and still gets plugin facts below.
+  const pluginSkillDirs = new Set<string>();
+  for (const plugin of inventory.plugins) {
+    for (const dir of plugin.skillDirs) {
+      pluginSkillDirs.add(dir);
+      if (!found.has(dir)) found.set(dir, "marketplace");
+    }
   }
 
   const candidates = await describeCandidates(
@@ -110,7 +133,26 @@ export async function discoverRemoteSkills(
       }))
       .filter((candidate) => isSafeItemName(candidate.defaultName)),
   );
-  return { candidates, warnings };
+
+  if (pluginSkillDirs.size > 0) {
+    const facts = await collectPluginFacts(
+      repo,
+      entries,
+      inventory.plugins,
+      pluginSkillDirs,
+    );
+    for (const candidate of candidates) {
+      const fact = facts.get(candidate.subpath);
+      if (fact !== undefined) candidate.plugin = fact;
+    }
+  }
+
+  return {
+    candidates,
+    plugins: inventory.plugins,
+    skipped: inventory.skipped,
+    warnings: inventory.warnings,
+  };
 }
 
 /** One candidate at an explicit subpath, or a refusal naming the path read. */
@@ -127,10 +169,12 @@ export async function candidateAtSubpath(
     );
   }
   const skillPath = itemFilePath(subpath, SKILL_FILE);
-  const entries = await lsTreeEntriesForPathspecs(repo, commit, [
+  const skillEntries = await lsTreeEntriesForPathspecs(repo, commit, [
     literalPathspec(skillPath),
   ]);
-  if (entries.length === 0) {
+  // D14: a symlinked or gitlinked SKILL.md is "no SKILL.md".
+  const skillEntry = skillEntries.find((entry) => entry.path === skillPath);
+  if (skillEntry === undefined || !isRegularFile(skillEntry)) {
     throw new PreconditionError(
       `no ${SKILL_FILE} at ${skillPath} in that repository at ${commit}`,
       {
@@ -152,7 +196,109 @@ export async function candidateAtSubpath(
   if (candidate === undefined) {
     throw new PreconditionError(`no ${SKILL_FILE} at ${skillPath}`);
   }
+
+  const entries = await lsTreeEntriesForPathspecs(repo, commit, [
+    literalPathspec("."),
+  ]);
+  const plugin = await pluginOwningSkillDir(repo, commit, entries, subpath);
+  if (plugin !== null) {
+    const facts = await collectPluginFacts(
+      repo,
+      entries,
+      [plugin],
+      new Set([subpath]),
+    );
+    const fact = facts.get(subpath);
+    if (fact !== undefined) candidate.plugin = fact;
+  }
   return candidate;
+}
+
+/**
+ * D10 and D5: the plugin whose source equals `subpath`, with candidates for
+ * its skills and their facts. Null when `subpath` names no plugin at all,
+ * cataloged or manifest-only.
+ */
+export async function pluginAtSubpath(
+  repo: string,
+  commit: string,
+  subpath: string,
+  repoName?: string,
+): Promise<{
+  plugin: DiscoveredPlugin;
+  candidates: RemoteSkillCandidate[];
+} | null> {
+  const entries = await lsTreeEntriesForPathspecs(repo, commit, [
+    literalPathspec("."),
+  ]);
+  const inventory = await discoverPlugins(repo, commit, entries);
+  let plugin = inventory.plugins.find((p) => p.source === subpath);
+  if (plugin === undefined) {
+    if (!hasPluginManifest(entries, subpath)) return null;
+    plugin = (await describePluginDirectory(repo, entries, subpath, {}, []))
+      .plugin;
+  }
+
+  const facts = await collectPluginFacts(repo, entries, [plugin]);
+  const seeds = plugin.skillDirs
+    .map((dir) => ({
+      subpath: dir,
+      defaultName: defaultNameFor(dir, repo, repoName),
+      origin: layoutOriginOf(dir) ?? "marketplace",
+    }))
+    .filter((seed) => isSafeItemName(seed.defaultName));
+  const candidates = await describeCandidates(repo, commit, seeds);
+  for (const candidate of candidates) {
+    const fact = facts.get(candidate.subpath);
+    if (fact !== undefined) candidate.plugin = fact;
+  }
+  return { plugin, candidates };
+}
+
+/**
+ * The plugin that owns `subpath` as a skill directory, or null.
+ *
+ * Checked first against every catalog-named plugin's own `skillDirs` (any
+ * manifest-declared shape). When none claims it, falls back to the
+ * conventional `<plugin>/skills/<skill>` shape for a plugin no catalog names
+ * at all, built the same way `describePluginDirectory` builds any other
+ * manifest-only plugin (rules 7 to 9).
+ */
+async function pluginOwningSkillDir(
+  repo: string,
+  commit: string,
+  entries: readonly GitTreeEntry[],
+  subpath: string,
+): Promise<DiscoveredPlugin | null> {
+  const inventory = await discoverPlugins(repo, commit, entries);
+  const cataloged = inventory.plugins.find((plugin) =>
+    plugin.skillDirs.includes(subpath),
+  );
+  if (cataloged !== undefined) return cataloged;
+
+  const pluginDir = pluginDirFromSkillPath(subpath);
+  if (pluginDir === null || !hasPluginManifest(entries, pluginDir)) {
+    return null;
+  }
+  const { plugin } = await describePluginDirectory(
+    repo,
+    entries,
+    pluginDir,
+    {},
+    [],
+  );
+  return plugin.skillDirs.includes(subpath) ? plugin : null;
+}
+
+/**
+ * The plugin directory `subpath` would sit under if it has the conventional
+ * `<plugin>/skills/<skill>` shape, or null when it does not have that shape
+ * at all.
+ */
+function pluginDirFromSkillPath(subpath: string): string | null {
+  const parent = posix.dirname(subpath);
+  if (posix.basename(parent) !== "skills") return null;
+  return posix.dirname(parent);
 }
 
 export interface LicenseFinding {
@@ -254,11 +400,11 @@ export function remoteTreeSource(
   return { kind: "git-tree", repo, commit, itemRoot };
 }
 
-/** Every directory that holds a `SKILL.md` at the commit. */
+/** Every directory that holds a regular-file `SKILL.md` at the commit (D14). */
 function skillDirectories(entries: readonly GitTreeEntry[]): Set<string> {
   const dirs = new Set<string>();
   for (const entry of entries) {
-    if (entry.type !== "blob") continue;
+    if (!isRegularFile(entry)) continue;
     if (entry.path === SKILL_FILE) {
       dirs.add(".");
       continue;
@@ -287,50 +433,6 @@ function layoutOriginOf(subpath: string): RemoteCandidateOrigin | null {
     }
   }
   return null;
-}
-
-/**
- * The skill directories a marketplace document names.
- *
- * `claudePluginSkills` is deliberately not used: it returns `[]` for an entry
- * capshelf does not *manage*, and those rules are capshelf's own. A repository
- * outside the shelf owes them nothing, so filtering by them would silently drop
- * a real skill directory.
- */
-async function marketplaceDirectories(
-  repo: string,
-  commit: string,
-  warnings: string[],
-): Promise<string[]> {
-  let plugins: ClaudePlugin[];
-  try {
-    plugins = (await loadClaudeMarketplaceAtCommit(repo, commit)).plugins;
-  } catch (error) {
-    // A10. An absent document is the ordinary case and says nothing. A present
-    // document that does not parse is a fact the user needs, and it never fails
-    // the command: refusing would block an install over a file that has nothing
-    // to do with the skill the user asked for.
-    if (!(error instanceof NotFoundError)) {
-      const message = error instanceof Error ? error.message : String(error);
-      warnings.push(
-        `${MARKETPLACE_PATH} is present and could not be read: ${message.split("\n")[0] ?? message}`,
-      );
-    }
-    return [];
-  }
-  const dirs: string[] = [];
-  for (const plugin of plugins) {
-    if (!Array.isArray(plugin.skills)) continue;
-    for (const skill of plugin.skills) {
-      if (!isConfigString(skill) || !skill.startsWith("./")) continue;
-      const ref = skill.slice(2);
-      const dir = ref.endsWith(`/${SKILL_FILE}`)
-        ? ref.slice(0, -(SKILL_FILE.length + 1))
-        : ref;
-      if (isSafeItemRoot(dir)) dirs.push(dir);
-    }
-  }
-  return dirs;
 }
 
 interface CandidateSeed {

@@ -1,13 +1,16 @@
 import { expect, test } from "bun:test";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   candidateAtSubpath,
   discoverRemoteSkills,
   findLicense,
+  pluginAtSubpath,
   summarizeCandidate,
 } from "../src/remote-discovery";
 import { commitAll, tempRepo } from "./cli-fixtures";
+import { claudeCatalog, writePlugins } from "./plugin-fixtures";
+import { skillText } from "./remote-fixtures";
 
 async function skillAt(repo: string, dir: string, description: string) {
   await mkdir(join(repo, dir), { recursive: true });
@@ -141,9 +144,145 @@ test("a malformed marketplace document warns and never fails discovery", async (
 
   const found = await discoverRemoteSkills(repo, "HEAD");
   expect(found.candidates.map((c) => c.subpath)).toEqual(["skills/pdf"]);
-  expect(found.warnings.join("\n")).toContain(
+  expect(found.warnings.map((w) => w.path)).toContain(
     ".claude-plugin/marketplace.json",
   );
+});
+
+test("plugin skill directories become candidates with origin marketplace and plugin facts", async () => {
+  const repo = await tempRepo("capshelf-discovery-plugin-");
+  await writePlugins(
+    repo,
+    [
+      {
+        dir: "plugins/a",
+        skills: [
+          { name: "one", description: "One" },
+          { name: "two", description: "Two" },
+        ],
+      },
+    ],
+    { claude: claudeCatalog([{ name: "a", source: "./plugins/a" }]) },
+  );
+  await commitAll(repo, "plugin a");
+  const { candidates, plugins } = await discoverRemoteSkills(repo, "HEAD");
+  expect(candidates.map((c) => c.subpath)).toEqual([
+    "plugins/a/skills/one",
+    "plugins/a/skills/two",
+  ]);
+  for (const candidate of candidates) {
+    expect(candidate.origin).toBe("marketplace");
+    expect(candidate.plugin?.plugin.name).toBe("a");
+  }
+  expect(plugins).toHaveLength(1);
+});
+
+test("a capshelf-shaped shelf lists as before, with no plugins and no skipped entries", async () => {
+  const repo = await tempRepo("capshelf-discovery-shelf-");
+  await skillAt(repo, "skills/pdf", "Extract text");
+  await mkdir(join(repo, ".claude-plugin"), { recursive: true });
+  await writeFile(
+    join(repo, ".claude-plugin", "marketplace.json"),
+    JSON.stringify({
+      name: "example",
+      owner: { name: "example" },
+      plugins: [
+        { name: "pdf", source: "./", strict: false, skills: ["./skills/pdf"] },
+      ],
+    }),
+  );
+  await mkdir(join(repo, ".agents", "plugins"), { recursive: true });
+  await writeFile(
+    join(repo, ".agents", "plugins", "marketplace.json"),
+    JSON.stringify({
+      plugins: [
+        {
+          name: "pdf",
+          source: { source: "local", path: "./codex/generated/plugins/pdf" },
+        },
+      ],
+    }),
+  );
+  await commitAll(repo, "shelf-shaped");
+  const found = await discoverRemoteSkills(repo, "HEAD");
+  expect(found.candidates.map((c) => c.subpath)).toEqual(["skills/pdf"]);
+  expect(found.plugins).toEqual([]);
+  expect(found.skipped).toEqual([]);
+});
+
+test("an .agents/skills directory that is also a plugin skill keeps its layout origin and gains plugin facts", async () => {
+  const repo = await tempRepo("capshelf-discovery-agents-plugin-");
+  await writePlugins(
+    repo,
+    [
+      {
+        dir: ".agents/skills/x",
+        manifestName: "x",
+        manifestSkills: "./",
+        skills: [],
+        files: { "SKILL.md": skillText("x", "Agents dir plugin") },
+      },
+    ],
+    { claude: claudeCatalog([{ name: "x", source: "./.agents/skills/x" }]) },
+  );
+  await commitAll(repo, "agents plugin");
+  const { candidates } = await discoverRemoteSkills(repo, "HEAD");
+  const candidate = candidates.find((c) => c.subpath === ".agents/skills/x");
+  expect(candidate?.origin).toBe("agents");
+  expect(candidate?.plugin?.plugin.name).toBe("x");
+});
+
+test("a symlinked skills/x/SKILL.md is not a candidate", async () => {
+  const repo = await tempRepo("capshelf-discovery-symlink-skill-");
+  await mkdir(join(repo, "skills", "x"), { recursive: true });
+  await symlink("../../elsewhere", join(repo, "skills", "x", "SKILL.md"));
+  await commitAll(repo, "symlinked skill");
+  const { candidates } = await discoverRemoteSkills(repo, "HEAD");
+  expect(candidates).toEqual([]);
+});
+
+// D14: candidateAtSubpath must apply the same regular-file rule an explicit
+// --path takes a route discoverRemoteSkills never does.
+test("candidateAtSubpath refuses a symlinked SKILL.md as no SKILL.md", async () => {
+  const repo = await tempRepo("capshelf-discovery-candidateatsubpath-symlink-");
+  await mkdir(join(repo, "skills", "x"), { recursive: true });
+  await symlink("../../elsewhere", join(repo, "skills", "x", "SKILL.md"));
+  await commitAll(repo, "symlinked skill");
+  await expect(candidateAtSubpath(repo, "HEAD", "skills/x")).rejects.toThrow(
+    /no SKILL\.md/,
+  );
+});
+
+test("pluginAtSubpath finds the plugin at its own directory and nothing at a skill path", async () => {
+  const repo = await tempRepo("capshelf-discovery-pluginatsubpath-");
+  await writePlugins(
+    repo,
+    [{ dir: "plugins/a", skills: [{ name: "s", description: "S" }] }],
+    { claude: claudeCatalog([{ name: "a", source: "./plugins/a" }]) },
+  );
+  await commitAll(repo, "plugin a");
+  const found = await pluginAtSubpath(repo, "HEAD", "plugins/a");
+  expect(found?.plugin.name).toBe("a");
+  expect(found?.candidates.map((c) => c.subpath)).toEqual([
+    "plugins/a/skills/s",
+  ]);
+  expect(await pluginAtSubpath(repo, "HEAD", "plugins/a/skills/s")).toBeNull();
+});
+
+test("candidateAtSubpath fills plugin facts for a plugin skill directory", async () => {
+  const repo = await tempRepo("capshelf-discovery-candidateatsubpath-plugin-");
+  await writePlugins(
+    repo,
+    [{ dir: "plugins/a", skills: [{ name: "s", description: "S" }] }],
+    { claude: claudeCatalog([{ name: "a", source: "./plugins/a" }]) },
+  );
+  await commitAll(repo, "plugin a");
+  const candidate = await candidateAtSubpath(
+    repo,
+    "HEAD",
+    "plugins/a/skills/s",
+  );
+  expect(candidate.plugin?.plugin.name).toBe("a");
 });
 
 test("a license inside the item and one at the root are distinguished", async () => {

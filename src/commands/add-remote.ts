@@ -160,11 +160,15 @@ export async function addRemoteSkill(
               parsed.repoName,
             ),
           ],
+          plugins: [],
+          skipped: [],
           warnings: [],
         };
   // Sanitized like every other repository-controlled string here: a warning
-  // about a malformed marketplace quotes the repository's own text.
-  for (const warning of discovery.warnings) console.error(`⚠ ${safe(warning)}`);
+  // about a malformed catalog or manifest quotes the repository's own text.
+  for (const warning of discovery.warnings) {
+    console.error(`⚠ ${safe(`${warning.path} ${warning.message}`)}`);
+  }
 
   // `--list` answers a question about the repository. It returns before the
   // cardinality rule below, because "too many to install without choosing" is

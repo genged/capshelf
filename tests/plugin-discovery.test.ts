@@ -538,17 +538,15 @@ test("a Claude catalog that does not parse warns, and the Codex catalog still li
   );
   await commitAll(repo, "bad claude catalog");
   const inventory = await discover(repo);
-  // M1: the warning must equal the exact `${path} ${message}` string the
-  // old remote-discovery code builds for the same fixture, verified by
-  // asking it directly rather than hardcoding a guess.
+  // M1 (Task 4): `discoverRemoteSkills` now returns this same inventory's
+  // `warnings` array (`src/remote-discovery.ts`), so the two must be the
+  // very same warning rather than two independently built strings.
   const old = await discoverRemoteSkills(repo, "HEAD");
   expect(inventory.plugins.map((p) => p.source)).toEqual(["plugins/l"]);
   expect(inventory.warnings).toHaveLength(1);
   expect(inventory.warnings[0]?.path).toBe(".claude-plugin/marketplace.json");
   expect(old.warnings).toHaveLength(1);
-  expect(
-    `${inventory.warnings[0]?.path} ${inventory.warnings[0]?.message}`,
-  ).toBe(old.warnings[0]!);
+  expect(old.warnings[0]).toEqual(inventory.warnings[0]);
 });
 
 test("hasPluginManifest and describePluginDirectory work for a directory no catalog names (Ruling A)", async () => {
