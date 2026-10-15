@@ -8,8 +8,7 @@
  * be read, and the directories a capshelf-written catalog already manages
  * under today's rule (D2).
  *
- * Rule numbers in comments below refer to the task brief; `D<n>` refers to
- * the design's numbered decisions.
+ * `D<n>` in comments below names a numbered decision of the design.
  */
 import { isSafeItemRoot } from "./assert";
 import type { ClaudePlugin } from "./claude-marketplace";
@@ -137,7 +136,7 @@ export function lastSegment(path: string): string {
   return path.split("/").at(-1) ?? path;
 }
 
-// --------------------------------------------------------------- rule 3: codex
+// ------------------------------------------------------ Codex catalog schema
 
 const codexEntrySchema = z
   .object({ name: z.string().min(1), source: ConfigValueSchema.optional() })
@@ -165,7 +164,7 @@ function parseCodexCatalog(raw: string): z.infer<typeof codexCatalogSchema> {
   return result.data;
 }
 
-// ------------------------------------------------------------- rules 7 and 8
+// ---------------------------------------------------- plugin manifest schema
 
 const manifestSchema = z
   .object({
@@ -193,11 +192,11 @@ function parseManifest(raw: string): PluginManifest {
   return result.data;
 }
 
-// ------------------------------------------------------------------- rule 1
+// --------------------------------------------------------- catalog documents
 
 /**
- * One catalog document: absent is quiet, present-but-not-a-file warns (rule
- * 1), and a parse failure warns and yields nothing. Shared by the Claude and
+ * One catalog document: absent is quiet, present-but-not-a-file warns (D14),
+ * and a parse failure warns and yields nothing. Shared by the Claude and
  * the Codex catalog, which otherwise differ only in their path and parser.
  */
 function readCatalog<T>(
@@ -227,14 +226,14 @@ function readCatalog<T>(
   }
 }
 
-/** Rule 1: read both catalogs in one `cat-file` batch. */
+/** Read both catalogs in one `cat-file` batch. */
 async function readCatalogs(
   repo: string,
   entries: readonly GitTreeEntry[],
   warnings: DiscoveryWarning[],
 ): Promise<{
   claudePlugins: ClaudePlugin[];
-  /** I1: `metadata` lives on the marketplace document, not on each entry. */
+  /** `metadata` lives on the marketplace document, not on each entry. */
   claudeMetadata: ConfigValue | undefined;
   codexEntries: CodexCatalogEntry[];
 }> {
@@ -280,7 +279,7 @@ async function readCatalogs(
   };
 }
 
-// ------------------------------------------------------------------- rule 2
+// ---------------------------------------------------- Claude catalog entries
 
 /** D2: an entry with a `skills` array, or whose source is the repo root. */
 function isLegacyClaudePlugin(plugin: ClaudePlugin): boolean {
@@ -326,10 +325,10 @@ function rawSourceText(value: ConfigValue): string {
 }
 
 /**
- * Rule 2: resolve one non-legacy Claude catalog entry's `source`.
+ * D1: resolve one non-legacy Claude catalog entry's `source`.
  *
- * `documentMetadata` is the marketplace document's own top-level `metadata`
- * (I1): Claude Code reads `metadata.pluginRoot` once per marketplace, not
+ * `documentMetadata` is the marketplace document's own top-level `metadata`.
+ * Claude Code reads `metadata.pluginRoot` once per marketplace, not
  * once per plugin entry.
  */
 function resolveClaudeSource(
@@ -363,7 +362,7 @@ function resolveClaudeSource(
   }
   // A bare name: must join to a document-level metadata.pluginRoot. No
   // pluginRoot, a non-string one, or one that fails to normalize all skip
-  // unsafe-path (I3, M3) — there is no silent fallback to the repository
+  // unsafe-path — there is no silent fallback to the repository
   // root, matching Claude Code's own refusal of a bare name with no
   // metadata.pluginRoot.
   const pluginRootRaw = isConfigObject(documentMetadata)
@@ -382,16 +381,16 @@ function resolveClaudeSource(
   return { kind: "resolved", path: joined, raw: source };
 }
 
-// ------------------------------------------------------------------- rule 3
+// ----------------------------------------------------- Codex catalog entries
 
-/** Rule 3: resolve one Codex catalog entry's `source`. */
+/** D8: resolve one Codex catalog entry's `source`. */
 function resolveCodexSource(entry: CodexCatalogEntry): CodexSourceResolution {
   const source = entry.source;
   if (isConfigObject(source)) {
     const sourceKind = source.source;
     if (sourceKind === "local") {
       const path = source.path;
-      // M5: a `local` source with a missing or non-string path is
+      // A `local` source with a missing or non-string path is
       // unsafe-path, not external-source — "local" is not another runtime's
       // source kind, it is this one's own shape, malformed.
       if (!isConfigString(path)) {
@@ -405,7 +404,7 @@ function resolveCodexSource(entry: CodexCatalogEntry): CodexSourceResolution {
       if (normalized === null) {
         return { kind: "skip", reason: "unsafe-path", source: path };
       }
-      // I2: a path that normalizes to the repository root is legacy, the
+      // A path that normalizes to the repository root is legacy, the
       // same as a Claude source that normalizes to ".": no plugin, and not
       // reported as skipped.
       if (normalized === ".") return { kind: "dropped" };
@@ -427,9 +426,9 @@ function resolveCodexSource(entry: CodexCatalogEntry): CodexSourceResolution {
   return { kind: "skip", reason: "unsafe-path", source: rawSourceText(source) };
 }
 
-// ------------------------------------------------------------------- rule 4
+// ------------------------------------------------------ catalog entry status
 
-/** Rule 4 bullet 2: whether a resolved directory exists at the commit. */
+/** Whether a resolved directory exists at the commit. */
 function directoryStatus(
   entries: readonly GitTreeEntry[],
   dir: string,
@@ -469,7 +468,7 @@ interface Candidate {
   catalogs: PluginCatalog[];
 }
 
-// ------------------------------------------------------------------- rule 6
+// ------------------------------------------------------------ nested plugins
 
 /**
  * D16: sort by path length, shortest (outermost) first, and drop a directory
@@ -504,7 +503,7 @@ function filterNestedPlugins(
   return candidates.filter((candidate) => !nested.has(candidate));
 }
 
-// ------------------------------------------------------------------- rule 7
+// --------------------------------------------------------- skill directories
 
 function hasRegularEntryAt(
   entries: readonly GitTreeEntry[],
@@ -533,7 +532,7 @@ function directSkillChildren(
   return [...found];
 }
 
-/** Rule 7: the plugin's own `skills/*` dirs, plus each manifest's `skills` field. */
+/** The plugin's own `skills/*` dirs, plus each manifest's `skills` field. */
 function computeSkillDirs(
   entries: readonly GitTreeEntry[],
   dir: string,
@@ -576,12 +575,12 @@ function computeSkillDirs(
   return [...skillDirs].sort();
 }
 
-// ------------------------------------------------------------------- rule 8
+// --------------------------------------------------------------- plugin name
 
 /**
- * Rule 8 (D15): the plugin's name, and a warning when the sources disagree.
+ * D15: the plugin's name, and a warning when the sources disagree.
  *
- * I4: the directory's last segment is the final fallback for `chosen`, but
+ * The directory's last segment is the final fallback for `chosen`, but
  * it never counts as a name a catalog or manifest "gave" — only the manifest
  * name and the two catalog entry names are compared for disagreement.
  */
@@ -613,9 +612,9 @@ function resolveName(
   return chosen;
 }
 
-// ------------------------------------------------------------------- rule 9
+// -------------------------------------------------------------- plugin parts
 
-/** Rule 9: the top-level plugin parts present under `dir`. */
+/** The top-level plugin parts present under `dir`. */
 function shipsOf(entries: readonly GitTreeEntry[], dir: string): PluginPart[] {
   const ships: PluginPart[] = [];
   for (const part of PLUGIN_PARTS) {
@@ -633,9 +632,9 @@ function shipsOf(entries: readonly GitTreeEntry[], dir: string): PluginPart[] {
 /**
  * Read the manifests of one plugin directory, parsing each once. A manifest
  * that is absent is quiet. One that is present but a symlink or gitlink
- * warns, the same text as rule 1's catalog check (M2), and contributes
- * nothing. One that is present, a regular file, and fails to parse warns
- * with its own text and contributes nothing (rule 8).
+ * warns with the same text as a catalog that is not a regular file (D14),
+ * and contributes nothing. One that is present, a regular file, and fails
+ * to parse warns with its own text and contributes nothing.
  */
 async function readManifests(
   repo: string,
@@ -675,9 +674,9 @@ async function readManifests(
 }
 
 /**
- * Rules 7, 8, and 9 for one plugin directory: its skill dirs, its name, and
- * the parts it ships. `discoverPlugins` calls this once per kept directory,
- * after rule 6's nesting filter. Also called directly for a manifest-only
+ * One plugin directory's skill dirs, its name, and the parts it ships.
+ * `discoverPlugins` calls this once per kept directory, after the nesting
+ * filter (D16). Also called directly for a manifest-only
  * directory that no catalog names, with `catalogs: []`.
  *
  * `manifestBlobs` lets a caller that already batched every manifest's bytes
@@ -713,9 +712,10 @@ export async function describePluginDirectory(
 }
 
 /**
- * Every plugin directory named by either catalog at `commit`, plus what was
- * skipped and what could not be read. `entries` is the full `ls-tree -r -z`
- * output at `commit` (`src/remote-discovery.ts:86-88`).
+ * Every plugin directory named by either catalog, plus what was skipped and
+ * what could not be read. `entries` is the full `ls-tree -r -z` output at
+ * one commit, as `discoverRemoteSkills` in `src/remote-discovery.ts` reads
+ * it.
  *
  * Reads a fixed number of Git processes: one `cat-file --batch` for both
  * catalogs, and one more for every plugin's manifests.

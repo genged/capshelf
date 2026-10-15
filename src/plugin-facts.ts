@@ -7,11 +7,11 @@
  * else here is the read plan that decides which blobs are safe to read and
  * assembles one `SkillPluginFacts` per skill directory.
  *
- * Rule numbers in comments refer to the task brief; `D<n>` refers to the
- * design's numbered decisions. Every `unread` path is
- * `posix.relative(skillDir, blobPath)`, not the literal `../../workflows/<f>`
- * a skill at `<plugin>/skills/<x>` would suggest — a manifest `skills` path
- * can put a skill anywhere inside its plugin (`src/plugin-discovery.ts` rule 7).
+ * `D<n>` in comments names a numbered decision of the design. Every `unread`
+ * path is `posix.relative(skillDir, blobPath)`, not the literal
+ * `../../workflows/<f>` a skill at `<plugin>/skills/<x>` would suggest — a
+ * manifest `skills` path can put a skill anywhere inside its plugin
+ * (`computeSkillDirs` in `src/plugin-discovery.ts`).
  */
 import { posix } from "node:path";
 import { catFileBlobs, catFileSizes } from "./git";
@@ -258,7 +258,7 @@ export async function collectPluginFactsWithLimits(
   }
   if (work.length === 0) return new Map();
 
-  // Read budget, rule 1: every regular blob under a wanted skill directory,
+  // The read candidates: every regular blob under a wanted skill directory,
   // plus each plugin's workflow scripts (read once, to resolve a meta name).
   const skillFilesByDir = new Map<string, GitTreeEntry[]>();
   const workflowFilesByPlugin = new Map<string, GitTreeEntry[]>();
@@ -289,13 +289,15 @@ export async function collectPluginFactsWithLimits(
     }
   }
 
-  // Rule 2: one `cat-file --batch-check` call for every candidate.
+  // One `cat-file --batch-check` call sizes every candidate before any read,
+  // because `catFileBlobs` buffers its whole output and a later skip limits
+  // nothing.
   const sizes = await catFileSizes(
     repo,
     candidates.map((c) => c.object),
   );
 
-  // Rule 3: sorted by path, skip over-size, then stop at the read budget.
+  // Sorted by path, skip over-size, then stop at the read budget.
   const sorted = [...candidates].sort(byPath);
   const unreadByPath = new Map<string, "over-1mb" | "budget">();
   const keptIds: string[] = [];
@@ -320,7 +322,7 @@ export async function collectPluginFactsWithLimits(
     keptIds.push(candidate.object);
   }
 
-  // Rule 4: one `cat-file --batch` call for the kept blobs. A NUL blob is
+  // One `cat-file --batch` call for the kept blobs. A NUL blob is
   // skipped silently — it does not make the facts incomplete.
   const blobs = await catFileBlobs(repo, keptIds);
   const textByPath = new Map<string, string>();
@@ -375,7 +377,7 @@ export async function collectPluginFactsWithLimits(
         const why = unreadByPath.get(entry.path);
         if (why !== undefined) unread.push({ path: relPath, why });
       }
-      // Rule 5: an unread workflow file makes every skill of this plugin
+      // An unread workflow file makes every skill of this plugin
       // incomplete too. Skip one already under this skill's own directory —
       // the loop above already counted it, and a skill directory can equal
       // its plugin directory (manifest `skills: "./"`), which puts a
@@ -397,7 +399,7 @@ export async function collectPluginFactsWithLimits(
         files,
       });
 
-      // Rule 6: every blob under the plugin directory that is not under this
+      // Every blob under the plugin directory that is not under this
       // skill's own directory, read or not. `pluginPath(plugin.source, "")`
       // is the plugin's own prefix form: "" for the repository root, so a
       // root-sourced plugin (source ".") would still count every entry as

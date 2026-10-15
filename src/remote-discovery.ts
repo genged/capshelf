@@ -240,7 +240,7 @@ export async function pluginAtSubpath(
   // (`isLegacyClaudePlugin`), so no cataloged plugin ever has `source: "."`.
   // A manifest at the root must not turn `--path .` into a plugin lookup
   // either: a repository whose root is also a plugin keeps today's `--path .`
-  // behavior (controller ruling).
+  // behavior.
   if (subpath === ".") return null;
 
   const entries = await lsTreeEntriesForPathspecs(repo, commit, [
@@ -289,7 +289,7 @@ export async function pluginAtSubpath(
  * manifest-declared shape). When none claims it, falls back to the
  * conventional `<plugin>/skills/<skill>` shape for a plugin no catalog names
  * at all, built the same way `describePluginDirectory` builds any other
- * manifest-only plugin (rules 7 to 9).
+ * manifest-only plugin.
  */
 async function pluginOwningSkillDir(
   repo: string,
