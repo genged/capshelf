@@ -88,7 +88,11 @@ async function writeUnder(
   await writeFile(target, content);
 }
 
-/** A Claude catalog document whose entries point at `./<dir>`. */
+/**
+ * A Claude catalog document whose entries point at `./<dir>`. `metadata` is
+ * document-level (I1): Claude Code reads `metadata.pluginRoot` once per
+ * marketplace, not once per plugin entry.
+ */
 export function claudeCatalog(
   entries: ReadonlyArray<{
     name: string;
@@ -100,11 +104,11 @@ export function claudeCatalog(
   return {
     name: "fixture",
     owner: { name: "fixture" },
+    ...(metadata !== undefined && { metadata }),
     plugins: entries.map((entry) => ({
       name: entry.name,
       source: entry.source,
       ...(entry.skills !== undefined && { skills: entry.skills }),
-      ...(metadata !== undefined && { metadata }),
     })),
   };
 }

@@ -9,6 +9,7 @@ import {
   normalizeCatalogPath,
   type PluginInventory,
 } from "../src/plugin-discovery";
+import { discoverRemoteSkills } from "../src/remote-discovery";
 import { addSkill, commitAll, tempRepo } from "./cli-fixtures";
 import { claudeCatalog, codexCatalog, writePlugins } from "./plugin-fixtures";
 import { skillText } from "./remote-fixtures";
@@ -49,10 +50,10 @@ test("a ./ source lists the plugin directory with its skill dirs", async () => {
   ]);
 });
 
-test("a bare name resolves via metadata.pluginRoot, or from the root without it", async () => {
-  const withRoot = await tempRepo("capshelf-plugin-bare-root-");
+test("a bare name resolves via the document's metadata.pluginRoot", async () => {
+  const repo = await tempRepo("capshelf-plugin-bare-root-");
   await writePlugins(
-    withRoot,
+    repo,
     [{ dir: "plugins/b", skills: [{ name: "one", description: "One" }] }],
     {
       claude: claudeCatalog([{ name: "b", source: "b" }], {
@@ -60,21 +61,52 @@ test("a bare name resolves via metadata.pluginRoot, or from the root without it"
       }),
     },
   );
-  await commitAll(withRoot, "bare with root");
-  const withRootInventory = await discover(withRoot);
-  expect(withRootInventory.plugins.map((p) => p.source)).toEqual(["plugins/b"]);
+  await commitAll(repo, "bare with root");
+  const inventory = await discover(repo);
+  expect(inventory.plugins.map((p) => p.source)).toEqual(["plugins/b"]);
+});
 
-  const noRoot = await tempRepo("capshelf-plugin-bare-noroot-");
-  await writePlugins(
-    noRoot,
-    [{ dir: "c", skills: [{ name: "two", description: "Two" }] }],
-    {
-      claude: claudeCatalog([{ name: "c", source: "c" }]),
-    },
-  );
-  await commitAll(noRoot, "bare without root");
-  const noRootInventory = await discover(noRoot);
-  expect(noRootInventory.plugins.map((p) => p.source)).toEqual(["c"]);
+// M3 (ruling): Claude Code itself refuses a bare name with no
+// metadata.pluginRoot, so this replaces the brief's "resolve from the root".
+test("a bare name with no metadata.pluginRoot is skipped as unsafe-path", async () => {
+  const repo = await tempRepo("capshelf-plugin-bare-noroot-");
+  await writePlugins(repo, [], {
+    claude: claudeCatalog([{ name: "c", source: "c" }]),
+  });
+  await commitAll(repo, "bare without root");
+  const inventory = await discover(repo);
+  expect(inventory.plugins).toEqual([]);
+  expect(inventory.skipped).toEqual([
+    { name: "c", catalog: "claude", reason: "unsafe-path", source: "c" },
+  ]);
+});
+
+// I3: a pluginRoot that is not a string, or that normalizes to null, skips
+// the bare name the same way — no silent fallback to the repository root.
+test("a non-string or unsafe metadata.pluginRoot skips the bare name as unsafe-path", async () => {
+  const nonString = await tempRepo("capshelf-plugin-bare-badroot-");
+  await writePlugins(nonString, [], {
+    claude: claudeCatalog([{ name: "d", source: "d" }], { pluginRoot: 5 }),
+  });
+  await commitAll(nonString, "non-string pluginRoot");
+  const nonStringInventory = await discover(nonString);
+  expect(nonStringInventory.plugins).toEqual([]);
+  expect(nonStringInventory.skipped).toEqual([
+    { name: "d", catalog: "claude", reason: "unsafe-path", source: "d" },
+  ]);
+
+  const escaping = await tempRepo("capshelf-plugin-bare-escaperoot-");
+  await writePlugins(escaping, [], {
+    claude: claudeCatalog([{ name: "e", source: "e" }], {
+      pluginRoot: "../x",
+    }),
+  });
+  await commitAll(escaping, "escaping pluginRoot");
+  const escapingInventory = await discover(escaping);
+  expect(escapingInventory.plugins).toEqual([]);
+  expect(escapingInventory.skipped).toEqual([
+    { name: "e", catalog: "claude", reason: "unsafe-path", source: "e" },
+  ]);
 });
 
 test("an object source is skipped as external-source", async () => {
@@ -232,6 +264,35 @@ test("a Codex path under codex/generated is dropped and is not in skipped", asyn
   expect(inventory.skipped).toEqual([]);
 });
 
+// I2 (ruling): a Codex local path that normalizes to the repository root is
+// legacy, the same as a Claude source that normalizes to ".": no plugin, and
+// not reported in skipped.
+test("a Codex local path that normalizes to the root is legacy: no plugin, not skipped", async () => {
+  const repo = await tempRepo("capshelf-plugin-codex-root-");
+  await writePlugins(repo, [], {
+    codex: codexCatalog([{ name: "root", path: "./" }]),
+  });
+  await commitAll(repo, "codex root");
+  const inventory = await discover(repo);
+  expect(inventory.plugins).toEqual([]);
+  expect(inventory.skipped).toEqual([]);
+});
+
+// M5 (ruling): "local" is this source kind's own shape, not another
+// runtime's — a missing or non-string path is a malformed local source, not
+// an external one.
+test("a Codex local source with no path is skipped as unsafe-path, not external-source", async () => {
+  const repo = await tempRepo("capshelf-plugin-codex-local-nopath-");
+  await writePlugins(repo, [], {
+    codex: codexCatalog([{ name: "q", source: { source: "local" } }]),
+  });
+  await commitAll(repo, "codex local no path");
+  const inventory = await discover(repo);
+  expect(inventory.skipped).toEqual([
+    { name: "q", catalog: "codex", reason: "unsafe-path" },
+  ]);
+});
+
 test("a Codex url source is external-source with sourceKind url", async () => {
   const repo = await tempRepo("capshelf-plugin-codex-url-");
   await writePlugins(repo, [], {
@@ -318,6 +379,34 @@ test("a manifest skills path that leaves the plugin warns and adds nothing", asy
   ]);
 });
 
+// M2 (ruling): a manifest that is present but a symlink or gitlink warns
+// with the same text as rule 1's catalog check, and contributes nothing.
+test("a symlinked manifest warns and contributes nothing", async () => {
+  const repo = await tempRepo("capshelf-plugin-symlink-manifest-");
+  await writePlugins(
+    repo,
+    [{ dir: "plugins/p", skills: [{ name: "one", description: "One" }] }],
+    { claude: claudeCatalog([{ name: "p", source: "./plugins/p" }]) },
+  );
+  await mkdir(join(repo, "plugins", "p", ".claude-plugin"), {
+    recursive: true,
+  });
+  await symlink(
+    "nowhere",
+    join(repo, "plugins", "p", ".claude-plugin", "plugin.json"),
+  );
+  await commitAll(repo, "symlinked manifest");
+  const inventory = await discover(repo);
+  expect(inventory.plugins).toHaveLength(1);
+  expect(inventory.plugins[0]?.name).toBe("p");
+  expect(inventory.warnings).toEqual([
+    {
+      path: "plugins/p/.claude-plugin/plugin.json",
+      message: "is a symlink or submodule, not a file; ignored",
+    },
+  ]);
+});
+
 test("the plugin name comes from the manifest, then the catalog, then the directory, warning once on disagreement", async () => {
   const repo = await tempRepo("capshelf-plugin-name-order-");
   await writePlugins(
@@ -343,15 +432,14 @@ test("the plugin name comes from the manifest, then the catalog, then the direct
   const i = inventory.plugins.find((p) => p.source === "plugins/i");
   expect(h?.name).toBe("from-manifest");
   expect(i?.name).toBe("beta");
+  // I4: the directory's last segment ("i") is only the final fallback for
+  // the chosen name — it never counts as a disagreeing name, so plugin "i"
+  // (named only by its catalog entry) gets no warning at all.
   expect(inventory.warnings).toEqual([
     {
       path: "plugins/h",
       message:
-        "catalogs and manifests name it from-catalog, h; shown as from-manifest",
-    },
-    {
-      path: "plugins/i",
-      message: "catalogs and manifests name it i; shown as beta",
+        "catalogs and manifests name it from-catalog; shown as from-manifest",
     },
   ]);
 });
@@ -450,12 +538,17 @@ test("a Claude catalog that does not parse warns, and the Codex catalog still li
   );
   await commitAll(repo, "bad claude catalog");
   const inventory = await discover(repo);
+  // M1: the warning must equal the exact `${path} ${message}` string the
+  // old remote-discovery code builds for the same fixture, verified by
+  // asking it directly rather than hardcoding a guess.
+  const old = await discoverRemoteSkills(repo, "HEAD");
   expect(inventory.plugins.map((p) => p.source)).toEqual(["plugins/l"]);
   expect(inventory.warnings).toHaveLength(1);
   expect(inventory.warnings[0]?.path).toBe(".claude-plugin/marketplace.json");
-  expect(inventory.warnings[0]?.message).toContain(
-    "is present and could not be read:",
-  );
+  expect(old.warnings).toHaveLength(1);
+  expect(
+    `${inventory.warnings[0]?.path} ${inventory.warnings[0]?.message}`,
+  ).toBe(old.warnings[0]!);
 });
 
 test("hasPluginManifest and describePluginDirectory work for a directory no catalog names (Ruling A)", async () => {

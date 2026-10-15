@@ -193,6 +193,38 @@ function parseManifest(raw: string): PluginManifest {
 
 // ------------------------------------------------------------------- rule 1
 
+/**
+ * One catalog document: absent is quiet, present-but-not-a-file warns (rule
+ * 1), and a parse failure warns and yields nothing. Shared by the Claude and
+ * the Codex catalog, which otherwise differ only in their path and parser.
+ */
+async function readCatalog<T>(
+  path: string,
+  entry: GitTreeEntry | undefined,
+  blobs: ReadonlyMap<string, Buffer>,
+  parse: (raw: string) => T,
+  warnings: DiscoveryWarning[],
+): Promise<T | undefined> {
+  if (entry === undefined) return undefined;
+  if (!isRegularFile(entry)) {
+    warnings.push({
+      path,
+      message: "is a symlink or submodule, not a file; ignored",
+    });
+    return undefined;
+  }
+  try {
+    const bytes = blobs.get(entry.object) ?? Buffer.alloc(0);
+    return parse(bytes.toString("utf8"));
+  } catch (error) {
+    warnings.push({
+      path,
+      message: `is present and could not be read: ${firstErrorLine(error)}`,
+    });
+    return undefined;
+  }
+}
+
 /** Rule 1: read both catalogs in one `cat-file` batch. */
 async function readCatalogs(
   repo: string,
@@ -200,6 +232,8 @@ async function readCatalogs(
   warnings: DiscoveryWarning[],
 ): Promise<{
   claudePlugins: ClaudePlugin[];
+  /** I1: `metadata` lives on the marketplace document, not on each entry. */
+  claudeMetadata: ConfigValue | undefined;
   codexEntries: CodexCatalogEntry[];
 }> {
   const claudeEntry = entries.find((e) => e.path === CLAUDE_CATALOG_PATH);
@@ -216,47 +250,32 @@ async function readCatalogs(
       ? await catFileBlobs(repo, blobIds)
       : new Map<string, Buffer>();
 
-  let claudePlugins: ClaudePlugin[] = [];
-  if (claudeEntry !== undefined) {
-    if (!isRegularFile(claudeEntry)) {
-      warnings.push({
-        path: CLAUDE_CATALOG_PATH,
-        message: "is a symlink or submodule, not a file; ignored",
-      });
-    } else {
-      try {
-        const bytes = blobs.get(claudeEntry.object) ?? Buffer.alloc(0);
-        claudePlugins = parseClaudeMarketplace(bytes.toString("utf8")).plugins;
-      } catch (error) {
-        warnings.push({
-          path: CLAUDE_CATALOG_PATH,
-          message: `is present and could not be read: ${firstErrorLine(error)}`,
-        });
-      }
-    }
-  }
+  const claudeDocument = await readCatalog(
+    CLAUDE_CATALOG_PATH,
+    claudeEntry,
+    blobs,
+    parseClaudeMarketplace,
+    warnings,
+  );
+  const codexDocument = await readCatalog(
+    CODEX_CATALOG_PATH,
+    codexEntry,
+    blobs,
+    parseCodexCatalog,
+    warnings,
+  );
 
-  let codexEntries: CodexCatalogEntry[] = [];
-  if (codexEntry !== undefined) {
-    if (!isRegularFile(codexEntry)) {
-      warnings.push({
-        path: CODEX_CATALOG_PATH,
-        message: "is a symlink or submodule, not a file; ignored",
-      });
-    } else {
-      try {
-        const bytes = blobs.get(codexEntry.object) ?? Buffer.alloc(0);
-        codexEntries = parseCodexCatalog(bytes.toString("utf8")).plugins;
-      } catch (error) {
-        warnings.push({
-          path: CODEX_CATALOG_PATH,
-          message: `is present and could not be read: ${firstErrorLine(error)}`,
-        });
-      }
-    }
-  }
+  // SAFETY: `metadata` is outside marketplaceSchema's declared fields
+  // (src/claude-marketplace.ts:30-38); `parseClaudeMarketplace` parses the
+  // whole document through JSON.parse first, so every passthrough field is
+  // still a plain JSON value and narrows safely as ConfigValue.
+  const claudeMetadata = claudeDocument?.metadata as ConfigValue | undefined;
 
-  return { claudePlugins, codexEntries };
+  return {
+    claudePlugins: claudeDocument?.plugins ?? [],
+    claudeMetadata,
+    codexEntries: codexDocument?.plugins ?? [],
+  };
 }
 
 // ------------------------------------------------------------------- rule 2
@@ -293,8 +312,17 @@ function rawSourceText(value: ConfigValue): string {
   return isConfigString(value) ? value : JSON.stringify(value);
 }
 
-/** Rule 2: resolve one non-legacy Claude catalog entry's `source`. */
-function resolveClaudeSource(plugin: ClaudePlugin): SourceResolution {
+/**
+ * Rule 2: resolve one non-legacy Claude catalog entry's `source`.
+ *
+ * `documentMetadata` is the marketplace document's own top-level `metadata`
+ * (I1): Claude Code reads `metadata.pluginRoot` once per marketplace, not
+ * once per plugin entry.
+ */
+function resolveClaudeSource(
+  plugin: ClaudePlugin,
+  documentMetadata: ConfigValue | undefined,
+): SourceResolution {
   const source = plugin.source;
   if (isConfigObject(source)) {
     const kind = source.source;
@@ -320,20 +348,20 @@ function resolveClaudeSource(plugin: ClaudePlugin): SourceResolution {
   if (source.startsWith("/")) {
     return { kind: "skip", reason: "unsafe-path", source };
   }
-  // A bare name: join to metadata.pluginRoot, normalized, or to the root.
-  //
-  // SAFETY: `metadata` is outside pluginSchema's declared fields
-  // (src/claude-marketplace.ts:20-29); `parseClaudeMarketplace` parses the
-  // whole document through JSON.parse first, so every passthrough field is
-  // still a plain JSON value and narrows safely as ConfigValue.
-  const metadata = plugin.metadata as ConfigValue | undefined;
-  const pluginRootRaw = isConfigObject(metadata)
-    ? metadata.pluginRoot
+  // A bare name: must join to a document-level metadata.pluginRoot. No
+  // pluginRoot, a non-string one, or one that fails to normalize all skip
+  // unsafe-path (I3, M3) — there is no silent fallback to the repository
+  // root, matching Claude Code's own refusal of a bare name with no
+  // metadata.pluginRoot.
+  const pluginRootRaw = isConfigObject(documentMetadata)
+    ? documentMetadata.pluginRoot
     : undefined;
-  let root = ".";
-  if (isConfigString(pluginRootRaw)) {
-    const normalizedRoot = normalizeCatalogPath(pluginRootRaw);
-    if (normalizedRoot !== null) root = normalizedRoot;
+  if (!isConfigString(pluginRootRaw)) {
+    return { kind: "skip", reason: "unsafe-path", source };
+  }
+  const root = normalizeCatalogPath(pluginRootRaw);
+  if (root === null) {
+    return { kind: "skip", reason: "unsafe-path", source };
   }
   const joined = root === "." ? source : `${root}/${source}`;
   if (!isSafeItemRoot(joined))
@@ -348,12 +376,26 @@ function resolveCodexSource(entry: CodexCatalogEntry): CodexSourceResolution {
   const source = entry.source;
   if (isConfigObject(source)) {
     const sourceKind = source.source;
-    const path = source.path;
-    if (sourceKind === "local" && isConfigString(path)) {
+    if (sourceKind === "local") {
+      const path = source.path;
+      // M5: a `local` source with a missing or non-string path is
+      // unsafe-path, not external-source — "local" is not another runtime's
+      // source kind, it is this one's own shape, malformed.
+      if (!isConfigString(path)) {
+        return {
+          kind: "skip",
+          reason: "unsafe-path",
+          ...(path !== undefined && { source: rawSourceText(path) }),
+        };
+      }
       const normalized = normalizeCatalogPath(path);
       if (normalized === null) {
         return { kind: "skip", reason: "unsafe-path", source: path };
       }
+      // I2: a path that normalizes to the repository root is legacy, the
+      // same as a Claude source that normalizes to ".": no plugin, and not
+      // reported as skipped.
+      if (normalized === ".") return { kind: "dropped" };
       if (
         normalized === GENERATED_CODEX_PREFIX ||
         normalized.startsWith(`${GENERATED_CODEX_PREFIX}/`)
@@ -529,7 +571,13 @@ function computeSkillDirs(
 
 // ------------------------------------------------------------------- rule 8
 
-/** Rule 8 (D15): the plugin's name, and a warning when the sources disagree. */
+/**
+ * Rule 8 (D15): the plugin's name, and a warning when the sources disagree.
+ *
+ * I4: the directory's last segment is the final fallback for `chosen`, but
+ * it never counts as a name a catalog or manifest "gave" — only the manifest
+ * name and the two catalog entry names are compared for disagreement.
+ */
 function resolveName(
   dir: string,
   names: { claude?: string; codex?: string },
@@ -543,14 +591,12 @@ function resolveName(
     manifestName = isConfigString(manifest.name) ? manifest.name : undefined;
     break;
   }
-  const dirName = lastSegment(dir);
-  const candidates = [manifestName, names.claude, names.codex, dirName].filter(
+  const chosen =
+    manifestName ?? names.claude ?? names.codex ?? lastSegment(dir);
+  const given = [manifestName, names.claude, names.codex].filter(
     (value): value is string => value !== undefined,
   );
-  const chosen = candidates[0]!;
-  const others = [...new Set(candidates.slice(1))].filter(
-    (value) => value !== chosen,
-  );
+  const others = [...new Set(given)].filter((value) => value !== chosen);
   if (others.length > 0) {
     warnings.push({
       path: dir,
@@ -579,9 +625,10 @@ function shipsOf(entries: readonly GitTreeEntry[], dir: string): PluginPart[] {
 
 /**
  * Read the manifests of one plugin directory, parsing each once. A manifest
- * that is absent or not a regular file is quiet, the same as a symlinked
- * `SKILL.md` (rule 9's test). A manifest that is present and fails to parse
- * warns and contributes nothing (rule 8).
+ * that is absent is quiet. One that is present but a symlink or gitlink
+ * warns, the same text as rule 1's catalog check (M2), and contributes
+ * nothing. One that is present, a regular file, and fails to parse warns
+ * with its own text and contributes nothing (rule 8).
  */
 async function readManifests(
   repo: string,
@@ -594,7 +641,14 @@ async function readManifests(
   for (const rel of MANIFEST_RELATIVE_PATHS) {
     const manifestPath = pluginPath(dir, rel);
     const entry = entries.find((e) => e.path === manifestPath);
-    if (entry === undefined || !isRegularFile(entry)) continue;
+    if (entry === undefined) continue;
+    if (!isRegularFile(entry)) {
+      warnings.push({
+        path: manifestPath,
+        message: "is a symlink or submodule, not a file; ignored",
+      });
+      continue;
+    }
     let bytes = manifestBlobs?.get(entry.object);
     if (bytes === undefined) {
       bytes =
@@ -669,7 +723,7 @@ export async function discoverPlugins(
   const skipped: SkippedEntry[] = [];
   const legacySkillDirs: string[] = [];
 
-  const { claudePlugins, codexEntries } = await readCatalogs(
+  const { claudePlugins, claudeMetadata, codexEntries } = await readCatalogs(
     repo,
     entries,
     warnings,
@@ -683,7 +737,7 @@ export async function discoverPlugins(
       addLegacySkillDirs(plugin, legacySkillDirs);
       continue;
     }
-    const resolution = resolveClaudeSource(plugin);
+    const resolution = resolveClaudeSource(plugin, claudeMetadata);
     if (resolution.kind === "skip") {
       pushSkip(skipped, plugin.name, "claude", resolution);
       continue;
