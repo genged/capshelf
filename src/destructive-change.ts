@@ -45,6 +45,10 @@ export interface DestructiveConfirmationContext {
   prompt: (message: string) => Promise<string>;
   /** Where the prompt draws. The return value is never read. */
   stderr: { write(text: string): void };
+  /** D9 of the remote discovery spec. Absent means "not a terminal". */
+  stdoutIsTTY?: boolean;
+  /** Terminal height in rows, or null when the terminal does not report it. */
+  terminalRows?: number | null;
 }
 
 interface DestructiveConfirmationOptions {
@@ -243,13 +247,29 @@ function defaultDestructiveConfirmationContext(): DestructiveConfirmationContext
   return {
     stdinIsTTY: process.stdin.isTTY === true,
     stderrIsTTY: process.stderr.isTTY === true,
+    stdoutIsTTY: process.stdout.isTTY === true,
+    terminalRows: process.stdout.rows ?? null,
     prompt: async (message) => {
       const readline = createInterface({
         input: process.stdin,
         output: process.stderr,
       });
       try {
-        return await readline.question(message);
+        // Under Bun 1.3.14, `readline.question()` does not settle on EOF: a
+        // closed pipe or `< /dev/null` fires the interface's `close` event
+        // right away, but the question promise neither resolves nor rejects
+        // — it hangs forever. Racing it against `close` turns that hang into
+        // a rejection, which every caller here already treats as "no" (D9 of
+        // the remote discovery spec, and the consent prompt above).
+        const closedBeforeAnswer = new Promise<never>((_, reject) => {
+          readline.once("close", () =>
+            reject(new Error("prompt closed before an answer (EOF)")),
+          );
+        });
+        return await Promise.race([
+          readline.question(message),
+          closedBeforeAnswer,
+        ]);
       } finally {
         readline.close();
       }

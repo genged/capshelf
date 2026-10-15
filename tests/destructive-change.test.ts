@@ -1,5 +1,6 @@
-import { file } from "bun";
+import { file, spawn } from "bun";
 import { describe, expect, test } from "bun:test";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   DESTRUCTIVE_CHANGE_REASON_LABELS,
@@ -11,7 +12,14 @@ import {
   normalizeDestructiveChanges,
 } from "../src/destructive-change";
 import { PreconditionError } from "../src/errors";
-import { rejection } from "./cli-fixtures";
+import { rejection, tempDir } from "./cli-fixtures";
+
+const DESTRUCTIVE_CHANGE_MODULE_PATH = join(
+  import.meta.dir,
+  "..",
+  "src",
+  "destructive-change.ts",
+);
 
 const first: DestructiveChange = {
   scope: "project",
@@ -212,4 +220,42 @@ describe("destructive change reasons", () => {
       expect(planners.some((source) => source.includes(reason))).toBe(true);
     }
   });
+});
+
+describe("the default confirmation context's prompt on EOF", () => {
+  // Under Bun 1.3.14, a probe script showed that `readline.question()` never
+  // settles when stdin reaches EOF (a closed pipe, or `< /dev/null`): the
+  // interface's `close` event fires right away, but the question promise
+  // neither resolves nor rejects. It hangs until the process is killed. D9
+  // of the remote discovery spec requires EOF to act as "no", so the default
+  // context races the question against `close` (`src/destructive-change.ts`).
+  // This can't use a fake context — it tests the real default, which only
+  // runs with no context installed — so it spawns a real Bun process with no
+  // TTY and no installed context, and bounds the wait with `Bun.spawn`'s own
+  // `timeout`: a hang kills the process with SIGTERM, which the assertions
+  // below tell apart from the expected clean exit.
+  test("rejects instead of hanging, within the spawn timeout", async () => {
+    const dir = await tempDir("capshelf-eof-probe-");
+    const scriptPath = join(dir, "ask-on-eof.ts");
+    const scriptSource = `import { askQuestion } from ${JSON.stringify(DESTRUCTIVE_CHANGE_MODULE_PATH)};
+try {
+  const answer = await askQuestion("Prompt? ");
+  console.log("RESOLVED:" + JSON.stringify(answer));
+} catch (error) {
+  console.log("REJECTED:" + String(error));
+}
+`;
+    await writeFile(scriptPath, scriptSource);
+    const proc = spawn({
+      cmd: [process.execPath, scriptPath],
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 5000,
+    });
+    await proc.exited;
+    expect(proc.signalCode).toBeNull();
+    const stdout = await new Response(proc.stdout).text();
+    expect(stdout).toContain("REJECTED:");
+  }, 10_000);
 });

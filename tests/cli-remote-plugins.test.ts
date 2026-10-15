@@ -27,6 +27,8 @@ import {
   upstreamWith,
 } from "./remote-fixtures";
 import { renderCandidateList } from "../src/commands/add-remote";
+import { setDestructiveConfirmationContext } from "../src/destructive-change";
+import type { DestructiveConfirmationContext } from "../src/destructive-change";
 import type { DiscoveredPlugin } from "../src/plugin-discovery";
 import type {
   RemoteDiscovery,
@@ -413,3 +415,254 @@ test("renderCandidateList's summaryLength stops right after the summary block's 
   ]);
   expect(lines[summaryLength]).toBe("  plugins/a");
 });
+
+interface D9Harness {
+  context: DestructiveConfirmationContext;
+  prompts: string[];
+}
+
+/**
+ * D9's confirmation context: three TTYs and a terminal short enough (5 rows)
+ * that the three-plugin fixture's listing — 2 skills, well over 5 lines once
+ * the plugin groups and the footer print — always crosses the threshold.
+ * `answers` is consumed in call order; a test that expects more than one
+ * prompt call must queue enough of them.
+ */
+function d9Context(
+  answers: readonly string[],
+  overrides: Partial<DestructiveConfirmationContext> = {},
+): D9Harness {
+  const prompts: string[] = [];
+  const queue = [...answers];
+  return {
+    context: {
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      stdoutIsTTY: true,
+      terminalRows: 5,
+      prompt: async (message) => {
+        prompts.push(message);
+        const next = queue.shift();
+        if (next === undefined) {
+          throw new Error("d9Context: no answer queued for this prompt call");
+        }
+        return next;
+      },
+      stderr: { write: () => {} },
+      ...overrides,
+    },
+    prompts,
+  };
+}
+
+async function runWithConfirmation(
+  project: string,
+  env: Record<string, string>,
+  args: string[],
+  context: DestructiveConfirmationContext,
+) {
+  const outer = setDestructiveConfirmationContext(context);
+  try {
+    return await runInProcess(project)(args, env);
+  } finally {
+    setDestructiveConfirmationContext(outer);
+  }
+}
+
+test(
+  "D9: a listing taller than the terminal asks once, and enter shows the rest",
+  async () => {
+    const { url } = await pluginUpstream(threePlugins(), {
+      claude: threePluginsCatalog(),
+    });
+    const { project, env } = await initProject();
+    const { context, prompts } = d9Context([""]);
+    const result = await runWithConfirmation(
+      project,
+      env,
+      ["add", url, "--list"],
+      context,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toStartWith("Show all 2 skills (");
+    const stdout = result.stdout.toString();
+    expect(stdout).toContain("  plugins/plain");
+    expect(stdout).toContain("  plugins/heavy");
+    expect(stdout).toContain(
+      `install one:   capshelf add ${url} --path plugins/plain/skills/plain`,
+    );
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "D9: 'n' prints the plugin-scoped and JSON commands, no skill rows, exit 0",
+  async () => {
+    const { url } = await pluginUpstream(threePlugins(), {
+      claude: threePluginsCatalog(),
+    });
+    const { project, env } = await initProject();
+    const { context, prompts } = d9Context(["n"]);
+    const result = await runWithConfirmation(
+      project,
+      env,
+      ["add", url, "--list"],
+      context,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(prompts).toHaveLength(1);
+    const stdout = result.stdout.toString();
+    expect(stdout).toContain(
+      `  one plugin:   capshelf add ${url} --list --path plugins/plain`,
+    );
+    expect(stdout).toContain(
+      `  everything:   capshelf add ${url} --list --json`,
+    );
+    expect(stdout).not.toContain("  plugins/heavy");
+    expect(stdout).not.toContain("install one:");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "D9: an answer that is neither yes nor no asks again",
+  async () => {
+    const { url } = await pluginUpstream(threePlugins(), {
+      claude: threePluginsCatalog(),
+    });
+    const { project, env } = await initProject();
+    const { context, prompts } = d9Context(["maybe", "y"]);
+    const result = await runWithConfirmation(
+      project,
+      env,
+      ["add", url, "--list"],
+      context,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(prompts).toHaveLength(2);
+    expect(result.stdout.toString()).toContain(
+      `install one:   capshelf add ${url} --path plugins/plain/skills/plain`,
+    );
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "D9: a rejected prompt (EOF, Ctrl-C) acts as 'no'",
+  async () => {
+    const { url } = await pluginUpstream(threePlugins(), {
+      claude: threePluginsCatalog(),
+    });
+    const { project, env } = await initProject();
+    const prompts: string[] = [];
+    const context: DestructiveConfirmationContext = {
+      stdinIsTTY: true,
+      stderrIsTTY: true,
+      stdoutIsTTY: true,
+      terminalRows: 5,
+      prompt: async (message) => {
+        prompts.push(message);
+        throw new Error("EOF");
+      },
+      stderr: { write: () => {} },
+    };
+    const result = await runWithConfirmation(
+      project,
+      env,
+      ["add", url, "--list"],
+      context,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(prompts).toHaveLength(1);
+    const stdout = result.stdout.toString();
+    expect(stdout).toContain(
+      `  one plugin:   capshelf add ${url} --list --path plugins/plain`,
+    );
+    expect(stdout).not.toContain("  plugins/heavy");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "D9: a terminal tall enough never asks",
+  async () => {
+    const { url } = await pluginUpstream(threePlugins(), {
+      claude: threePluginsCatalog(),
+    });
+    const { project, env } = await initProject();
+    const { context, prompts } = d9Context([], { terminalRows: 500 });
+    const result = await runWithConfirmation(
+      project,
+      env,
+      ["add", url, "--list"],
+      context,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(prompts).toHaveLength(0);
+    expect(result.stdout.toString()).toContain("  plugins/heavy");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "D9: stdout that is not a terminal never asks",
+  async () => {
+    const { url } = await pluginUpstream(threePlugins(), {
+      claude: threePluginsCatalog(),
+    });
+    const { project, env } = await initProject();
+    const { context, prompts } = d9Context([], { stdoutIsTTY: false });
+    const result = await runWithConfirmation(
+      project,
+      env,
+      ["add", url, "--list"],
+      context,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(prompts).toHaveLength(0);
+    expect(result.stdout.toString()).toContain("  plugins/heavy");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "D9: --json never asks, even with a short terminal",
+  async () => {
+    const { url } = await pluginUpstream(threePlugins(), {
+      claude: threePluginsCatalog(),
+    });
+    const { project, env } = await initProject();
+    const { context, prompts } = d9Context([]);
+    const result = await runWithConfirmation(
+      project,
+      env,
+      ["add", url, "--list", "--json"],
+      context,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(prompts).toHaveLength(0);
+    const payload = jsonOutput(result);
+    expect(arrayField(payload, "plugins")).toHaveLength(3);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "D9: a shelf with no plugin skill never asks, even with a one-row terminal (D2)",
+  async () => {
+    const { url } = await upstreamWith([["skills/pdf", "Extract text"]]);
+    const { project, env } = await initProject();
+    const { context, prompts } = d9Context([], { terminalRows: 1 });
+    const result = await runWithConfirmation(
+      project,
+      env,
+      ["add", url, "--list"],
+      context,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(prompts).toHaveLength(0);
+    expect(result.stdout.toString()).toContain("skills/pdf");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);

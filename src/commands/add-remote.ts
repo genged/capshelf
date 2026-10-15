@@ -15,6 +15,7 @@ import { relative } from "node:path";
 import { PreconditionError } from "../errors";
 import { fetchOrigin } from "../git";
 import { confirmationContext } from "../destructive-change";
+import type { DestructiveConfirmationContext } from "../destructive-change";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import { findInstallConflict, installedPath } from "../installed";
 import { parseItemRef, lockKeyForRef } from "../item-ref";
@@ -215,7 +216,7 @@ export async function addRemoteSkill(
   // cardinality rule below, because "too many to install without choosing" is
   // not a reason to refuse to say what is there.
   if (opts.list === true) {
-    printCandidateList(
+    await printCandidateList(
       input,
       parsed,
       ref,
@@ -955,7 +956,7 @@ function firstSubpathWithNoFacts(
   return noFacts ?? renderOrder[0]!;
 }
 
-function printCandidateList(
+async function printCandidateList(
   input: string,
   parsed: RemoteSkillUrl,
   ref: string,
@@ -963,7 +964,7 @@ function printCandidateList(
   discovery: RemoteDiscovery,
   scope: "repository" | { plugin: DiscoveredPlugin },
   opts: RemoteAddOptions,
-): void {
+): Promise<void> {
   // Skipped entries other than `external-source` (which becomes the
   // `elsewhere` summary line) are warnings about catalog entries this
   // listing could not read.
@@ -977,7 +978,7 @@ function printCandidateList(
     printCandidateListJson(parsed, ref, commit, discovery);
     return;
   }
-  const { lines } = renderCandidateList({
+  const { lines, summaryLength } = renderCandidateList({
     url: input,
     upstream: parsed.upstream,
     ref,
@@ -985,7 +986,74 @@ function printCandidateList(
     discovery,
     scope,
   });
-  for (const line of lines) console.log(line);
+
+  // D9: a long plugin listing asks before it floods the terminal. A pipe,
+  // `--json` (already handled above), and `--yes` print the full list with no
+  // question, so scripts and `| less` work as today. A listing with no
+  // plugin skill never asks, which is what keeps a capshelf-shaped shelf
+  // byte-identical in a terminal too (D2).
+  const context = confirmationContext();
+  const askBeforeShowingAll =
+    opts.yes !== true &&
+    context.stdinIsTTY &&
+    context.stdoutIsTTY === true &&
+    context.stderrIsTTY &&
+    context.terminalRows !== null &&
+    context.terminalRows !== undefined &&
+    discovery.plugins.length > 0 &&
+    lines.length > context.terminalRows;
+  if (!askBeforeShowingAll) {
+    for (const line of lines) console.log(line);
+    return;
+  }
+
+  for (const line of lines.slice(0, summaryLength)) console.log(line);
+  const showAll = await confirmShowAllSkills(
+    context,
+    discovery.candidates.length,
+    lines.length,
+  );
+  if (showAll) {
+    for (const line of lines.slice(summaryLength)) console.log(line);
+    return;
+  }
+  // The "no" answer, D9: the plugin-scoped command (D10) names the first
+  // plugin in listing order, so the user has a short next step instead of
+  // the whole list.
+  const firstPlugin = discovery.plugins[0]!;
+  console.log(
+    `  one plugin:   ${safe(shellCommand([PRODUCT_NAME, "add", input, "--list", "--path", firstPlugin.source]))}`,
+  );
+  console.log(
+    `  everything:   ${safe(shellCommand([PRODUCT_NAME, "add", input, "--list", "--json"]))}`,
+  );
+}
+
+/**
+ * D9's question. Loops on anything that is not an explicit yes or no, and a
+ * rejected prompt — EOF, Ctrl-C closes readline — counts as "no" the same as
+ * typing it.
+ */
+async function confirmShowAllSkills(
+  context: DestructiveConfirmationContext,
+  skillCount: number,
+  lineCount: number,
+): Promise<boolean> {
+  for (;;) {
+    let answer: string;
+    try {
+      answer = await context.prompt(
+        `Show all ${skillCount} ${plural(skillCount, "skill")} (${lineCount} lines)? [Y/n] `,
+      );
+    } catch {
+      return false;
+    }
+    const normalized = answer.trim().toLowerCase();
+    if (normalized === "" || normalized === "y" || normalized === "yes") {
+      return true;
+    }
+    if (normalized === "n" || normalized === "no") return false;
+  }
 }
 
 function printCandidateListJson(
