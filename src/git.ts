@@ -880,6 +880,35 @@ export async function catFileBlobs(
   }
 }
 
+/**
+ * The size of each blob, from one `cat-file --batch-check` process.
+ *
+ * Discovery must decide what to skip before it reads: `catFileBlobs` holds the
+ * whole batch output in one buffer, so a size limit applied after that read
+ * limits nothing.
+ */
+export async function catFileSizes(
+  repo: string,
+  blobIds: Iterable<string>,
+): Promise<Map<string, number>> {
+  const ids = [...new Set(blobIds)];
+  const sizes = new Map<string, number>();
+  if (ids.length === 0) return sizes;
+  for (const id of ids) {
+    if (!/^[0-9a-f]{40,64}$/.test(id)) {
+      throw new Error(`invalid git object name: ${id}`);
+    }
+  }
+  const out = await sourceReadText(repo, ["cat-file", "--batch-check"], {
+    stdin: `${ids.join("\n")}\n`,
+  });
+  for (const line of out.split("\n")) {
+    const match = /^([0-9a-f]+) blob (\d+)$/.exec(line);
+    if (match) sizes.set(match[1]!, Number(match[2]));
+  }
+  return sizes;
+}
+
 export interface CheckAttrResult {
   path: string;
   attribute: string;
