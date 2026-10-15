@@ -1028,9 +1028,11 @@ operation and lists managed content drift, executable-mode changes, extra
 local paths, subagent target drift, managed fragment drift, config-comment
 loss, or dirty generated projection paths. Interactive human output asks once.
 Declining exits 0 and writes nothing. When stdin closes before an answer, for
-example at Ctrl-D, the prompt exits 1 and writes nothing instead. A
-single-skill remote install or a single named remote update keeps that
-promise. Naming several skills changes that. The install loop and the
+example at Ctrl-D, the prompt exits 1 and writes nothing instead. Ctrl-C at a
+remote install prompt, a remote update prompt, or a destructive-change prompt
+counts as closed input. It also exits 1 and writes nothing. A single-skill
+remote install or a single named remote update keeps that promise. Naming
+several skills changes that. The install loop and the
 update loop both record each skill before the next one's prompt. A closed
 prompt there still exits 1. A skill already installed or updated earlier in
 the same run stays that way. The share picker's own name question works the
@@ -1627,10 +1629,9 @@ Show all 2 skills (18 lines)? [Y/n] n
 
 Enter or `y` shows the full list. `n` prints a shorter next command instead.
 In a listing of one plugin (`--list --path <plugin>`), `n` prints only the
-JSON command for that plugin.
-Closed input, such as Ctrl-D, counts as `n` too. Ctrl-C stops the command
-with exit 130. A pipe, `--json`, and `--yes` skip the question and print
-everything, so a script never waits on it. The question counts only a
+JSON command for that plugin. Closed input, such as Ctrl-D or Ctrl-C at the
+question, counts as `n`. A pipe, `--json`, and `--yes` skip the question and
+print everything, so a script never waits on it. The question counts only a
 plugin that holds a skill. A commands-only or workflows-only plugin never
 triggers it.
 

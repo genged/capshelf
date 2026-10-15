@@ -98,7 +98,7 @@ async function writeUnder(
 
 /**
  * A Claude catalog document whose entries point at `./<dir>`. `metadata` is
- * document-level (I1): Claude Code reads `metadata.pluginRoot` once per
+ * document-level: Claude Code reads `metadata.pluginRoot` once per
  * marketplace, not once per plugin entry.
  */
 export function claudeCatalog(

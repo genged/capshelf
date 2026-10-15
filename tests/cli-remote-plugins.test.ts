@@ -48,7 +48,7 @@ const HEAVY_BODY = `Reads \${CLAUDE_PLUGIN_ROOT}/scripts/x.sh and dispatches hea
 /**
  * `plain` (one skill, no facts), `heavy` (one skill named `worker` that
  * matches `plugin root`, `agents`, and `outside links`), and `empty` (no
- * skill directory, only `commands/`) — the brief's fixture for the grouping,
+ * skill directory, only `commands/`) — the fixture for the grouping,
  * uses-column, and no-skills-line behaviors.
  *
  * The agent is named `assistant`, not `worker`: a reference to the skill's

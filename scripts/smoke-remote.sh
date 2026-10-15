@@ -125,6 +125,41 @@ assert_fixed_contains 'uses parts of the heavy plugin' "$TMP/plugin-skill.err"
 # --- PTY cases: these need a real terminal, so they run only when `script`
 #     and `timeout` are both on PATH. Neither is required for the
 #     non-interactive behavior this suite otherwise proves. ---
+# Run "$1" in a pty, wait until the output in "$3" holds the text "$2", then
+# send Ctrl-C. Sets PTY_EXIT to the exit code of the command. The text match
+# is fixed, not a pattern. A timeout (exit 124), or a command that ends
+# before the text appears, fails the run.
+ctrl_c_at() {
+  local cmd="$1" text="$2" out="$3" fifo="$TMP/pty-in" pid waited=0
+  rm -f "$fifo"
+  mkfifo "$fifo"
+  timeout 30 script -qec "$cmd" /dev/null < "$fifo" > "$out" 2>&1 &
+  pid=$!
+  # Hold the write end open, so `script` does not read end of input.
+  exec 3>"$fifo"
+  until grep -qF -- "$text" "$out"; do
+    if ! kill -0 "$pid" 2>/dev/null || [ "$waited" -ge 300 ]; then
+      exec 3>&-
+      echo "expected '$text' before Ctrl-C; output:"
+      cat "$out"
+      exit 1
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  printf '\003' >&3
+  set +e
+  wait "$pid"
+  PTY_EXIT=$?
+  set -e
+  exec 3>&-
+  rm -f "$fifo"
+  if [ "$PTY_EXIT" -eq 124 ]; then
+    echo "timed out after Ctrl-C at '$text'"
+    exit 1
+  fi
+}
+
 if command -v script >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
   CLI_STR="$(printf '%q ' "${CLI[@]}")"
   D9_CMD="cd '$P' && $CLI_STR add '$PLUGIN_URL' --list"
@@ -138,34 +173,32 @@ if command -v script >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
   assert_fixed_contains 'everything:   capshelf add' "$TMP/d9.txt"
   assert_fixed_not_contains 'install one:' "$TMP/d9.txt"
 
-  # --- D9 PTY: Ctrl-C stops the command by SIGINT, exit 130. This is the
-  #     documented contract (docs/cli.md, Remote skills): only end of input
-  #     (Ctrl-D, closed stdin) answers this question as "no", which the case
-  #     above already proved. ---
-  set +e
-  printf '\003' | timeout 15 script -qec "stty rows 3; $D9_CMD" /dev/null \
-    > "$TMP/d9-ctrlc.txt" 2>&1
-  CTRLC_EXIT=$?
-  set -e
-  if [ "$CTRLC_EXIT" -ne 130 ]; then
-    echo "expected Ctrl-C at the D9 question to exit 130, got $CTRLC_EXIT"
+  # --- D9 PTY: Ctrl-C at the question counts as "no" (D9). Readline holds
+  #     the terminal in raw mode, so Ctrl-C is a key, not a SIGINT. The key
+  #     must arrive after the question opens. A key sent earlier is a tty
+  #     SIGINT that ends the process with exit 130 and proves nothing about
+  #     the question. The pty merges stdout and stderr into one file. ---
+  ctrl_c_at "stty rows 3; $D9_CMD" 'Show all 2 skills' "$TMP/d9-ctrlc.txt"
+  if [ "$PTY_EXIT" -ne 0 ]; then
+    echo "expected Ctrl-C at the D9 question to exit 0, got $PTY_EXIT"
     exit 1
   fi
+  assert_fixed_contains 'everything:   capshelf add' "$TMP/d9-ctrlc.txt"
+  assert_fixed_not_contains 'install one:' "$TMP/d9-ctrlc.txt"
+  assert_fixed_not_contains 'Plain skill' "$TMP/d9-ctrlc.txt"
+  assert_fixed_not_contains 'Heavy skill' "$TMP/d9-ctrlc.txt"
 
-  # --- Ctrl-C at the per-skill install prompt: same contract. The install
-  #     stays safe either way, because the prompt gates every write; this
-  #     uses the as-yet-uninstalled `plain` skill to prove it. ---
+  # --- Ctrl-C at the per-skill install prompt counts as closed input: exit
+  #     1, and nothing is written. This uses the `plain` skill, which is not
+  #     installed yet. ---
   INSTALL_CMD="cd '$P' && $CLI_STR add '$PLUGIN_URL' --path plugins/plain/skills/plain"
   cp "$P/.capshelf/remotes.lock.json" "$TMP/remotes-before-ctrlc.json"
-  set +e
-  printf '\003' | timeout 15 script -qec "$INSTALL_CMD" /dev/null \
-    > "$TMP/install-ctrlc.txt" 2>&1
-  INSTALL_CTRLC_EXIT=$?
-  set -e
-  if [ "$INSTALL_CTRLC_EXIT" -ne 130 ]; then
-    echo "expected Ctrl-C at the install prompt to exit 130, got $INSTALL_CTRLC_EXIT"
+  ctrl_c_at "$INSTALL_CMD" 'Install it? [y/N]' "$TMP/install-ctrlc.txt"
+  if [ "$PTY_EXIT" -ne 1 ]; then
+    echo "expected Ctrl-C at the install prompt to exit 1, got $PTY_EXIT"
     exit 1
   fi
+  assert_fixed_contains 'prompt closed before an answer' "$TMP/install-ctrlc.txt"
   cmp -s "$TMP/remotes-before-ctrlc.json" "$P/.capshelf/remotes.lock.json"
   test ! -e "$P/.agents/skills/plain"
 else
