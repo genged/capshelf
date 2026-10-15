@@ -146,7 +146,7 @@ export async function loadClaudeMarketplaceAtCommit(
   return parseClaudeMarketplace(raw.toString("utf8"));
 }
 
-function parseClaudeMarketplace(raw: string): ClaudeMarketplace {
+export function parseClaudeMarketplace(raw: string): ClaudeMarketplace {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
