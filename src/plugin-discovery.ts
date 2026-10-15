@@ -26,7 +26,7 @@ import type { GitTreeEntry } from "./git";
 import { z } from "zod";
 
 /** Exported so `add --list`'s `found` line can name the catalog(s) that
- * named a plugin (`src/commands/add-remote.ts`). */
+ * named a plugin (`src/remote-list-render.ts`). */
 export const CLAUDE_CATALOG_PATH = ".claude-plugin/marketplace.json";
 export const CODEX_CATALOG_PATH = ".agents/plugins/marketplace.json";
 const CLAUDE_MANIFEST_REL = ".claude-plugin/plugin.json";

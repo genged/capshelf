@@ -30,7 +30,6 @@ import {
   skillText,
   upstreamWith,
 } from "./remote-fixtures";
-import { renderCandidateList } from "../src/commands/add-remote";
 import { setDestructiveConfirmationContext } from "../src/destructive-change";
 import type { DestructiveConfirmationContext } from "../src/destructive-change";
 import { setPickContext } from "../src/pick";
@@ -40,6 +39,7 @@ import type {
   RemoteDiscovery,
   RemoteSkillCandidate,
 } from "../src/remote-discovery";
+import { renderCandidateList } from "../src/remote-list-render";
 
 const initProject = initRemoteProject;
 
@@ -595,7 +595,7 @@ test(
       `install one:   capshelf add ${url} --path plugins/plain/skills/plain`,
     );
     // The question's line count is `renderCandidateList(...).lines.length`
-    // (`src/commands/add-remote.ts`), and answering "" here prints every one
+    // (`src/remote-list-render.ts`), and answering "" here prints every one
     // of those lines via one `console.log` call each — the summary half, then
     // the rest — so the total lines this run printed must equal the number
     // the question quoted.

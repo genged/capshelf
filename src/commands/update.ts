@@ -128,7 +128,7 @@ import {
   saveRemotesLock,
 } from "../remotes-lock";
 import type { RemoteLockEntry, RemotesLock } from "../remotes-lock";
-import { factsWarnOnInstall, renderPluginFacts } from "./add-remote";
+import { factsWarnOnInstall, renderPluginFacts } from "../remote-list-render";
 
 interface UpdateOptions {
   json?: boolean;
