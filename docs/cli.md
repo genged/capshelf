@@ -1545,15 +1545,17 @@ with no plugin grouping at all, the same in a terminal and in a pipe.
 
 A catalog entry that names a bare directory, with no leading `./`, resolves
 only against that catalog document's own `metadata.pluginRoot`. With no
-`pluginRoot`, or an unsafe one, capshelf skips the entry and warns. It never
-falls back to the repository root.
+`pluginRoot`, or an unsafe one, capshelf skips the entry. Only `--list`
+warns about a skipped entry. Capshelf never falls back to the repository
+root.
 
 A catalog `source`, a `metadata.pluginRoot`, and a manifest `skills` path all
 follow one rule. Strip one leading `./` and one trailing `/`. What remains
-must stay inside the repository, with no `..` segment. A path that fails
-this check is skipped, with a warning naming the reason. A manifest `skills`
-path that names a directory outside its own plugin is skipped the same way,
-with its own warning. The plugin's other paths still count.
+must stay inside the repository, with no `..` segment. A catalog entry whose
+path fails this check is skipped. `--list` warns about it and names the
+reason. A manifest `skills` path that is unsafe or names a directory outside
+its own plugin is skipped too, with a warning. The plugin's other paths still
+count.
 
 Discovery reads a catalog, a manifest, and a `SKILL.md` only when each is a
 regular file. A symlink or a submodule counts as absent either way. For a
@@ -1823,10 +1825,11 @@ A named `update` asks again, then moves the pin offline from the cache:
   promote is not available for a remote skill. to keep it permanently: capshelf share skills/pdf --adopt
 ```
 
-When the moved skill is a plugin skill, this prompt shows the same plugin
-facts, read at the new commit. A commit that changes only a file outside
-the skill directory does not ask at all. `update` reports `already-current`
-instead.
+When the moved skill is a plugin skill, this prompt can show the plugin facts
+block, read at the new commit. It shows the block only when the skill uses
+plugin parts outside its directory, or when some of its files were not
+checked. A commit that changes only a file outside the skill directory does
+not ask at all. `update` reports `already-current` instead.
 
 #### The clone cache
 
