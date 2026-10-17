@@ -26,10 +26,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # Full history with tags: scripts/smoke-older-binary.sh builds capshelf
+      # 0.13 from tag v0.13.0, and fails in CI when the tag is missing.
       - name: Check out repository
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref }}
+          fetch-depth: 0
 
       - name: Set up Bun
         uses: ./.github/actions/bun-toolchain

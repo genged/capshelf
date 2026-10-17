@@ -32,7 +32,8 @@ only. Terminal behavior belongs to the E2E pseudo-terminal cells.
 capshelf. It extracts the source at tag `v0.13.0` and runs it with this
 tree's `node_modules`. This tree's CLI writes a plugin project first. Then
 each 0.13 writer must refuse and leave the manifest and both locks byte for
-byte. A clone without the tag skips the script.
+byte. A local clone without the tag skips the script. In CI, a missing tag
+fails the script, and the test lane checks out the full history with tags.
 
 ## Read reuse regression coverage
 

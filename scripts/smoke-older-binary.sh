@@ -16,12 +16,21 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/smoke-lib.sh"
 
+# A local clone can lack the tag, so the script skips there. In CI it must
+# run: the test lane checks out with full history and tags, and a missing tag
+# means that checkout is wrong, so the script fails.
 if ! git -C "$ROOT" rev-parse -q --verify 'v0.13.0^{commit}' >/dev/null; then
+  if [ -n "${CI:-}" ]; then
+    echo "smoke-older-binary: tag v0.13.0 is not in this clone, and CI is set." >&2
+    echo "  The CI checkout must fetch tags (actions/checkout with fetch-depth: 0)." >&2
+    exit 1
+  fi
   echo "SKIP smoke-older-binary: tag v0.13.0 is not in this clone"
   exit 0
 fi
 
 TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
 export HOME="$TMP/home"
 export XDG_DATA_HOME="$TMP/xdg"
 export XDG_CONFIG_HOME="$TMP/config"
@@ -166,5 +175,4 @@ expect_refusal "$L" keep-local skills/placeholder --local
 expect_refusal "$L" rm plugins/x --local --yes
 expect_refusal "$L" keep-local plugins/x --local
 
-rm -rf "$TMP"
 echo "✓ smoke-older-binary"
