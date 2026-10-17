@@ -214,30 +214,35 @@ export async function addRemoteSkill(
       )
     : null;
   // A plugin whose manifest names its own directory as a skill (`"skills":
-  // "./"`) installs exactly as it did before this feature: `explicitSubpath`
-  // is the plugin's source *and* one of its own `skillDirs`, so it is not a
-  // plugin *root* in the D5 sense, even though `pluginAtSubpath` found it.
+  // "./"`): `explicitSubpath` is the plugin's source *and* one of its own
+  // `skillDirs`. With a Claude manifest it installs whole (below). With none,
+  // it installs as a skill, as it did before plugins were installable.
   const pluginRootIsAlsoASkill =
     hasExplicitSubpath &&
     (pluginScope?.plugin.skillDirs.includes(explicitSubpath) ?? false);
+  // D3 takes the item name from `.claude-plugin/plugin.json`. Read only for
+  // an install at a plugin root, never for `--list`.
+  const claudeManifest =
+    pluginScope !== null && hasExplicitSubpath && opts.list !== true
+      ? await readClaudePluginManifest(cache.path, commit, explicitSubpath)
+      : null;
+  // A plugin root with a Claude manifest installs whole, even when the
+  // manifest also names the root as one of its own skills: the whole plugin
+  // wins, so its hooks reach the consent prompt. A self-skill root with no
+  // Claude manifest still installs as a skill, below.
   if (
     pluginScope !== null &&
     hasExplicitSubpath &&
     opts.list !== true &&
-    !pluginRootIsAlsoASkill
+    (claudeManifest !== null || !pluginRootIsAlsoASkill)
   ) {
     for (const warning of pluginScope.warnings) {
       console.error(`⚠ ${safe(`${warning.path} ${warning.message}`)}`);
     }
-    // D3 takes the item name from `.claude-plugin/plugin.json`. A plugin with
-    // only a Codex manifest, or only a catalog entry, has no such name, so it
-    // keeps the step 1 refusal.
-    const manifest = await readClaudePluginManifest(
-      cache.path,
-      commit,
-      explicitSubpath,
-    );
-    if (manifest === null) throw pluginRootRefusal(input, pluginScope);
+    // A plugin with only a Codex manifest, or only a catalog entry, has no
+    // Claude manifest name, so it keeps the step 1 refusal.
+    if (claudeManifest === null) throw pluginRootRefusal(input, pluginScope);
+    const manifest = claudeManifest;
     await addWholePlugin({
       project,
       parsed,

@@ -1605,6 +1605,7 @@ capshelf add https://github.com/acme/agent-plugins --list
   install some:  capshelf add https://github.com/acme/agent-plugins
   details:       capshelf add https://github.com/acme/agent-plugins --list --json
   install a whole plugin:  capshelf add <url> --path plugins/<plugin>
+  Codex sees the skills only.
 ```
 
 The `found` line counts only the plugins that hold a skill. A plugin with no

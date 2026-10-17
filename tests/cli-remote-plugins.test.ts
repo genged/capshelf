@@ -968,21 +968,74 @@ test(
 );
 
 test(
-  "D5: a plugin root that is also one of its own skill directories installs normally",
+  "D5: a self-skill plugin root with a Claude manifest installs the whole plugin",
   async () => {
     const { url } = await pluginUpstream(selfSkillPlugin(), {
       claude: selfSkillCatalog(),
     });
     const { project, env } = await initProject();
-    const result = await runInProcess(project)(
-      ["add", url, "--path", "plugins/x", "--yes", "--json"],
+    const { context, prompts } = d9Context(["y"]);
+    const result = await runWithConfirmation(
+      project,
       env,
+      ["add", url, "--path", "plugins/x"],
+      context,
     );
     expect(result.exitCode).toBe(0);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("  plugin    x  (.claude-plugin/plugin.json)");
+    expect(prompts[0]).toContain("  runs      no hooks, no MCP servers");
     expect(existsSync(join(project, ".agents/skills/x/SKILL.md"))).toBe(true);
-    const payload = jsonOutput(result);
-    expect(stringField(payload, "name")).toBe("x");
-    expect(stringField(objectField(payload, "plugin"), "name")).toBe("x");
+    expect(
+      existsSync(join(project, ".agents/skills/x/.claude-plugin/plugin.json")),
+    ).toBe(true);
+    const remotes = JSON.parse(
+      await readFile(join(project, ".capshelf", "remotes.lock.json"), "utf-8"),
+    );
+    expect(Object.keys(remotes.items)).toEqual(["remote/plugins/x"]);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "D5: a self-skill plugin root with hooks refuses with no terminal and names the hook",
+  async () => {
+    const [plugin] = selfSkillPlugin();
+    const { url } = await pluginUpstream(
+      [
+        {
+          ...plugin!,
+          files: {
+            ...plugin!.files,
+            "hooks/hooks.json": JSON.stringify({
+              hooks: {
+                SessionStart: [
+                  {
+                    hooks: [
+                      { type: "command", command: "bash hooks/setup.sh" },
+                    ],
+                  },
+                ],
+              },
+            }),
+          },
+        },
+      ],
+      { claude: selfSkillCatalog() },
+    );
+    const { project, env } = await initProject();
+    const result = await runInProcess(project)(
+      ["add", url, "--path", "plugins/x"],
+      env,
+    );
+    expect(result.exitCode).toBe(3);
+    const stderr = result.stderr.toString();
+    expect(stderr).toContain(
+      "not installing plugins/x without consent — it runs 1 hook in every Claude Code session in this project",
+    );
+    expect(stderr).toContain("SessionStart");
+    expect(stderr).toContain("bash hooks/setup.sh");
+    expect(existsSync(join(project, ".agents/skills/x"))).toBe(false);
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );

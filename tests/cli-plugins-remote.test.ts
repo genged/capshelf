@@ -374,6 +374,46 @@ describe("add <url> --path <plugin root>", () => {
   );
 
   test(
+    "D13: a --list with a plugin says Codex sees the skills only, in text output only",
+    async () => {
+      const codexLine = "  Codex sees the skills only.";
+      const world = await initRemoteProject();
+      const up = await pluginUpstream([gh], {
+        claude: claudeCatalog([{ name: "gh-cli", source: "./plugins/gh-cli" }]),
+      });
+      const run = runInProcess(world.project);
+      const listed = await run(["add", up.url, "--list"], world.env);
+      expect(listed.exitCode).toBe(0);
+      const lines = listed.stdout.toString().split("\n");
+      // Directly under the footer line.
+      const footer = lines.findIndex((l) =>
+        l.includes("install a whole plugin"),
+      );
+      expect(lines[footer + 1]).toBe(codexLine);
+
+      const scoped = await run(
+        ["add", up.url, "--list", "--path", "plugins/gh-cli"],
+        world.env,
+      );
+      expect(scoped.exitCode).toBe(0);
+      expect(scoped.stdout.toString()).toContain(
+        `install a whole plugin:  capshelf add ${up.url} --path plugins/gh-cli`,
+      );
+      expect(scoped.stdout.toString()).toContain(codexLine);
+
+      const json = await run(["add", up.url, "--list", "--json"], world.env);
+      expect(json.exitCode).toBe(0);
+      expect(json.stdout.toString()).not.toContain("Codex sees");
+
+      const skillsOnly = await upstreamWith([["skills/pdf", "PDF tools"]]);
+      const plain = await run(["add", skillsOnly.url, "--list"], world.env);
+      expect(plain.exitCode).toBe(0);
+      expect(plain.stdout.toString()).not.toContain("Codex sees");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "an existing remote skill with the same name refuses with the switch",
     async () => {
       const world = await initRemoteProject();

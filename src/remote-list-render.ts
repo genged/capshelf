@@ -270,7 +270,7 @@ function renderRepositoryList(
   if (elsewhere !== null) lines.push(elsewhere);
   lines.push("");
   if (candidates.length === 0) {
-    lines.push(WHOLE_PLUGIN_LINE);
+    lines.push(WHOLE_PLUGIN_LINE, CODEX_SKILLS_ONLY_LINE);
     return { lines, summaryLength: lines.length };
   }
   const summaryLength = lines.length;
@@ -335,7 +335,7 @@ function renderRepositoryList(
   lines.push(
     `  details:       ${safe(shellCommand([PRODUCT_NAME, "add", url, "--list", "--json"]))}`,
   );
-  lines.push(WHOLE_PLUGIN_LINE);
+  lines.push(WHOLE_PLUGIN_LINE, CODEX_SKILLS_ONLY_LINE);
   return { lines, summaryLength };
 }
 
@@ -345,6 +345,12 @@ function renderRepositoryList(
  * not one plugin.
  */
 const WHOLE_PLUGIN_LINE = `  install a whole plugin:  ${PRODUCT_NAME} add <url> --path plugins/<plugin>`;
+
+/**
+ * Plugin D13: capshelf writes nothing for Codex, so a listing that offers a
+ * whole plugin says what Codex reads from it. Printed under the footer line.
+ */
+const CODEX_SKILLS_ONLY_LINE = "  Codex sees the skills only.";
 
 /**
  * Whether a plugin holds a skill. Every plugin count in the listing uses this
@@ -380,7 +386,7 @@ function renderPluginList(
   lines.push("");
   const wholePluginLine = `  install a whole plugin:  ${safe(shellCommand([PRODUCT_NAME, "add", url, "--path", plugin.source]))}`;
   if (candidates.length === 0) {
-    lines.push(wholePluginLine);
+    lines.push(wholePluginLine, CODEX_SKILLS_ONLY_LINE);
     return { lines, summaryLength: lines.length };
   }
   const summaryLength = lines.length;
@@ -401,7 +407,7 @@ function renderPluginList(
   lines.push(
     `  install one:   ${safe(shellCommand([PRODUCT_NAME, "add", url, "--path", firstSubpath]))}`,
   );
-  lines.push(wholePluginLine);
+  lines.push(wholePluginLine, CODEX_SKILLS_ONLY_LINE);
   return { lines, summaryLength };
 }
 
