@@ -19,7 +19,13 @@ import {
   isCopyTargetFileItemKind,
   isFragmentItemKind,
 } from "./master";
-import { itemOutputTargets, parseLockKey, shaOfInstalled } from "./installed";
+import {
+  installedPath,
+  itemOutputTargets,
+  parseLockKey,
+  shaOfInstalled,
+} from "./installed";
+import { pluginRunCounts } from "./plugin-runs";
 import { findSystemItem, shaOfSystemItem } from "./bundled";
 import type { ItemRef } from "./item-ref";
 import {
@@ -515,10 +521,21 @@ export async function buildStatusReport(
           }))
         : undefined;
 
+    // D11. A plugin row in either shelf scope carries the counts a remote
+    // plugin row carries, read the same way.
+    const runs =
+      kind === "plugins"
+        ? await pluginRunCounts(
+            installedPath(project, kind, itemName, manifest.installMode),
+            sourceCommitPresent === false ? null : tree,
+          )
+        : null;
+
     rows.push(
       buildStatusRow({
         scope: rowScope,
         source,
+        ...(runs !== null && { runs }),
         kind,
         name: itemName,
         entry,

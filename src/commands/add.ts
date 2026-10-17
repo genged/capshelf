@@ -128,6 +128,10 @@ import {
 } from "../bundle-install";
 import type { BundlePlan, MemberPlan } from "../bundle-install";
 import { formatDeclaredNeeds } from "../needs-format";
+import { confirmPluginConsent } from "../plugin-consent";
+import type { PluginConsentPoint } from "../plugin-consent";
+import { pluginRunsAtCommit } from "../plugin-runs";
+import type { PluginRuns } from "../plugin-runs";
 import {
   assertSubagentOutputAvailable,
   currentSubagentSources,
@@ -329,7 +333,7 @@ async function addOne(
     );
   }
 
-  const consent = await approveFragmentPin(ctx, item, {
+  const consent = await approveAddPin(ctx, item, {
     json: opts.json === true,
     yes: opts.yes === true,
   });
@@ -1058,6 +1062,34 @@ async function addBundle(
     throw new ResultExitError(3);
   }
 
+  // D7 points 1 and 3 reach a bundle member too, or a plugin with hooks would
+  // install unasked through the bundle that holds it. One prompt covers every
+  // plugin member, and each member installs the pin its runs were read from.
+  const pluginPins = new Map<string, PinnedSource>();
+  const pluginPoints: PluginConsentPoint[] = [];
+  for (const member of plan.members) {
+    if (member.status !== "install" || member.kind !== "plugins") continue;
+    const pin = await pinCurrentSource(ctx.dataRepo, member.kind, member.name, {
+      memo: ctx.memo,
+    });
+    pluginPins.set(member.ref, pin);
+    pluginPoints.push(
+      ...shelfPluginAddPoints(
+        member.name,
+        await pluginRunsAtCommit(ctx.dataRepo, pin.entries),
+        ctx.local,
+      ),
+    );
+  }
+  if (
+    !(await confirmPluginConsent(pluginPoints, {
+      json: opts.json === true,
+      yes: opts.yes === true,
+    }))
+  ) {
+    return;
+  }
+
   // Bundles are the recommended entry point (`capshelf init` suggests
   // `capshelf add bundles/<name>`), so the consent boundary has to be reached
   // here too. Without this, the same fragment destruction was gated for
@@ -1105,8 +1137,10 @@ async function addBundle(
       if (!item) throw new Error(`expected master item for ${member.ref}`);
       // A bundle's write window is the longest one there is — every member
       // installs after one shared revalidation — so each fragment member
-      // installs the exact tree its own preflight approved.
-      const approved = revalidated.pins.get(member.ref);
+      // installs the exact tree its own preflight approved, and each plugin
+      // member the tree its consent covered.
+      const approved =
+        revalidated.pins.get(member.ref) ?? pluginPins.get(member.ref);
       return installDataItem(ctx, item, {
         enforceRelations: false,
         memo: ctx.memo,
@@ -1276,7 +1310,7 @@ export async function runInteractiveAdd(request: {
 
       // The same consent gate a named `add` reaches. A fragment picked from
       // a list can destroy a config comment exactly as one typed by hand.
-      const consent = await approveFragmentPin(ctx, item, {
+      const consent = await approveAddPin(ctx, item, {
         json: false,
         yes: opts.yes === true,
       });
@@ -1355,17 +1389,34 @@ function systemItemAddRefusal(name: string): string {
 }
 
 /**
- * The fragment consent gate both entry points into `installDataItem` run: a
- * fragment picked from a list can destroy a config comment exactly as one
- * typed by hand. Preflight, confirm, then re-plan and prove the plan
- * unchanged — the consent was for the plan the user saw. A non-fragment item
- * has no gate and proceeds with no pin.
+ * The consent gates both entry points into `installDataItem` run, and the
+ * pin each gate approved.
+ *
+ * A fragment picked from a list can destroy a config comment exactly as one
+ * typed by hand: preflight, confirm, then re-plan and prove the plan
+ * unchanged — the consent was for the plan the user saw.
+ *
+ * A plugin asks before it installs commands (D7 points 1 and 3). The pin the
+ * runs were read from travels to `installDataItem`, so the tree the user
+ * approved is the tree that gets written. Any other item has no gate and
+ * proceeds with no pin.
  */
-async function approveFragmentPin(
+async function approveAddPin(
   ctx: Awaited<ReturnType<typeof loadAddContext>>,
   item: MasterItem,
   opts: { json: boolean; yes: boolean },
 ): Promise<{ proceed: boolean; pin: PinnedSource | null }> {
+  if (item.kind === "plugins") {
+    const pin = await pinCurrentSource(ctx.dataRepo, item.kind, item.name, {
+      memo: ctx.memo,
+    });
+    const points = shelfPluginAddPoints(
+      item.name,
+      await pluginRunsAtCommit(ctx.dataRepo, pin.entries),
+      ctx.local,
+    );
+    return { proceed: await confirmPluginConsent(points, opts), pin };
+  }
   if (!isFragmentItemKind(item.kind)) return { proceed: true, pin: null };
   const preflight = await planStandaloneFragmentAdd(ctx, item);
   if (
@@ -1382,6 +1433,22 @@ async function approveFragmentPin(
   const revalidated = await planStandaloneFragmentAdd(ctx, item);
   assertDestructivePlanUnchanged(preflight.plan, revalidated.plan);
   return { proceed: true, pin: revalidated.pin };
+}
+
+/**
+ * D7 point 1 for every shelf plugin add, and point 3 when the add writes
+ * project scope, the default for a shelf add. The two go in one prompt.
+ */
+function shelfPluginAddPoints(
+  name: string,
+  runs: PluginRuns,
+  local: boolean,
+): PluginConsentPoint[] {
+  const ref = `plugins/${name}`;
+  return [
+    { kind: "install", ref, runs },
+    ...(local ? [] : [{ kind: "project-scope" as const, ref, runs }]),
+  ];
 }
 
 /**

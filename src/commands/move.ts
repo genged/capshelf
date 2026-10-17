@@ -27,10 +27,15 @@ import { moveScope } from "../move-scope";
 import type { MoveScopeResult, Scope } from "../promote-core";
 import { loadRemotesLock } from "../remotes-lock";
 import { assertSkillTargetFree } from "../skill-target";
+import { gitTreeSource } from "../item-source";
+import { itemTreeEntriesAtCommit } from "../pin";
+import { confirmPluginConsent } from "../plugin-consent";
+import { pluginRunsAtCommit } from "../plugin-runs";
 
 interface MoveOptions {
   to?: string;
   json?: boolean;
+  yes?: boolean;
 }
 
 export function registerMove(program: Command): void {
@@ -38,6 +43,10 @@ export function registerMove(program: Command): void {
     .command("move <item>")
     .description("change the scope of an already-tracked data item")
     .requiredOption("--to <scope>", "destination scope: local or project")
+    .option(
+      "--yes",
+      "authorize the commands a plugin runs in project scope without prompting",
+    )
     .option("--json", "output JSON")
     .addHelpText(
       "after",
@@ -117,6 +126,33 @@ export function registerMove(program: Command): void {
           localConfig,
         },
       );
+
+      // D7 point 3, after `moveScope` refused drift and before any save: the
+      // pinned tree is then what the installed folder holds, and what every
+      // teammate gets from the committed lock.
+      if (
+        !result.alreadyCurrent &&
+        result.to === "project" &&
+        result.kind === "plugins"
+      ) {
+        const runs = await pluginRunsAtCommit(
+          dataRepo,
+          await itemTreeEntriesAtCommit(
+            gitTreeSource({
+              repo: dataRepo,
+              kind: result.kind,
+              name: result.name,
+              commit: result.sourceCommit,
+            }),
+            result.kind,
+          ),
+        );
+        const approved = await confirmPluginConsent(
+          [{ kind: "project-scope", ref: `plugins/${result.name}`, runs }],
+          { json: opts.json === true, yes: opts.yes === true },
+        );
+        if (!approved) return;
+      }
 
       if (!result.alreadyCurrent) {
         if (result.to === "project") {

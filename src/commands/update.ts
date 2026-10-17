@@ -119,6 +119,7 @@ import { beginInstalledReconciliation } from "../promote-transaction";
 import { remoteCacheState } from "../remote-cache";
 import { candidateAtSubpath, remoteTreeSource } from "../remote-discovery";
 import {
+  pluginChange,
   previewRemoteUpdate,
   remoteEntryAsDataEntry,
   updateMergeRemoteTarget,
@@ -141,7 +142,8 @@ import type {
 import { factsWarnOnInstall, renderPluginFacts } from "../remote-list-render";
 import { assertSkillTargetFree } from "../skill-target";
 import { sanitizeDisplayText } from "../pick-core";
-import { newPluginRunsField } from "../plugin-consent";
+import { confirmPluginConsent, newPluginRunsField } from "../plugin-consent";
+import type { PluginConsentPoint } from "../plugin-consent";
 import { runsHaveEntries } from "../plugin-runs";
 import type { PluginRuns } from "../plugin-runs";
 
@@ -187,7 +189,7 @@ interface UpdateResult {
   mergeResultSha?: string;
   mergeBase?: string;
   mergedUpstreamCommit?: string;
-  /** A remote plugin dry run: the runs entries the real run would ask about. */
+  /** A plugin dry run: the runs entries the real run would ask about. */
   newRuns?: PluginRuns;
 }
 
@@ -339,16 +341,59 @@ export function registerUpdate(program: Command): void {
         }
         if (opts.merge) {
           if (!dataRepo) throw new PreconditionError("data repo is required");
-          const result = await updateMergeTarget({
+          const target = targets[0]!;
+          // D3 and D7 point 2 take the merge's new tree too, before
+          // `updateMergeTarget` writes anything.
+          const mergeItem = parseLockKey(target.key);
+          const mergeEntry = (
+            target.scope === "local" ? writableLocalLock : writableProjectLock
+          ).items[target.key];
+          const mergeRuns =
+            mergeItem.kind === "plugins" &&
+            mergeEntry?.source === "data" &&
+            mergeEntry.local !== true
+              ? await shelfPluginNewRuns(
+                  dataRepo,
+                  mergeItem.name,
+                  mergeEntry,
+                  new GitReadMemo(),
+                )
+              : null;
+          const mergePoints: PluginConsentPoint[] =
+            mergeRuns === null
+              ? []
+              : [
+                  {
+                    kind: "pin-move",
+                    ref: `plugins/${mergeItem.name}`,
+                    runs: mergeRuns,
+                  },
+                ];
+          if (
+            !(await confirmPluginConsent(mergePoints, {
+              json: opts.json === true,
+              yes: opts.yes === true,
+              dryRun: opts.dryRun === true,
+            }))
+          ) {
+            return;
+          }
+          const merged = await updateMergeTarget({
             project,
             manifest,
             dataRepo,
-            target: targets[0]!,
+            target,
             projectLock: writableProjectLock,
             localLock: writableLocalLock,
             remotes,
             dryRun: opts.dryRun === true,
           });
+          const result =
+            opts.dryRun === true &&
+            mergeRuns !== null &&
+            runsHaveEntries(mergeRuns)
+              ? { ...merged, newRuns: mergeRuns }
+              : merged;
           printUpdateOutput({
             project,
             dataRepo,
@@ -443,6 +488,16 @@ export function registerUpdate(program: Command): void {
             );
           }
           throw new ResultExitError(1);
+        }
+        // D7 point 2 before the loss prompt. Both answers are needed before
+        // any write, and `--yes` answers both.
+        if (
+          !(await confirmPluginConsent(
+            preflight.results.flatMap(pinMovePoints),
+            { json: opts.json === true, yes: opts.yes === true },
+          ))
+        ) {
+          return;
         }
         if (
           !(await confirmDestructiveChanges(preflight.destructivePlan, {
@@ -1703,6 +1758,17 @@ async function updateOneTarget(
 ): Promise<TargetOutcome> {
   const { scope, key } = target;
   const parsed = parseLockKey(key);
+  const failed = (cause: unknown): TargetOutcome => ({
+    result: {
+      key,
+      scope,
+      source: parsed.source,
+      kind: parsed.kind,
+      name: parsed.name,
+      action: "error",
+      error: cause instanceof Error ? cause.message : String(cause),
+    },
+  });
   if (
     installsAtSkillTarget(parsed.kind) &&
     ctx.externalSkillByName.has(parsed.name)
@@ -1748,36 +1814,98 @@ async function updateOneTarget(
       );
     } catch (err) {
       if (ctx.explicit) throw err;
-      return {
-        result: {
-          key,
-          scope,
-          source: parsed.source,
-          kind: parsed.kind,
-          name: parsed.name,
-          action: "error",
-          error: err instanceof Error ? err.message : String(err),
-        },
-      };
+      return failed(err);
+    }
+  }
+  // D3 and D7 point 2, outside the per-item `try` for the reason the check
+  // above gives: an explicit `update plugins/<n>` whose new tree renames the
+  // plugin refuses with exit 3, before any write.
+  let newRuns: PluginRuns | null = null;
+  if (
+    parsed.kind === "plugins" &&
+    entry.source === "data" &&
+    entry.local !== true &&
+    ctx.dataRepo !== undefined
+  ) {
+    try {
+      newRuns = await shelfPluginNewRuns(
+        ctx.dataRepo,
+        parsed.name,
+        entry,
+        ctx.memo,
+      );
+    } catch (err) {
+      if (ctx.explicit) throw err;
+      return failed(err);
     }
   }
   try {
-    return entry.source === "data"
-      ? await updateDataTarget(ctx, scope, key, parsed, entry)
-      : await updateSystemTarget(ctx, scope, key, parsed, entry);
+    const outcome =
+      entry.source === "data"
+        ? await updateDataTarget(ctx, scope, key, parsed, entry)
+        : await updateSystemTarget(ctx, scope, key, parsed, entry);
+    // A dry pass carries what the real run asks about. The preflight is a
+    // dry pass, so the command reads the consent points from these rows.
+    if (ctx.dryRun && newRuns !== null && runsHaveEntries(newRuns)) {
+      outcome.result.newRuns = newRuns;
+    }
+    return outcome;
   } catch (err) {
-    return {
-      result: {
-        key,
-        scope,
-        source: parsed.source,
-        kind: parsed.kind,
-        name: parsed.name,
-        action: "error",
-        error: err instanceof Error ? err.message : String(err),
-      },
-    };
+    return failed(err);
   }
+}
+
+/**
+ * The runs entries a shelf plugin's pin move adds (D7 point 2). Null when
+ * the pin would not move, or when the new pin cannot be built:
+ * `updateDataTarget` reports that failure itself. Throws the D3 refusal when
+ * the new tree's manifest names another plugin.
+ *
+ * Only an added entry asks. A script that changes behind an unchanged hook
+ * line is not a new entry (D7 limit, M2).
+ */
+async function shelfPluginNewRuns(
+  dataRepo: string,
+  name: string,
+  entry: DataLockEntryV4,
+  memo: GitReadMemo,
+): Promise<PluginRuns | null> {
+  const next = await pinCurrentSource(dataRepo, "plugins", name, {
+    memo,
+  }).catch(() => null);
+  if (next === null) return null;
+  if (
+    next.sourcePinDigest === entryIdentity(entry) &&
+    next.sourceCommit === entry.sourceCommit
+  ) {
+    return null;
+  }
+  // PIN-8: an unreadable old pin compares against a tree with no files, so
+  // the new tree's entries count as new and the update asks.
+  const previous = await itemTreeEntriesAtCommit(
+    gitTreeSource({
+      repo: dataRepo,
+      kind: "plugins",
+      name,
+      commit: entry.sourceCommit,
+    }),
+    "plugins",
+    memo,
+  ).catch(() => []);
+  return (await pluginChange(dataRepo, name, previous, next.entries)).newRuns;
+}
+
+/** A shelf row's new runs as a D7 point 2 consent point. */
+function pinMovePoints(result: UpdateResult): PluginConsentPoint[] {
+  return result.source === "data" && result.newRuns !== undefined
+    ? [
+        {
+          kind: "pin-move",
+          ref: `${result.kind}/${result.name}`,
+          runs: result.newRuns,
+        },
+      ]
+    : [];
 }
 
 async function updateDataTarget(

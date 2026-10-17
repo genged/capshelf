@@ -5,12 +5,9 @@
  * left behind and the record in `.capshelf/remotes.lock.json`; `status
  * --check-upstream` is the one path that fetches, and it lives beside this.
  */
-import { existsSync } from "node:fs";
 import { describeInstallation, isTreePinned } from "./install-identity";
 import { installedPath } from "./installed";
-import { PLUGIN_MANIFEST_REL } from "./master";
-import { pluginRunsAtCommit, pluginRunsOnDisk } from "./plugin-runs";
-import type { PluginRuns } from "./plugin-runs";
+import { pluginRunCounts } from "./plugin-runs";
 import type { Lock } from "./lock";
 import { dataKey } from "./lock";
 import {
@@ -150,45 +147,19 @@ async function buildRemoteRow(
   });
 }
 
-/**
- * The counts D11 reports for a plugin row. The installed tree when the folder
- * exists: for a clean row it equals the pinned tree, and for a drifted row it
- * is what Claude Code loads. The pinned tree when the folder is missing. With
- * neither readable, the manifest is reported as unread rather than as a
- * plugin that runs nothing (D6).
- */
+/** D11 for a remote plugin row: the clone cache holds the pinned tree. */
 async function remotePluginRuns(
   project: string,
   name: string,
   entry: RemoteLockEntry,
 ): Promise<StatusRowRuns> {
-  const path = installedPath(project, "plugins", name);
-  const runs = existsSync(path)
-    ? await pluginRunsOnDisk(path)
-    : await pinnedPluginRuns(entry);
-  return {
-    hooks: runs.hooks.length,
-    mcpServers: runs.mcpServers.length,
-    unknown: runs.unknown,
-  };
-}
-
-async function pinnedPluginRuns(entry: RemoteLockEntry): Promise<PluginRuns> {
   const cache = remoteCacheState(entry.upstream);
-  const entries = cache.present
-    ? await itemTreeEntriesAtCommit(
-        remoteTreeSource(cache.path, entry.sourceCommit, entry.subpath),
-        "plugins",
-      ).catch(() => null)
-    : null;
-  if (entries === null) {
-    return {
-      hooks: [],
-      mcpServers: [],
-      unknown: [`${PLUGIN_MANIFEST_REL} could not be read`],
-    };
-  }
-  return await pluginRunsAtCommit(cache.path, entries);
+  return await pluginRunCounts(
+    installedPath(project, "plugins", name),
+    cache.present
+      ? remoteTreeSource(cache.path, entry.sourceCommit, entry.subpath)
+      : null,
+  );
 }
 
 interface UpstreamFacts {

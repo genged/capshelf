@@ -7,7 +7,11 @@
  * because this text is the one gate before third-party code runs with the
  * user's permissions.
  */
+import { confirmationContext } from "./destructive-change";
+import { PreconditionError } from "./errors";
+import { PRODUCT_NAME } from "./identity";
 import { PLUGIN_MANIFEST_REL } from "./master";
+import { runsHaveEntries } from "./plugin-runs";
 import type { PluginRunHook, PluginRuns, PluginRunServer } from "./plugin-runs";
 import { formatBytes, plural, safe } from "./remote-list-render";
 
@@ -156,6 +160,207 @@ export function pluginConsentReason(runs: PluginRuns): string {
     return "capshelf could not read everything it runs";
   }
   return "capshelf does not review this content, and your agent runs it with your permissions";
+}
+
+/**
+ * One write that puts a plugin's commands in reach of Claude Code (D7).
+ * `install` and `project-scope` carry everything the plugin runs; `pin-move`
+ * carries only the entries the new tree adds.
+ */
+export interface PluginConsentPoint {
+  kind: "install" | "pin-move" | "project-scope";
+  /** `plugins/<name>`. */
+  ref: string;
+  runs: PluginRuns;
+}
+
+export interface PluginConsentOptions {
+  yes?: boolean;
+  json?: boolean;
+  dryRun?: boolean;
+}
+
+/**
+ * Asks once for every point that has an entry (D7, M2). Returns true when
+ * the write may go on: no point has an entry, `--yes` is set, the user
+ * answered yes, or this is a dry run (the caller reports the points as
+ * `would ask`). Returns false when the user answered no. With `--json` or no
+ * terminal, and no `--yes`, it refuses with exit 3.
+ *
+ * A point with an empty runs set asks nothing, but a non-empty `unknown`
+ * list always asks: a declaration the reader could not read is not proof
+ * that the plugin runs nothing (D6).
+ */
+export async function confirmPluginConsent(
+  points: readonly PluginConsentPoint[],
+  opts: PluginConsentOptions,
+): Promise<boolean> {
+  const asking = points.filter((point) => runsHaveEntries(point.runs));
+  const [first] = asking;
+  if (first === undefined || opts.dryRun === true) return true;
+  const lines = consentLines(asking);
+  if (opts.yes === true) {
+    // `--yes` skips the question, so what the write authorizes goes to
+    // stderr, where `--json` cannot see it. A `--yes` remote add does the
+    // same.
+    for (const line of lines) console.error(line);
+    return true;
+  }
+  const words = consentWords(first, asking);
+  const context = confirmationContext();
+  if (opts.json === true || !context.stdinIsTTY || !context.stderrIsTTY) {
+    const refs = [...new Set(asking.map((point) => point.ref))];
+    const shows = refs
+      .map((ref) => `${PRODUCT_NAME} show ${safe(ref)}`)
+      .join(", ");
+    throw new PreconditionError(
+      `not ${words.verb} ${refs.map(safe).join(", ")}${words.target} without consent — ${words.reason}`,
+      {
+        // The error boundary indents the first hint line itself.
+        hint: [
+          ...lines,
+          `  review it first, then authorize with --yes. See what it runs: ${shows}`,
+        ]
+          .join("\n")
+          .replace(/^ {2}/, ""),
+      },
+    );
+  }
+  const answer = await context.prompt(
+    `${lines.join("\n")}\n${words.question} [y/N] `,
+  );
+  if (/^(y|yes)$/i.test(answer.trim())) return true;
+  context.stderr.write(`${words.cancelled}\n`);
+  return false;
+}
+
+/**
+ * The block a consent point shows. Point 3 repeats no runs list when point 1
+ * for the same plugin already shows one: one prompt, one list.
+ */
+function consentLines(points: readonly PluginConsentPoint[]): string[] {
+  const listed = new Set(
+    points
+      .filter((point) => point.kind !== "project-scope")
+      .map((point) => point.ref),
+  );
+  const lines = points.flatMap((point) => pointLines(point, listed));
+  return points.some((point) => point.kind !== "project-scope")
+    ? [
+        ...lines,
+        "",
+        "  capshelf does not review this content. Your agent runs it with your permissions.",
+      ]
+    : lines;
+}
+
+function pointLines(
+  point: PluginConsentPoint,
+  listed: ReadonlySet<string>,
+): string[] {
+  if (point.kind === "project-scope") {
+    return [
+      ...(listed.has(point.ref)
+        ? []
+        : [`  ${safe(point.ref)} ${runsSummary(point.runs)}.`]),
+      ...teammateLines(point.runs),
+    ];
+  }
+  return [
+    `  plugin    ${safe(point.ref)}`,
+    ...(point.kind === "install"
+      ? pluginRunsField(point.runs)
+      : newPluginRunsField("runs", point.runs)),
+  ];
+}
+
+/** D7 point 3: what project scope means for a plugin's commands (R2, R3). */
+function teammateLines(runs: PluginRuns): string[] {
+  const subject =
+    runs.hooks.length > 0 && runs.mcpServers.length > 0
+      ? "The hooks and MCP servers"
+      : runs.hooks.length > 0
+        ? "The hooks"
+        : runs.mcpServers.length > 0
+          ? "The MCP servers"
+          : "Its commands";
+  return [
+    `  project scope commits it. ${subject} then run in every teammate's`,
+    "  Claude Code session after they trust this workspace.",
+  ];
+}
+
+/** `5 hooks`, `1 hook and 1 MCP server`, or null when it counts neither. */
+function runsCounts(runs: PluginRuns): string | null {
+  const parts = [
+    ...(runs.hooks.length > 0
+      ? [`${runs.hooks.length} ${plural(runs.hooks.length, "hook")}`]
+      : []),
+    ...(runs.mcpServers.length > 0
+      ? [
+          `${runs.mcpServers.length} MCP ${plural(runs.mcpServers.length, "server")}`,
+        ]
+      : []),
+  ];
+  return parts.length > 0 ? parts.join(" and ") : null;
+}
+
+/** `runs 5 hooks`, or the unknown case. */
+function runsSummary(runs: PluginRuns): string {
+  const counts = runsCounts(runs);
+  return counts === null
+    ? "runs commands that capshelf could not read"
+    : `runs ${counts}`;
+}
+
+interface ConsentWords {
+  verb: string;
+  target: string;
+  reason: string;
+  question: string;
+  cancelled: string;
+}
+
+/**
+ * The refusal, the question, and the cancel line, chosen by the write the
+ * points belong to: an update moves a pin, an add installs, and a move
+ * commits to the project.
+ */
+function consentWords(
+  first: PluginConsentPoint,
+  points: readonly PluginConsentPoint[],
+): ConsentWords {
+  const pinMove = points.find((point) => point.kind === "pin-move");
+  if (pinMove !== undefined) {
+    const counts = runsCounts(pinMove.runs);
+    return {
+      verb: "updating",
+      target: "",
+      reason:
+        counts === null
+          ? "capshelf could not read everything the new tree runs"
+          : `the new tree adds ${counts}`,
+      question: "Move the pin?",
+      cancelled: "Update cancelled; no changes were written.",
+    };
+  }
+  const install = points.find((point) => point.kind === "install");
+  if (install !== undefined) {
+    return {
+      verb: "installing",
+      target: "",
+      reason: pluginConsentReason(install.runs),
+      question: "Install it?",
+      cancelled: "Add cancelled; nothing was installed.",
+    };
+  }
+  return {
+    verb: "moving",
+    target: " to project scope",
+    reason: `project scope commits it, and it ${runsSummary(first.runs)} in every teammate's Claude Code session after they trust this workspace`,
+    question: "Commit it to the project?",
+    cancelled: "Move cancelled; no changes were written.",
+  };
 }
 
 function hookCells(hook: PluginRunHook): string[] {

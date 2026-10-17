@@ -13,6 +13,7 @@ import type { ItemNeeds } from "./metadata";
 import type { InstallationAxis } from "./install-identity";
 import type { InstallDifference } from "./install-diff";
 import type { FilteredPath } from "./pin";
+import type { PluginRunCounts } from "./plugin-runs";
 import type {
   TargetCoverageFields,
   TargetCoverageJson,
@@ -88,11 +89,7 @@ export interface RemoteRowFacts {
  * What a plugin runs with no request from the agent, as counts (spec D11).
  * `unknown` lists each declaration the reader could not read.
  */
-export interface StatusRowRuns {
-  hooks: number;
-  mcpServers: number;
-  unknown: string[];
-}
+export type StatusRowRuns = PluginRunCounts;
 
 export interface StatusRow {
   scope: "project" | "local";

@@ -12,6 +12,7 @@
  * `pluginRunsAtCommit` reads blobs from a pinned Git tree, `pluginRunsOnDisk`
  * reads files from an installed directory.
  */
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
@@ -23,7 +24,9 @@ import {
 } from "./config-values";
 import { lstatOrNull } from "./fs-utils";
 import { catFileBlobs } from "./git";
+import type { GitTreeSource } from "./item-source";
 import { PLUGIN_MANIFEST_REL } from "./master";
+import { itemTreeEntriesAtCommit } from "./pin";
 import type { PinTreeEntry } from "./pin";
 import { normalizeCatalogPath } from "./plugin-discovery";
 
@@ -498,4 +501,49 @@ export async function pluginRunsOnDisk(dir: string): Promise<PluginRuns> {
     return info !== null && info !== undefined && !info.isFile();
   });
   return runs;
+}
+
+/** What a plugin status row reports: counts, and each unread source (D11). */
+export interface PluginRunCounts {
+  hooks: number;
+  mcpServers: number;
+  unknown: string[];
+}
+
+/**
+ * The counts D11 reports for a plugin row, shelf or remote. The installed
+ * tree when the folder exists: for a clean row it equals the pinned tree,
+ * and for a drifted row it is what Claude Code loads. The pinned tree when
+ * the folder is missing. With neither readable, the manifest is reported as
+ * unread rather than as a plugin that runs nothing (D6).
+ */
+export async function pluginRunCounts(
+  installedDir: string,
+  pinned: GitTreeSource | null,
+): Promise<PluginRunCounts> {
+  const runs = existsSync(installedDir)
+    ? await pluginRunsOnDisk(installedDir)
+    : await pinnedPluginRuns(pinned);
+  return {
+    hooks: runs.hooks.length,
+    mcpServers: runs.mcpServers.length,
+    unknown: runs.unknown,
+  };
+}
+
+async function pinnedPluginRuns(
+  pinned: GitTreeSource | null,
+): Promise<PluginRuns> {
+  const entries =
+    pinned === null
+      ? null
+      : await itemTreeEntriesAtCommit(pinned, "plugins").catch(() => null);
+  if (pinned === null || entries === null) {
+    return {
+      hooks: [],
+      mcpServers: [],
+      unknown: [unknownEntry(PLUGIN_MANIFEST_REL)],
+    };
+  }
+  return await pluginRunsAtCommit(pinned.repo, entries);
 }

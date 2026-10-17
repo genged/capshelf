@@ -326,25 +326,26 @@ export async function previewRemoteUpdate(opts: {
  *
  * `previewRemoteUpdate` is the one producer of the pin that `updateRemoteItem`
  * and `updateMergeRemoteTarget` write, and the dry run reads the same
- * preview, so this one check covers every update path.
+ * preview, so this one check covers every remote update path. The shelf
+ * `update` calls it with the data repo for a `data/plugins/<n>` pin move.
  */
-async function pluginChange(
-  cachePath: string,
+export async function pluginChange(
+  repo: string,
   name: string,
   before: readonly PinTreeEntry[],
   after: readonly PinTreeEntry[],
 ): Promise<RemotePluginChange> {
   const [manifestBefore, manifestAfter] = await Promise.all([
-    pluginManifestAt(cachePath, before),
-    pluginManifestAt(cachePath, after),
+    pluginManifestAt(repo, before),
+    pluginManifestAt(repo, after),
   ]);
   const renamedTo = manifestString(manifestAfter, "name");
   if (renamedTo !== name) {
     throw pluginRenameRefusal(name, renamedTo);
   }
   const [runsBefore, runsAfter] = await Promise.all([
-    pluginRunsAtCommit(cachePath, before),
-    pluginRunsAtCommit(cachePath, after),
+    pluginRunsAtCommit(repo, before),
+    pluginRunsAtCommit(repo, after),
   ]);
   return {
     versionFrom: manifestString(manifestBefore, "version"),
