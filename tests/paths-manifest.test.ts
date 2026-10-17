@@ -298,6 +298,7 @@ describe("legacy root layout fallback", () => {
     expect(await loadManifest(project)).toEqual({
       installMode: "claude-only",
       skills: ["hello"],
+      plugins: [],
       settings: [],
       mcp: [],
       codexConfig: [],
@@ -373,6 +374,7 @@ describe("manifest commands migration", () => {
     expect(emptyManifest()).toEqual({
       installMode: "codex-compatible",
       skills: [],
+      plugins: [],
       settings: [],
       mcp: [],
       codexConfig: [],
@@ -506,6 +508,7 @@ describe("manifest commands migration", () => {
       installMode: "claude-only",
       dataRepoUpstream: "https://github.com/mg/agent-shared",
       skills: ["hello"],
+      plugins: [],
       settings: [],
       mcp: [],
       codexConfig: [],

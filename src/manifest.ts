@@ -43,7 +43,7 @@ export const ManifestSchema = z
       ),
     dataRepo: z.never().optional(),
     skills: itemNameArray,
-    plugins: itemNameArray.optional(),
+    plugins: itemNameArray,
     commands: z.array(z.string()).optional(),
     settings: itemNameArray,
     mcp: itemNameArray,
