@@ -125,6 +125,7 @@ for args in \
   "rm skills/placeholder --yes" \
   "update" \
   "apply" \
+  "move skills/placeholder --to local" \
   "move plugins/x --to local" \
   "promote skills/placeholder -m smoke" \
   "keep-local skills/placeholder" \

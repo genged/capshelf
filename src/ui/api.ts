@@ -21,7 +21,7 @@ import {
 } from "../git";
 import { installedPath, parseLockKey } from "../installed";
 import { findMasterItemByRef, parseItemRef } from "../item-ref";
-import { entryIdentity, loadLocalLock, loadLock } from "../lock";
+import { entryIdentity, LOCK_VERSION, loadLocalLock, loadLock } from "../lock";
 import type { Lock } from "../lock";
 import { loadRemotesLock } from "../remotes-lock";
 import type { RemotesLock } from "../remotes-lock";
@@ -280,7 +280,10 @@ export function createUiApi(ctx: UiContext): UiApi {
       if (dataRepo === null) {
         notices.push(noDataRepoNotice(manifest));
       }
-      if (projectLock.version < 4 || localLock.version < 4) {
+      if (
+        projectLock.version < LOCK_VERSION ||
+        localLock.version < LOCK_VERSION
+      ) {
         notices.push(legacyLockNotice(projectLock.version, localLock.version));
       }
 
@@ -619,7 +622,9 @@ function legacyLockNotice(
 ): UiNotice {
   const versions = [
     `project lock version ${projectVersion}`,
-    ...(localVersion < 4 ? [`local lock version ${localVersion}`] : []),
+    ...(localVersion < LOCK_VERSION
+      ? [`local lock version ${localVersion}`]
+      : []),
   ];
   return {
     level: "warn",
@@ -627,11 +632,11 @@ function legacyLockNotice(
     actions: [
       {
         command: "capshelf lock migrate --dry-run",
-        purpose: "Preview the migration to lock version 4.",
+        purpose: `Preview the migration to lock version ${LOCK_VERSION}.`,
       },
       {
         command: "capshelf lock migrate",
-        purpose: "Convert both locks to version 4 in one transaction.",
+        purpose: `Convert both locks to version ${LOCK_VERSION} in one transaction.`,
       },
     ],
   };

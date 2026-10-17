@@ -394,6 +394,28 @@ describe("capshelf ui server", () => {
       expect(status.body.notices[0]?.actions?.[0]?.command).toBe(
         "capshelf lock migrate --dry-run",
       );
+      expect(status.body.notices[0]?.actions?.[0]?.purpose).toBe(
+        "Preview the migration to lock version 5.",
+      );
+    } finally {
+      await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+    }
+  });
+
+  test("a version 4 lock produces a migration notice too", async () => {
+    const lockPath = join(world.project, ".capshelf", "capshelf.lock.json");
+    const lock = await readJsonObject(lockPath);
+    await writeFile(
+      lockPath,
+      `${JSON.stringify({ ...lock, version: 4 }, null, 2)}\n`,
+    );
+    try {
+      const status = await get<UiProjectStatus>("/api/project/status", {
+        project: world.project,
+      });
+      expect(status.status).toBe(200);
+      expect(status.body.lockVersion).toBe(4);
+      expect(status.body.notices[0]?.message).toMatch(/legacy lock/);
     } finally {
       await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
     }

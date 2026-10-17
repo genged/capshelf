@@ -669,8 +669,17 @@ A plugin installs where a skill installs. In the default layout that is
 `.agents/skills/<name>/` with the `.claude/skills/<name>` symlink. In a
 `--claude-only` project it is `.claude/skills/<name>/`. Claude Code loads
 that directory as `<name>@skills-dir` in a trusted workspace. It then calls
-the plugin's skills `<name>:<skill>` and its agents `<name>:<agent>`. Codex
-sees the skills only. Capshelf writes no Claude or Codex setting, cache, or
+the plugin's skills `<name>:<skill>` and its agents `<name>:<agent>`. Every
+`add` of a plugin, from the shelf or from a URL, prints that name:
+
+```text
+✓ added project/data/plugins/gh-cli @ d86663c945b8
+  source commit: 7410c7e8e3ba6aa84a6838fee305969915d5f142
+  /home/mg/code/my-app/.agents/skills/gh-cli
+  Claude Code loads it as gh-cli@skills-dir in a trusted workspace
+```
+
+Codex sees the skills only. Capshelf writes no Claude or Codex setting, cache, or
 catalog to make a plugin load.
 
 Plugins have the same lifecycle as skills, in project scope or local scope:
@@ -740,12 +749,12 @@ matcher, and each MCP server with its name and its command:
             These hooks run in every Claude Code session in this project.
 ```
 
-A plugin that runs nothing shows `runs      no hooks, no MCP servers`. The
-reader does not guess. Some declarations cannot be read: a file that does
+A plugin that runs nothing shows `runs      no hooks, no MCP servers`.
+Capshelf does not guess. Some declarations cannot be read: a file that does
 not parse, a manifest path outside the plugin, or a symlinked default file.
 Each one shows as `unknown: <path> could not be read`. An unknown entry
-never reads as "no hooks". Capshelf does not evaluate a command, and it does not claim
-that the list is complete. It shows what it read.
+never reads as "no hooks". Capshelf does not evaluate a command, and it does
+not claim that the list is complete. It shows what it read.
 
 #### Consent for a plugin
 
@@ -802,7 +811,7 @@ does not apply to it.
 `update --merge` of a shelf plugin cannot take `--yes` for point 2. If the
 merge adds an entry, run it in a terminal and answer the prompt. To take the
 new tree without your local edits, run `capshelf update plugins/<name> --yes`
-with no `--merge`.
+with no `--merge` (with `--local` for a local-scope plugin).
 
 A new tree whose `plugin.json` gives a different name refuses before any
 write. This applies to `update`, `update --merge`, `promote`, and

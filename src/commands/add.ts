@@ -388,6 +388,14 @@ async function addOne(
   } else {
     console.log(`  ${result.dst}`);
   }
+  if (item.kind === "plugins") {
+    // Spec D2 guard 4: a switch from `skills/<n>` changes the name Claude
+    // Code uses, and capshelf cannot see a switch across two commands, so
+    // every plugin add prints the name. The same line as `add <url>`.
+    console.log(
+      `  Claude Code loads it as ${item.name}@skills-dir in a trusted workspace`,
+    );
+  }
   printDeclaredNeeds(result.needs);
   printRuntimeWarnings(result.runtimeWarnings);
   printMissingRequires(`${item.kind}/${item.name}`, result.missingRequires);

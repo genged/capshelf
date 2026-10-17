@@ -160,6 +160,29 @@ async function lockKeys(project: string): Promise<string[]> {
 
 describe("shelf add plugins/<n> (D7 points 1 and 3)", () => {
   test(
+    "text output names the plugin the way Claude Code loads it, and JSON does not change (D2 guard 4)",
+    async () => {
+      const world = await shelfWorld();
+      const r = await world.run(["add", "plugins/quiet", "--local"]);
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout.toString()).toContain(
+        "  Claude Code loads it as quiet@skills-dir in a trusted workspace\n",
+      );
+      const json = await world.run([
+        "add",
+        "plugins/gh-cli",
+        "--yes",
+        "--json",
+      ]);
+      expect(json.exitCode).toBe(0);
+      const payload = jsonOutput(json);
+      expect(stringField(payload, "kind")).toBe("plugins");
+      expect(json.stdout.toString()).not.toContain("skills-dir");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "a plugin that runs nothing installs with no prompt",
     async () => {
       const world = await shelfWorld();
