@@ -8,6 +8,13 @@
  * silently dropped an unreadable file would be a false negative at the one
  * gate the design has.
  *
+ * Hooks and MCP servers are not the complete set. Claude Code also arms
+ * background monitors and starts LSP servers from a plugin, and its manifest
+ * schema grows. The reader does not list those. It reports each one in
+ * `unknown`, and so does every manifest key that is not on the inert
+ * allowlist, so a consent point asks whenever capshelf cannot list what the
+ * plugin runs.
+ *
  * Two callers read the same logic through one `PluginFileReader` seam:
  * `pluginRunsAtCommit` reads blobs from a pinned Git tree, `pluginRunsOnDisk`
  * reads files from an installed directory.
@@ -18,10 +25,10 @@ import { join } from "node:path";
 import { z } from "zod";
 import {
   ConfigObjectSchema,
-  ConfigValueSchema,
   isConfigObject,
   isConfigString,
 } from "./config-values";
+import type { ConfigObject } from "./config-values";
 import { lstatOrNull } from "./fs-utils";
 import { catFileBlobs } from "./git";
 import type { GitTreeSource } from "./item-source";
@@ -32,6 +39,37 @@ import { normalizeCatalogPath } from "./plugin-discovery";
 
 const HOOKS_DEFAULT_REL = "hooks/hooks.json";
 const MCP_DEFAULT_REL = ".mcp.json";
+const MONITORS_DEFAULT_REL = "monitors/monitors.json";
+const LSP_DEFAULT_REL = ".lsp.json";
+
+/**
+ * Manifest keys that run nothing, or that this reader models itself (`hooks`,
+ * `mcpServers`). Any other key is unknown: a key that Claude Code added after
+ * this list was written can start a process.
+ */
+const INERT_MANIFEST_KEYS: ReadonlySet<string> = new Set([
+  "$schema",
+  "name",
+  "version",
+  "description",
+  "author",
+  "homepage",
+  "repository",
+  "license",
+  "keywords",
+  "skills",
+  "agents",
+  "commands",
+  "outputStyles",
+  "themes",
+  "workflows",
+  "evals",
+  "hooks",
+  "mcpServers",
+]);
+
+const MONITORS_FILE_UNKNOWN = `${MONITORS_DEFAULT_REL} declares background monitors; capshelf does not list them`;
+const LSP_FILE_UNKNOWN = `${LSP_DEFAULT_REL} declares LSP servers; capshelf does not list them`;
 
 export interface PluginRunHook {
   event: string;
@@ -80,16 +118,18 @@ const mcpServerConfigSchema = z
 const mcpServersMapSchema = z.record(z.string(), mcpServerConfigSchema);
 type McpServersMap = z.infer<typeof mcpServersMapSchema>;
 
-const manifestSchema = z
-  .object({
-    hooks: ConfigValueSchema.optional(),
-    mcpServers: ConfigValueSchema.optional(),
-  })
-  .passthrough();
-type PluginManifest = z.infer<typeof manifestSchema>;
+type PluginManifest = ConfigObject;
 
 function unknownEntry(source: string): string {
   return `${source} could not be read`;
+}
+
+function manifestDeclares(what: string): string {
+  return `${PLUGIN_MANIFEST_REL} declares ${what}; capshelf does not list them`;
+}
+
+function manifestKeyUnknown(key: string): string {
+  return `${PLUGIN_MANIFEST_REL} declares ${JSON.stringify(key)}; capshelf does not know what it runs`;
 }
 
 function parseJsonDocument<T>(bytes: Buffer, schema: z.ZodType<T>): T | null {
@@ -114,7 +154,7 @@ async function readManifest(
     unknown.push(unknownEntry(PLUGIN_MANIFEST_REL));
     return null;
   }
-  const manifest = parseJsonDocument(bytes, manifestSchema);
+  const manifest = parseJsonDocument(bytes, ConfigObjectSchema);
   if (manifest === null) {
     unknown.push(unknownEntry(PLUGIN_MANIFEST_REL));
     return null;
@@ -221,6 +261,53 @@ async function collectHooks(
   await readManifestHooks(read, manifest, hooks, unknown);
 }
 
+// ------------------------------------------- monitors, LSP, unknown keys
+
+/**
+ * The manifest keys this reader cannot list (D6): `monitors` (also under
+ * `experimental`), `lspServers`, and every key off the inert allowlist. One
+ * entry per source, whatever the value holds: Claude Code reads these keys,
+ * so even a value capshelf would call malformed can run a command.
+ */
+function collectManifestUnknowns(
+  manifest: PluginManifest,
+  unknown: string[],
+): void {
+  let monitors = manifest.monitors !== undefined;
+  const keys: string[] = [];
+  for (const [key, value] of Object.entries(manifest)) {
+    if (INERT_MANIFEST_KEYS.has(key) || key === "monitors") continue;
+    if (key === "lspServers") {
+      unknown.push(manifestDeclares("lspServers"));
+    } else if (key === "experimental" && isConfigObject(value)) {
+      for (const subKey of Object.keys(value)) {
+        if (subKey === "monitors") monitors = true;
+        else if (!INERT_MANIFEST_KEYS.has(subKey)) {
+          keys.push(`experimental.${subKey}`);
+        }
+      }
+    } else {
+      keys.push(key);
+    }
+  }
+  if (monitors) unknown.push(manifestDeclares("monitors"));
+  for (const key of keys) unknown.push(manifestKeyUnknown(key));
+}
+
+/**
+ * The default monitor and LSP files Claude Code loads when present. Their
+ * contents are not parsed: presence alone is reported.
+ */
+async function collectDefaultFileUnknowns(
+  read: PluginFileReader,
+  unknown: string[],
+): Promise<void> {
+  if ((await read(MONITORS_DEFAULT_REL)) !== null) {
+    unknown.push(MONITORS_FILE_UNKNOWN);
+  }
+  if ((await read(LSP_DEFAULT_REL)) !== null) unknown.push(LSP_FILE_UNKNOWN);
+}
+
 // --------------------------------------------------------------- MCP servers
 
 function serverCommand(config: McpServersMap[string]): string | null {
@@ -304,6 +391,8 @@ export async function readPluginRuns(
   const manifest = await readManifest(read, unknown);
   await collectHooks(read, manifest, hooks, unknown);
   await collectServers(read, manifest, mcpServers, unknown);
+  await collectDefaultFileUnknowns(read, unknown);
+  if (manifest !== null) collectManifestUnknowns(manifest, unknown);
   return { hooks, mcpServers, unknown };
 }
 
@@ -354,6 +443,8 @@ const DEFAULT_CANDIDATE_RELS = [
   PLUGIN_MANIFEST_REL,
   HOOKS_DEFAULT_REL,
   MCP_DEFAULT_REL,
+  MONITORS_DEFAULT_REL,
+  LSP_DEFAULT_REL,
 ] as const;
 
 function isRegularBlobMode(mode: string): boolean {
@@ -400,7 +491,7 @@ function manifestNamedHookPaths(manifestBytes: Buffer | undefined): string[] {
   } catch {
     return [];
   }
-  const result = manifestSchema.safeParse(parsed);
+  const result = ConfigObjectSchema.safeParse(parsed);
   if (!result.success) return [];
   const raw = result.data.hooks;
   const rawPaths = isConfigString(raw)

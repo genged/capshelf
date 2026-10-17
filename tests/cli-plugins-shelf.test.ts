@@ -348,6 +348,51 @@ describe("shelf add plugins/<n> (D7 points 1 and 3)", () => {
   );
 
   test(
+    "a plugin with only monitors/monitors.json asks, and names the monitors",
+    async () => {
+      const world = await shelfWorld();
+      await writeShelfPlugin(world.dataRepo, "watcher", {
+        "monitors/monitors.json": JSON.stringify([
+          { name: "w", command: "bash watch.sh", description: "d" },
+        ]),
+      });
+      await commitAll(world.dataRepo, "watcher");
+      const r = await world.run(["add", "plugins/watcher"]);
+      expect(r.exitCode).toBe(3);
+      const err = r.stderr.toString();
+      expect(err).toContain(
+        "not installing plugins/watcher without consent — capshelf cannot list everything it runs",
+      );
+      expect(err).toContain(
+        "unknown: monitors/monitors.json declares background monitors; capshelf does not list them",
+      );
+      expect(existsSync(pluginFolder(world.project, "watcher"))).toBe(false);
+
+      expect(
+        (await world.run(["add", "plugins/watcher", "--yes"])).exitCode,
+      ).toBe(0);
+      const rows = objectItems(
+        jsonOutput(await world.run(["status", "plugins/watcher", "--json"])),
+        "items",
+      );
+      expect(rows[0]?.runs).toEqual({
+        hooks: 0,
+        mcpServers: 0,
+        unknown: [
+          "monitors/monitors.json declares background monitors; capshelf does not list them",
+        ],
+      });
+      const text = await world.run(["status"]);
+      const line = text.stdout
+        .toString()
+        .split("\n")
+        .find((row) => row.includes("data/plugins/watcher"));
+      expect(line).toContain("runs: unknown");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "a bundle that holds a plugin with hooks asks too",
     async () => {
       const world = await shelfWorld();

@@ -229,7 +229,7 @@ registered.
 | `show <item>` | print metadata + content for one item, including relations and current/locked declared needs, plus runtime target coverage for MCP and subagents; `--target` narrows to one runtime | implemented |
 | `search <query...>` | search available items (data repo + system) and bundles by name, tags, description, and content; supports `--kind` and `--json`; zero matches exit 0 | implemented |
 | `status [<item>]` | drift / update report plus orthogonal `needsState` freshness and locked needs; subagent JSON includes deterministic per-target state; a sub-line names any runtime target an MCP or subagent item does not cover; a plugin row counts the hooks and MCP servers the plugin runs; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` shows locked-to-installed and locked-to-upstream comparisons; `--diff-view installed\|upstream\|all` selects a comparison; `--check-upstream` fetches every tracked remote repository and reports which remote items moved | implemented |
-| `add [item]` | install a new item from the bound data repo, materializing exactly what the pin contains; with no item, opens the interactive picker (see The picker); MCP and subagent installs report per-runtime target coverage; an already-installed standalone item is a byte- and lock-stable no-op; `--local` installs a clone-local copy item; `--yes` authorizes collateral fragment-output loss for a new fragment, standalone or expanded from a bundle; a ref whose first segment is not an item kind is refused with exit 3 and the supported kinds, because `owner/repo` shorthand is shaped exactly like `kind/name`; a repository URL instead of a ref installs a skill or a whole plugin from outside the shelf, with `--as`, `--ref`, `--path`, and `--list`. A plugin that runs a hook or an MCP server asks for consent, and `--yes` gives it | implemented |
+| `add [item]` | install a new item from the bound data repo, materializing exactly what the pin contains; with no item, opens the interactive picker (see The picker); MCP and subagent installs report per-runtime target coverage; an already-installed standalone item is a byte- and lock-stable no-op; `--local` installs a clone-local copy item; `--yes` authorizes collateral fragment-output loss for a new fragment, standalone or expanded from a bundle; a ref whose first segment is not an item kind is refused with exit 3 and the supported kinds, because `owner/repo` shorthand is shaped exactly like `kind/name`; a repository URL instead of a ref installs a skill or a whole plugin from outside the shelf, with `--as`, `--ref`, `--path`, and `--list`. A plugin that runs a hook or an MCP server, or has an `unknown` entry, asks for consent, and `--yes` gives it | implemented |
 | `rm <item>` | remove a locked data item and report every output it reconciled; clean reproducible content is prompt-free, while local edits, modes, extra paths, subagent drift, and fragment comment loss require consent or `--yes` | implemented |
 | `get-path <item>` | print the editable path; subagents and MCP support `--target`, while `--output` returns the corresponding runtime output | implemented |
 | `apply [<item>]` | reconcile project and local files with lockfiles after a full-set destructive preflight; a failing fragment target aborts every write, while an unresolvable copy or subagent item is reported and the rest still converge (exit 1); supports `--local`, `--dry-run`, and `--yes` | implemented |
@@ -753,8 +753,25 @@ A plugin that runs nothing shows `runs      no hooks, no MCP servers`.
 Capshelf does not guess. Some declarations cannot be read: a file that does
 not parse, a manifest path outside the plugin, or a symlinked default file.
 Each one shows as `unknown: <path> could not be read`. An unknown entry
-never reads as "no hooks". Capshelf does not evaluate a command, and it does
-not claim that the list is complete. It shows what it read.
+never reads as "no hooks".
+
+Hooks and MCP servers are not the only commands that a plugin can run.
+Capshelf does not list the other ones. It reports each of them as an
+`unknown` entry:
+
+| source | entry |
+|---|---|
+| `monitors/monitors.json` | `declares background monitors; capshelf does not list them` |
+| manifest `monitors` or `experimental.monitors` | `declares monitors; capshelf does not list them` |
+| `.lsp.json` | `declares LSP servers; capshelf does not list them` |
+| manifest `lspServers` | `declares lspServers; capshelf does not list them` |
+| a different manifest key | `declares "<key>"; capshelf does not know what it runs` |
+
+These manifest keys give no entry: `$schema`, `name`, `version`,
+`description`, `author`, `homepage`, `repository`, `license`, `keywords`,
+`skills`, `agents`, `commands`, `outputStyles`, `themes`, `workflows`,
+`evals`, `hooks`, and `mcpServers`. Capshelf does not evaluate a command, and
+it does not claim that the list is complete. It shows what it read.
 
 #### Consent for a plugin
 
@@ -762,7 +779,7 @@ A write asks before it puts a plugin's commands where Claude Code runs them.
 There are three consent points:
 
 1. **Install.** `add plugins/<name>` from the shelf asks when the plugin
-   runs a hook or an MCP server. `add <url>` asks for every install, and its
+   runs a hook or an MCP server, or has an `unknown` entry. `add <url>` asks for every install, and its
    prompt shows the same `runs` block.
 2. **Pin move.** A shelf `update` asks when the new tree runs an entry that
    the old tree did not. An entry is one hook (event, matcher, and command)
@@ -844,7 +861,7 @@ plugin row:
 In `status --json`, a plugin row has two more fields. No other kind gets
 them:
 
-- `runs`: `{ "hooks": <n>, "mcpServers": <n>, "unknown": [<path>, …] }`.
+- `runs`: `{ "hooks": <n>, "mcpServers": <n>, "unknown": [<entry>, …] }`.
 - `claudeTrust`: `"trusted"`, `"untrusted"`, or `"unknown"`. It is
   `"unknown"` when `~/.claude.json` is missing or cannot be read.
 
@@ -942,7 +959,8 @@ Bundles can also include `subagents` members. Subagents are project-scope only,
 so a bundle containing one is rejected as a unit when added with `--local`.
 
 Bundles can include `plugins` members. The expansion asks once for every
-plugin member that runs a hook or an MCP server. See Consent for a plugin.
+plugin member that runs a hook or an MCP server, or has an `unknown` entry.
+See Consent for a plugin.
 
 Bundle exit codes:
 

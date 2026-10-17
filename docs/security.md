@@ -119,12 +119,14 @@ that boundary:
   nothing. A URL that carries its own credential is refused rather than cloned,
   because `git clone` would write it into the cache clone's `.git/config`.
 - **A plugin's commands get a consent question, not a review.** A plugin can
-  run hooks and MCP servers with no request from the agent. Capshelf reads
-  them from the pinned tree and shows each hook command and each server
-  command. It asks before an install, before a pin move that adds an entry,
-  and before a write to project scope. With no terminal, `--yes` is the only
-  answer. A declaration that capshelf cannot read is shown as unknown and
-  still asks. Capshelf does not judge a command. A hook script can change
+  run hooks, MCP servers, background monitors, and LSP servers with no
+  request from the agent. Capshelf lists the hooks and the MCP servers from
+  the pinned tree, with each command. It does not list monitors, LSP
+  servers, or a manifest key that it does not know. It reports each of them
+  as unknown. A declaration that capshelf cannot read is also unknown.
+  Capshelf asks before an install, before a pin move that adds an entry, and
+  before a write to project scope. An unknown entry always asks. With no
+  terminal, `--yes` is the only answer. Capshelf does not judge a command. A hook script can change
   while its hook line stays the same, and a shelf `update` then does not ask.
   Review the diff of a plugin update like a dependency bump.
 - **Declared needs are metadata, not enforcement.** Capshelf can pin and

@@ -140,6 +140,96 @@ describe("readPluginRuns", () => {
   });
 });
 
+describe("readPluginRuns: what it cannot list is unknown", () => {
+  const manifest = (fields: Record<string, unknown>) =>
+    JSON.stringify({ name: "p", ...fields });
+  test("monitors/monitors.json is unknown", async () => {
+    const runs = await readPluginRuns(
+      reader({
+        ".claude-plugin/plugin.json": manifest({}),
+        "monitors/monitors.json": "[]",
+      }),
+    );
+    expect(runs.unknown).toEqual([
+      "monitors/monitors.json declares background monitors; capshelf does not list them",
+    ]);
+    expect(runsHaveEntries(runs)).toBe(true);
+  });
+  test("a manifest monitors field, top level or experimental, is one entry", async () => {
+    const expected = [
+      ".claude-plugin/plugin.json declares monitors; capshelf does not list them",
+    ];
+    for (const fields of [
+      { monitors: "./m.json" },
+      { monitors: null },
+      { experimental: { monitors: [] } },
+      { monitors: [], experimental: { monitors: [] } },
+    ]) {
+      const runs = await readPluginRuns(
+        reader({ ".claude-plugin/plugin.json": manifest(fields) }),
+      );
+      expect(runs.unknown).toEqual(expected);
+    }
+  });
+  test(".lsp.json and a manifest lspServers field are unknown", async () => {
+    const file = await readPluginRuns(
+      reader({ ".claude-plugin/plugin.json": manifest({}), ".lsp.json": "{}" }),
+    );
+    expect(file.unknown).toEqual([
+      ".lsp.json declares LSP servers; capshelf does not list them",
+    ]);
+    const field = await readPluginRuns(
+      reader({
+        ".claude-plugin/plugin.json": manifest({ lspServers: "./x.lsp.json" }),
+      }),
+    );
+    expect(field.unknown).toEqual([
+      ".claude-plugin/plugin.json declares lspServers; capshelf does not list them",
+    ]);
+  });
+  test("each manifest key off the allowlist is one unknown entry", async () => {
+    const runs = await readPluginRuns(
+      reader({
+        ".claude-plugin/plugin.json": manifest({
+          userConfig: {},
+          channels: [],
+          experimental: { themes: "./t", later: true },
+        }),
+      }),
+    );
+    expect(runs.unknown).toEqual([
+      '.claude-plugin/plugin.json declares "userConfig"; capshelf does not know what it runs',
+      '.claude-plugin/plugin.json declares "channels"; capshelf does not know what it runs',
+      '.claude-plugin/plugin.json declares "experimental.later"; capshelf does not know what it runs',
+    ]);
+  });
+  test("allowlisted manifest keys give no entry", async () => {
+    const runs = await readPluginRuns(
+      reader({
+        ".claude-plugin/plugin.json": manifest({
+          $schema: "https://x",
+          version: "1.0.0",
+          description: "d",
+          author: { name: "a" },
+          homepage: "https://h",
+          repository: "https://r",
+          license: "MIT",
+          keywords: ["k"],
+          skills: "./skills",
+          agents: ["./agents/a.md"],
+          commands: "./commands",
+          outputStyles: "./styles",
+          themes: "./themes",
+          workflows: "./workflows",
+          evals: "./evals",
+          experimental: { themes: "./t", workflows: "./w" },
+        }),
+      }),
+    );
+    expect(runs).toEqual({ hooks: [], mcpServers: [], unknown: [] });
+  });
+});
+
 describe("newRunsEntries", () => {
   const hook = (command: string) => ({
     event: "SessionStart",
@@ -293,6 +383,54 @@ describe("pluginRunsAtCommit", () => {
     expect(runs.hooks).toEqual([]);
     expect(runs.unknown).toEqual(["hooks/hooks.json could not be read"]);
     expect(runsHaveEntries(runs)).toBe(true);
+  });
+});
+
+describe("pluginRunsAtCommit and pluginRunsOnDisk: monitors and LSP", () => {
+  async function writeMonitorPlugin(dir: string): Promise<void> {
+    await mkdir(join(dir, ".claude-plugin"), { recursive: true });
+    await mkdir(join(dir, "monitors"), { recursive: true });
+    await writeFile(
+      join(dir, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "p", lspServers: {} }),
+    );
+    await writeFile(
+      join(dir, "monitors", "monitors.json"),
+      JSON.stringify([{ name: "w", command: "bash w.sh" }]),
+    );
+    await writeFile(join(dir, ".lsp.json"), "{}");
+  }
+  const expected = [
+    "monitors/monitors.json declares background monitors; capshelf does not list them",
+    ".lsp.json declares LSP servers; capshelf does not list them",
+    ".claude-plugin/plugin.json declares lspServers; capshelf does not list them",
+  ];
+  test("at a commit", async () => {
+    const repo = await tempRepo("capshelf-plugin-runs-commit-monitors-");
+    await writeMonitorPlugin(join(repo, "plugins", "p"));
+    await commitAll(repo, "plugin p");
+    const entries = await itemTreeEntriesAtCommit(
+      gitTreeSource({ repo, kind: "plugins", name: "p", commit: "HEAD" }),
+      "plugins",
+    );
+    expect((await pluginRunsAtCommit(repo, entries)).unknown).toEqual(expected);
+  });
+  test("on disk", async () => {
+    const dir = await tempDir("capshelf-plugin-runs-disk-monitors-");
+    await writeMonitorPlugin(dir);
+    expect((await pluginRunsOnDisk(dir)).unknown).toEqual(expected);
+  });
+  test("a directory at monitors/monitors.json follows the unsafe-default rule", async () => {
+    const dir = await tempDir("capshelf-plugin-runs-disk-monitors-dir-");
+    await mkdir(join(dir, ".claude-plugin"), { recursive: true });
+    await writeFile(
+      join(dir, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "p" }),
+    );
+    await mkdir(join(dir, "monitors", "monitors.json"), { recursive: true });
+    expect((await pluginRunsOnDisk(dir)).unknown).toEqual([
+      "monitors/monitors.json could not be read",
+    ]);
   });
 });
 

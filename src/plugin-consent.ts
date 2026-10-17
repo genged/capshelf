@@ -101,7 +101,7 @@ export function pluginRunsLines(runs: PluginRuns): string[] {
   const lines = [
     counts.length > 0
       ? `${counts.join(", ")}, with no request from the agent`
-      : "no hooks or MCP servers that capshelf could read",
+      : "no hooks or MCP servers that capshelf could list",
     ...columns(hooks.map(hookCells)),
     ...columns(mcpServers.map(serverCells)),
     ...unknown.map((entry) => `  unknown: ${safe(entry)}`),
@@ -157,7 +157,7 @@ export function pluginConsentReason(runs: PluginRuns): string {
     return `it ${parts.join(" and ")} in every Claude Code session in this project`;
   }
   if (runs.unknown.length > 0) {
-    return "capshelf could not read everything it runs";
+    return "capshelf cannot list everything it runs";
   }
   return "capshelf does not review this content, and your agent runs it with your permissions";
 }
@@ -314,7 +314,7 @@ function runsCounts(runs: PluginRuns): string | null {
 function runsSummary(runs: PluginRuns): string {
   const counts = runsCounts(runs);
   return counts === null
-    ? "runs commands that capshelf could not read"
+    ? "runs commands that capshelf cannot list"
     : `runs ${counts}`;
 }
 
@@ -343,7 +343,7 @@ function consentWords(
       target: "",
       reason:
         counts === null
-          ? "capshelf could not read everything the new tree runs"
+          ? "capshelf cannot list everything the new tree runs"
           : `the new tree adds ${counts}`,
       question: "Move the pin?",
       cancelled: "Update cancelled; no changes were written.",
