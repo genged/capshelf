@@ -1,0 +1,440 @@
+/**
+ * What a plugin runs without the agent asking: its hooks and its MCP
+ * servers (spec D6, D7 point 2).
+ *
+ * The reader is conservative (D6): a declaration that does not parse, or a
+ * manifest path that leaves the plugin root, is reported in `unknown`. It
+ * never reports "no hooks" for something it could not read — a reader that
+ * silently dropped an unreadable file would be a false negative at the one
+ * gate the design has.
+ *
+ * Two callers read the same logic through one `PluginFileReader` seam:
+ * `pluginRunsAtCommit` reads blobs from a pinned Git tree, `pluginRunsOnDisk`
+ * reads files from an installed directory.
+ */
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { z } from "zod";
+import {
+  ConfigObjectSchema,
+  ConfigValueSchema,
+  isConfigObject,
+  isConfigString,
+} from "./config-values";
+import { lstatOrNull } from "./fs-utils";
+import { catFileBlobs } from "./git";
+import { PLUGIN_MANIFEST_REL } from "./master";
+import type { PinTreeEntry } from "./pin";
+import { normalizeCatalogPath } from "./plugin-discovery";
+
+const HOOKS_DEFAULT_REL = "hooks/hooks.json";
+const MCP_DEFAULT_REL = ".mcp.json";
+
+export interface PluginRunHook {
+  event: string;
+  matcher: string | null;
+  type: string;
+  command: string | null;
+  source: string;
+}
+
+export interface PluginRunServer {
+  name: string;
+  command: string | null;
+  url: string | null;
+  source: string;
+}
+
+export interface PluginRuns {
+  hooks: PluginRunHook[];
+  mcpServers: PluginRunServer[];
+  unknown: string[];
+}
+
+/** Returns the file's bytes, or null when the path is absent or unusable. */
+export type PluginFileReader = (relPath: string) => Promise<Buffer | null>;
+
+// --------------------------------------------------------------- schemas
+
+const hookEntrySchema = z
+  .object({ type: z.string(), command: z.string().optional() })
+  .passthrough();
+const hookGroupSchema = z
+  .object({ matcher: z.string().optional(), hooks: z.array(hookEntrySchema) })
+  .passthrough();
+const hooksDocumentSchema = z
+  .object({ hooks: z.record(z.string(), z.array(hookGroupSchema)) })
+  .passthrough();
+type HooksDocument = z.infer<typeof hooksDocumentSchema>;
+
+const mcpServerConfigSchema = z
+  .object({
+    command: z.string().optional(),
+    args: z.array(z.string()).optional(),
+    url: z.string().optional(),
+  })
+  .passthrough();
+const mcpServersMapSchema = z.record(z.string(), mcpServerConfigSchema);
+type McpServersMap = z.infer<typeof mcpServersMapSchema>;
+
+const manifestSchema = z
+  .object({
+    hooks: ConfigValueSchema.optional(),
+    mcpServers: ConfigValueSchema.optional(),
+  })
+  .passthrough();
+type PluginManifest = z.infer<typeof manifestSchema>;
+
+function unknownEntry(source: string): string {
+  return `${source} could not be read`;
+}
+
+function parseJsonDocument<T>(bytes: Buffer, schema: z.ZodType<T>): T | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    return null;
+  }
+  const result = schema.safeParse(parsed);
+  return result.success ? result.data : null;
+}
+
+// ----------------------------------------------------------------- manifest
+
+async function readManifest(
+  read: PluginFileReader,
+  unknown: string[],
+): Promise<PluginManifest | null> {
+  const bytes = await read(PLUGIN_MANIFEST_REL);
+  if (bytes === null) {
+    unknown.push(unknownEntry(PLUGIN_MANIFEST_REL));
+    return null;
+  }
+  const manifest = parseJsonDocument(bytes, manifestSchema);
+  if (manifest === null) {
+    unknown.push(unknownEntry(PLUGIN_MANIFEST_REL));
+    return null;
+  }
+  return manifest;
+}
+
+// -------------------------------------------------------------------- hooks
+
+function pushHooksFromDocument(
+  doc: HooksDocument,
+  source: string,
+  hooks: PluginRunHook[],
+): void {
+  for (const [event, groups] of Object.entries(doc.hooks)) {
+    for (const group of groups) {
+      const matcher = group.matcher ?? null;
+      for (const hook of group.hooks) {
+        hooks.push({
+          event,
+          matcher,
+          type: hook.type,
+          command: hook.command ?? null,
+          source,
+        });
+      }
+    }
+  }
+}
+
+async function readHooksFromPath(
+  read: PluginFileReader,
+  rawPath: string,
+  hooks: PluginRunHook[],
+  unknown: string[],
+): Promise<void> {
+  const normalized = normalizeCatalogPath(rawPath);
+  if (normalized === null || normalized === ".") {
+    unknown.push(unknownEntry(rawPath));
+    return;
+  }
+  const bytes = await read(normalized);
+  if (bytes === null) {
+    unknown.push(unknownEntry(normalized));
+    return;
+  }
+  const doc = parseJsonDocument(bytes, hooksDocumentSchema);
+  if (doc === null) {
+    unknown.push(unknownEntry(normalized));
+    return;
+  }
+  pushHooksFromDocument(doc, normalized, hooks);
+}
+
+/** The manifest `hooks` field, in the order R10 names: string, array, object. */
+async function readManifestHooks(
+  read: PluginFileReader,
+  manifest: PluginManifest,
+  hooks: PluginRunHook[],
+  unknown: string[],
+): Promise<void> {
+  const raw = manifest.hooks;
+  if (raw === undefined) return;
+  if (isConfigString(raw)) {
+    await readHooksFromPath(read, raw, hooks, unknown);
+    return;
+  }
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (isConfigString(item)) {
+        await readHooksFromPath(read, item, hooks, unknown);
+      } else {
+        unknown.push(unknownEntry(PLUGIN_MANIFEST_REL));
+      }
+    }
+    return;
+  }
+  if (isConfigObject(raw)) {
+    const result = hooksDocumentSchema.safeParse(raw);
+    if (!result.success) {
+      unknown.push(unknownEntry(PLUGIN_MANIFEST_REL));
+      return;
+    }
+    pushHooksFromDocument(result.data, PLUGIN_MANIFEST_REL, hooks);
+    return;
+  }
+  // Any other type (number, boolean, null): unknown.
+  unknown.push(unknownEntry(PLUGIN_MANIFEST_REL));
+}
+
+async function collectHooks(
+  read: PluginFileReader,
+  manifest: PluginManifest | null,
+  hooks: PluginRunHook[],
+  unknown: string[],
+): Promise<void> {
+  const defaultBytes = await read(HOOKS_DEFAULT_REL);
+  if (defaultBytes !== null) {
+    const doc = parseJsonDocument(defaultBytes, hooksDocumentSchema);
+    if (doc === null) unknown.push(unknownEntry(HOOKS_DEFAULT_REL));
+    else pushHooksFromDocument(doc, HOOKS_DEFAULT_REL, hooks);
+  }
+  if (manifest === null) return;
+  await readManifestHooks(read, manifest, hooks, unknown);
+}
+
+// --------------------------------------------------------------- MCP servers
+
+function serverCommand(config: McpServersMap[string]): string | null {
+  if (config.command === undefined) return null;
+  if (config.args === undefined || config.args.length === 0) {
+    return config.command;
+  }
+  return `${config.command} ${config.args.join(" ")}`;
+}
+
+function pushServersFromMap(
+  map: McpServersMap,
+  source: string,
+  servers: PluginRunServer[],
+): void {
+  for (const [name, config] of Object.entries(map)) {
+    servers.push({
+      name,
+      command: serverCommand(config),
+      url: config.url ?? null,
+      source,
+    });
+  }
+}
+
+/**
+ * `.mcp.json`'s two shapes: the `mcpServers` wrapper when that key holds an
+ * object, else the top-level object itself.
+ */
+function parseMcpDocument(bytes: Buffer): McpServersMap | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    return null;
+  }
+  const topLevel = ConfigObjectSchema.safeParse(parsed);
+  if (!topLevel.success) return null;
+  const candidate = isConfigObject(topLevel.data.mcpServers)
+    ? topLevel.data.mcpServers
+    : topLevel.data;
+  const result = mcpServersMapSchema.safeParse(candidate);
+  return result.success ? result.data : null;
+}
+
+async function collectServers(
+  read: PluginFileReader,
+  manifest: PluginManifest | null,
+  servers: PluginRunServer[],
+  unknown: string[],
+): Promise<void> {
+  const defaultBytes = await read(MCP_DEFAULT_REL);
+  if (defaultBytes !== null) {
+    const map = parseMcpDocument(defaultBytes);
+    if (map === null) unknown.push(unknownEntry(MCP_DEFAULT_REL));
+    else pushServersFromMap(map, MCP_DEFAULT_REL, servers);
+  }
+  if (manifest === null) return;
+  const raw = manifest.mcpServers;
+  if (raw === undefined) return;
+  if (!isConfigObject(raw)) {
+    unknown.push(unknownEntry(PLUGIN_MANIFEST_REL));
+    return;
+  }
+  const result = mcpServersMapSchema.safeParse(raw);
+  if (!result.success) {
+    unknown.push(unknownEntry(PLUGIN_MANIFEST_REL));
+    return;
+  }
+  pushServersFromMap(result.data, PLUGIN_MANIFEST_REL, servers);
+}
+
+// ----------------------------------------------------------------- top level
+
+export async function readPluginRuns(
+  read: PluginFileReader,
+): Promise<PluginRuns> {
+  const hooks: PluginRunHook[] = [];
+  const mcpServers: PluginRunServer[] = [];
+  const unknown: string[] = [];
+  const manifest = await readManifest(read, unknown);
+  await collectHooks(read, manifest, hooks, unknown);
+  await collectServers(read, manifest, mcpServers, unknown);
+  return { hooks, mcpServers, unknown };
+}
+
+export function runsHaveEntries(runs: PluginRuns): boolean {
+  return (
+    runs.hooks.length > 0 ||
+    runs.mcpServers.length > 0 ||
+    runs.unknown.length > 0
+  );
+}
+
+function hookIdentity(hook: PluginRunHook): string {
+  return JSON.stringify([hook.event, hook.matcher, hook.command]);
+}
+
+function serverIdentity(server: PluginRunServer): string {
+  return JSON.stringify([server.name, server.command, server.url]);
+}
+
+/**
+ * The entries in `next` that `previous` did not have (D7 point 2). A hook is
+ * new when no previous hook shares its event, matcher, and command; a server
+ * is new when no previous server shares its name, command, and url. A script
+ * changing while its hook line stays the same is therefore not a new entry.
+ */
+export function newRunsEntries(
+  previous: PluginRuns,
+  next: PluginRuns,
+): PluginRuns {
+  const previousHooks = new Set(previous.hooks.map(hookIdentity));
+  const previousServers = new Set(previous.mcpServers.map(serverIdentity));
+  const previousUnknown = new Set(previous.unknown);
+  return {
+    hooks: next.hooks.filter((hook) => !previousHooks.has(hookIdentity(hook))),
+    mcpServers: next.mcpServers.filter(
+      (server) => !previousServers.has(serverIdentity(server)),
+    ),
+    unknown: next.unknown.filter((entry) => !previousUnknown.has(entry)),
+  };
+}
+
+// ------------------------------------------------------------------ readers
+
+/**
+ * The manifest `hooks` field's string path(s), normalized and resolved, for
+ * prefetching only. `pluginRunsAtCommit`'s correctness never depends on this
+ * finding every path: a path it misses is still read, one blob at a time, by
+ * the per-path fallback in its reader.
+ */
+function manifestNamedHookPaths(manifestBytes: Buffer | undefined): string[] {
+  if (manifestBytes === undefined) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(manifestBytes.toString("utf8"));
+  } catch {
+    return [];
+  }
+  const result = manifestSchema.safeParse(parsed);
+  if (!result.success) return [];
+  const raw = result.data.hooks;
+  const rawPaths = isConfigString(raw)
+    ? [raw]
+    : Array.isArray(raw)
+      ? raw.filter(isConfigString)
+      : [];
+  const normalized: string[] = [];
+  for (const rawPath of rawPaths) {
+    const path = normalizeCatalogPath(rawPath);
+    if (path !== null && path !== ".") normalized.push(path);
+  }
+  return normalized;
+}
+
+/**
+ * Read a plugin's runs from a pinned Git tree. Reads a fixed number of
+ * `cat-file --batch` processes in the common case: one for the default
+ * candidate files (the manifest, `hooks/hooks.json`, `.mcp.json`), one more
+ * for the paths the manifest's `hooks` field names. A path missed by that
+ * second batch — an edge case this reader's own logic does not anticipate —
+ * still reads correctly through one extra per-path fetch, never as a false
+ * "could not be read".
+ */
+export async function pluginRunsAtCommit(
+  repo: string,
+  entries: readonly PinTreeEntry[],
+): Promise<PluginRuns> {
+  const byPath = new Map(entries.map((entry) => [entry.path, entry] as const));
+  const blobs = new Map<string, Buffer>();
+
+  async function fetchBlobsFor(relPaths: readonly string[]): Promise<void> {
+    const ids: string[] = [];
+    for (const relPath of relPaths) {
+      const entry = byPath.get(relPath);
+      if (entry !== undefined && !blobs.has(entry.blobId))
+        ids.push(entry.blobId);
+    }
+    if (ids.length === 0) return;
+    const fetched = await catFileBlobs(repo, ids);
+    for (const [id, bytes] of fetched) blobs.set(id, bytes);
+  }
+
+  await fetchBlobsFor([
+    PLUGIN_MANIFEST_REL,
+    HOOKS_DEFAULT_REL,
+    MCP_DEFAULT_REL,
+  ]);
+  const manifestEntry = byPath.get(PLUGIN_MANIFEST_REL);
+  const manifestBytes =
+    manifestEntry === undefined ? undefined : blobs.get(manifestEntry.blobId);
+  await fetchBlobsFor(manifestNamedHookPaths(manifestBytes));
+
+  const reader: PluginFileReader = async (relPath) => {
+    const entry = byPath.get(relPath);
+    if (entry === undefined) return null;
+    if (!blobs.has(entry.blobId)) await fetchBlobsFor([relPath]);
+    return blobs.get(entry.blobId) ?? null;
+  };
+  return await readPluginRuns(reader);
+}
+
+/**
+ * Read a plugin's runs from an installed directory. A symlink or a
+ * non-regular file is treated as absent, never followed.
+ */
+export async function pluginRunsOnDisk(dir: string): Promise<PluginRuns> {
+  const reader: PluginFileReader = async (relPath) => {
+    const fullPath = join(dir, ...relPath.split("/"));
+    const info = lstatOrNull(fullPath);
+    if (!info?.isFile()) return null;
+    try {
+      return await readFile(fullPath);
+    } catch {
+      return null;
+    }
+  };
+  return await readPluginRuns(reader);
+}
