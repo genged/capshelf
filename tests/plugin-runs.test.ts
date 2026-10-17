@@ -3,6 +3,7 @@ import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { gitTreeSource } from "../src/item-source";
 import { itemTreeEntriesAtCommit } from "../src/pin";
+import type { PinTreeEntry } from "../src/pin";
 import {
   newRunsEntries,
   pluginRunsAtCommit,
@@ -245,6 +246,44 @@ describe("pluginRunsAtCommit", () => {
     expect(runs.unknown).toEqual(["missing.json could not be read"]);
     expect(runsHaveEntries(runs)).toBe(true);
   });
+
+  test("a non-regular tree entry at a default path is unknown, not absent", async () => {
+    const repo = await tempRepo("capshelf-plugin-runs-commit-mode-");
+    const pluginDir = join(repo, "plugins", "p");
+    await mkdir(join(pluginDir, ".claude-plugin"), { recursive: true });
+    await mkdir(join(pluginDir, "hooks"), { recursive: true });
+    await writeFile(
+      join(pluginDir, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "p" }),
+    );
+    await writeFile(
+      join(pluginDir, "hooks", "hooks.json"),
+      hooksJson("Stop", "bash x.sh"),
+    );
+    await commitAll(repo, "plugin p");
+
+    const entries = await itemTreeEntriesAtCommit(
+      gitTreeSource({ repo, kind: "plugins", name: "p", commit: "HEAD" }),
+      "plugins",
+    );
+    // SAFETY: `itemTreeEntriesAtCommit` never actually returns this mode for
+    // hooks/hooks.json — assertRegularBlobEntries (src/git.ts:697-712)
+    // refuses a symlink or gitlink before pin.ts builds a PinTreeEntry, and
+    // GitFileMode's type only admits "100644"/"100755". This cast simulates
+    // a caller that bypasses that guard, to prove pluginRunsAtCommit does
+    // not depend on it.
+    const tampered: PinTreeEntry[] = entries.map((entry) =>
+      entry.path === "hooks/hooks.json"
+        ? { ...entry, mode: "120000" as PinTreeEntry["mode"] }
+        : entry,
+    );
+
+    const runs = await pluginRunsAtCommit(repo, tampered);
+
+    expect(runs.hooks).toEqual([]);
+    expect(runs.unknown).toEqual(["hooks/hooks.json could not be read"]);
+    expect(runsHaveEntries(runs)).toBe(true);
+  });
 });
 
 describe("pluginRunsOnDisk", () => {
@@ -291,6 +330,61 @@ describe("pluginRunsOnDisk", () => {
 
     expect(runs.hooks).toEqual([]);
     expect(runs.unknown).toEqual(["custom/h.json could not be read"]);
+    expect(runsHaveEntries(runs)).toBe(true);
+  });
+
+  test("a symlinked default hooks/hooks.json is unknown, never absent", async () => {
+    const dir = await tempDir("capshelf-plugin-runs-disk-default-symlink-");
+    const outsideDir = await tempDir("capshelf-plugin-runs-disk-outside2-");
+    const outsideFile = join(outsideDir, "hooks.json");
+    await writeFile(outsideFile, hooksJson("Stop", "bash evil.sh"));
+    await mkdir(join(dir, ".claude-plugin"), { recursive: true });
+    await writeFile(
+      join(dir, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "p" }),
+    );
+    await mkdir(join(dir, "hooks"), { recursive: true });
+    await symlink(outsideFile, join(dir, "hooks", "hooks.json"));
+
+    const runs = await pluginRunsOnDisk(dir);
+
+    expect(runs.hooks).toEqual([]);
+    expect(runs.unknown).toEqual(["hooks/hooks.json could not be read"]);
+    expect(runsHaveEntries(runs)).toBe(true);
+  });
+
+  test("a symlinked .mcp.json is unknown, never absent", async () => {
+    const dir = await tempDir("capshelf-plugin-runs-disk-mcp-symlink-");
+    const outsideDir = await tempDir("capshelf-plugin-runs-disk-outside3-");
+    const outsideFile = join(outsideDir, "mcp.json");
+    await writeFile(outsideFile, JSON.stringify({ srv: { command: "evil" } }));
+    await mkdir(join(dir, ".claude-plugin"), { recursive: true });
+    await writeFile(
+      join(dir, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "p" }),
+    );
+    await symlink(outsideFile, join(dir, ".mcp.json"));
+
+    const runs = await pluginRunsOnDisk(dir);
+
+    expect(runs.mcpServers).toEqual([]);
+    expect(runs.unknown).toEqual([".mcp.json could not be read"]);
+    expect(runsHaveEntries(runs)).toBe(true);
+  });
+
+  test("a directory at hooks/hooks.json is unknown", async () => {
+    const dir = await tempDir("capshelf-plugin-runs-disk-hooks-dir-");
+    await mkdir(join(dir, ".claude-plugin"), { recursive: true });
+    await writeFile(
+      join(dir, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "p" }),
+    );
+    await mkdir(join(dir, "hooks", "hooks.json"), { recursive: true });
+
+    const runs = await pluginRunsOnDisk(dir);
+
+    expect(runs.hooks).toEqual([]);
+    expect(runs.unknown).toEqual(["hooks/hooks.json could not be read"]);
     expect(runsHaveEntries(runs)).toBe(true);
   });
 });

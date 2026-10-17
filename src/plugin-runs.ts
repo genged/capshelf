@@ -344,6 +344,42 @@ export function newRunsEntries(
 
 // ------------------------------------------------------------------ readers
 
+const DEFAULT_CANDIDATE_RELS = [
+  PLUGIN_MANIFEST_REL,
+  HOOKS_DEFAULT_REL,
+  MCP_DEFAULT_REL,
+] as const;
+
+function isRegularBlobMode(mode: string): boolean {
+  return mode === "100644" || mode === "100755";
+}
+
+/**
+ * D6's conservative-reader rule extended to the three default candidate
+ * paths themselves. `collectHooks`/`collectServers`/`readManifest` treat a
+ * `null` read of one of these as "genuinely absent" and stay quiet — correct
+ * for a truly missing file, wrong for one that exists but is unsafe to read
+ * (a symlink on disk, a non-regular blob at a commit). `readPluginRuns` has
+ * no way to tell those two "null" cases apart through `PluginFileReader`
+ * alone, so each caller checks presence its own way and this adds the one
+ * unknown entry that quiet absence would otherwise swallow.
+ *
+ * Runs after `readPluginRuns`, so a source already flagged unknown for
+ * another reason (the manifest's own parse failure, say) is never
+ * duplicated — `isUnsafePresent` only asks "does this exist and refuse to be
+ * read", not "does it already appear in `unknown`".
+ */
+function addUnsafeDefaultUnknowns(
+  runs: PluginRuns,
+  isUnsafePresent: (relPath: string) => boolean,
+): void {
+  for (const relPath of DEFAULT_CANDIDATE_RELS) {
+    if (!isUnsafePresent(relPath)) continue;
+    const message = unknownEntry(relPath);
+    if (!runs.unknown.includes(message)) runs.unknown.push(message);
+  }
+}
+
 /**
  * The manifest `hooks` field's string path(s), normalized and resolved, for
  * prefetching only. `pluginRunsAtCommit`'s correctness never depends on this
@@ -382,6 +418,13 @@ function manifestNamedHookPaths(manifestBytes: Buffer | undefined): string[] {
  * second batch — an edge case this reader's own logic does not anticipate —
  * still reads correctly through one extra per-path fetch, never as a false
  * "could not be read".
+ *
+ * `assertRegularBlobEntries` (`src/git.ts:697-712`) already refuses a
+ * symlink or gitlink before `pin.ts` ever builds a `PinTreeEntry`, so in
+ * practice every entry here already has a regular-file mode. This reader
+ * checks the mode itself anyway rather than trusting that invariant: a
+ * caller that builds `entries` by some other path must not be able to make
+ * this reader silently treat a non-regular blob as absent.
  */
 export async function pluginRunsAtCommit(
   repo: string,
@@ -390,10 +433,17 @@ export async function pluginRunsAtCommit(
   const byPath = new Map(entries.map((entry) => [entry.path, entry] as const));
   const blobs = new Map<string, Buffer>();
 
+  function regularEntryAt(relPath: string): PinTreeEntry | undefined {
+    const entry = byPath.get(relPath);
+    return entry !== undefined && isRegularBlobMode(entry.mode)
+      ? entry
+      : undefined;
+  }
+
   async function fetchBlobsFor(relPaths: readonly string[]): Promise<void> {
     const ids: string[] = [];
     for (const relPath of relPaths) {
-      const entry = byPath.get(relPath);
+      const entry = regularEntryAt(relPath);
       if (entry !== undefined && !blobs.has(entry.blobId))
         ids.push(entry.blobId);
     }
@@ -402,28 +452,33 @@ export async function pluginRunsAtCommit(
     for (const [id, bytes] of fetched) blobs.set(id, bytes);
   }
 
-  await fetchBlobsFor([
-    PLUGIN_MANIFEST_REL,
-    HOOKS_DEFAULT_REL,
-    MCP_DEFAULT_REL,
-  ]);
-  const manifestEntry = byPath.get(PLUGIN_MANIFEST_REL);
+  await fetchBlobsFor(DEFAULT_CANDIDATE_RELS);
+  const manifestEntry = regularEntryAt(PLUGIN_MANIFEST_REL);
   const manifestBytes =
     manifestEntry === undefined ? undefined : blobs.get(manifestEntry.blobId);
   await fetchBlobsFor(manifestNamedHookPaths(manifestBytes));
 
   const reader: PluginFileReader = async (relPath) => {
-    const entry = byPath.get(relPath);
+    const entry = regularEntryAt(relPath);
     if (entry === undefined) return null;
     if (!blobs.has(entry.blobId)) await fetchBlobsFor([relPath]);
     return blobs.get(entry.blobId) ?? null;
   };
-  return await readPluginRuns(reader);
+  const runs = await readPluginRuns(reader);
+
+  addUnsafeDefaultUnknowns(runs, (relPath) => {
+    const entry = byPath.get(relPath);
+    return entry !== undefined && !isRegularBlobMode(entry.mode);
+  });
+  return runs;
 }
 
 /**
  * Read a plugin's runs from an installed directory. A symlink or a
- * non-regular file is treated as absent, never followed.
+ * non-regular file is treated the same as absent by the reader itself — it
+ * is never followed or opened — but a present, unsafe default candidate
+ * still produces one unknown entry (D6), rather than being silently read as
+ * "no hooks".
  */
 export async function pluginRunsOnDisk(dir: string): Promise<PluginRuns> {
   const reader: PluginFileReader = async (relPath) => {
@@ -436,5 +491,11 @@ export async function pluginRunsOnDisk(dir: string): Promise<PluginRuns> {
       return null;
     }
   };
-  return await readPluginRuns(reader);
+  const runs = await readPluginRuns(reader);
+
+  addUnsafeDefaultUnknowns(runs, (relPath) => {
+    const info = lstatOrNull(join(dir, ...relPath.split("/")));
+    return info !== null && info !== undefined && !info.isFile();
+  });
+  return runs;
 }
