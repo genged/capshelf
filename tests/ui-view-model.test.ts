@@ -300,10 +300,11 @@ describe("hidden rows and external display", () => {
 
   test("isKind accepts kinds and rejects the external group ids", () => {
     expect(isKind("skills")).toBe(true);
-    // "plugins" is now a real kind (the data-repo plugin kind), not only the
-    // external "Claude plugins" chip id — the two share a string until a
-    // later task renames the chip id to "claude-plugins".
+    // "plugins" is the real kind (the data-repo plugin kind). The external
+    // "Claude plugins" chip id is "claude-plugins" (D11), so the two no
+    // longer collide.
     expect(isKind("plugins")).toBe(true);
+    expect(isKind("claude-plugins")).toBe(false);
     expect(isKind("user-skills")).toBe(false);
   });
 

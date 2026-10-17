@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { homedir } from "node:os";
 import {
+  CLAUDE_TRUST_HINT,
   describe as describeRow,
   formatStatusHuman,
   formatUserSkillsHuman,
@@ -221,8 +222,12 @@ describe("formatStatusHuman", () => {
       lines.some((l) => l.includes("skills/ext") && l.includes("acme/ext")),
     ).toBe(true);
     expect(lines).toContain("external/  (Claude plugins)");
+    // D11: the external Claude marketplace plugin id collides with the
+    // `plugins` item kind, so this row is `claude-plugins/<id>`.
     expect(
-      lines.some((l) => l.includes("plugins/rev@co") && l.includes("enabled")),
+      lines.some(
+        (l) => l.includes("claude-plugins/rev@co") && l.includes("enabled"),
+      ),
     ).toBe(true);
   });
 
@@ -267,5 +272,68 @@ describe("formatStatusHuman", () => {
     expect(lines).toContain(
       "      same name as local/data/skills/beta; Codex offers both",
     );
+  });
+});
+
+describe("plugin row workspace trust (M8)", () => {
+  test("an untrusted plugin row carries the hint, right after it", () => {
+    const lines = formatStatusHuman({
+      project: "/p",
+      dataRepo: null,
+      rows: [
+        row({ kind: "plugins", name: "worker", claudeTrust: "untrusted" }),
+      ],
+      external: [],
+      externalClaudePlugins: [],
+      personalClaudeExternal: [],
+    });
+    const rowIndex = lines.findIndex((l) => l.includes("data/plugins/worker"));
+    expect(rowIndex).toBeGreaterThanOrEqual(0);
+    expect(lines[rowIndex + 1]).toBe(`      ${CLAUDE_TRUST_HINT}`);
+  });
+
+  test("a trusted or unknown plugin row prints no hint", () => {
+    for (const claudeTrust of ["trusted", "unknown"] as const) {
+      const lines = formatStatusHuman({
+        project: "/p",
+        dataRepo: null,
+        rows: [row({ kind: "plugins", name: "worker", claudeTrust })],
+        external: [],
+        externalClaudePlugins: [],
+        personalClaudeExternal: [],
+      });
+      expect(lines.some((l) => l.includes(CLAUDE_TRUST_HINT))).toBe(false);
+    }
+  });
+
+  test("several untrusted plugin rows print the hint once, under the first", () => {
+    const lines = formatStatusHuman({
+      project: "/p",
+      dataRepo: null,
+      rows: [
+        row({ kind: "plugins", name: "alpha", claudeTrust: "untrusted" }),
+        row({ kind: "plugins", name: "beta", claudeTrust: "untrusted" }),
+      ],
+      external: [],
+      externalClaudePlugins: [],
+      personalClaudeExternal: [],
+    });
+    expect(lines.filter((l) => l.includes(CLAUDE_TRUST_HINT))).toHaveLength(1);
+    const alphaIndex = lines.findIndex((l) => l.includes("data/plugins/alpha"));
+    expect(lines[alphaIndex + 1]).toBe(`      ${CLAUDE_TRUST_HINT}`);
+  });
+
+  test("a non-plugin row's trust is never read, even if a caller sets it", () => {
+    const lines = formatStatusHuman({
+      project: "/p",
+      dataRepo: null,
+      // claudeTrust is typed "plugin rows only"; this checks the formatter
+      // itself gates on kind, not merely on the test fixtures being honest.
+      rows: [{ ...row({ name: "alpha" }), claudeTrust: "untrusted" }],
+      external: [],
+      externalClaudePlugins: [],
+      personalClaudeExternal: [],
+    });
+    expect(lines.some((l) => l.includes(CLAUDE_TRUST_HINT))).toBe(false);
   });
 });

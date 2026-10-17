@@ -27,6 +27,7 @@ import type {
 } from "./remotes-lock";
 import { buildStatusRow, deriveState } from "./status-core";
 import type { RemoteRowFacts, StatusRow, StatusRowRuns } from "./status-core";
+import type { ClaudeTrust } from "./claude-trust";
 import type { ItemRef } from "./item-ref";
 import { runtimeWarningsForItem } from "./runtime-warnings";
 import { itemTreeEntriesAtCommit, sourcePinDigest } from "./pin";
@@ -36,6 +37,8 @@ export interface RemoteStatusInput {
   remotes: RemotesLock;
   projectLock: Lock;
   localLock: Lock;
+  /** M8: the caller's single read of `~/.claude.json` for this status run. */
+  claudeTrust: ClaudeTrust;
   ref?: ItemRef;
 }
 
@@ -122,6 +125,7 @@ async function buildRemoteRow(
     source: "remote",
     remote: facts,
     ...(runs !== null && { runs }),
+    ...(kind === "plugins" && { claudeTrust: input.claudeTrust }),
     kind,
     name,
     entry: synthetic,

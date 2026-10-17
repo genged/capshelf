@@ -14,6 +14,7 @@ import type { InstallationAxis } from "./install-identity";
 import type { InstallDifference } from "./install-diff";
 import type { FilteredPath } from "./pin";
 import type { PluginRunCounts } from "./plugin-runs";
+import type { ClaudeTrust } from "./claude-trust";
 import type {
   TargetCoverageFields,
   TargetCoverageJson,
@@ -98,6 +99,8 @@ export interface StatusRow {
   remote?: RemoteRowFacts;
   /** Plugin rows only: what the plugin runs. */
   runs?: StatusRowRuns;
+  /** Plugin rows only: whether Claude Code has trusted this workspace (M8). */
+  claudeTrust?: ClaudeTrust;
   kind: ItemKind;
   name: string;
   state: State;
@@ -255,6 +258,7 @@ export interface BuildStatusRowInput {
   source: RowSource;
   remote?: RemoteRowFacts;
   runs?: StatusRowRuns;
+  claudeTrust?: ClaudeTrust;
   kind: ItemKind;
   name: string;
   entry: LockEntry;
@@ -278,6 +282,7 @@ export function buildStatusRow(input: BuildStatusRowInput): StatusRow {
     source,
     ...(input.remote !== undefined && { remote: input.remote }),
     ...(input.runs !== undefined && { runs: input.runs }),
+    ...(input.claudeTrust !== undefined && { claudeTrust: input.claudeTrust }),
     kind,
     name,
     state,

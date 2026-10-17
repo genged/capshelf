@@ -162,10 +162,22 @@ export function formatStatusHuman(input: FormatStatusHumanInput): string[] {
   const localRows = rows.filter(
     (r) => r.scope === "local" && r.source !== "remote",
   );
+  // M8: several plugin rows can share one untrusted workspace, so the hint
+  // names the fact once, under the first plugin row a reader reaches —
+  // never once per row.
+  const firstUntrustedPluginRow = [
+    ...projectRows,
+    ...localRows,
+    ...remoteRows,
+  ].find((r) => r.kind === "plugins" && r.claudeTrust === "untrusted");
+  const formatRowWithTrustHint = (r: StatusRow): string[] =>
+    r === firstUntrustedPluginRow
+      ? [...formatRow(r), `      ${CLAUDE_TRUST_HINT}`]
+      : formatRow(r);
 
   if (projectRows.length > 0) {
     lines.push("project/");
-    for (const r of projectRows) lines.push(...formatRow(r));
+    for (const r of projectRows) lines.push(...formatRowWithTrustHint(r));
   }
   if (projectRows.length > 0 && localRows.length > 0) lines.push("");
   if (localRows.length > 0) {
@@ -173,13 +185,13 @@ export function formatStatusHuman(input: FormatStatusHumanInput): string[] {
       ? `from ${homeRelative(dataRepo)}`
       : "no data repo configured — pass --data, set $CAPSHELF_HOME, or run init";
     lines.push(`local/  (${repoLabel})`);
-    for (const r of localRows) lines.push(...formatRow(r));
+    for (const r of localRows) lines.push(...formatRowWithTrustHint(r));
   }
   if (remoteRows.length > 0) {
     if (projectRows.length > 0 || localRows.length > 0) lines.push("");
     // D16: the word never stands alone, so the heading carries its qualifier.
     lines.push(REMOTE_GROUP_HEADING);
-    for (const r of remoteRows) lines.push(...formatRow(r));
+    for (const r of remoteRows) lines.push(...formatRowWithTrustHint(r));
     if (remoteRows.some((r) => r.remote?.lastChecked === null)) {
       lines.push(
         "      check for newer upstreams: capshelf status --check-upstream",
@@ -200,7 +212,9 @@ export function formatStatusHuman(input: FormatStatusHumanInput): string[] {
     }
     lines.push("external/  (Claude plugins)");
     for (const plugin of externalClaudePlugins) {
-      const id = `plugins/${plugin.id}`.padEnd(34);
+      // D11: the external Claude marketplace plugin id now collides with the
+      // `plugins` item kind, so this group's rows are `claude-plugins/<id>`.
+      const id = `claude-plugins/${plugin.id}`.padEnd(34);
       const status = plugin.enabled ? "enabled" : "disabled";
       lines.push(
         `  •   ${id} ${status} ${plugin.scope} ${homeRelative(plugin.settingsPath)}`,
@@ -281,6 +295,10 @@ function userSkillSurfaceLabel(surface: ExternalUserSkill["surface"]): string {
 
 export const REMOTE_GROUP_HEADING =
   "remote/  (items pinned to repos outside your shelf)";
+
+/** M8: printed once, under the first plugin row in an untrusted workspace. */
+export const CLAUDE_TRUST_HINT =
+  "Claude Code does not load plugins in an untrusted workspace. Open the project in Claude Code and trust it.";
 
 function formatRow(r: StatusRow): string[] {
   const g = glyph(r.state).padEnd(3);

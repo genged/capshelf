@@ -26,6 +26,7 @@ import {
   shaOfInstalled,
 } from "./installed";
 import { pluginRunCounts } from "./plugin-runs";
+import { claudeTrustFor } from "./claude-trust";
 import { findSystemItem, shaOfSystemItem } from "./bundled";
 import type { ItemRef } from "./item-ref";
 import {
@@ -220,6 +221,9 @@ export async function buildStatusReport(
   const { project, manifest, projectLock, localLock, dataRepo, ref } = input;
   const scope = input.scope ?? {};
   const targets = statusTargets(projectLock, localLock, ref, scope);
+  // M8: read once per status run. Every plugin row in this project — shelf or
+  // remote — shares the same workspace trust fact.
+  const claudeTrust = claudeTrustFor(project);
   const external = (await listSkillsShSkills(project)).filter(
     (skill) =>
       !ref ||
@@ -536,6 +540,7 @@ export async function buildStatusReport(
         scope: rowScope,
         source,
         ...(runs !== null && { runs }),
+        ...(kind === "plugins" && { claudeTrust }),
         kind,
         name: itemName,
         entry,
@@ -571,6 +576,7 @@ export async function buildStatusReport(
         remotes: input.remotes,
         projectLock,
         localLock,
+        claudeTrust,
         ...(ref !== undefined && { ref }),
       })),
     );
