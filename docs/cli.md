@@ -1604,6 +1604,7 @@ capshelf add https://github.com/acme/agent-plugins --list
   install one:   capshelf add https://github.com/acme/agent-plugins --path plugins/plain/skills/plain
   install some:  capshelf add https://github.com/acme/agent-plugins
   details:       capshelf add https://github.com/acme/agent-plugins --list --json
+  install a whole plugin:  capshelf add <url> --path plugins/<plugin>
 ```
 
 The `found` line counts only the plugins that hold a skill. A plugin with no
@@ -1635,13 +1636,18 @@ print everything, so a script never waits on it. The question counts only a
 plugin that holds a skill. A commands-only or workflows-only plugin never
 triggers it.
 
-`--path <subpath>` naming a plugin directory, not a skill, refuses:
+`--path <subpath>` naming a plugin directory installs the whole plugin when
+the directory holds `.claude-plugin/plugin.json`. The item name is the
+manifest `name`, so `--as` refuses. The prompt shows the hooks and MCP
+servers the plugin runs. With `--json` or no terminal, the install refuses
+without `--yes`, and the refusal names those hooks and servers. A plugin
+directory with no `.claude-plugin/plugin.json` refuses:
 
 ```text
 ✗ plugins/heavy is a plugin, not a skill. It holds 1 skill:
     plugins/heavy/skills/worker   uses plugin root, agents
   install the skill: capshelf add https://github.com/acme/agent-plugins --path plugins/heavy/skills/worker
-  capshelf cannot install a whole plugin
+  capshelf installs a whole plugin only when it holds .claude-plugin/plugin.json
 ```
 
 The repository root is never read as a plugin this way. `--path .` keeps

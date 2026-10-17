@@ -56,6 +56,14 @@ export function plural(count: number, word: string): string {
   return count === 1 ? word : `${word}s`;
 }
 
+/** A size for a person: bytes, then kB and MB in powers of 1000. */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1000) return `${bytes} B`;
+  const kb = bytes / 1000;
+  if (kb < 1000) return `${kb.toFixed(1)} kB`;
+  return `${(kb / 1000).toFixed(1)} MB`;
+}
+
 /**
  * The skill row's "uses" column. "" when the candidate is not a plugin
  * skill or matches none of the four checks and its facts are complete.
@@ -262,7 +270,7 @@ function renderRepositoryList(
   if (elsewhere !== null) lines.push(elsewhere);
   lines.push("");
   if (candidates.length === 0) {
-    lines.pop();
+    lines.push(WHOLE_PLUGIN_LINE);
     return { lines, summaryLength: lines.length };
   }
   const summaryLength = lines.length;
@@ -327,8 +335,16 @@ function renderRepositoryList(
   lines.push(
     `  details:       ${safe(shellCommand([PRODUCT_NAME, "add", url, "--list", "--json"]))}`,
   );
+  lines.push(WHOLE_PLUGIN_LINE);
   return { lines, summaryLength };
 }
+
+/**
+ * Plugin D5: one footer line when the listing holds a plugin. The listing
+ * does not read each plugin's manifest, so the line names the command shape,
+ * not one plugin.
+ */
+const WHOLE_PLUGIN_LINE = `  install a whole plugin:  ${PRODUCT_NAME} add <url> --path plugins/<plugin>`;
 
 /**
  * Whether a plugin holds a skill. Every plugin count in the listing uses this
@@ -362,8 +378,9 @@ function renderPluginList(
     `  found     ${candidates.length} ${plural(candidates.length, "skill")} in ${safe(plugin.source)}${shipsSuffix}`,
   );
   lines.push("");
+  const wholePluginLine = `  install a whole plugin:  ${safe(shellCommand([PRODUCT_NAME, "add", url, "--path", plugin.source]))}`;
   if (candidates.length === 0) {
-    lines.pop();
+    lines.push(wholePluginLine);
     return { lines, summaryLength: lines.length };
   }
   const summaryLength = lines.length;
@@ -384,6 +401,7 @@ function renderPluginList(
   lines.push(
     `  install one:   ${safe(shellCommand([PRODUCT_NAME, "add", url, "--path", firstSubpath]))}`,
   );
+  lines.push(wholePluginLine);
   return { lines, summaryLength };
 }
 

@@ -935,7 +935,9 @@ test(
     expect(stderr).toContain(
       `install the skill: capshelf add ${url} --path plugins/heavy/skills/worker`,
     );
-    expect(stderr).toContain("capshelf cannot install a whole plugin");
+    expect(stderr).toContain(
+      "capshelf installs a whole plugin only when it holds .claude-plugin/plugin.json",
+    );
     expect(stderr).not.toContain("claude plugin");
     expect(stderr).not.toContain("codex plugin");
     const after = await projectSnapshot(project);
@@ -958,7 +960,9 @@ test(
     expect(result.exitCode).toBe(3);
     const stderr = result.stderr.toString();
     expect(stderr).toContain("plugins/empty is a plugin with no skills");
-    expect(stderr).toContain("capshelf cannot install a whole plugin");
+    expect(stderr).toContain(
+      "capshelf installs a whole plugin only when it holds .claude-plugin/plugin.json",
+    );
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );

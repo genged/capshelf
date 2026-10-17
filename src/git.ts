@@ -694,6 +694,12 @@ export interface GitTreeEntry {
   path: string;
 }
 
+/**
+ * The refusal `assertRegularBlobEntries` throws. A caller that can say more
+ * about the refusal catches this class, not every `PreconditionError`.
+ */
+export class UnsupportedGitEntryError extends PreconditionError {}
+
 export function assertRegularBlobEntries(
   entries: GitTreeEntry[],
   itemPath: string,
@@ -705,7 +711,7 @@ export function assertRegularBlobEntries(
     ) {
       continue;
     }
-    throw new PreconditionError(
+    throw new UnsupportedGitEntryError(
       `${itemPath} contains an unsupported Git entry: ${entry.path} (mode ${entry.mode}, type ${entry.type}); copy items support regular files only`,
     );
   }

@@ -61,6 +61,15 @@ export interface SkillTargetSelf {
   key: string;
 }
 
+/**
+ * `addCommand` replaces `capshelf add <kind>/<name>` in the switch message.
+ * A remote install passes its own command, because a shelf `add` of the
+ * same ref would not install from the upstream.
+ */
+export interface SkillTargetMessageOptions {
+  addCommand?: string;
+}
+
 export type SkillTargetOwner =
   | { owner: "project" | "local"; key: string }
   | { owner: "remote"; key: string }
@@ -151,6 +160,7 @@ export async function assertSkillTargetFree(
   name: string,
   locks: SkillTargetLocks,
   self: SkillTargetSelf | null,
+  options: SkillTargetMessageOptions = {},
 ): Promise<void> {
   const owners = (await skillTargetOwners(project, name, locks)).filter(
     (owner) => {
@@ -168,7 +178,14 @@ export async function assertSkillTargetFree(
   if (!first) return;
   const folder = relative(project, installedPath(project, kind, name));
   throw new PreconditionError(
-    await skillTargetConflictMessage(project, folder, kind, name, first),
+    await skillTargetConflictMessage(
+      project,
+      folder,
+      kind,
+      name,
+      first,
+      options,
+    ),
   );
 }
 
@@ -178,6 +195,7 @@ async function skillTargetConflictMessage(
   kind: SkillTargetKind,
   name: string,
   owner: SkillTargetOwner,
+  options: SkillTargetMessageOptions,
 ): Promise<string> {
   if (owner.owner === "skills.sh") {
     const external: ExternalSkill = (await findSkillsShSkill(
@@ -195,7 +213,7 @@ async function skillTargetConflictMessage(
       `  capshelf does not manage that path. Move or delete it, then install ${kind}/${name} again.`,
     ].join("\n");
   }
-  return lockOwnerConflictMessage(folder, kind, name, owner);
+  return lockOwnerConflictMessage(folder, kind, name, owner, options);
 }
 
 /**
@@ -211,6 +229,7 @@ function lockOwnerConflictMessage(
   kind: SkillTargetKind,
   name: string,
   owner: { owner: "project" | "local" | "remote"; key: string },
+  options: SkillTargetMessageOptions,
 ): string {
   const ownerRef = skillTargetRefFromKey(owner.key);
   const ownerLabel = `${ownerRef.kind}/${ownerRef.name}`;
@@ -228,7 +247,7 @@ function lockOwnerConflictMessage(
   lines.push(
     `  a project uses one of ${ownerLabel} and ${selfLabel}. To switch:`,
     `    ${PRODUCT_NAME} rm ${ownerLabel}`,
-    `    ${PRODUCT_NAME} add ${selfLabel}`,
+    `    ${options.addCommand ?? `${PRODUCT_NAME} add ${selfLabel}`}`,
     kind === "plugins"
       ? `  after the switch, Claude Code calls the skill ${name}:<skill> (was /${name})`
       : `  after the switch, Claude Code calls the skill /${name} (was ${name}:<skill>)`,
