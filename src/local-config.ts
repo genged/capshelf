@@ -24,6 +24,7 @@ const localItemNames = z.array(
 const LocalConfigSchema = z.object({
   dataRepo: z.string().min(1),
   skills: localItemNames.default([]),
+  plugins: localItemNames.default([]),
   piExtensions: localItemNames.default([]),
   settings: localItemNames.default([]),
   mcp: localItemNames.default([]),
@@ -32,6 +33,7 @@ const LocalConfigSchema = z.object({
 export interface LocalConfig {
   dataRepo: string;
   skills: string[];
+  plugins: string[];
   piExtensions: string[];
   settings: string[];
   mcp: string[];
@@ -58,6 +60,7 @@ export async function loadLocalConfig(
   return {
     dataRepo: expandTilde(parsed.dataRepo),
     skills: parsed.skills,
+    plugins: parsed.plugins,
     piExtensions: parsed.piExtensions,
     settings: parsed.settings,
     mcp: parsed.mcp,
@@ -99,6 +102,8 @@ export function localConfigNamesForKind(
   switch (kind) {
     case "skills":
       return config.skills;
+    case "plugins":
+      return config.plugins;
     case "pi-extensions":
       return config.piExtensions;
     case "subagents":
@@ -207,6 +212,7 @@ export function assertLocalScopeSupported(
 ): void {
   switch (kind) {
     case "skills":
+    case "plugins":
     case "pi-extensions":
       return;
     case "subagents":
@@ -236,6 +242,7 @@ function localInstallPaths(
   const suffix = directorySuffix ? "/" : "";
   switch (kind) {
     case "skills":
+    case "plugins":
       return [`.agents/skills/${name}${suffix}`, `.claude/skills/${name}`];
     case "pi-extensions":
       return [`.pi/extensions/${name}${suffix}`];

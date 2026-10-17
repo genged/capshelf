@@ -647,6 +647,7 @@ describe("pi extension CLI lifecycle", () => {
       {
         dataRepo,
         skills: [],
+        plugins: [],
         piExtensions: ["guard"],
         settings: [],
         mcp: [],

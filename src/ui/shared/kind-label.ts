@@ -8,6 +8,7 @@ import type { ItemKind } from "../../master";
 
 export const KIND_ORDER: readonly ItemKind[] = [
   "skills",
+  "plugins",
   "pi-extensions",
   "subagents",
   "settings",
@@ -23,6 +24,8 @@ export function kindLabel(kind: ItemKind): string {
   switch (kind) {
     case "skills":
       return "Skills";
+    case "plugins":
+      return "Plugins";
     case "pi-extensions":
       return "Pi extensions";
     case "subagents":

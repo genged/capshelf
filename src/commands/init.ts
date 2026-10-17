@@ -249,6 +249,7 @@ export function registerInit(program: Command): void {
       await saveLocalConfig(project, {
         dataRepo,
         skills: [],
+        plugins: [],
         piExtensions: [],
         settings: [],
         mcp: [],

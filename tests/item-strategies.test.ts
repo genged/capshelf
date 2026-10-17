@@ -16,6 +16,7 @@ describe("item strategies", () => {
   test("every public item kind belongs to exactly one explicit strategy", () => {
     expect(ITEM_KINDS).toEqual([
       "skills",
+      "plugins",
       "pi-extensions",
       "subagents",
       "settings",

@@ -54,6 +54,7 @@ import {
   isFragmentItemKind,
   isFragmentKindName,
   itemRepoRelPath,
+  type CopyDirectoryItemKind,
 } from "../master";
 import {
   assertRepoClean,
@@ -1223,7 +1224,7 @@ async function revalidateUpdateMergeInputs(input: {
   localLock: WritableLock;
   entry: DataLockEntryV4;
   parsed: ReturnType<typeof parseLockKey> & {
-    kind: "skills" | "pi-extensions";
+    kind: CopyDirectoryItemKind;
   };
   plannedHead: string;
   upstreamPin: Awaited<ReturnType<typeof pinCurrentSource>>;

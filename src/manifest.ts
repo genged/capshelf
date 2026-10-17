@@ -43,6 +43,7 @@ export const ManifestSchema = z
       ),
     dataRepo: z.never().optional(),
     skills: itemNameArray,
+    plugins: itemNameArray.optional(),
     commands: z.array(z.string()).optional(),
     settings: itemNameArray,
     mcp: itemNameArray,
@@ -69,10 +70,14 @@ type ParsedManifest = z.infer<typeof ManifestSchema>;
 // New fields stay optional at the TypeScript boundary so older in-memory
 // fixtures and integrations remain source-compatible. ManifestSchema always
 // supplies them when loading persisted state, and mutation initializes them.
-export type Manifest = Omit<ParsedManifest, "piExtensions" | "subagents"> & {
+export type Manifest = Omit<
+  ParsedManifest,
+  "piExtensions" | "subagents" | "plugins"
+> & {
   installMode: InstallMode;
   piExtensions?: string[];
   subagents?: string[];
+  plugins?: string[];
 };
 
 export function emptyManifest(): Manifest {
@@ -153,6 +158,9 @@ export function manifestNamesForKind(
   switch (kind) {
     case "skills":
       return manifest.skills;
+    case "plugins":
+      if (!manifest.plugins) manifest.plugins = [];
+      return manifest.plugins;
     case "pi-extensions":
       if (!manifest.piExtensions) manifest.piExtensions = [];
       return manifest.piExtensions;

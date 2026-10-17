@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { findProjectRoot, projectRoot, homeRelative } from "../paths";
 import { resolveDataRepo, resolveDataRepoOptional } from "../data-repo";
@@ -18,7 +19,12 @@ import {
   ITEM_KINDS,
   parseItemKind,
   shaOfGitVisibleItem,
+  PLUGIN_MANIFEST_REL,
 } from "../master";
+import { isConfigObject, isConfigString } from "../config-values";
+import type { ConfigValue } from "../config-values";
+import { lstatOrNull } from "../fs-utils";
+import { sanitizeDisplayText } from "../pick-core";
 import { shaOfCurrentSubagent } from "../subagents";
 import type { ItemKind } from "../master";
 import { entryIdentity, loadLocalLock, loadLock } from "../lock";
@@ -115,6 +121,57 @@ export function registerLs(program: Command): void {
     });
 }
 
+interface PluginNameWarning {
+  path: string;
+  message: string;
+}
+
+/**
+ * D3: a `plugins/<dir>` directory whose manifest names it something else is
+ * not a listed item (`isInstallableDataItem` in `src/master.ts`), so `ls`
+ * names the mismatch instead of silently omitting the directory. Never
+ * throws: a missing or malformed manifest is simply not a mismatch to
+ * report — `listMasterItems` already excludes that directory.
+ */
+async function pluginNameWarnings(
+  dataRepo: string,
+): Promise<PluginNameWarning[]> {
+  const dir = join(dataRepo, "plugins");
+  if (!existsSync(dir)) return [];
+  const entries = await readdir(dir, { withFileTypes: true });
+  const warnings: PluginNameWarning[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    const manifestPath = join(
+      dir,
+      entry.name,
+      ...PLUGIN_MANIFEST_REL.split("/"),
+    );
+    if (!lstatOrNull(manifestPath)?.isFile()) continue;
+    let manifestName: string | null = null;
+    try {
+      const parsed: ConfigValue = JSON.parse(
+        await readFile(manifestPath, "utf-8"),
+      );
+      if (isConfigObject(parsed) && isConfigString(parsed.name)) {
+        manifestName = parsed.name;
+      }
+    } catch {
+      continue;
+    }
+    if (manifestName === null || manifestName === entry.name) continue;
+    const dirName = sanitizeDisplayText(entry.name);
+    const safeManifestName = sanitizeDisplayText(manifestName);
+    warnings.push({
+      path: `plugins/${dirName}`,
+      message:
+        `is not listed: its plugin.json names it "${safeManifestName}". ` +
+        `Rename the directory to plugins/${safeManifestName}.`,
+    });
+  }
+  return warnings;
+}
+
 async function lsAvailable(
   project: string | null,
   dataRepo: string,
@@ -127,6 +184,8 @@ async function lsAvailable(
   await assertIsGitRepo(dataRepo);
   const dataItems = await listMasterItems(dataRepo, kind);
   const systemItems = SYSTEM_ITEMS.filter((s) => !kind || s.kind === kind);
+  const pluginWarnings =
+    !kind || kind === "plugins" ? await pluginNameWarnings(dataRepo) : [];
 
   const systemRows = systemItems
     .map((item) => ({ item, meta: loadSystemItemMetadata(item) }))
@@ -191,6 +250,7 @@ async function lsAvailable(
           data: dataJsonRows,
           externalUserSkills,
           // Append-only: a sibling top-level key; system/data rows unchanged.
+          ...(pluginWarnings.length > 0 && { warnings: pluginWarnings }),
           ...(bundleRows.length > 0 && {
             bundles: bundleRows.map((bundle) => ({
               name: bundle.name,
@@ -240,6 +300,10 @@ async function lsAvailable(
         `  ${item.kind}/${item.name.padEnd(26)} ${sha}${metadataLineSuffix(meta)}`,
       );
     }
+  }
+
+  for (const warning of pluginWarnings) {
+    console.error(`⚠ ${warning.path} ${warning.message}`);
   }
 
   if (bundleRows.length > 0) {

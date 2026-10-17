@@ -4,6 +4,9 @@ import { join, basename } from "node:path";
 import { hashNamedContents } from "./content-hash";
 import { assertNever, assertSafeItemName } from "./assert";
 import { isIgnoredDotDirent } from "./dotfiles";
+import { isConfigObject, isConfigString } from "./config-values";
+import type { ConfigValue } from "./config-values";
+import { lstatOrNull } from "./fs-utils";
 import {
   projectVisibleFilesUnderPath,
   sourceVisibleFilesUnderPath,
@@ -13,6 +16,7 @@ import { PreconditionError } from "./errors";
 
 export const ITEM_KINDS = [
   "skills",
+  "plugins",
   "pi-extensions",
   "subagents",
   "settings",
@@ -21,8 +25,22 @@ export const ITEM_KINDS = [
 ] as const;
 export type ItemKind = (typeof ITEM_KINDS)[number];
 
-export const COPY_DIRECTORY_ITEM_KINDS = ["skills", "pi-extensions"] as const;
+export const COPY_DIRECTORY_ITEM_KINDS = [
+  "skills",
+  "plugins",
+  "pi-extensions",
+] as const;
 export type CopyDirectoryItemKind = (typeof COPY_DIRECTORY_ITEM_KINDS)[number];
+
+export type SkillTargetKind = "skills" | "plugins";
+
+/** Where a plugin's manifest lives, relative to its item root (spec D1, D3). */
+export const PLUGIN_MANIFEST_REL = ".claude-plugin/plugin.json";
+
+/** Skills and plugins install into one folder per name (spec D2). */
+export function installsAtSkillTarget(kind: ItemKind): kind is SkillTargetKind {
+  return kind === "skills" || kind === "plugins";
+}
 
 export const COPY_TARGET_FILE_ITEM_KINDS = ["subagents"] as const;
 export type CopyTargetFileItemKind =
@@ -83,6 +101,7 @@ export function isMaterializedItemKind(
 export function itemStrategy(kind: ItemKind): ItemStrategy {
   switch (kind) {
     case "skills":
+    case "plugins":
     case "pi-extensions":
       return "copy-directory";
     case "subagents":
@@ -323,6 +342,8 @@ export function itemRepoRelPath(kind: ItemKind, name: string): string {
   switch (kind) {
     case "skills":
       return `skills/${name}`;
+    case "plugins":
+      return `plugins/${name}`;
     case "pi-extensions":
       return `pi/extensions/${name}`;
     case "settings":
@@ -349,6 +370,7 @@ export function itemRepoRelPath(kind: ItemKind, name: string): string {
 export function itemRelPathsWithinRoot(kind: ItemKind): readonly string[] {
   switch (kind) {
     case "skills":
+    case "plugins":
     case "pi-extensions":
       return [];
     case "settings":
@@ -403,6 +425,7 @@ export function masterListDir(dataRepo: string, kind: ItemKind): string {
       return join(dataRepo, "codex", "config");
     case "subagents":
     case "skills":
+    case "plugins":
     case "settings":
     case "mcp":
       return join(dataRepo, kind);
@@ -419,6 +442,8 @@ async function isInstallableDataItem(
   switch (kind) {
     case "skills":
       return true;
+    case "plugins":
+      return isInstallablePlugin(dataRepo, name);
     case "pi-extensions":
       return existsSync(
         join(dataRepo, ...itemRepoRelPath(kind, name).split("/"), "index.ts"),
@@ -432,5 +457,35 @@ async function isInstallableDataItem(
       );
     default:
       return assertNever(kind);
+  }
+}
+
+/**
+ * A `plugins/<name>` directory is an item only when its manifest names it
+ * `name` (spec D1, D3). Never throws: a missing, unreadable, or malformed
+ * manifest means the directory is not (yet) a listed item, not an error.
+ */
+async function isInstallablePlugin(
+  dataRepo: string,
+  name: string,
+): Promise<boolean> {
+  const manifestPath = join(
+    dataRepo,
+    ...itemRepoRelPath("plugins", name).split("/"),
+    ...PLUGIN_MANIFEST_REL.split("/"),
+  );
+  const stat = lstatOrNull(manifestPath);
+  if (!stat?.isFile()) return false;
+  try {
+    const parsed: ConfigValue = JSON.parse(
+      await readFile(manifestPath, "utf-8"),
+    );
+    return (
+      isConfigObject(parsed) &&
+      isConfigString(parsed.name) &&
+      parsed.name === name
+    );
+  } catch {
+    return false;
   }
 }

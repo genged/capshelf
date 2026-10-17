@@ -5,11 +5,13 @@ import { mkdir, rm, symlink } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import {
   ITEM_KINDS,
+  installsAtSkillTarget,
   isItemKind,
   isMaterializedItemKind,
   itemRepoRelPath,
   type ItemKind,
   type MaterializedItemKind,
+  type SkillTargetKind,
   shaOfItem,
 } from "./master";
 import {
@@ -36,11 +38,12 @@ export function itemOutputTargets(
 ): ItemOutputTarget[] {
   switch (kind) {
     case "skills":
+    case "plugins":
       return [
         {
           id: "directory",
           canonicalRelPath: itemRepoRelPath(kind, name),
-          outputPath: skillInstalledPath(project, name, mode),
+          outputPath: skillInstalledPath(project, kind, name, mode),
         },
       ];
     case "pi-extensions":
@@ -147,7 +150,7 @@ export function findInstallConflict(
     if (pathExists(dst)) return dst;
   }
 
-  if (kind === "skills" && mode === "codex-compatible") {
+  if (installsAtSkillTarget(kind) && mode === "codex-compatible") {
     const claudePath = claudeSkillPath(project, name);
     if (pathExists(claudePath)) return claudePath;
   }
@@ -161,7 +164,7 @@ export function assertCanMaterializeInstalled(
   name: string,
   mode: InstallMode = detectInstallMode(project),
 ): void {
-  if (kind !== "skills" || mode !== "codex-compatible") return;
+  if (!installsAtSkillTarget(kind) || mode !== "codex-compatible") return;
 
   const claudePath = claudeSkillPath(project, name);
   const stat = lstatOrNull(claudePath);
@@ -178,7 +181,7 @@ export async function ensureInstallAliases(
   name: string,
   mode: InstallMode = detectInstallMode(project),
 ): Promise<void> {
-  if (kind !== "skills" || mode !== "codex-compatible") return;
+  if (!installsAtSkillTarget(kind) || mode !== "codex-compatible") return;
 
   const dst = installedPath(project, kind, name, mode);
   const claudePath = claudeSkillPath(project, name);
@@ -208,7 +211,7 @@ export async function removeInstallAliases(
   managedPath: string,
   mode: InstallMode = detectInstallMode(project),
 ): Promise<boolean> {
-  if (kind !== "skills" || mode !== "codex-compatible") return false;
+  if (!installsAtSkillTarget(kind) || mode !== "codex-compatible") return false;
 
   const claudePath = claudeSkillPath(project, name);
   const stat = lstatOrNull(claudePath);
@@ -287,6 +290,7 @@ export function parseLockKey(key: string): LockKeyParts {
 
 function skillInstalledPath(
   project: string,
+  kind: SkillTargetKind,
   name: string,
   mode: InstallMode,
 ): string {
@@ -307,11 +311,11 @@ function skillInstalledPath(
         !samePath(codexPath, symlinkTarget)
       ) {
         throw new Error(
-          `ambiguous skill install paths for skills/${name}: ${codexPath} and ${claudePath} -> ${symlinkTarget}`,
+          `ambiguous skill install paths for ${kind}/${name}: ${codexPath} and ${claudePath} -> ${symlinkTarget}`,
         );
       }
       throw new Error(
-        `compatibility symlink for skills/${name} resolves outside the managed skills dir: ${claudePath} -> ${symlinkTarget}`,
+        `compatibility symlink for ${kind}/${name} resolves outside the managed skills dir: ${claudePath} -> ${symlinkTarget}`,
       );
     }
     return canonical;
