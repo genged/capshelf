@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { ConfigObject } from "../src/config-values";
 import { gitTreeSource } from "../src/item-source";
 import { itemTreeEntriesAtCommit } from "../src/pin";
 import type { PinTreeEntry } from "../src/pin";
@@ -141,7 +142,7 @@ describe("readPluginRuns", () => {
 });
 
 describe("readPluginRuns: what it cannot list is unknown", () => {
-  const manifest = (fields: Record<string, unknown>) =>
+  const manifest = (fields: ConfigObject) =>
     JSON.stringify({ name: "p", ...fields });
   test("monitors/monitors.json is unknown", async () => {
     const runs = await readPluginRuns(
@@ -159,12 +160,13 @@ describe("readPluginRuns: what it cannot list is unknown", () => {
     const expected = [
       ".claude-plugin/plugin.json declares monitors; capshelf does not list them",
     ];
-    for (const fields of [
+    const cases: ConfigObject[] = [
       { monitors: "./m.json" },
       { monitors: null },
       { experimental: { monitors: [] } },
       { monitors: [], experimental: { monitors: [] } },
-    ]) {
+    ];
+    for (const fields of cases) {
       const runs = await readPluginRuns(
         reader({ ".claude-plugin/plugin.json": manifest(fields) }),
       );

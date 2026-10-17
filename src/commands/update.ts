@@ -247,11 +247,11 @@ export function registerUpdate(program: Command): void {
             { local: opts.local },
           );
         }
-        // By resolved key, not by bare name. `remoteKeysForRef` matches the
-        // remote kinds only, so `update skills/pdf mcp/pdf` would otherwise
-        // see `pdf` among the remote names and drop the mcp item from the
-        // shelf pass — neither updated nor reported, and the command still
-        // exits 0.
+        // By resolved key, not by bare name. `remoteKeysForRef` matches only
+        // the two remote kinds, `skills` and `plugins`, so `update skills/pdf
+        // mcp/pdf` (or `plugins/pdf mcp/pdf`) would otherwise see `pdf` among
+        // the remote names and drop the mcp item from the shelf pass —
+        // neither updated nor reported, and the command still exits 0.
         const shelfRefs = refs.filter(
           (itemRef) =>
             remoteKeysForRef(remotes, parseItemRef(itemRef)).length === 0,

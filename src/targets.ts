@@ -50,13 +50,15 @@ export function matchRefAcrossScopes(
 }
 
 /**
- * Refuse a bare ref that names a remote skill and a shelf item at once.
+ * Refuse a bare ref that names a remote row and a shelf item at once.
  *
- * `remoteKeysForRef` matches on name alone, and `add <url>` only checks
- * `skills/<name>` against the two locks, so a project can track `mcp/pdf` in
- * its shelf and pull `skills/pdf` from a URL. `apply` and `update` resolve the
- * remote row first, so without this the remote skill would win `capshelf apply
- * pdf` outright and leave the shelf item unconverged with nothing reported.
+ * For a bare ref, `remoteKeysForRef` matches on name across both remote
+ * kinds, `skills` and `plugins`. `add <url>` checks only its own
+ * `<kind>/<name>` against the two locks, so a project can track `mcp/pdf` in
+ * its shelf and pull `skills/pdf` or `plugins/pdf` from a URL. `apply` and
+ * `update` resolve the remote row first, so without this the remote row would
+ * win `capshelf apply pdf` outright and leave the shelf item unconverged with
+ * nothing reported.
  * `resolveTrackedTarget` already refuses an ambiguous bare ref inside one
  * population; this is the same rule across two.
  *
