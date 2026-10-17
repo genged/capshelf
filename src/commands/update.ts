@@ -17,7 +17,7 @@ import {
 } from "../destructive-preflight";
 import type { Manifest } from "../manifest";
 import {
-  assertLockV4,
+  assertWritableLock,
   entryIdentity,
   loadLocalLock,
   loadLock,
@@ -39,7 +39,7 @@ import type {
   DataLockEntryV4,
   LockEntry,
   LockEntryV4,
-  LockV4,
+  WritableLock,
   SystemLockEntry,
 } from "../lock";
 import { installedPath, parseLockKey, shaOfInstalled } from "../installed";
@@ -246,11 +246,14 @@ export function registerUpdate(program: Command): void {
         // PIN-12: no ordinary lock write migrates. `update` reads either
         // version but writes only version 4, so it refuses here with the
         // migration command rather than rewriting entries as a side effect.
-        const writableProjectLock = assertLockV4(
+        const writableProjectLock = assertWritableLock(
           projectLock,
           "capshelf update",
         );
-        const writableLocalLock = assertLockV4(localLock, "capshelf update");
+        const writableLocalLock = assertWritableLock(
+          localLock,
+          "capshelf update",
+        );
         const explicit = refs.length > 0;
 
         const targets: ScopedTarget[] = [];
@@ -956,8 +959,8 @@ async function updateMergeTarget(input: {
   manifest: Manifest;
   dataRepo: string;
   target: ScopedTarget;
-  projectLock: LockV4;
-  localLock: LockV4;
+  projectLock: WritableLock;
+  localLock: WritableLock;
   dryRun: boolean;
 }): Promise<UpdateResult> {
   const { project, dataRepo, target, dryRun } = input;
@@ -1216,8 +1219,8 @@ async function revalidateUpdateMergeInputs(input: {
   project: string;
   dataRepo: string;
   target: ScopedTarget;
-  projectLock: LockV4;
-  localLock: LockV4;
+  projectLock: WritableLock;
+  localLock: WritableLock;
   entry: DataLockEntryV4;
   parsed: ReturnType<typeof parseLockKey> & {
     kind: "skills" | "pi-extensions";
@@ -1338,8 +1341,8 @@ interface UpdatePreflight {
 async function planUpdatePreflight(
   ctx: UpdateContext,
   targets: ScopedTarget[],
-  projectLock: LockV4,
-  localLock: LockV4,
+  projectLock: WritableLock,
+  localLock: WritableLock,
 ): Promise<UpdatePreflight> {
   const dryContext = { ...ctx, dryRun: true };
   const results: UpdateResult[] = [];

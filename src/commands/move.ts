@@ -2,7 +2,7 @@ import type { Command } from "commander";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import { saveManifest } from "../manifest";
 import {
-  assertLockV4,
+  assertWritableLock,
   dataKey,
   entryIdentity,
   saveLocalLock,
@@ -65,8 +65,11 @@ export function registerMove(program: Command): void {
       }
       // PIN-12: before the drift comparison, so an unmigrated project gets the
       // migration guidance rather than a drift refusal it cannot act on.
-      const writableProjectLock = assertLockV4(projectLock, "capshelf move");
-      const writableLocalLock = assertLockV4(localLock, "capshelf move");
+      const writableProjectLock = assertWritableLock(
+        projectLock,
+        "capshelf move",
+      );
+      const writableLocalLock = assertWritableLock(localLock, "capshelf move");
       const alreadyCurrent = alreadyInDestinationScope(
         resolved.kind,
         resolved.name,

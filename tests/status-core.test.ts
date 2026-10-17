@@ -10,7 +10,7 @@ import {
   type StatusRow,
   type State,
 } from "../src/status-core";
-import type { LockEntry, LockEntryV4, LockV4 } from "../src/lock";
+import type { LockEntry, LockEntryV4, WritableLock } from "../src/lock";
 import type { RuntimeWarning } from "../src/runtime-warnings";
 
 function facts(overrides: Partial<StateFacts> = {}): StateFacts {
@@ -247,8 +247,8 @@ describe("deriveNeedsState", () => {
   });
 });
 
-function lock(items: Record<string, LockEntryV4>): LockV4 {
-  return { version: 4, items };
+function lock(items: Record<string, LockEntryV4>): WritableLock {
+  return { version: 5, items };
 }
 
 const dataEntry: LockEntryV4 = {

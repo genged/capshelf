@@ -200,8 +200,8 @@ test(
 
       const migrated = await readLock(projectLock);
       const migratedLocal = await readLock(localLock);
-      expect(migrated.version).toBe(4);
-      expect(migratedLocal.version).toBe(4);
+      expect(migrated.version).toBe(5);
+      expect(migratedLocal.version).toBe(5);
 
       const marker = asObject(
         migrated.items["data/skills/security-review"],
@@ -308,7 +308,7 @@ test(
         0,
       );
       const migrated = await readLock(projectLock);
-      expect(migrated.version).toBe(4);
+      expect(migrated.version).toBe(5);
       expect(Object.keys(migrated.items)).not.toContain(
         "data/settings/permissions",
       );

@@ -22,7 +22,7 @@ import type {
   DataLockEntryV4,
   Lock,
   LockEntry,
-  LockV4,
+  WritableLock,
 } from "../src/lock";
 import {
   headSha,
@@ -131,8 +131,8 @@ async function commitAll(repo: string, message: string): Promise<void> {
   await $`git -C ${repo} commit -qm ${message}`.quiet();
 }
 
-function lockWith(entry: DataLockEntryV4): LockV4 {
-  return { version: 4, items: { [dataKey("skills", "hello")]: entry } };
+function lockWith(entry: DataLockEntryV4): WritableLock {
+  return { version: 5, items: { [dataKey("skills", "hello")]: entry } };
 }
 
 async function promotionSafetyFixture(prefix: string): Promise<{
@@ -140,10 +140,10 @@ async function promotionSafetyFixture(prefix: string): Promise<{
   project: string;
   dataItem: string;
   installed: string;
-  lock: LockV4;
+  lock: WritableLock;
   headBefore: string;
   indexBefore: Buffer;
-  lockBefore: LockV4;
+  lockBefore: WritableLock;
 }> {
   const dataRepo = await tempRepo(`${prefix}-data-`);
   const project = await tempRepo(`${prefix}-project-`);
@@ -684,7 +684,7 @@ describe("adoptIntoDataRepo sidecar handling", () => {
 async function staleFixture(): Promise<{
   dataRepo: string;
   project: string;
-  lock: LockV4;
+  lock: WritableLock;
   lockedSha: string;
   upstreamCommit: string;
   upstreamSha: string;
@@ -839,8 +839,8 @@ describe("stale-promote guard (copy items)", () => {
       join(installed, "index.ts"),
       "export const local = true;\n",
     );
-    const lock: LockV4 = {
-      version: 4,
+    const lock: WritableLock = {
+      version: 5,
       items: {
         [dataKey("pi-extensions", "guard")]: {
           source: "data",
@@ -998,7 +998,7 @@ describe("stale-promote guard (fragments)", () => {
   async function fragmentStaleFixture(): Promise<{
     dataRepo: string;
     project: string;
-    lock: LockV4;
+    lock: WritableLock;
     lockedSha: string;
   }> {
     const dataRepo = await tempRepo("capshelf-frag-stale-data-");
@@ -1017,7 +1017,7 @@ describe("stale-promote guard (fragments)", () => {
       "theme",
     );
     const lock: Lock = {
-      version: 4,
+      version: 5,
       items: {
         [dataKey("settings", "theme")]: {
           source: "data",

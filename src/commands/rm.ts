@@ -21,7 +21,7 @@ import {
   removeManifestName,
 } from "../manifest";
 import {
-  assertLockV4,
+  assertWritableLock,
   loadLocalLock,
   loadLock,
   saveLocalLock,
@@ -107,7 +107,7 @@ export function registerRm(program: Command): void {
       // PIN-12: the gate goes before any deletion. `rm --yes` would otherwise
       // delete the installed files and only then discover it cannot write the
       // lock, leaving the project inconsistent.
-      assertLockV4(lock, `${PRODUCT_NAME} rm`);
+      assertWritableLock(lock, `${PRODUCT_NAME} rm`);
       const localConfig = opts.local ? await loadLocalConfig(project) : null;
       const oldManifest = structuredClone(manifest);
       const oldLock = structuredClone(lock);
@@ -434,7 +434,10 @@ export function registerRm(program: Command): void {
         throw new Error(`no removal strategy for ${kind}/${name}`);
       }
 
-      const writableNextLock = assertLockV4(nextLock, `${PRODUCT_NAME} rm`);
+      const writableNextLock = assertWritableLock(
+        nextLock,
+        `${PRODUCT_NAME} rm`,
+      );
       if (opts.local) {
         if (!nextLocalConfig) throw new Error("expected local manifest");
         await removeLocalExcludes(project, kind, name);

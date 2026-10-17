@@ -17,7 +17,7 @@ import {
 } from "../manifest";
 import type { Manifest } from "../manifest";
 import {
-  assertLockV4,
+  assertWritableLock,
   createDataLockEntry,
   entryIdentity,
   dataKey,
@@ -567,7 +567,7 @@ async function planStandaloneFragmentAdd(
   ]);
   const nextManifest = structuredClone(ctx.manifest);
   addToManifest(nextManifest, item);
-  const nextLock = assertLockV4(
+  const nextLock = assertWritableLock(
     structuredClone(ctx.projectLock),
     "capshelf add",
   );
@@ -871,7 +871,7 @@ export async function installDataItem(
   } else {
     addToManifest(manifest, item);
   }
-  const writableLock = assertLockV4(lock, "capshelf add");
+  const writableLock = assertWritableLock(lock, "capshelf add");
   const previousEntry = writableLock.items[key];
   writableLock.items[key] = createDataLockEntry({
     pin,

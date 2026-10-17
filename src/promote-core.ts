@@ -2,7 +2,12 @@ import type { ItemKind } from "./master";
 import type { Manifest } from "./manifest";
 import { addManifestName, removeManifestName } from "./manifest";
 import { entryIdentity } from "./lock";
-import type { DataLockEntry, DataLockEntryV4, Lock, LockV4 } from "./lock";
+import type {
+  DataLockEntry,
+  DataLockEntryV4,
+  Lock,
+  WritableLock,
+} from "./lock";
 import type { LocalConfig } from "./local-config";
 import type { RuntimeWarning } from "./runtime-warnings";
 import type { PinnedSource } from "./pin";
@@ -119,12 +124,12 @@ export function dataEntryOrThrow(
 
 /**
  * The same narrowing for a writer, which by definition runs against a lock
- * `assertLockV4` has already accepted. Keeping it explicit means a promote
+ * `assertWritableLock` has already accepted. Keeping it explicit means a promote
  * path can read `entry.sourcePinDigest` as a `string` rather than defending
  * against a legacy shape it can never see.
  */
 export function dataEntryV4OrThrow(
-  entry: LockV4["items"][string] | undefined,
+  entry: WritableLock["items"][string] | undefined,
   key: string,
 ): DataLockEntryV4 {
   if (entry?.source !== "data") {

@@ -25,7 +25,7 @@ import { reportItemFailure } from "./picker-report";
 import { fragmentSourceCandidates } from "../fragments";
 import { globalOpts } from "../global-options";
 import { parseItemRef } from "../item-ref";
-import { assertLockV4, dataKey, loadLocalLock, loadLock } from "../lock";
+import { assertWritableLock, dataKey, loadLocalLock, loadLock } from "../lock";
 import type { Lock } from "../lock";
 import { loadManifest } from "../manifest";
 import { isFragmentKindName } from "../master";
@@ -80,7 +80,7 @@ export async function runInteractiveShare(request: {
   // Fail a legacy lock before the prompt opens, not after a selection: the
   // refusal is the same one `shareFragment` makes, moved ahead of the
   // unbounded terminal hold.
-  assertLockV4(projectLock, "capshelf share");
+  assertWritableLock(projectLock, "capshelf share");
   const localLock = await loadLocalLock(project);
   const dataRepo = await resolveProjectDataRepo(project, manifest, request.cmd);
   const catalog = await loadShareCatalog({

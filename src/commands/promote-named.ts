@@ -14,13 +14,13 @@ import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import { saveManifest } from "../manifest";
 import type { Manifest } from "../manifest";
 import {
-  assertLockV4,
+  assertWritableLock,
   dataKey,
   refreshDataLockEntry,
   saveLocalLock,
   saveLock,
 } from "../lock";
-import type { DataLockEntryV4, LockV4 } from "../lock";
+import type { DataLockEntryV4, WritableLock } from "../lock";
 import {
   hashWidthOf,
   itemTreeEntriesAtCommit,
@@ -183,8 +183,8 @@ export async function promoteOne(
   let result: PromoteResult;
   let saveProject = false;
   let saveLocal = false;
-  const writableLock = assertLockV4(lock, "capshelf promote");
-  const writableLocalLock = assertLockV4(localLock, "capshelf promote");
+  const writableLock = assertWritableLock(lock, "capshelf promote");
+  const writableLocalLock = assertWritableLock(localLock, "capshelf promote");
   if (opts.local) {
     result = await promoteLocalTracked(
       project,
@@ -242,8 +242,8 @@ async function promoteProjectTracked(
   project: string,
   dataRepo: string,
   manifest: Manifest,
-  projectLock: LockV4,
-  localLock: LockV4,
+  projectLock: WritableLock,
+  localLock: WritableLock,
   ref: ReturnType<typeof parseItemRef>,
   opts: PromoteOptions,
 ): Promise<PromoteResult> {
@@ -305,7 +305,7 @@ async function promoteProjectTracked(
 export async function promoteSubagent(
   project: string,
   dataRepo: string,
-  lock: LockV4,
+  lock: WritableLock,
   name: string,
   opts: PromoteOptions,
 ): Promise<PromoteResult> {
@@ -519,7 +519,7 @@ export async function promoteSubagent(
 async function promoteLocalTracked(
   project: string,
   dataRepo: string,
-  localLock: LockV4,
+  localLock: WritableLock,
   ref: ReturnType<typeof parseItemRef>,
   opts: PromoteOptions,
 ): Promise<PromoteResult> {
@@ -555,7 +555,7 @@ async function promoteLocalTracked(
 
 async function rejectUntrackedPromote(
   project: string,
-  lock: LockV4,
+  lock: WritableLock,
   ref: ReturnType<typeof parseItemRef>,
 ): Promise<never> {
   if (ref.kind === undefined || ref.kind === "skills") {
@@ -586,7 +586,7 @@ export async function promoteFragmentSource(
   project: string,
   dataRepo: string,
   manifest: Manifest,
-  lock: LockV4,
+  lock: WritableLock,
   kind: FragmentItemKind,
   name: string,
   opts: PromoteOptions,
@@ -776,7 +776,7 @@ export async function syncTrackedIntoDataRepo(
   dataRepo: string,
   kind: ItemKind,
   name: string,
-  lock: LockV4,
+  lock: WritableLock,
   opts: SyncOptions,
 ): Promise<PromoteResult> {
   const key = dataKey(kind, name);

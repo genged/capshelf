@@ -129,8 +129,8 @@ describe("capshelf lock migrate", () => {
       expect((await run(["lock", "migrate"])).exitCode).toBe(0);
       const projectLock = await file(join(project, LOCK)).json();
       const localLock = await file(join(project, LOCAL_LOCK)).json();
-      expect(projectLock.version).toBe(4);
-      expect(localLock.version).toBe(4);
+      expect(projectLock.version).toBe(5);
+      expect(localLock.version).toBe(5);
       for (const [lock, key] of [
         [projectLock, "data/skills/alpha"],
         [localLock, "data/skills/beta"],
@@ -148,7 +148,7 @@ describe("capshelf lock migrate", () => {
 
       const second = await run(["lock", "migrate"]);
       expect(second.exitCode).toBe(0);
-      expect(second.stdout.toString()).toContain("already version 4");
+      expect(second.stdout.toString()).toContain("already version 5");
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );
@@ -240,8 +240,8 @@ describe("capshelf lock migrate", () => {
         "--yes",
       ]);
       expect(repaired.exitCode).toBe(0);
-      expect((await file(join(project, LOCK)).json()).version).toBe(4);
-      expect((await file(localPath).json()).version).toBe(4);
+      expect((await file(join(project, LOCK)).json()).version).toBe(5);
+      expect((await file(localPath).json()).version).toBe(5);
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );

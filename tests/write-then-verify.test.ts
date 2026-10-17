@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { dataKey, loadLock, parseLock, serializeLock } from "../src/lock";
-import type { LockEntryV4, LockV4 } from "../src/lock";
+import type { LockEntryV4, WritableLock } from "../src/lock";
 import { materializeLockEntry } from "../src/materialize";
 import { materializeSubagent } from "../src/subagents";
 import { pinItemAtCommit, currentSourceCommit } from "../src/pin";
@@ -159,8 +159,8 @@ describe("write-then-verify", () => {
   });
 
   test("a lock candidate that lost a digest fails before anything is published", () => {
-    const candidate: LockV4 = {
-      version: 4,
+    const candidate: WritableLock = {
+      version: 5,
       items: {
         [dataKey("skills", "hello")]: {
           source: "data",
@@ -179,8 +179,8 @@ describe("write-then-verify", () => {
     const entry = candidate.items[dataKey("skills", "hello")];
     if (entry?.source !== "data") throw new Error("expected a data entry");
     const { sourcePinDigest: _dropped, ...withoutDigest } = entry;
-    const broken: LockV4 = {
-      version: 4,
+    const broken: WritableLock = {
+      version: 5,
       items: {
         // SAFETY: the entry omits sourcePinDigest on purpose. The test proves
         // the writer refuses it. LockEntryV4 is comparable to the narrowed
@@ -206,7 +206,7 @@ describe("write-then-verify", () => {
     // produced strict-parses on the way back in, with the same value.
     const parsed = parseLock(raw);
     expect(parsed).toEqual(await loadLock(project));
-    if (parsed.version !== 4) throw new Error("expected a version 4 lock");
+    if (parsed.version !== 5) throw new Error("expected a version 5 lock");
     expect(serializeLock(parsed)).toBe(await readFile(path, "utf-8"));
   });
 });

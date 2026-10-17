@@ -6,7 +6,7 @@ import {
   namedFilesFromInstalledSnapshot,
 } from "./item-snapshot";
 import { dataKey } from "./lock";
-import type { LockV4 } from "./lock";
+import type { WritableLock } from "./lock";
 import {
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
@@ -45,7 +45,7 @@ export interface PreparedPromotePreview {
 export async function preparePromotePreview(input: {
   project: string;
   dataRepo: string;
-  lock: LockV4;
+  lock: WritableLock;
   scope: Scope;
   kind: ItemKind;
   name: string;

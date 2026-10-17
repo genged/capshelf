@@ -18,12 +18,12 @@ import {
   upstreamWith,
 } from "./remote-fixtures";
 import {
-  assertLockV4,
+  assertWritableLock,
   dataKey,
   loadLocalLock,
   serializeLock,
 } from "../src/lock";
-import type { LockV4 } from "../src/lock";
+import type { WritableLock } from "../src/lock";
 import { gitTreeSource } from "../src/item-source";
 import { pinItemAtCommit } from "../src/pin";
 import { headSha } from "../src/git";
@@ -164,7 +164,7 @@ test(
       "skills",
       "pdf",
     );
-    const withShelfRow: LockV4 = assertLockV4(
+    const withShelfRow: WritableLock = assertWritableLock(
       await loadLocalLock(world.project),
       "the fixture",
     );

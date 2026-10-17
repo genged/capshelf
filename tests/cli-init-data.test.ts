@@ -943,7 +943,7 @@ describe("cli integration", () => {
     await writeFile(
       join(project, ".capshelf", "capshelf.lock.json"),
       JSON.stringify({
-        version: 4,
+        version: 5,
         items: {
           "data/skills/hello": {
             source: "data",
@@ -991,7 +991,7 @@ describe("cli integration", () => {
     await writeFile(
       join(project, ".capshelf", "capshelf.lock.json"),
       JSON.stringify({
-        version: 4,
+        version: 5,
         items: {
           "data/skills/hello": {
             source: "data",

@@ -14,7 +14,7 @@ import { resolveDataRepo } from "../data-repo";
 import { loadManifest } from "../manifest";
 import {
   entryIdentity,
-  assertLockV4,
+  assertWritableLock,
   loadLocalLock,
   loadLock,
   saveLocalLock,
@@ -107,7 +107,7 @@ export function registerRevert(program: Command): void {
 
       // PIN-12: before the source is read, so an unmigrated project is told to
       // migrate rather than shown a pin mismatch it cannot repair here.
-      assertLockV4(lock, `${PRODUCT_NAME} revert`);
+      assertWritableLock(lock, `${PRODUCT_NAME} revert`);
       const entry = lock.items[key]!;
       const scope = opts.local ? "local" : "project";
       const reviewCommand = `${PRODUCT_NAME} status ${parsed.kind}/${parsed.name}${
@@ -316,7 +316,7 @@ export function registerRevert(program: Command): void {
       // The keep-local marker records intent, not a fact about current
       // content, so revert restores bytes and leaves it alone. Only
       // `keep-local --unset` clears it. See the field doc in lock.ts.
-      const nextLock = assertLockV4(
+      const nextLock = assertWritableLock(
         structuredClone(lock),
         `${PRODUCT_NAME} revert`,
       );

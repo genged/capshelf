@@ -21,7 +21,7 @@ describe("lock schema", () => {
   test("saveLock writes the canonical lock path and loadLock reads it", async () => {
     const project = await tempDir();
     const lock = {
-      version: 4 as const,
+      version: 5 as const,
       items: {
         [systemKey("skills", "capshelf")]: {
           source: "system" as const,
@@ -77,13 +77,13 @@ describe("lock schema", () => {
   test("rejects future lock versions with upgrade guidance", async () => {
     const project = await tempDir();
     await mkdir(join(project, ".capshelf"), { recursive: true });
-    await writeFile(lockPath(project), '{"version":5,"items":{}}\n');
+    await writeFile(lockPath(project), '{"version":6,"items":{}}\n');
 
-    // This guard *is* the compatibility story for version 4: an older binary
+    // This guard *is* the compatibility story for version 5: an older binary
     // meets a lock it does not understand and stops, instead of parsing it
     // through a strict schema that strips every `sourcePinDigest` it sees.
     await expect(loadLock(project)).rejects.toThrow(
-      /lock version 5.*upgrade capshelf/,
+      /lock version 6.*upgrade capshelf/,
     );
   });
 
@@ -228,7 +228,7 @@ describe("local lock", () => {
   test("local lock round-trips via saveLocalLock without touching the shared lock", async () => {
     const project = await tempDir();
     const lock = {
-      version: 4 as const,
+      version: 5 as const,
       items: {
         [dataKey("skills", "hello")]: {
           source: "data" as const,

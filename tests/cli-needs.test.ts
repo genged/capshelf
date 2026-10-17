@@ -66,7 +66,7 @@ describe("declared needs CLI lifecycle", () => {
     const lockPath = join(project, ".capshelf", "capshelf.lock.json");
     const addedLock = await file(lockPath).json();
     const addedEntry = addedLock.items["data/pi-extensions/exa-mcp"];
-    expect(addedLock.version).toBe(4);
+    expect(addedLock.version).toBe(5);
     expect(addedEntry.needs).toEqual({
       network: ["mcp.exa.ai"],
       env: ["EXA_API_KEY"],

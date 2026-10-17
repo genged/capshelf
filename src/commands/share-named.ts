@@ -23,7 +23,7 @@ import {
   addManifestName,
 } from "../manifest";
 import {
-  assertLockV4,
+  assertWritableLock,
   createDataLockEntry,
   dataKey,
   entryIdentity,
@@ -298,8 +298,8 @@ export async function shareCopyItem(
   // `adoptIntoDataRepo`, so a legacy lock refused the share only after the
   // item was already committed — leaving a data-repo commit with no project
   // tracking.
-  const writableProjectLock = assertLockV4(projectLock, "capshelf share");
-  const writableLocalLock = assertLockV4(localLock, "capshelf share");
+  const writableProjectLock = assertWritableLock(projectLock, "capshelf share");
+  const writableLocalLock = assertWritableLock(localLock, "capshelf share");
 
   if (owner !== null) await warnAboutMissingLicense(project, name, owner);
 
@@ -645,7 +645,7 @@ export async function shareSubagent(
   // Before any data-repo mutation. This assertion used to run after the
   // commit, so a legacy lock refused the share only after the subagent was
   // already committed — leaving a data-repo commit with no project tracking.
-  const writableProjectLock = assertLockV4(projectLock, "capshelf share");
+  const writableProjectLock = assertWritableLock(projectLock, "capshelf share");
 
   const allCandidates = subagentSourceCandidates(project, name);
   for (const candidate of allCandidates) {
@@ -818,7 +818,7 @@ export async function shareFragment(
   // Before any data-repo mutation. This assertion used to run after the
   // commit, so a legacy lock refused the share only after the fragment was
   // already committed — leaving a data-repo commit with no project tracking.
-  const writableProjectLock = assertLockV4(projectLock, "capshelf share");
+  const writableProjectLock = assertWritableLock(projectLock, "capshelf share");
   const oldManifest = structuredClone(manifest);
   const oldLock = structuredClone(projectLock);
   const dataRepo =

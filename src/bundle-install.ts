@@ -25,7 +25,7 @@ import { assertPathClean } from "./git";
 import type { GitReadMemo } from "./git-read-memo";
 import { findInstallConflict } from "./installed";
 import { assertLocalInstallPathsUntracked } from "./local-config";
-import { assertLockV4, createDataLockEntry, dataKey } from "./lock";
+import { assertWritableLock, createDataLockEntry, dataKey } from "./lock";
 import { pinCurrentSource } from "./pin";
 import type { Lock } from "./lock";
 import { addManifestName } from "./manifest";
@@ -332,7 +332,7 @@ async function preflightFragmentCollisions(
   const planFn = ctx.planFragmentOutputFn ?? planFragmentOutput;
 
   const nextManifest = structuredClone(ctx.manifest);
-  const nextLock = assertLockV4(
+  const nextLock = assertWritableLock(
     structuredClone(ctx.lock),
     "capshelf add bundles/<name>",
   );

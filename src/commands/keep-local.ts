@@ -1,7 +1,7 @@
 import type { Command } from "commander";
 import { projectRoot } from "../paths";
 import {
-  assertLockV4,
+  assertWritableLock,
   loadLocalLock,
   loadLock,
   saveLocalLock,
@@ -139,7 +139,7 @@ export function registerKeepLocal(program: Command): void {
         if (opts.reason !== undefined) entry.localReason = opts.reason;
       }
 
-      const writableLock = assertLockV4(lock, "capshelf keep-local");
+      const writableLock = assertWritableLock(lock, "capshelf keep-local");
       if (opts.local) await saveLocalLock(project, writableLock);
       else await saveLock(project, writableLock);
 

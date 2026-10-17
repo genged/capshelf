@@ -131,7 +131,7 @@ describe("findMasterItemByRef", () => {
 
 describe("lockKeysForRef", () => {
   const lock: Lock = {
-    version: 4,
+    version: 5,
     items: {
       "data/skills/hello": {
         source: "data",
@@ -176,7 +176,7 @@ describe("lockKeysForRef", () => {
 
 describe("lockKeyForRef", () => {
   const lock: Lock = {
-    version: 4,
+    version: 5,
     items: {
       "data/skills/shared": {
         source: "data",
