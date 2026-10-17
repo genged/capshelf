@@ -1,11 +1,16 @@
 /**
- * Status rows for remote skills.
+ * Status rows for remote skills and plugins.
  *
  * Offline by construction. Everything here reads the clone cache the install
  * left behind and the record in `.capshelf/remotes.lock.json`; `status
  * --check-upstream` is the one path that fetches, and it lives beside this.
  */
+import { existsSync } from "node:fs";
 import { describeInstallation, isTreePinned } from "./install-identity";
+import { installedPath } from "./installed";
+import { PLUGIN_MANIFEST_REL } from "./master";
+import { pluginRunsAtCommit, pluginRunsOnDisk } from "./plugin-runs";
+import type { PluginRuns } from "./plugin-runs";
 import type { Lock } from "./lock";
 import { dataKey } from "./lock";
 import {
@@ -24,7 +29,7 @@ import type {
   RemotesLock,
 } from "./remotes-lock";
 import { buildStatusRow, deriveState } from "./status-core";
-import type { RemoteRowFacts, StatusRow } from "./status-core";
+import type { RemoteRowFacts, StatusRow, StatusRowRuns } from "./status-core";
 import type { ItemRef } from "./item-ref";
 import { runtimeWarningsForItem } from "./runtime-warnings";
 import { itemTreeEntriesAtCommit, sourcePinDigest } from "./pin";
@@ -102,6 +107,10 @@ async function buildRemoteRow(
     sourceCommitPresent: cache.present ? null : false,
   });
 
+  const runs =
+    kind === "plugins"
+      ? await remotePluginRuns(input.project, name, entry)
+      : null;
   const facts: RemoteRowFacts = {
     upstream: entry.upstream,
     ref: entry.ref,
@@ -115,6 +124,7 @@ async function buildRemoteRow(
     scope: "local",
     source: "remote",
     remote: facts,
+    ...(runs !== null && { runs }),
     kind,
     name,
     entry: synthetic,
@@ -138,6 +148,47 @@ async function buildRemoteRow(
       },
     }),
   });
+}
+
+/**
+ * The counts D11 reports for a plugin row. The installed tree when the folder
+ * exists: for a clean row it equals the pinned tree, and for a drifted row it
+ * is what Claude Code loads. The pinned tree when the folder is missing. With
+ * neither readable, the manifest is reported as unread rather than as a
+ * plugin that runs nothing (D6).
+ */
+async function remotePluginRuns(
+  project: string,
+  name: string,
+  entry: RemoteLockEntry,
+): Promise<StatusRowRuns> {
+  const path = installedPath(project, "plugins", name);
+  const runs = existsSync(path)
+    ? await pluginRunsOnDisk(path)
+    : await pinnedPluginRuns(entry);
+  return {
+    hooks: runs.hooks.length,
+    mcpServers: runs.mcpServers.length,
+    unknown: runs.unknown,
+  };
+}
+
+async function pinnedPluginRuns(entry: RemoteLockEntry): Promise<PluginRuns> {
+  const cache = remoteCacheState(entry.upstream);
+  const entries = cache.present
+    ? await itemTreeEntriesAtCommit(
+        remoteTreeSource(cache.path, entry.sourceCommit, entry.subpath),
+        "plugins",
+      ).catch(() => null)
+    : null;
+  if (entries === null) {
+    return {
+      hooks: [],
+      mcpServers: [],
+      unknown: [`${PLUGIN_MANIFEST_REL} could not be read`],
+    };
+  }
+  return await pluginRunsAtCommit(cache.path, entries);
 }
 
 interface UpstreamFacts {

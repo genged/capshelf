@@ -40,7 +40,7 @@ import {
 import {
   loadRemotesLock,
   parseRemoteKey,
-  remoteKeysForRef,
+  remoteKeysForNamedRef,
 } from "../remotes-lock";
 import type {
   RemoteItemKind,
@@ -182,7 +182,7 @@ export function registerApply(program: Command): void {
         const remoteTargets: RemoteApplyTarget[] = (
           itemRef === undefined
             ? Object.keys(remotes.items)
-            : remoteKeysForRef(remotes, parseItemRef(itemRef))
+            : remoteKeysForNamedRef(remotes, parseItemRef(itemRef))
         ).map((key) => {
           const parsed = parseRemoteKey(key);
           return { key, kind: parsed.kind, name: parsed.name };

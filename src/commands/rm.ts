@@ -69,7 +69,7 @@ import { remoteTreeSource } from "../remote-discovery";
 import {
   loadRemotesLock,
   parseRemoteKey,
-  remoteKeysForRef,
+  remoteKeysForNamedRef,
   saveRemotesLock,
 } from "../remotes-lock";
 import type { RemotesLock } from "../remotes-lock";
@@ -151,7 +151,7 @@ export function registerRm(program: Command): void {
       // Before the not-tracked error: a remote row is in neither capshelf lock
       // by A3, so `lockKeysForRef` above found nothing for one.
       const remotes = await loadRemotesLock(project);
-      const remoteKeys = remoteKeysForRef(remotes, ref);
+      const remoteKeys = remoteKeysForNamedRef(remotes, ref);
       // Two populations count as much as two kinds, and `rm` is exactly the
       // verb a user reaches for in the two-owner state. Whichever side won,
       // the other was left orphaned: the shelf path deleted the install and

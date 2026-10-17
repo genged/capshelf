@@ -1,5 +1,5 @@
 /**
- * Pin, install, and reconcile one remote skill.
+ * Pin, install, and reconcile one remote skill or plugin.
  *
  * A remote row reuses the copy-directory machinery rather than growing a second
  * reconciler. `materializeLockEntry` and `copyDirectoryReconciliationFiles`
@@ -15,7 +15,10 @@
  * the remote row's digest. That value is never serialized: no writer puts it in
  * a `Lock`.
  */
+import { isConfigObject, isConfigString } from "./config-values";
+import type { ConfigObject, ConfigValue } from "./config-values";
 import { PreconditionError } from "./errors";
+import { catFileBlobs } from "./git";
 import { METADATA_DIR, PRODUCT_NAME, REMOTES_LOCK_FILE } from "./identity";
 import { installedPath } from "./installed";
 import { dataKey } from "./lock";
@@ -26,8 +29,12 @@ import {
   installedSnapshot,
   namedFilesFromInstalledSnapshot,
 } from "./item-snapshot";
+import { PLUGIN_MANIFEST_REL } from "./master";
 import { mergeNamedTrees, namedFilesEqual } from "./merge-tree";
 import type { NamedFile } from "./merge-tree";
+import { sanitizeDisplayText } from "./pick-core";
+import { newRunsEntries, pluginRunsAtCommit } from "./plugin-runs";
+import type { PluginRuns } from "./plugin-runs";
 import { beginInstalledReconciliation } from "./promote-transaction";
 import { remoteCacheState, resolveCachedRef } from "./remote-cache";
 import { remoteTreeSource } from "./remote-discovery";
@@ -231,6 +238,18 @@ export interface RemoteUpdatePreview {
   current: boolean;
   /** The pin at the cached ref. Null when nothing would move. */
   pin: PinnedSource | null;
+  /** A plugin row's pin move. Null for a skill row and when nothing moves. */
+  plugin: RemotePluginChange | null;
+}
+
+/** What a plugin pin move changes in what the consent prompt reports. */
+export interface RemotePluginChange {
+  /** The manifest `version` at the old pin, or null when it has none. */
+  versionFrom: string | null;
+  /** The manifest `version` at the new pin, or null when it has none. */
+  versionTo: string | null;
+  /** The runs entries the new pin has and the old pin did not (D7 point 2). */
+  newRuns: PluginRuns;
 }
 
 /** Read the pending change without moving anything. Offline. */
@@ -258,6 +277,7 @@ export async function previewRemoteUpdate(opts: {
     changed: [],
     current: true,
     pin: null,
+    plugin: null,
   };
   if (head === entry.sourceCommit) return unchanged;
 
@@ -284,7 +304,103 @@ export async function previewRemoteUpdate(opts: {
   const changed = [...new Set([...previous.keys(), ...next.keys()])]
     .filter((path) => previous.get(path) !== next.get(path))
     .sort();
-  return { from: entry.sourceCommit, to: head, changed, current: false, pin };
+  const plugin =
+    kind === "plugins"
+      ? await pluginChange(cache.path, name, before, pin.entries)
+      : null;
+  return {
+    from: entry.sourceCommit,
+    to: head,
+    changed,
+    current: false,
+    pin,
+    plugin,
+  };
+}
+
+/**
+ * D3 and D7 point 2 for a plugin pin move. The new tree must keep the item
+ * name in its manifest, or the move refuses before any write: Claude Code
+ * names the plugin from the manifest, so a renamed tree installed under the
+ * old folder would load under a name that no capshelf row holds.
+ *
+ * `previewRemoteUpdate` is the one producer of the pin that `updateRemoteItem`
+ * and `updateMergeRemoteTarget` write, and the dry run reads the same
+ * preview, so this one check covers every update path.
+ */
+async function pluginChange(
+  cachePath: string,
+  name: string,
+  before: readonly PinTreeEntry[],
+  after: readonly PinTreeEntry[],
+): Promise<RemotePluginChange> {
+  const [manifestBefore, manifestAfter] = await Promise.all([
+    pluginManifestAt(cachePath, before),
+    pluginManifestAt(cachePath, after),
+  ]);
+  const renamedTo = manifestString(manifestAfter, "name");
+  if (renamedTo !== name) {
+    throw pluginRenameRefusal(name, renamedTo);
+  }
+  const [runsBefore, runsAfter] = await Promise.all([
+    pluginRunsAtCommit(cachePath, before),
+    pluginRunsAtCommit(cachePath, after),
+  ]);
+  return {
+    versionFrom: manifestString(manifestBefore, "version"),
+    versionTo: manifestString(manifestAfter, "version"),
+    newRuns: newRunsEntries(runsBefore, runsAfter),
+  };
+}
+
+/** The refusal for a new tree whose manifest names another plugin (D3). */
+function pluginRenameRefusal(
+  name: string,
+  manifestName: string | null,
+): PreconditionError {
+  const ref = `plugins/${name}`;
+  const found =
+    manifestName === null
+      ? `has no plugin name in ${PLUGIN_MANIFEST_REL}`
+      : `names the plugin "${sanitizeDisplayText(manifestName)}" in ${PLUGIN_MANIFEST_REL}`;
+  return new PreconditionError(`${ref}: the new tree ${found}`, {
+    hint:
+      `the item name is "${name}". ${PRODUCT_NAME} does not rename an item.\n` +
+      `  to take the renamed plugin: ${PRODUCT_NAME} rm ${ref}, then add it again`,
+  });
+}
+
+/**
+ * The manifest in a pinned plugin tree, parsed. Null when the tree holds no
+ * regular manifest blob, or when the blob is not a JSON object.
+ */
+async function pluginManifestAt(
+  repo: string,
+  entries: readonly PinTreeEntry[],
+): Promise<ConfigObject | null> {
+  const entry = entries.find(
+    (candidate) =>
+      candidate.path === PLUGIN_MANIFEST_REL &&
+      (candidate.mode === "100644" || candidate.mode === "100755"),
+  );
+  if (entry === undefined) return null;
+  const bytes = (await catFileBlobs(repo, [entry.blobId])).get(entry.blobId);
+  if (bytes === undefined) return null;
+  let parsed: ConfigValue;
+  try {
+    parsed = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    return null;
+  }
+  return isConfigObject(parsed) ? parsed : null;
+}
+
+function manifestString(
+  manifest: ConfigObject | null,
+  field: string,
+): string | null {
+  const value = manifest?.[field];
+  return isConfigString(value) ? value : null;
 }
 
 /**

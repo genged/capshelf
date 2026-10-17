@@ -111,9 +111,25 @@ export function pluginRunsLines(runs: PluginRuns): string[] {
  * install and a consent refusal print the same lines.
  */
 export function pluginRunsField(runs: PluginRuns): string[] {
-  const [first, ...rest] = pluginRunsLines(runs);
+  return labelledLines("runs", pluginRunsLines(runs));
+}
+
+/**
+ * The runs entries a pin move adds (D7 point 2), under `label`: `runs` in
+ * the update prompt, `would ask` in a dry run. The summary line starts with
+ * `+` when it counts new hooks or MCP servers.
+ */
+export function newPluginRunsField(label: string, runs: PluginRuns): string[] {
+  const [first = "", ...rest] = pluginRunsLines(runs);
+  const counted = runs.hooks.length > 0 || runs.mcpServers.length > 0;
+  return labelledLines(label, [counted ? `+ ${first}` : first, ...rest]);
+}
+
+/** Lines under a field label, with later lines at the value column. */
+function labelledLines(label: string, lines: readonly string[]): string[] {
+  const [first = "", ...rest] = lines;
   return [
-    `  runs      ${first ?? ""}`,
+    `  ${label.padEnd(CONTINUATION.length - 3)} ${first}`,
     ...rest.map((line) => `${CONTINUATION}${line}`),
   ];
 }

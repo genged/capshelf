@@ -84,11 +84,23 @@ export interface RemoteRowFacts {
   alsoTrackedInShelf: boolean;
 }
 
+/**
+ * What a plugin runs with no request from the agent, as counts (spec D11).
+ * `unknown` lists each declaration the reader could not read.
+ */
+export interface StatusRowRuns {
+  hooks: number;
+  mcpServers: number;
+  unknown: string[];
+}
+
 export interface StatusRow {
   scope: "project" | "local";
   source: RowSource;
   /** Remote rows only: where the pin came from. */
   remote?: RemoteRowFacts;
+  /** Plugin rows only: what the plugin runs. */
+  runs?: StatusRowRuns;
   kind: ItemKind;
   name: string;
   state: State;
@@ -245,6 +257,7 @@ export interface BuildStatusRowInput {
   scope: "project" | "local";
   source: RowSource;
   remote?: RemoteRowFacts;
+  runs?: StatusRowRuns;
   kind: ItemKind;
   name: string;
   entry: LockEntry;
@@ -267,6 +280,7 @@ export function buildStatusRow(input: BuildStatusRowInput): StatusRow {
     scope,
     source,
     ...(input.remote !== undefined && { remote: input.remote }),
+    ...(input.runs !== undefined && { runs: input.runs }),
     kind,
     name,
     state,

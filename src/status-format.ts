@@ -293,13 +293,28 @@ function formatRow(r: StatusRow): string[] {
   ).padEnd(39);
   const label = r.label ? ` ${r.label}` : "";
   return [
-    `  ${g} ${id} ${shortIdentity(r.lockedSha)}${label}  ${describe(r)}`,
+    `  ${g} ${id} ${shortIdentity(r.lockedSha)}${label}  ${describe(r)}${runsSuffix(r)}`,
     ...remoteRowDetail(r),
     ...targetCoverageGuidance(r),
     ...missingSourceCommitGuidance(r),
     ...needsStateGuidance(r),
     ...formatRuntimeWarnings(r.runtimeWarnings, "    "),
   ];
+}
+
+/**
+ * What a plugin row runs (spec D11), after the state. A count that is zero
+ * prints nothing, so a plugin that runs nothing reads like any other row.
+ */
+function runsSuffix(r: StatusRow): string {
+  const runs = r.runs;
+  if (runs === undefined) return "";
+  const parts = [
+    ...(runs.hooks > 0 ? [`hooks: ${runs.hooks}`] : []),
+    ...(runs.mcpServers > 0 ? [`MCP: ${runs.mcpServers}`] : []),
+    ...(runs.unknown.length > 0 ? ["runs: unknown"] : []),
+  ];
+  return parts.length === 0 ? "" : `   ${parts.join("  ")}`;
 }
 
 /**
@@ -331,7 +346,7 @@ function remoteRowDetail(r: StatusRow): string[] {
     r.state === "drifted_and_upstream_dirty"
   ) {
     lines.push(
-      "      a remote skill cannot be promoted. to keep this edit:",
+      `      a remote ${r.kind === "plugins" ? "plugin" : "skill"} cannot be promoted. to keep this edit:`,
       `        capshelf share ${r.kind}/${r.name} --adopt`,
     );
   }

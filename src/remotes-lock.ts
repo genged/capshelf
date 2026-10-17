@@ -26,6 +26,7 @@ import {
   isSafeItemRoot,
 } from "./assert";
 import type { ConfigValue } from "./config-values";
+import { PreconditionError } from "./errors";
 import { atomicWriteFile, isErrno } from "./fs-utils";
 import { PRODUCT_NAME, REMOTES_LOCK_FILE } from "./identity";
 import type { ItemRef } from "./item-ref";
@@ -214,6 +215,36 @@ export function remoteKeysForRef(lock: RemotesLock, ref: ItemRef): string[] {
     : REMOTE_ITEM_KINDS;
   const wanted = new Set(kinds.map((kind) => remoteKey(kind, ref.name)));
   return Object.keys(lock.items).filter((key) => wanted.has(key));
+}
+
+/**
+ * `remoteKeysForRef`, refused when a bare name selects both kinds.
+ *
+ * The CLI never creates `remote/skills/<n>` beside `remote/plugins/<n>`: both
+ * install to one folder, and D2 guard 5 refuses the second install. A hand
+ * edit or an older state can still hold the pair. Then a bare name must not
+ * pick one row silently (`rm` would delete one owner's row and keep the
+ * other) or reconcile both into one folder (`apply`, `update`). This is the
+ * refusal the shelf gives for the same ambiguity.
+ */
+export function remoteKeysForNamedRef(
+  lock: RemotesLock,
+  ref: ItemRef,
+): string[] {
+  const keys = remoteKeysForRef(lock, ref);
+  if (keys.length > 1) {
+    const found = keys
+      .map((key) => {
+        const parts = parseRemoteKey(key);
+        return `${parts.kind}/${parts.name}`;
+      })
+      .sort()
+      .join(", ");
+    throw new PreconditionError(
+      `ambiguous item "${ref.name}": found ${found}; use kind/name`,
+    );
+  }
+  return keys;
 }
 
 export async function loadRemotesLock(project: string): Promise<RemotesLock> {

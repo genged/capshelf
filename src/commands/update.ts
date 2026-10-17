@@ -57,6 +57,7 @@ import {
   isFragmentItemKind,
   isFragmentKindName,
   itemRepoRelPath,
+  PLUGIN_MANIFEST_REL,
   type CopyDirectoryItemKind,
   type ItemKind,
 } from "../master";
@@ -123,11 +124,12 @@ import {
   updateMergeRemoteTarget,
   updateRemoteItem,
 } from "../remote-item";
-import type { RemoteUpdateResult } from "../remote-item";
+import type { RemotePluginChange, RemoteUpdateResult } from "../remote-item";
 import {
   loadRemotesLock,
   parseRemoteKey,
   remoteKey,
+  remoteKeysForNamedRef,
   remoteKeysForRef,
   saveRemotesLock,
 } from "../remotes-lock";
@@ -138,6 +140,10 @@ import type {
 } from "../remotes-lock";
 import { factsWarnOnInstall, renderPluginFacts } from "../remote-list-render";
 import { assertSkillTargetFree } from "../skill-target";
+import { sanitizeDisplayText } from "../pick-core";
+import { newPluginRunsField } from "../plugin-consent";
+import { runsHaveEntries } from "../plugin-runs";
+import type { PluginRuns } from "../plugin-runs";
 
 interface UpdateOptions {
   json?: boolean;
@@ -181,6 +187,8 @@ interface UpdateResult {
   mergeResultSha?: string;
   mergeBase?: string;
   mergedUpstreamCommit?: string;
+  /** A remote plugin dry run: the runs entries the real run would ask about. */
+  newRuns?: PluginRuns;
 }
 
 export function registerUpdate(program: Command): void {
@@ -236,7 +244,7 @@ export function registerUpdate(program: Command): void {
           );
         }
         // By resolved key, not by bare name. `remoteKeysForRef` matches the
-        // `skills` kind only, so `update skills/pdf mcp/pdf` would otherwise
+        // remote kinds only, so `update skills/pdf mcp/pdf` would otherwise
         // see `pdf` among the remote names and drop the mcp item from the
         // shelf pass — neither updated nor reported, and the command still
         // exits 0.
@@ -613,7 +621,7 @@ function resolveRemoteTargets(
 ): RemoteTarget[] {
   if (refs.length > 0) {
     return refs.flatMap((itemRef) =>
-      remoteKeysForRef(remotes, parseItemRef(itemRef)).map((key) => {
+      remoteKeysForNamedRef(remotes, parseItemRef(itemRef)).map((key) => {
         const parsed = parseRemoteKey(key);
         return { key, kind: parsed.kind, name: parsed.name, named: true };
       }),
@@ -763,6 +771,14 @@ async function runRemoteUpdates(input: {
             mergeResultSha: mergeOutcome.mergeResultDigest,
           }
         : null;
+    // A dry run asks nothing, so its row carries what the real run would
+    // ask about: the runs entries the move adds.
+    const wouldAsk =
+      input.dryRun &&
+      preview.plugin !== null &&
+      runsHaveEntries(preview.plugin.newRuns)
+        ? preview.plugin.newRuns
+        : null;
     results.push({
       ...remoteResult(
         target,
@@ -776,6 +792,7 @@ async function runRemoteUpdates(input: {
         mergedUpstreamCommit: mergeFacts.mergedUpstreamCommit,
         mergeResultSha: mergeFacts.mergeResultSha,
       }),
+      ...(wouldAsk !== null && { newRuns: wouldAsk }),
     });
     if (!input.dryRun && moved.action === "updated") {
       input.remotes.items[target.key] = moved.entry;
@@ -815,16 +832,34 @@ async function confirmRemotePinMove(input: {
   json: boolean;
   yes: boolean;
 }): Promise<RemoteConsent> {
-  if (input.dryRun || input.yes) return { approved: true, plan: null };
+  if (input.dryRun) return { approved: true, plan: null };
+  const plugin = input.preview.plugin;
+  const runsLines =
+    plugin !== null && runsHaveEntries(plugin.newRuns)
+      ? newPluginRunsField("runs", plugin.newRuns)
+      : [];
+  if (input.yes) {
+    // `--yes` skips the prompt, so what the move adds goes to stderr, the
+    // same as a `--yes` plugin install.
+    for (const line of runsLines) console.error(line);
+    return { approved: true, plan: null };
+  }
   const destruction = await planRemotePinMove(input);
-  const factsLines = await remotePinMoveFactsLines(
-    input.entry,
-    input.preview.to,
-  );
+  // A plugin row reports its own facts: the version and the new runs
+  // entries. `remotePinMoveFactsLines` reads one skill's plugin facts and
+  // needs a SKILL.md at the subpath, which a plugin root does not hold.
+  const factsLines =
+    plugin === null
+      ? await remotePinMoveFactsLines(input.entry, input.preview.to)
+      : [];
   const block = [
     `  pinned    ${input.preview.from.slice(0, 7)}  ->  ${input.preview.to.slice(0, 7)}   (from the local cache, no network)`,
+    ...(plugin === null ? [] : pluginVersionLines(plugin)),
     `  files     ${input.preview.changed.length} changed`,
-    ...input.preview.changed.map((path) => `              ${path}`),
+    ...input.preview.changed.map(
+      (path) => `              ${sanitizeDisplayText(path)}`,
+    ),
+    ...runsLines,
     ...(destruction.changes.length > 0
       ? ["", renderDestructiveChanges("Update", destruction.changes)]
       : []),
@@ -834,10 +869,19 @@ async function confirmRemotePinMove(input: {
   ].join("\n");
   const context = confirmationContext();
   if (input.json || !context.stdinIsTTY || !context.stderrIsTTY) {
+    const review = `review it, then authorize with --yes: ${PRODUCT_NAME} update ${input.kind}/${input.name} --yes`;
+    // The boundary indents the first hint line itself, and no later line.
+    const hint = [
+      ...(plugin === null ? [] : pluginVersionLines(plugin)),
+      ...runsLines,
+    ];
     throw new PreconditionError(
       `not moving ${remoteKey(input.kind, input.name)} to ${input.preview.to.slice(0, 7)} without consent — it is content from a repository outside your shelf`,
       {
-        hint: `review it, then authorize with --yes: ${PRODUCT_NAME} update ${input.kind}/${input.name} --yes`,
+        hint:
+          hint.length === 0
+            ? review
+            : [...hint, `  ${review}`].join("\n").replace(/^ {2}/, ""),
       },
     );
   }
@@ -847,6 +891,14 @@ async function confirmRemotePinMove(input: {
   }
   context.stderr.write("Update cancelled; no changes were written.\n");
   return { approved: false, plan: null };
+}
+
+/** The manifest version line of a plugin pin move, when either pin has one. */
+function pluginVersionLines(plugin: RemotePluginChange): string[] {
+  if (plugin.versionFrom === null && plugin.versionTo === null) return [];
+  const from = sanitizeDisplayText(plugin.versionFrom ?? "(none)");
+  const to = sanitizeDisplayText(plugin.versionTo ?? "(none)");
+  return [`  version   ${from}  ->  ${to}  (${PLUGIN_MANIFEST_REL})`];
 }
 
 /**
@@ -951,7 +1003,7 @@ function printRemoteAdoptGuidance(results: UpdateResult[]): void {
     if (result.source !== "remote") continue;
     if (result.action !== "updated" && result.action !== "merged") continue;
     console.log(
-      `  promote is not available for a remote skill. to keep it permanently: ${PRODUCT_NAME} share ${result.kind}/${result.name} --adopt`,
+      `  promote is not available for a remote ${result.kind === "plugins" ? "plugin" : "skill"}. to keep it permanently: ${PRODUCT_NAME} share ${result.kind}/${result.name} --adopt`,
     );
   }
 }
@@ -962,8 +1014,13 @@ function printRemoteSkipHint(results: UpdateResult[]): void {
     (result) => result.source === "remote" && result.action === "skipped",
   );
   if (skipped.length === 0) return;
+  const noun = skipped.every((result) => result.kind === "skills")
+    ? "skill"
+    : skipped.every((result) => result.kind === "plugins")
+      ? "plugin"
+      : "item";
   console.log(
-    `  ${skipped.length} remote ${skipped.length === 1 ? "skill was" : "skills were"} left alone; a sweep never accepts new third-party content`,
+    `  ${skipped.length} remote ${skipped.length === 1 ? `${noun} was` : `${noun}s were`} left alone; a sweep never accepts new third-party content`,
   );
   console.log(
     `  move one: ${PRODUCT_NAME} update ${skipped[0]!.kind}/${skipped[0]!.name}`,
@@ -2142,6 +2199,11 @@ function printUpdateDetails(r: UpdateResult): void {
   if (r.plannedSha) console.log(`  planned: ${shortIdentity(r.plannedSha)}`);
   if (r.sourceCommit) console.log(`  source commit: ${r.sourceCommit}`);
   if (r.cliVersion) console.log(`  cli version: ${r.cliVersion}`);
+  if (r.newRuns !== undefined) {
+    for (const line of newPluginRunsField("would ask", r.newRuns)) {
+      console.log(line);
+    }
+  }
   printRuntimeWarnings(r.runtimeWarnings);
 }
 
