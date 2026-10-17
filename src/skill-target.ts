@@ -68,10 +68,11 @@ export interface SkillTargetSelf {
  * same ref would not install from the upstream.
  *
  * `ignoreSkillsSh` drops a skills.sh owner. Only `share --adopt` of a remote
- * row sets it: that adopt keeps the folder where it is, changes only which
- * capshelf record owns it, and never reads or releases a skills.sh row (spec
- * D9 correction). A skills.sh row there was already beside the remote row,
- * and the adopt leaves it as it found it.
+ * *skill* row sets it: skills.sh is a legitimate previous owner of a skill,
+ * and a skill adopt beside a skills.sh row of the same name succeeded before
+ * this guard existed. A plugin adopt never sets it: skills.sh never installs
+ * a plugin, so its row there is a second owner of the folder (spec D2 guard
+ * 5, D9).
  */
 export interface SkillTargetOptions {
   addCommand?: string;

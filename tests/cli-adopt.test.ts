@@ -213,6 +213,32 @@ test(
 );
 
 test(
+  "a skill adopt beside a same-name skills.sh row releases the remote row and keeps skills-lock.json",
+  async () => {
+    // A skills.sh row is a legitimate previous owner of a skill, so the
+    // skill-target guard leaves this adopt as it was before that guard.
+    const { world, run, remotesPath } = await installedFromRemote();
+    const skillsLock = join(world.project, "skills-lock.json");
+    await writeFile(
+      skillsLock,
+      `${JSON.stringify({ version: 1, skills: { pdf: { source: "o/r" } } }, null, 2)}\n`,
+    );
+    const before = await readFile(skillsLock);
+    const result = await run(
+      ["share", "skills/pdf", "--adopt", "--json"],
+      world.env,
+    );
+    expect(result.exitCode).toBe(0);
+    const payload = jsonOutput(result);
+    expect(payload.adoptedFrom).toBe("remote");
+    expect(payload.previousOwnerReleased).toBe(true);
+    expect(JSON.parse(await readFile(remotesPath, "utf-8")).items).toEqual({});
+    expect(await readFile(skillsLock)).toEqual(before);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
   "adopt with no data repo exits 6",
   async () => {
     const { world, run } = await installedFromRemote();

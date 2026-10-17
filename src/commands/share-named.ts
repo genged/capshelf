@@ -322,7 +322,9 @@ export async function shareCopyItem(
   // D2 guard 5. `self` is the remote row this adopt releases, so the item's
   // own folder is not a second owner. It is never null here: null exempts an
   // unmanaged folder, which is safe only for shelf `add` and its own
-  // recovery path.
+  // recovery path. A skills.sh row of the same name is a legitimate previous
+  // owner of a skill, so a skill adopt keeps its pre-guard behavior. For a
+  // plugin it is a second owner of the folder, and the adopt refuses.
   if (owner?.kind === "remote" && installsAtSkillTarget(kind)) {
     await assertSkillTargetFree(
       project,
@@ -334,7 +336,7 @@ export async function shareCopyItem(
         remotes: await loadRemotesLock(project),
       },
       { key: remoteKey(kind, name) },
-      { ignoreSkillsSh: true },
+      { ignoreSkillsSh: kind === "skills" },
     );
   }
   // Last of the refusals, so nobody is asked and then refused.
@@ -649,19 +651,23 @@ async function printAdoptProvenance(
         : `  ⚠ no provenance in ${itemRepoRelPath(kind, name)}/${METADATA_SIDECAR}; the shelf already held this content, so nothing was committed`,
     );
     if (!recorded) {
-      console.log(`      it came from: ${upstream ?? "(unknown)"}`);
+      console.log(
+        `      it came from: ${sanitizeDisplayText(upstream ?? "(unknown)")}`,
+      );
     }
     return;
   }
   console.log(
     `  provenance recorded in ${itemRepoRelPath(kind, name)}/${METADATA_SIDECAR}:`,
   );
-  if (upstream !== null) console.log(`      upstream:       ${upstream}`);
+  if (upstream !== null) {
+    console.log(`      upstream:       ${sanitizeDisplayText(upstream)}`);
+  }
   if (upstreamCommit !== null) {
     console.log(`      upstreamCommit: ${upstreamCommit}`);
   }
   if (upstreamPath !== null) {
-    console.log(`      upstreamPath:   ${upstreamPath}`);
+    console.log(`      upstreamPath:   ${sanitizeDisplayText(upstreamPath)}`);
   }
 }
 
@@ -685,7 +691,7 @@ async function warnAboutMissingLicense(
   // adopt copies the plugin folder only, so a root license stays behind.
   if (found.present && !found.insideItem && kind === "plugins") {
     console.error(
-      `⚠ the license is at the ${owner.provenance.upstream ?? "upstream"} root${found.label ? ` (${found.label})` : ""}, not in the plugin`,
+      `⚠ the license is at the ${sanitizeDisplayText(owner.provenance.upstream ?? "upstream")} root${found.label ? ` (${found.label})` : ""}, not in the plugin`,
     );
     console.error(
       "  you are copying someone else's work into your shelf. Check the terms yourself.",
@@ -699,7 +705,9 @@ async function warnAboutMissingLicense(
   // statement about work that never happened.
   console.error(
     `⚠ no license file in the remote item${
-      inspectedRoot ? ` or at the ${owner.provenance.upstream} root` : ""
+      inspectedRoot
+        ? ` or at the ${sanitizeDisplayText(owner.provenance.upstream ?? "upstream")} root`
+        : ""
     }`,
   );
   console.error(

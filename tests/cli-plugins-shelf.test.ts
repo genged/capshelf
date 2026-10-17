@@ -25,6 +25,7 @@ import {
   initRemoteProject,
   pluginUpstream,
   pushPluginChange,
+  upstreamWith,
 } from "./remote-fixtures";
 import type { RemoteProject, Upstream } from "./remote-fixtures";
 import { setDestructiveConfirmationContext } from "../src/destructive-change";
@@ -895,7 +896,7 @@ describe("share plugins/<n> --adopt (D9, M3, M4)", () => {
   );
 
   test(
-    "never touches a skills.sh row with the same name (D9 correction)",
+    "refuses beside a skills.sh row with the same name and touches neither row (D2 guard 5, D9)",
     async () => {
       const { world, run } = await remotePluginWorld();
       const skillsLock = join(world.project, "skills-lock.json");
@@ -918,15 +919,21 @@ describe("share plugins/<n> --adopt (D9, M3, M4)", () => {
         )}\n`,
       );
       const before = await readFile(skillsLock);
+      const remotesBefore = await readFile(remotesLockPath(world.project));
+      const headBefore = await headOf(world.dataRepo);
 
       const r = await run(["share", "plugins/gh-cli", "--adopt", "--yes"]);
-      expect(r.exitCode).toBe(0);
-      expect(r.stdout.toString()).toContain(
-        "released: remote row for plugins/gh-cli",
+      expect(r.exitCode).toBe(3);
+      expect(r.stderr.toString()).toContain(
+        ".agents/skills/gh-cli is already installed by skills.sh",
       );
+      // D9: the skills.sh row is never found and never released.
       expect(await readFile(skillsLock)).toEqual(before);
-      const remotes = await readJsonObject(remotesLockPath(world.project));
-      expect(objectField(remotes, "items")).toEqual({});
+      expect(await readFile(remotesLockPath(world.project))).toEqual(
+        remotesBefore,
+      );
+      expect(await headOf(world.dataRepo)).toBe(headBefore);
+      expect(existsSync(join(world.dataRepo, "plugins", "gh-cli"))).toBe(false);
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );
@@ -1058,6 +1065,63 @@ describe("share plugins/<n> --adopt (D9, M3, M4)", () => {
       const r = await run(["share", "plugins/gh-cli", "--adopt", "--yes"]);
       expect(r.exitCode).toBe(0);
       expect(r.stderr.toString()).not.toContain("license");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "prints the recorded upstream URL through the display sanitizer",
+    async () => {
+      const { world, run } = await remotePluginWorld();
+      const remotesPath = remotesLockPath(world.project);
+      const remotes = JSON.parse(await readFile(remotesPath, "utf-8"));
+      const row = remotes.items["remote/plugins/gh-cli"];
+      row.upstream = `${row.upstream}\u001b[31mred`;
+      await writeFile(remotesPath, `${JSON.stringify(remotes, null, 2)}\n`);
+
+      const r = await run(["share", "plugins/gh-cli", "--adopt", "--yes"]);
+      expect(r.exitCode).toBe(0);
+      const err = r.stderr.toString();
+      // The edited URL has no warm cache, so the "no license" line names it.
+      expect(err).toContain("no license file in the remote item or at the ");
+      expect(err).not.toContain("\u001b");
+      expect(r.stdout.toString()).toContain("upstream:       ");
+      expect(r.stdout.toString()).not.toContain("\u001b");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "a retry after an interrupted adopt releases remote/plugins/<n> only",
+    async () => {
+      // Constructed state, as in the skill test: the adopt runs to
+      // completion, then the remotes lock is written back by hand. A second
+      // remote row shows the retry releases only the plugin's own row.
+      const { world, run } = await remotePluginWorld();
+      const skillUpstream = await upstreamWith([["skills/pdf", "Extract"]]);
+      expect(
+        (await run(["add", skillUpstream.url, "--yes", "--json"])).exitCode,
+      ).toBe(0);
+      const remotesPath = remotesLockPath(world.project);
+      const before = await readFile(remotesPath);
+      expect(
+        (await run(["share", "plugins/gh-cli", "--adopt", "--yes"])).exitCode,
+      ).toBe(0);
+      await writeFile(remotesPath, before);
+      const headAfterFirst = await headOf(world.dataRepo);
+
+      const retry = await run(["share", "plugins/gh-cli", "--adopt", "--json"]);
+      expect(retry.exitCode).toBe(0);
+      const payload = jsonOutput(retry);
+      expect(payload.kind).toBe("plugins");
+      expect(payload.action).toBe("already-upstream");
+      expect(payload.adoptedFrom).toBe("remote");
+      expect(payload.previousOwnerReleased).toBe(true);
+      const remotes = await readJsonObject(remotesPath);
+      expect(Object.keys(objectField(remotes, "items"))).toEqual([
+        "remote/skills/pdf",
+      ]);
+      expect(await headOf(world.dataRepo)).toBe(headAfterFirst);
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );
