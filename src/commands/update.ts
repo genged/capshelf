@@ -37,6 +37,7 @@ import {
 } from "../pin";
 import type {
   DataLockEntryV4,
+  Lock,
   LockEntry,
   LockEntryV4,
   WritableLock,
@@ -133,6 +134,7 @@ import {
 } from "../remotes-lock";
 import type { RemoteLockEntry, RemotesLock } from "../remotes-lock";
 import { factsWarnOnInstall, renderPluginFacts } from "../remote-list-render";
+import { assertSkillTargetFree } from "../skill-target";
 
 interface UpdateOptions {
   json?: boolean;
@@ -333,6 +335,7 @@ export function registerUpdate(program: Command): void {
             target: targets[0]!,
             projectLock: writableProjectLock,
             localLock: writableLocalLock,
+            remotes,
             dryRun: opts.dryRun === true,
           });
           printUpdateOutput({
@@ -363,6 +366,9 @@ export function registerUpdate(program: Command): void {
           dryRun: opts.dryRun === true,
           explicit,
           externalSkillByName,
+          projectLock: writableProjectLock,
+          localLock: writableLocalLock,
+          remotes,
         };
 
         const preflight = await planUpdatePreflight(
@@ -965,6 +971,7 @@ async function updateMergeTarget(input: {
   target: ScopedTarget;
   projectLock: WritableLock;
   localLock: WritableLock;
+  remotes: RemotesLock;
   dryRun: boolean;
 }): Promise<UpdateResult> {
   const { project, dataRepo, target, dryRun } = input;
@@ -1165,6 +1172,20 @@ async function updateMergeTarget(input: {
   }
 
   if (!dryRun && (lockChanged || filesChanged)) {
+    // D2 guard 5: before the copy-directory write below.
+    if (installsAtSkillTarget(kind)) {
+      await assertSkillTargetFree(
+        project,
+        kind,
+        parsed.name,
+        {
+          project: input.projectLock,
+          local: input.localLock,
+          remotes: input.remotes,
+        },
+        { key: target.key },
+      );
+    }
     await revalidateUpdateMergeInputs({
       ...input,
       entry,
@@ -1225,6 +1246,7 @@ async function revalidateUpdateMergeInputs(input: {
   target: ScopedTarget;
   projectLock: WritableLock;
   localLock: WritableLock;
+  remotes: RemotesLock;
   entry: DataLockEntryV4;
   parsed: ReturnType<typeof parseLockKey> & {
     kind: CopyDirectoryItemKind;
@@ -1335,6 +1357,10 @@ interface UpdateContext {
   dryRun: boolean;
   explicit: boolean;
   externalSkillByName: Map<string, ExternalSkill>;
+  /** D2 guard 5: the populations `assertSkillTargetFree` scans. */
+  projectLock: Lock;
+  localLock: Lock;
+  remotes: RemotesLock;
 }
 
 interface UpdatePreflight {
@@ -1714,6 +1740,22 @@ async function updateDataTarget(
   const sha = pin.sourcePinDigest;
   const sourceCommit = pin.sourceCommit;
   if (isCopyDirectoryItemKind(parsed.kind)) {
+    // D2 guard 5: before the copy-directory write, dry run included — a
+    // preview that silently showed a reconcile onto another owner's folder
+    // would be wrong for the same reason writing it would be.
+    if (installsAtSkillTarget(parsed.kind)) {
+      await assertSkillTargetFree(
+        ctx.project,
+        parsed.kind,
+        parsed.name,
+        {
+          project: ctx.projectLock,
+          local: ctx.localLock,
+          remotes: ctx.remotes,
+        },
+        { key },
+      );
+    }
     await assertNoDestinationCollisions(
       `${parsed.kind}/${parsed.name}`,
       installedPath(ctx.project, parsed.kind, parsed.name),

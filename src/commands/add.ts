@@ -68,6 +68,8 @@ import { assertPathClean } from "../git";
 import { GitReadMemo } from "../git-read-memo";
 import { findMasterItemByRef, lockKeyForRef, parseItemRef } from "../item-ref";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
+import { loadRemotesLock } from "../remotes-lock";
+import { assertSkillTargetFree } from "../skill-target";
 import {
   addLocalConfigName,
   assertLocalInstallPathsUntracked,
@@ -762,6 +764,21 @@ export async function installDataItem(
         `not installing ${item.kind}/${item.name} — ${skillsShConflictMessage(external)}`,
       );
     }
+    // D2 guard 5: the folder-level check, ahead of `findInstallConflict`
+    // below. That check only sees whether a path exists, so a `plugins/<n>`
+    // add over an installed `skills/<n>` would otherwise fall into the
+    // recovery-adopt branch and silently claim the skill's folder.
+    await assertSkillTargetFree(
+      project,
+      item.kind,
+      item.name,
+      {
+        project: projectLock,
+        local: localLock,
+        remotes: await loadRemotesLock(project),
+      },
+      null,
+    );
   }
 
   const conflict =

@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
+import { relative } from "node:path";
 import {
   assertDestructivePlanUnchanged,
   confirmDestructiveChanges,
@@ -75,6 +76,8 @@ import {
 import type { RemotesLock } from "../remotes-lock";
 import { assertRefNotSplitAcrossPopulations } from "../targets";
 import type { Manifest } from "../manifest";
+import { skillTargetOwnerLabel, skillTargetOwners } from "../skill-target";
+import type { SkillTargetOwner } from "../skill-target";
 
 interface RmOptions {
   json?: boolean;
@@ -381,6 +384,7 @@ export function registerRm(program: Command): void {
 
       let path = "";
       let removed = false;
+      let keptBy: SkillTargetOwner | null = null;
       if (isFragmentItemKind(kind)) {
         const targets = await lockedFragmentTargetsForItem(
           await requireDataRepo(),
@@ -403,26 +407,45 @@ export function registerRm(program: Command): void {
         }
       } else if (isCopyDirectoryItemKind(kind)) {
         path = installedPath(project, kind, name, oldManifest.installMode);
-        removed = await removeInstallAliases(
-          project,
-          kind,
-          name,
-          path,
-          oldManifest.installMode,
-        );
-        if (existsSync(path)) {
-          try {
-            await rmTreeWithRetries(path);
-          } catch (err) {
-            const detail = err instanceof Error ? err.message : String(err);
-            throw new CliError(`could not delete ${path} (${detail})`, {
-              hint:
-                "another process may be writing to that directory (an agent runtime watching it?) — stop it and retry,\n" +
-                "  or delete the directory manually and re-run this command to finish untracking",
-              cause: err,
-            });
+        // D2 guard 5: a `skills/<n>` and `plugins/<n>` pair shares this
+        // folder. When another owner still claims it, untrack this item but
+        // leave the folder — and its compatibility alias — alone; they are
+        // not this item's to delete.
+        if (installsAtSkillTarget(kind)) {
+          const otherOwners = (
+            await skillTargetOwners(project, name, {
+              project: opts.local ? await loadLock(project) : lock,
+              local: opts.local ? lock : await loadLocalLock(project),
+              remotes,
+            })
+          ).filter(
+            (owner) =>
+              !(owner.owner === "lock" && owner.key === dataKey(kind, name)),
+          );
+          keptBy = otherOwners[0] ?? null;
+        }
+        if (!keptBy) {
+          removed = await removeInstallAliases(
+            project,
+            kind,
+            name,
+            path,
+            oldManifest.installMode,
+          );
+          if (existsSync(path)) {
+            try {
+              await rmTreeWithRetries(path);
+            } catch (err) {
+              const detail = err instanceof Error ? err.message : String(err);
+              throw new CliError(`could not delete ${path} (${detail})`, {
+                hint:
+                  "another process may be writing to that directory (an agent runtime watching it?) — stop it and retry,\n" +
+                  "  or delete the directory manually and re-run this command to finish untracking",
+                cause: err,
+              });
+            }
+            removed = true;
           }
-          removed = true;
         }
       } else if (isCopyTargetFileItemKind(kind)) {
         const paths = await removeSubagentOutputs(
@@ -461,6 +484,7 @@ export function registerRm(program: Command): void {
               name,
               path,
               removedFiles: removed,
+              ...(keptBy && { keptBy: skillTargetOwnerLabel(keptBy) }),
             },
             null,
             2,
@@ -471,7 +495,11 @@ export function registerRm(program: Command): void {
       console.log(
         `✓ removed ${opts.local ? "local/" : ""}data/${kind}/${name}`,
       );
-      if (removed) {
+      if (keptBy) {
+        console.log(
+          `  kept ${relative(project, path)}: it is installed by ${skillTargetOwnerLabel(keptBy)}`,
+        );
+      } else if (removed) {
         console.log(
           `  ${isFragmentItemKind(kind) ? "updated" : "deleted"} ${path}`,
         );

@@ -49,6 +49,8 @@ import {
 } from "../fragments";
 import { materializeSubagent } from "../subagents";
 import { PRODUCT_NAME } from "../identity";
+import { loadRemotesLock } from "../remotes-lock";
+import { assertSkillTargetFree } from "../skill-target";
 
 interface RevertOptions {
   json?: boolean;
@@ -316,6 +318,21 @@ export function registerRevert(program: Command): void {
         accepted.destructivePlan,
         revalidated.destructivePlan,
       );
+
+      // D2 guard 5: before the restore write.
+      if (installsAtSkillTarget(parsed.kind)) {
+        await assertSkillTargetFree(
+          project,
+          parsed.kind,
+          parsed.name,
+          {
+            project: opts.local ? await loadLock(project) : lock,
+            local: opts.local ? lock : await loadLocalLock(project),
+            remotes: await loadRemotesLock(project),
+          },
+          { key },
+        );
+      }
 
       // The keep-local marker records intent, not a fact about current
       // content, so revert restores bytes and leaves it alone. Only

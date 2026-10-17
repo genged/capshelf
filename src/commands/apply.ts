@@ -58,6 +58,7 @@ import {
   isFragmentKindName,
   isMaterializedItemKind,
 } from "../master";
+import { assertSkillTargetFree } from "../skill-target";
 import { materializeSubagent, shaOfInstalledSubagent } from "../subagents";
 import {
   applyFragmentOutputPlans,
@@ -387,6 +388,16 @@ export function registerApply(program: Command): void {
             );
           }
           try {
+            // D2 guard 5: before the write loop replaces this folder.
+            if (installsAtSkillTarget(parsed.kind)) {
+              await assertSkillTargetFree(
+                project,
+                parsed.kind,
+                parsed.name,
+                { project: projectLock, local: localLock, remotes },
+                { key },
+              );
+            }
             if (parsed.kind === "subagents") {
               if (!dataRepo) throw new Error("data repo is required");
               const entry = lock.items[key]!;

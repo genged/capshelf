@@ -2,7 +2,13 @@ import type { Command } from "commander";
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { findProjectRoot, projectRoot, homeRelative } from "../paths";
+import {
+  findProjectRoot,
+  projectRoot,
+  homeRelative,
+  detectInstallMode,
+  DEFAULT_INSTALL_MODE,
+} from "../paths";
 import { resolveDataRepo, resolveDataRepoOptional } from "../data-repo";
 import { PreconditionError } from "../errors";
 import {
@@ -174,6 +180,24 @@ async function lsAvailable(
   const pluginWarnings =
     !kind || kind === "plugins" ? await pluginNameWarnings(dataRepo) : [];
 
+  // D2 guard 2: `skills/<n>` and `plugins/<n>` can both be on the shelf, and
+  // a project uses only one. `dataItems` already holds both kinds unless
+  // `--kind` narrowed it to `plugins` alone, in which case the skill names
+  // are fetched separately so the marker still finds the pair.
+  const skillNames = new Set(
+    dataItems.filter((item) => item.kind === "skills").map((item) => item.name),
+  );
+  if (kind === "plugins") {
+    for (const item of await listMasterItems(dataRepo, "skills")) {
+      skillNames.add(item.name);
+    }
+  }
+  const mode = project ? detectInstallMode(project) : DEFAULT_INSTALL_MODE;
+  const skillTargetDir =
+    mode === "claude-only" ? ".claude/skills" : ".agents/skills";
+  const sharesTargetWith = (itemKind: ItemKind, name: string): string | null =>
+    itemKind === "plugins" && skillNames.has(name) ? `skills/${name}` : null;
+
   const systemRows = systemItems
     .map((item) => ({ item, meta: loadSystemItemMetadata(item) }))
     .filter(({ meta }) => matchesTagFilter(meta, tags));
@@ -220,14 +244,18 @@ async function lsAvailable(
       })),
     );
     const dataJsonRows = await Promise.all(
-      dataRows.map(async ({ item, meta }) => ({
-        source: "data" as const,
-        kind: item.kind,
-        name: item.name,
-        sha: await shaOfDataItem(dataRepo, item),
-        path: item.path,
-        ...metadataJsonFields(meta),
-      })),
+      dataRows.map(async ({ item, meta }) => {
+        const shared = sharesTargetWith(item.kind, item.name);
+        return {
+          source: "data" as const,
+          kind: item.kind,
+          name: item.name,
+          sha: await shaOfDataItem(dataRepo, item),
+          path: item.path,
+          ...metadataJsonFields(meta),
+          ...(shared && { sharesTargetWith: shared }),
+        };
+      }),
     );
     console.log(
       JSON.stringify(
@@ -286,6 +314,12 @@ async function lsAvailable(
       console.log(
         `  ${item.kind}/${item.name.padEnd(26)} ${sha}${metadataLineSuffix(meta)}`,
       );
+      const shared = sharesTargetWith(item.kind, item.name);
+      if (shared) {
+        console.log(
+          `    ^ ${shared} and ${item.kind}/${item.name} both install to ${skillTargetDir}/${item.name}. A project uses one of them.`,
+        );
+      }
     }
   }
 

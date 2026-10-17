@@ -14,6 +14,7 @@ import { NotFoundError, PreconditionError } from "../errors";
 import { isSystemItemName } from "../bundled";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
 import { assertNotPulledSkill } from "../remote-refusal";
+import { installsAtSkillTarget } from "../master";
 import type { ItemKind } from "../master";
 import {
   assertLocalScopeSupported,
@@ -24,6 +25,8 @@ import {
 } from "../local-config";
 import { moveScope } from "../move-scope";
 import type { MoveScopeResult, Scope } from "../promote-core";
+import { loadRemotesLock } from "../remotes-lock";
+import { assertSkillTargetFree } from "../skill-target";
 
 interface MoveOptions {
   to?: string;
@@ -83,6 +86,23 @@ export function registerMove(program: Command): void {
       }
 
       const dataRepo = await resolveProjectDataRepo(project, manifest, cmd);
+
+      // D2 guard 5: before the scope-change write. `self` is the item's
+      // current key, the same in either scope (a lock key carries no scope),
+      // so the item's own entry is never reported as its own conflict.
+      if (installsAtSkillTarget(resolved.kind)) {
+        await assertSkillTargetFree(
+          project,
+          resolved.kind,
+          resolved.name,
+          {
+            project: projectLock,
+            local: localLock,
+            remotes: await loadRemotesLock(project),
+          },
+          { key: dataKey(resolved.kind, resolved.name) },
+        );
+      }
 
       const result = await moveScope(
         project,

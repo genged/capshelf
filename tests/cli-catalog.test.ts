@@ -555,4 +555,84 @@ describe("cli integration", () => {
 
     expect((await run(["status", "--strict"])).exitCode).toBe(4);
   });
+
+  test("ls marks a skills/<n> and plugins/<n> pair (D2 guard 2)", async () => {
+    const project = await tempRepo("capshelf-ls-pair-project-");
+    const dataRepo = await tempRepo("capshelf-ls-pair-data-");
+    await mkdir(join(dataRepo, "skills", "rust-review"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "skills", "rust-review", "SKILL.md"),
+      "---\nname: rust-review\ndescription: d\n---\nbody\n",
+    );
+    await mkdir(join(dataRepo, "plugins", "rust-review", "skills", "s"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(dataRepo, "plugins", "rust-review", "skills", "s", "SKILL.md"),
+      "---\nname: s\ndescription: d\n---\nbody\n",
+    );
+    await mkdir(join(dataRepo, "plugins", "rust-review", ".claude-plugin"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(dataRepo, "plugins", "rust-review", ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "rust-review" }),
+    );
+    // An unrelated plugin, so the marker is never printed for it.
+    await mkdir(join(dataRepo, "plugins", "lonely", "skills", "s"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(dataRepo, "plugins", "lonely", "skills", "s", "SKILL.md"),
+      "---\nname: s\ndescription: d\n---\nbody\n",
+    );
+    await mkdir(join(dataRepo, "plugins", "lonely", ".claude-plugin"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(dataRepo, "plugins", "lonely", ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "lonely" }),
+    );
+    await commitAll(dataRepo, "baseline");
+
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+
+    const ls = await run(["ls"]);
+    expect(ls.exitCode).toBe(0);
+    const out = ls.stdout.toString();
+    expect(out).toContain(
+      "    ^ skills/rust-review and plugins/rust-review both install to .agents/skills/rust-review. A project uses one of them.",
+    );
+    // The marker follows the plugins/rust-review row, and no such line
+    // follows plugins/lonely.
+    const lonelyIndex = out.indexOf("plugins/lonely");
+    const lonelyNextLine = out.slice(lonelyIndex).split("\n")[1] ?? "";
+    expect(lonelyNextLine).not.toContain("^");
+
+    const json = await run(["ls", "--json"]);
+    const parsed = JSON.parse(json.stdout.toString());
+    const pluginRow = parsed.data.find(
+      (row: { kind: string; name: string }) =>
+        row.kind === "plugins" && row.name === "rust-review",
+    );
+    expect(pluginRow.sharesTargetWith).toBe("skills/rust-review");
+    const lonelyRow = parsed.data.find(
+      (row: { kind: string; name: string }) =>
+        row.kind === "plugins" && row.name === "lonely",
+    );
+    expect(lonelyRow.sharesTargetWith).toBeUndefined();
+    const skillRow = parsed.data.find(
+      (row: { kind: string; name: string }) =>
+        row.kind === "skills" && row.name === "rust-review",
+    );
+    expect(skillRow.sharesTargetWith).toBeUndefined();
+
+    // `--kind plugins` alone still finds the pair.
+    const kinded = await run(["ls", "--kind", "plugins", "--json"]);
+    const kindedRow = JSON.parse(kinded.stdout.toString()).data.find(
+      (row: { name: string }) => row.name === "rust-review",
+    );
+    expect(kindedRow.sharesTargetWith).toBe("skills/rust-review");
+  });
 });
