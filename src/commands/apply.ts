@@ -387,9 +387,13 @@ export function registerApply(program: Command): void {
               `no apply strategy for ${parsed.kind}/${parsed.name}`,
             );
           }
-          try {
-            // D2 guard 5: before the write loop replaces this folder.
-            if (installsAtSkillTarget(parsed.kind)) {
+          // D2 guard 5: before the write loop replaces this folder. Outside
+          // the per-item `try` below, mirroring the skills.sh check above —
+          // an explicit `apply <ref>` refuses (exit 3 through
+          // `PreconditionError`); a bare sweep records the item as failed
+          // and converges the rest.
+          if (installsAtSkillTarget(parsed.kind)) {
+            try {
               await assertSkillTargetFree(
                 project,
                 parsed.kind,
@@ -397,7 +401,21 @@ export function registerApply(program: Command): void {
                 { project: projectLock, local: localLock, remotes },
                 { key },
               );
+            } catch (err) {
+              if (itemRef) throw err;
+              results.push({
+                scope,
+                key,
+                source: parsed.source,
+                kind: parsed.kind,
+                name: parsed.name,
+                action: "error",
+                error: err instanceof Error ? err.message : String(err),
+              });
+              continue;
             }
+          }
+          try {
             if (parsed.kind === "subagents") {
               if (!dataRepo) throw new Error("data repo is required");
               const entry = lock.items[key]!;

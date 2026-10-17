@@ -1662,6 +1662,39 @@ async function updateOneTarget(
       },
     };
   }
+  // D2 guard 5: before the copy-directory write, dry run included —
+  // `updateDataTarget` is the one function both passes call. Outside the
+  // per-item `try` below, mirroring the skills.sh check above: an explicit
+  // `update <ref>` refuses (exit 3 through `PreconditionError`); a bare
+  // sweep records the item as failed and converges the rest.
+  if (installsAtSkillTarget(parsed.kind)) {
+    try {
+      await assertSkillTargetFree(
+        ctx.project,
+        parsed.kind,
+        parsed.name,
+        {
+          project: ctx.projectLock,
+          local: ctx.localLock,
+          remotes: ctx.remotes,
+        },
+        { key },
+      );
+    } catch (err) {
+      if (ctx.explicit) throw err;
+      return {
+        result: {
+          key,
+          scope,
+          source: parsed.source,
+          kind: parsed.kind,
+          name: parsed.name,
+          action: "error",
+          error: err instanceof Error ? err.message : String(err),
+        },
+      };
+    }
+  }
   try {
     return entry.source === "data"
       ? await updateDataTarget(ctx, scope, key, parsed, entry)
@@ -1740,22 +1773,8 @@ async function updateDataTarget(
   const sha = pin.sourcePinDigest;
   const sourceCommit = pin.sourceCommit;
   if (isCopyDirectoryItemKind(parsed.kind)) {
-    // D2 guard 5: before the copy-directory write, dry run included — a
-    // preview that silently showed a reconcile onto another owner's folder
-    // would be wrong for the same reason writing it would be.
-    if (installsAtSkillTarget(parsed.kind)) {
-      await assertSkillTargetFree(
-        ctx.project,
-        parsed.kind,
-        parsed.name,
-        {
-          project: ctx.projectLock,
-          local: ctx.localLock,
-          remotes: ctx.remotes,
-        },
-        { key },
-      );
-    }
+    // D2 guard 5 already ran in `updateOneTarget`, the caller both the dry
+    // and the real pass share, before this function was reached at all.
     await assertNoDestinationCollisions(
       `${parsed.kind}/${parsed.name}`,
       installedPath(ctx.project, parsed.kind, parsed.name),

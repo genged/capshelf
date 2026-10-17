@@ -10,13 +10,13 @@
  * unrelated items to it even though they are one folder on disk.
  *
  * This module is the folder-level check (spec D2 guard 5). `skillTargetOwners`
- * finds every owner of a skill-target folder: a project-lock or local-lock
- * entry, a remote row, a skills.sh row, or an unmanaged path. `assertSkillTargetFree`
- * refuses a write that would create, replace, or delete that folder while
- * another owner holds it.
+ * finds every owner of a skill-target folder: a project-lock entry, a
+ * local-lock entry, a remote row, a skills.sh row, or an unmanaged path.
+ * `assertSkillTargetFree` refuses a write that would create, replace, or
+ * delete that folder while another owner holds it.
  */
-import { readlinkSync } from "node:fs";
-import { dirname, relative, resolve } from "node:path";
+import { dirname, join, relative } from "node:path";
+import { readdir } from "node:fs/promises";
 import { PreconditionError } from "./errors";
 import type { ExternalSkill } from "./external";
 import {
@@ -24,7 +24,6 @@ import {
   listSkillsShSkills,
   skillsShConflictMessage,
 } from "./external";
-import { lstatOrNull } from "./fs-utils";
 import { PRODUCT_NAME } from "./identity";
 import {
   claudeSkillPath,
@@ -63,14 +62,19 @@ export interface SkillTargetSelf {
 }
 
 export type SkillTargetOwner =
-  | { owner: "lock"; key: string }
+  | { owner: "project" | "local"; key: string }
+  | { owner: "remote"; key: string }
   | { owner: "skills.sh"; name: string }
   | { owner: "unmanaged"; path: string };
 
 /** A short label for an owner, for a message that only needs to name it. */
 export function skillTargetOwnerLabel(owner: SkillTargetOwner): string {
   switch (owner.owner) {
-    case "lock":
+    case "project":
+      return `${owner.key} (project scope)`;
+    case "local":
+      return `${owner.key} (local scope)`;
+    case "remote":
       return owner.key;
     case "skills.sh":
       return "skills.sh";
@@ -85,9 +89,9 @@ export function skillTargetOwnerLabel(owner: SkillTargetOwner): string {
  * An owner is any lock key `<source>/<skills|plugins>/<n2>` in the project or
  * local lock, any remote key `remote/<skills|plugins>/<n2>`, or any skills.sh
  * row `<n2>`, where `destinationKey(n2, ALL)` equals `destinationKey(name,
- * ALL)`. An unmanaged path — an existing path at the codex or Claude skill
- * location for `name` — counts as an owner only when none of those three
- * populations already explains the folder.
+ * ALL)`. An unmanaged path — an existing directory entry, folded the same
+ * way, at the codex or Claude skill location for `name` — counts as an owner
+ * only when none of those three populations already explains the folder.
  */
 export async function skillTargetOwners(
   project: string,
@@ -97,19 +101,22 @@ export async function skillTargetOwners(
   const wanted = destinationKey(name, ALL_FOLDING);
   const owners: SkillTargetOwner[] = [];
 
-  for (const lock of [locks.project, locks.local]) {
+  for (const [scope, lock] of [
+    ["project", locks.project],
+    ["local", locks.local],
+  ] as const) {
     for (const key of Object.keys(lock.items)) {
       const parsed = parseLockKey(key);
       if (!installsAtSkillTarget(parsed.kind)) continue;
       if (destinationKey(parsed.name, ALL_FOLDING) !== wanted) continue;
-      owners.push({ owner: "lock", key });
+      owners.push({ owner: scope, key });
     }
   }
 
   for (const key of Object.keys(locks.remotes.items)) {
     const parsed = parseRemoteKey(key);
     if (destinationKey(parsed.name, ALL_FOLDING) !== wanted) continue;
-    owners.push({ owner: "lock", key });
+    owners.push({ owner: "remote", key });
   }
 
   for (const skill of await listSkillsShSkills(project)) {
@@ -118,7 +125,7 @@ export async function skillTargetOwners(
   }
 
   if (owners.length === 0) {
-    const unmanaged = unmanagedSkillTargetOwner(project, name);
+    const unmanaged = await unmanagedSkillTargetOwner(project, name);
     if (unmanaged) owners.push(unmanaged);
   }
 
@@ -147,7 +154,12 @@ export async function assertSkillTargetFree(
 ): Promise<void> {
   const owners = (await skillTargetOwners(project, name, locks)).filter(
     (owner) => {
-      if (owner.owner === "lock" && owner.key === self?.key) return false;
+      if (
+        (owner.owner === "project" || owner.owner === "local") &&
+        owner.key === self?.key
+      ) {
+        return false;
+      }
       if (self === null && owner.owner === "unmanaged") return false;
       return true;
     },
@@ -183,7 +195,7 @@ async function skillTargetConflictMessage(
       `  capshelf does not manage that path. Move or delete it, then install ${kind}/${name} again.`,
     ].join("\n");
   }
-  return lockOwnerConflictMessage(folder, kind, name, owner.key);
+  return lockOwnerConflictMessage(folder, kind, name, owner);
 }
 
 /**
@@ -198,12 +210,14 @@ function lockOwnerConflictMessage(
   folder: string,
   kind: SkillTargetKind,
   name: string,
-  ownerKey: string,
+  owner: { owner: "project" | "local" | "remote"; key: string },
 ): string {
-  const ownerRef = skillTargetRefFromKey(ownerKey);
+  const ownerRef = skillTargetRefFromKey(owner.key);
   const ownerLabel = `${ownerRef.kind}/${ownerRef.name}`;
   const selfLabel = `${kind}/${name}`;
-  const lines = [`${folder} is already installed by ${ownerKey}`];
+  const lines = [
+    `${folder} is already installed by ${skillTargetOwnerLabel(owner)}`,
+  ];
   if (ownerRef.kind === kind) {
     // Same kind as the item being written: not the skill/plugin pair this
     // message exists for. The ordinary scope-collision guards should have
@@ -240,32 +254,49 @@ function skillTargetRefFromKey(key: string): SkillTargetRef {
 }
 
 /**
- * An existing path at the codex or Claude skill location for `name`, when
- * nothing else explains it. A Claude-side symlink that resolves to the codex
- * path is the compatibility alias of a managed install, not a second owner.
+ * An existing directory entry at the codex or Claude skills directory that
+ * folds to `name`, when nothing else explains it. Matched by `readdir` plus
+ * `destinationKey`, not by `lstat`-ing the literal name: a committed
+ * `.agents/skills/RR` must be found for a write of `rr` on every machine,
+ * including one whose filesystem does not fold case or Unicode itself (spec
+ * D2 guard 5).
+ *
+ * A Claude-side symlink that resolves to the matching codex entry is the
+ * compatibility alias of a managed install, not a second owner — and since a
+ * managed install's codex entry is matched and returned first, that case
+ * never reaches the Claude-side scan at all.
  */
-function unmanagedSkillTargetOwner(
+async function unmanagedSkillTargetOwner(
   project: string,
   name: string,
-): SkillTargetOwner | null {
-  const codexPath = codexSkillPath(project, name);
-  if (lstatOrNull(codexPath)) return { owner: "unmanaged", path: codexPath };
+): Promise<SkillTargetOwner | null> {
+  const wanted = destinationKey(name, ALL_FOLDING);
 
-  const claudePath = claudeSkillPath(project, name);
-  const claudeStat = lstatOrNull(claudePath);
-  if (!claudeStat) return null;
-  if (claudeStat.isSymbolicLink() && aliasPointsAt(claudePath, codexPath)) {
-    return null;
+  const codexSkillsDir = dirname(codexSkillPath(project, name));
+  const codexEntry = await foldedDirEntry(codexSkillsDir, wanted);
+  if (codexEntry) {
+    return { owner: "unmanaged", path: join(codexSkillsDir, codexEntry) };
   }
-  return { owner: "unmanaged", path: claudePath };
+
+  const claudeSkillsDir = dirname(claudeSkillPath(project, name));
+  const claudeEntry = await foldedDirEntry(claudeSkillsDir, wanted);
+  if (!claudeEntry) return null;
+  return { owner: "unmanaged", path: join(claudeSkillsDir, claudeEntry) };
 }
 
-function aliasPointsAt(linkPath: string, target: string): boolean {
+/** The first entry of `dir` that folds to `wanted`, or null. Never throws. */
+async function foldedDirEntry(
+  dir: string,
+  wanted: string,
+): Promise<string | null> {
+  let entries: string[];
   try {
-    return (
-      resolve(dirname(linkPath), readlinkSync(linkPath)) === resolve(target)
-    );
+    entries = await readdir(dir);
   } catch {
-    return false;
+    return null;
   }
+  return (
+    entries.find((entry) => destinationKey(entry, ALL_FOLDING) === wanted) ??
+    null
+  );
 }

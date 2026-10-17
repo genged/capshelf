@@ -84,6 +84,25 @@ describe("skill-target owners", () => {
     });
   });
 
+  test("an unmanaged folder is found by folded name, not exact case", async () => {
+    // Spec D2 guard 5 folds every owner, including an unmanaged one: a
+    // committed `.agents/skills/RR` must be found for a write of `rr` on
+    // every machine, including one whose filesystem does not fold case.
+    const project = await tempDir("capshelf-target-");
+    await mkdir(join(project, ".agents", "skills", "RR"), {
+      recursive: true,
+    });
+    const locks = {
+      project: emptyLock(),
+      local: emptyLock(),
+      remotes: emptyRemotesLock(),
+    };
+    expect((await skillTargetOwners(project, "rr", locks))[0]).toEqual({
+      owner: "unmanaged",
+      path: join(project, ".agents", "skills", "RR"),
+    });
+  });
+
   test("assertSkillTargetFree lets a first install (self null) proceed over an unmanaged folder", async () => {
     // `self === null` is `add`'s call: nothing tracks this name yet, so an
     // unmanaged folder there is add's own recovery-adopt decision
@@ -152,24 +171,30 @@ async function writePlugin(
   );
 }
 
-async function lockPath(project: string): Promise<string> {
+function lockPath(project: string): string {
   return join(project, ".capshelf", "capshelf.lock.json");
+}
+
+function localLockPath(project: string): string {
+  return join(project, ".capshelf", "local.lock.json");
 }
 
 /**
  * Directly inject a second, otherwise-valid, lock entry for `kind`/`name`
- * into the project lock, bypassing every writer. This is how the suite
- * reaches the two-owner state the guard exists for: with the guard active,
- * no ordinary command sequence can create `data/skills/rr` and
- * `data/plugins/rr` in one project, so the fixture stands in for a project
- * whose lock predates this guard, or whose other owner came from a command
- * this task does not yet cover (a remote add, Task 8).
+ * into the project (or, with `scope: "local"`, the local) lock, bypassing
+ * every writer. This is how the suite reaches the two-owner state the guard
+ * exists for: with the guard active, no ordinary command sequence can create
+ * `data/skills/rr` and `data/plugins/rr` in one project, so the fixture
+ * stands in for a project whose lock predates this guard, or whose other
+ * owner came from a command this task does not yet cover (a remote add,
+ * Task 8).
  */
 async function injectConflictingEntry(
   project: string,
   dataRepo: string,
   kind: "skills" | "plugins",
   name: string,
+  scope: "project" | "local" = "project",
 ): Promise<void> {
   const pin = await pinCurrentSource(dataRepo, kind, name);
   const entry = createDataLockEntry({
@@ -177,7 +202,7 @@ async function injectConflictingEntry(
     needs: emptyNeeds(),
     needsSourceCommit: pin.sourceCommit,
   });
-  const path = await lockPath(project);
+  const path = scope === "local" ? localLockPath(project) : lockPath(project);
   const lock = JSON.parse(await readFile(path, "utf-8"));
   lock.items[`data/${kind}/${name}`] = entry;
   await writeFile(path, JSON.stringify(lock, null, 2));
@@ -253,7 +278,10 @@ describe("skill-target ownership at each write (D2 guard 5)", () => {
     ).toBe(false);
   });
 
-  test("apply reports an error for plugins/<n> while skills/<n> owns the folder", async () => {
+  test("apply refuses, exit 3, when explicitly naming plugins/<n> while skills/<n> owns the folder", async () => {
+    // Explicit ref: mirrors the adjacent skills.sh check — a refusal is a
+    // PreconditionError thrown outside the per-item try, so it exits 3, the
+    // same as every other refusal in this file.
     const project = await tempRepo("capshelf-target-apply-project-");
     const dataRepo = await tempRepo("capshelf-target-apply-data-");
     await writeSkill(dataRepo, "rr");
@@ -265,11 +293,9 @@ describe("skill-target ownership at each write (D2 guard 5)", () => {
     expect((await run(["add", "skills/rr"])).exitCode).toBe(0);
     await injectConflictingEntry(project, dataRepo, "plugins", "rr");
 
-    const apply = await run(["apply", "plugins/rr", "--yes", "--json"]);
-    expect(apply.exitCode).toBe(1);
-    const parsed = JSON.parse(apply.stdout.toString());
-    expect(parsed.items[0].action).toBe("error");
-    expect(parsed.items[0].error).toContain(
+    const apply = await run(["apply", "plugins/rr", "--yes"]);
+    expect(apply.exitCode).toBe(3);
+    expect(apply.stderr.toString()).toContain(
       "is already installed by data/skills/rr",
     );
     // Refused before any write: the folder still holds only the skill.
@@ -278,7 +304,37 @@ describe("skill-target ownership at each write (D2 guard 5)", () => {
     ).toBe(false);
   });
 
-  test("update reports an error for plugins/<n> while skills/<n> owns the folder", async () => {
+  test("apply sweep records the conflict as a per-item error and converges the rest", async () => {
+    const project = await tempRepo("capshelf-target-apply-sweep-project-");
+    const dataRepo = await tempRepo("capshelf-target-apply-sweep-data-");
+    await writeSkill(dataRepo, "rr");
+    await writePlugin(dataRepo, "rr", "rr");
+    await writeSkill(dataRepo, "healthy");
+    await commitAll(dataRepo, "baseline");
+
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/rr"])).exitCode).toBe(0);
+    expect((await run(["add", "skills/healthy"])).exitCode).toBe(0);
+    await injectConflictingEntry(project, dataRepo, "plugins", "rr");
+
+    // No explicit ref: the conflicted targets are reported, not thrown, and
+    // the unrelated healthy item still converges.
+    const apply = await run(["apply", "--yes", "--json"]);
+    expect(apply.exitCode).toBe(1);
+    const items: Array<{ name: string; action: string; error?: string }> =
+      JSON.parse(apply.stdout.toString()).items;
+    const rrRows = items.filter((row) => row.name === "rr");
+    expect(rrRows.length).toBeGreaterThan(0);
+    for (const row of rrRows) {
+      expect(row.action).toBe("error");
+      expect(row.error).toContain("is already installed by");
+    }
+    const healthyRow = items.find((row) => row.name === "healthy");
+    expect(healthyRow?.action).not.toBe("error");
+  });
+
+  test("update refuses, exit 3, when explicitly naming plugins/<n> while skills/<n> owns the folder", async () => {
     const project = await tempRepo("capshelf-target-update-project-");
     const dataRepo = await tempRepo("capshelf-target-update-data-");
     await writeSkill(dataRepo, "rr");
@@ -290,13 +346,39 @@ describe("skill-target ownership at each write (D2 guard 5)", () => {
     expect((await run(["add", "skills/rr"])).exitCode).toBe(0);
     await injectConflictingEntry(project, dataRepo, "plugins", "rr");
 
-    const update = await run(["update", "plugins/rr", "--json"]);
-    expect(update.exitCode).toBe(1);
-    const parsed = JSON.parse(update.stdout.toString());
-    expect(parsed.items[0].action).toBe("error");
-    expect(parsed.items[0].error).toContain(
+    const update = await run(["update", "plugins/rr"]);
+    expect(update.exitCode).toBe(3);
+    expect(update.stderr.toString()).toContain(
       "is already installed by data/skills/rr",
     );
+  });
+
+  test("update sweep records the conflict as a per-item error and converges the rest", async () => {
+    const project = await tempRepo("capshelf-target-update-sweep-project-");
+    const dataRepo = await tempRepo("capshelf-target-update-sweep-data-");
+    await writeSkill(dataRepo, "rr");
+    await writePlugin(dataRepo, "rr", "rr");
+    await writeSkill(dataRepo, "healthy");
+    await commitAll(dataRepo, "baseline");
+
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/rr"])).exitCode).toBe(0);
+    expect((await run(["add", "skills/healthy"])).exitCode).toBe(0);
+    await injectConflictingEntry(project, dataRepo, "plugins", "rr");
+
+    const update = await run(["update", "--json"]);
+    expect(update.exitCode).toBe(1);
+    const items: Array<{ name: string; action: string; error?: string }> =
+      JSON.parse(update.stdout.toString()).items;
+    const rrRows = items.filter((row) => row.name === "rr");
+    expect(rrRows.length).toBeGreaterThan(0);
+    for (const row of rrRows) {
+      expect(row.action).toBe("error");
+      expect(row.error).toContain("is already installed by");
+    }
+    const healthyRow = items.find((row) => row.name === "healthy");
+    expect(healthyRow?.action).not.toBe("error");
   });
 
   test("rm keeps the folder when another owner still claims it", async () => {
@@ -347,7 +429,75 @@ describe("skill-target ownership at each write (D2 guard 5)", () => {
     expect(rm.exitCode).toBe(0);
     const parsed = JSON.parse(rm.stdout.toString());
     expect(parsed.removedFiles).toBe(false);
-    expect(parsed.keptBy).toBe("data/plugins/rr");
+    expect(parsed.keptBy).toBe("data/plugins/rr (project scope)");
     expect(existsSync(join(project, ".agents", "skills", "rr"))).toBe(true);
+  });
+
+  test("rm of a kept folder needs no --yes for drift caused by the other owner's content", async () => {
+    // The folder also holds content the other owner (plugins/rr) put there
+    // — simulating a project whose lock predates this guard, where the
+    // plugin was actually materialized into the shared folder. Without the
+    // fix, `rm`'s destructive-change plan would report these files as this
+    // item's own local edits and refuse without `--yes`.
+    const project = await tempRepo("capshelf-target-rm-drift-project-");
+    const dataRepo = await tempRepo("capshelf-target-rm-drift-data-");
+    await writeSkill(dataRepo, "rr");
+    await writePlugin(dataRepo, "rr", "rr");
+    await commitAll(dataRepo, "baseline");
+
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/rr"])).exitCode).toBe(0);
+    await injectConflictingEntry(project, dataRepo, "plugins", "rr");
+    await mkdir(join(project, ".agents", "skills", "rr", "skills", "s"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(project, ".agents", "skills", "rr", "skills", "s", "SKILL.md"),
+      "plugin skill\n",
+    );
+
+    const rm = await run(["rm", "skills/rr"]);
+    expect(rm.exitCode).toBe(0);
+    expect(rm.stdout.toString()).toContain(
+      "kept .agents/skills/rr: it is installed by data/plugins/rr (project scope)",
+    );
+    // The other owner's content survives untouched.
+    expect(
+      existsSync(
+        join(project, ".agents", "skills", "rr", "skills", "s", "SKILL.md"),
+      ),
+    ).toBe(true);
+  });
+
+  test("rm --local keeps the local exclude lines when a local plugins/<n> keeps the folder", async () => {
+    // `localInstallPaths` names the shared folder the same way for
+    // `skills/<n>` and `plugins/<n>` — removing the exclude lines for one
+    // would strip them for the other if `rm` did not skip it when kept.
+    const project = await tempRepo("capshelf-target-rm-exclude-project-");
+    const dataRepo = await tempRepo("capshelf-target-rm-exclude-data-");
+    await writeSkill(dataRepo, "rr");
+    await writePlugin(dataRepo, "rr", "rr");
+    await commitAll(dataRepo, "baseline");
+
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/rr", "--local"])).exitCode).toBe(0);
+    await injectConflictingEntry(project, dataRepo, "plugins", "rr", "local");
+
+    const excludePath = join(project, ".git", "info", "exclude");
+    const before = await readFile(excludePath, "utf-8");
+    expect(before).toContain(".agents/skills/rr/");
+    expect(before).toContain(".claude/skills/rr");
+
+    const rm = await run(["rm", "--local", "skills/rr"]);
+    expect(rm.exitCode).toBe(0);
+    expect(rm.stdout.toString()).toContain(
+      "kept .agents/skills/rr: it is installed by data/plugins/rr (local scope)",
+    );
+
+    const after = await readFile(excludePath, "utf-8");
+    expect(after).toContain(".agents/skills/rr/");
+    expect(after).toContain(".claude/skills/rr");
   });
 });

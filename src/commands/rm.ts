@@ -230,6 +230,30 @@ export function registerRm(program: Command): void {
       if (entry?.source !== "data") {
         throw new Error(`expected data lock entry for data/${kind}/${name}`);
       }
+
+      // D2 guard 5: computed before any plan or consent. A folder this item
+      // does not own must never enter the destructive-change preflight below
+      // — the other owner's content would be reported as this item's local
+      // edits, demanding `--yes` for drift this item did not create — and
+      // must never be deleted.
+      let keptBy: SkillTargetOwner | null = null;
+      if (isCopyDirectoryItemKind(kind) && installsAtSkillTarget(kind)) {
+        const otherOwners = (
+          await skillTargetOwners(project, name, {
+            project: opts.local ? await loadLock(project) : lock,
+            local: opts.local ? lock : await loadLocalLock(project),
+            remotes,
+          })
+        ).filter(
+          (owner) =>
+            !(
+              (owner.owner === "project" || owner.owner === "local") &&
+              owner.key === dataKey(kind, name)
+            ),
+        );
+        keptBy = otherOwners[0] ?? null;
+      }
+
       // Resolved lazily: fragment and subagent removal read the data repo to
       // rebuild their outputs, but a copy directory is deleted from the
       // project alone. Requiring it unconditionally made `rm` impossible in
@@ -325,23 +349,31 @@ export function registerRm(program: Command): void {
           changes.push(...planned.changes);
           snapshotParts.push(...planned.snapshotParts);
         } else if (isCopyDirectoryItemKind(kind)) {
-          const planned = await planCopyDirectoryRemoval({
-            project,
-            currentSource: contentSourceOrNull({
-              entry,
+          // Kept: the folder belongs to another owner, so it is never part
+          // of this item's destructive-change plan. Planning it anyway would
+          // report that owner's content as this item's local edits and
+          // demand `--yes` for drift this item did not create.
+          if (keptBy) {
+            snapshotParts.push(`kept-by:${JSON.stringify(keptBy)}`);
+          } else {
+            const planned = await planCopyDirectoryRemoval({
+              project,
+              currentSource: contentSourceOrNull({
+                entry,
+                kind,
+                name,
+                repo: await optionalDataRepo(),
+              }),
+              manifest: oldManifest,
               kind,
               name,
-              repo: await optionalDataRepo(),
-            }),
-            manifest: oldManifest,
-            kind,
-            name,
-            key: dataKey(kind, name),
-            scope,
-            reviewCommand,
-          });
-          changes.push(...planned.changes);
-          snapshotParts.push(...planned.snapshotParts);
+              key: dataKey(kind, name),
+              scope,
+              reviewCommand,
+            });
+            changes.push(...planned.changes);
+            snapshotParts.push(...planned.snapshotParts);
+          }
         } else if (isCopyTargetFileItemKind(kind)) {
           const planned = await planSubagentDestruction({
             project,
@@ -384,7 +416,6 @@ export function registerRm(program: Command): void {
 
       let path = "";
       let removed = false;
-      let keptBy: SkillTargetOwner | null = null;
       if (isFragmentItemKind(kind)) {
         const targets = await lockedFragmentTargetsForItem(
           await requireDataRepo(),
@@ -407,23 +438,10 @@ export function registerRm(program: Command): void {
         }
       } else if (isCopyDirectoryItemKind(kind)) {
         path = installedPath(project, kind, name, oldManifest.installMode);
-        // D2 guard 5: a `skills/<n>` and `plugins/<n>` pair shares this
-        // folder. When another owner still claims it, untrack this item but
-        // leave the folder — and its compatibility alias — alone; they are
-        // not this item's to delete.
-        if (installsAtSkillTarget(kind)) {
-          const otherOwners = (
-            await skillTargetOwners(project, name, {
-              project: opts.local ? await loadLock(project) : lock,
-              local: opts.local ? lock : await loadLocalLock(project),
-              remotes,
-            })
-          ).filter(
-            (owner) =>
-              !(owner.owner === "lock" && owner.key === dataKey(kind, name)),
-          );
-          keptBy = otherOwners[0] ?? null;
-        }
+        // D2 guard 5: `keptBy` is computed above, before any plan or
+        // consent. When another owner still claims this folder, untrack
+        // this item but leave the folder — and its compatibility alias —
+        // alone; they are not this item's to delete.
         if (!keptBy) {
           removed = await removeInstallAliases(
             project,
@@ -466,7 +484,11 @@ export function registerRm(program: Command): void {
       );
       if (opts.local) {
         if (!nextLocalConfig) throw new Error("expected local manifest");
-        await removeLocalExcludes(project, kind, name);
+        // Kept: the exclude lines name the shared folder
+        // (`.agents/skills/<n>`, `.claude/skills/<n>`), identical for
+        // `skills/<n>` and `plugins/<n>` — removing them here would strip
+        // the lines the other owner still needs.
+        if (!keptBy) await removeLocalExcludes(project, kind, name);
         await saveLocalConfig(project, nextLocalConfig);
         await saveLocalLock(project, writableNextLock);
       } else {
