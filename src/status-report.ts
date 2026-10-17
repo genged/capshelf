@@ -14,6 +14,7 @@ import { describeInstallation, isTreePinned } from "./install-identity";
 import type { Manifest } from "./manifest";
 import type { ItemKind } from "./master";
 import {
+  installsAtSkillTarget,
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
   isFragmentItemKind,
@@ -203,7 +204,7 @@ export function filterUserSkillsForRef(
   ref: ItemRef | undefined,
 ): ExternalUserSkill[] {
   if (!ref) return skills;
-  if (ref.kind !== undefined && ref.kind !== "skills") return [];
+  if (ref.kind !== undefined && !installsAtSkillTarget(ref.kind)) return [];
   return skills.filter((skill) => skill.name === ref.name);
 }
 
@@ -217,7 +218,7 @@ export async function buildStatusReport(
     (skill) =>
       !ref ||
       (skill.name === ref.name &&
-        (ref.kind === undefined || ref.kind === "skills")),
+        (ref.kind === undefined || installsAtSkillTarget(ref.kind))),
   );
   const externalClaudePlugins = (await listClaudePlugins(project)).filter(
     (plugin) =>
@@ -247,7 +248,9 @@ export async function buildStatusReport(
     const { scope: rowScope, key } = target;
     const lock = rowScope === "local" ? localLock : projectLock;
     const { source, kind, name: itemName } = parseLockKey(key);
-    if (kind === "skills" && externalSkillNames.has(itemName)) continue;
+    if (installsAtSkillTarget(kind) && externalSkillNames.has(itemName)) {
+      continue;
+    }
 
     const entry = lock.items[key]!;
     // The one place this row decides where its bytes come from. A null content

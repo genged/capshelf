@@ -37,7 +37,11 @@ import type { PinnedSource } from "../pin";
 import { gitTreeSource } from "../item-source";
 import { assertCommittedTreeEqualsCandidate } from "../promote-proof";
 import { isSystemItemName } from "../bundled";
-import { isCopyDirectoryItemKind, itemRepoRelPath } from "../master";
+import {
+  installsAtSkillTarget,
+  isCopyDirectoryItemKind,
+  itemRepoRelPath,
+} from "../master";
 import type { CopyDirectoryItemKind, FragmentItemKind } from "../master";
 import { assertRepoClean, headSha, originRemoteUrl } from "../git";
 import { commitDataRepoMutation } from "../marketplace-files";
@@ -161,7 +165,7 @@ export async function shareOne(
   const name = ref.name;
   const scope = parseShareScope(
     opts.to,
-    kind === "skills" ? "local" : "project",
+    installsAtSkillTarget(kind) ? "local" : "project",
   );
   if (isFragmentKind(kind)) {
     await shareFragment(kind, name, scope, opts, cmd);

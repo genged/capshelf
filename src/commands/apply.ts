@@ -53,6 +53,7 @@ import {
 import { printRuntimeWarnings } from "../runtime-warnings";
 import { assertLocalScopeSupported } from "../local-config";
 import {
+  installsAtSkillTarget,
   isCopyDirectoryItemKind,
   isFragmentKindName,
   isMaterializedItemKind,
@@ -326,14 +327,17 @@ export function registerApply(program: Command): void {
               "apply --local",
             );
           }
-          if (parsed.kind === "skills" && externalSkillNames.has(parsed.name)) {
+          if (
+            installsAtSkillTarget(parsed.kind) &&
+            externalSkillNames.has(parsed.name)
+          ) {
             const external = await findSkillsShSkill(project, parsed.name);
             const message = external
               ? skillsShConflictMessage(external)
               : "managed by skills.sh";
             if (itemRef) {
               throw new PreconditionError(
-                `not applying skills/${parsed.name} — ${message}`,
+                `not applying ${parsed.kind}/${parsed.name} — ${message}`,
               );
             }
             results.push({
@@ -619,14 +623,17 @@ async function planApplyPreflight(
     if (scope === "local") {
       assertLocalScopeSupported(parsed.kind, parsed.name, "apply --local");
     }
-    if (parsed.kind === "skills" && input.externalSkillNames.has(parsed.name)) {
+    if (
+      installsAtSkillTarget(parsed.kind) &&
+      input.externalSkillNames.has(parsed.name)
+    ) {
       const external = await findSkillsShSkill(input.project, parsed.name);
       const message = external
         ? skillsShConflictMessage(external)
         : "managed by skills.sh";
       if (input.explicit) {
         throw new PreconditionError(
-          `not applying skills/${parsed.name} — ${message}`,
+          `not applying ${parsed.kind}/${parsed.name} — ${message}`,
         );
       }
       results.push({

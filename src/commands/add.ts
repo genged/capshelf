@@ -38,6 +38,7 @@ import { materializeLockEntry } from "../materialize";
 import {
   ITEM_KINDS,
   allCanonicalItemRelPaths,
+  installsAtSkillTarget,
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
   isFragmentItemKind,
@@ -754,7 +755,7 @@ export async function installDataItem(
       ? await currentSubagentSources(project, dataRepo, item.name)
       : [];
 
-  if (item.kind === "skills") {
+  if (installsAtSkillTarget(item.kind)) {
     const external = await findSkillsShSkill(project, item.name);
     if (external) {
       throw new PreconditionError(

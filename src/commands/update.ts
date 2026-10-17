@@ -49,12 +49,15 @@ import {
   gitTreeSource,
 } from "../item-source";
 import {
+  COPY_DIRECTORY_ITEM_KINDS,
+  installsAtSkillTarget,
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
   isFragmentItemKind,
   isFragmentKindName,
   itemRepoRelPath,
   type CopyDirectoryItemKind,
+  type ItemKind,
 } from "../master";
 import {
   assertRepoClean,
@@ -983,7 +986,7 @@ async function updateMergeTarget(input: {
   }
   if (!isCopyDirectoryItemKind(parsed.kind)) {
     throw new PreconditionError(
-      `update --merge supports only skills and pi-extensions; ${parsed.kind}/${parsed.name} is not supported`,
+      `update --merge supports only ${COPY_DIRECTORY_ITEM_KINDS.join(", ")}; ${parsed.kind}/${parsed.name} is not supported`,
     );
   }
   const kind = parsed.kind;
@@ -1285,14 +1288,14 @@ async function revalidateUpdateMergeInputs(input: {
 
 async function assertUpdateMergeNotSkillsShOwned(
   project: string,
-  kind: string,
+  kind: ItemKind,
   name: string,
 ): Promise<void> {
-  if (kind !== "skills") return;
+  if (!installsAtSkillTarget(kind)) return;
   const external = await findSkillsShSkill(project, name);
   if (!external) return;
   throw new PreconditionError(
-    `not updating skills/${name} — ${skillsShConflictMessage(external)}`,
+    `not updating ${kind}/${name} — ${skillsShConflictMessage(external)}`,
   );
 }
 
@@ -1608,7 +1611,10 @@ async function updateOneTarget(
 ): Promise<TargetOutcome> {
   const { scope, key } = target;
   const parsed = parseLockKey(key);
-  if (parsed.kind === "skills" && ctx.externalSkillByName.has(parsed.name)) {
+  if (
+    installsAtSkillTarget(parsed.kind) &&
+    ctx.externalSkillByName.has(parsed.name)
+  ) {
     const message = skillsShConflictMessage(
       ctx.externalSkillByName.get(parsed.name)!,
     );
@@ -1616,7 +1622,7 @@ async function updateOneTarget(
     // implicit sweep records the skip and continues.
     if (ctx.explicit) {
       throw new PreconditionError(
-        `not updating skills/${parsed.name} — ${message}`,
+        `not updating ${parsed.kind}/${parsed.name} — ${message}`,
       );
     }
     return {

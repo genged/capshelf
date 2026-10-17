@@ -37,6 +37,8 @@ import {
   isCopyTargetFileItemKind,
   allCanonicalItemRelPaths,
   itemRepoRelPath,
+  readPluginManifestName,
+  PLUGIN_MANIFEST_REL,
 } from "../master";
 import type { FragmentItemKind, ItemKind } from "../master";
 import { NotFoundError, PreconditionError } from "../errors";
@@ -112,6 +114,7 @@ import {
 } from "../promote-candidate";
 import { validatePromotePreview } from "../promote-preview";
 import type { PromotePreviewGuard } from "../promote-preview";
+import { sanitizeDisplayText } from "../pick-core";
 
 export interface PromoteOptions {
   message?: string;
@@ -826,8 +829,15 @@ export async function syncTrackedIntoDataRepo(
   }
   await opts.snapshotHooks?.afterSnapshotCaptured?.();
   const { localPath, sha } = snapshot;
-  const requiredFile = kind === "skills" ? "SKILL.md" : "index.ts";
-  const requiredFileStat = lstatOrNull(join(localPath, requiredFile));
+  const requiredFile =
+    kind === "skills"
+      ? "SKILL.md"
+      : kind === "plugins"
+        ? PLUGIN_MANIFEST_REL
+        : "index.ts";
+  const requiredFileStat = lstatOrNull(
+    join(localPath, ...requiredFile.split("/")),
+  );
   if (!requiredFileStat?.isFile()) {
     throw new PreconditionError(
       `not promoting ${kind}/${name} — required ${requiredFile} is missing or not a regular file`,
@@ -838,7 +848,7 @@ export async function syncTrackedIntoDataRepo(
       snapshot.source === "git-visible"
         ? await projectIgnoreRule(
             project,
-            relative(project, join(localPath, requiredFile)),
+            relative(project, join(localPath, ...requiredFile.split("/"))),
           )
         : null;
     if (rule) {
@@ -852,6 +862,21 @@ export async function syncTrackedIntoDataRepo(
     throw new PreconditionError(
       `not promoting ${kind}/${name} — required ${requiredFile} is not Git-visible in the installed snapshot`,
     );
+  }
+  // D3: the manifest, not the directory, names a plugin. Checked here, before
+  // the content comparison below, so a renamed-upstream plugin refuses with
+  // both names instead of promoting under the wrong item name.
+  if (kind === "plugins") {
+    const manifestName = await readPluginManifestName(
+      join(localPath, ...PLUGIN_MANIFEST_REL.split("/")),
+    );
+    if (manifestName !== name) {
+      throw new PreconditionError(
+        manifestName === null
+          ? `not promoting plugins/${name} — ${PLUGIN_MANIFEST_REL} has no "name" field`
+          : `not promoting plugins/${name} — its plugin.json names it "${sanitizeDisplayText(manifestName)}"`,
+      );
+    }
   }
   for (const file of snapshot.files) {
     const fileStat = lstatOrNull(join(localPath, ...file.split("/")));

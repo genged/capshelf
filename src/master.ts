@@ -461,6 +461,29 @@ async function isInstallableDataItem(
 }
 
 /**
+ * The `name` field of the plugin manifest at `manifestPath`, or `null` when
+ * the path is missing, unreadable, malformed, or has no string `name` (spec
+ * D3). Never throws: callers decide what a missing or malformed manifest
+ * means for their own site.
+ */
+export async function readPluginManifestName(
+  manifestPath: string,
+): Promise<string | null> {
+  const stat = lstatOrNull(manifestPath);
+  if (!stat?.isFile()) return null;
+  try {
+    const parsed: ConfigValue = JSON.parse(
+      await readFile(manifestPath, "utf-8"),
+    );
+    return isConfigObject(parsed) && isConfigString(parsed.name)
+      ? parsed.name
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * A `plugins/<name>` directory is an item only when its manifest names it
  * `name` (spec D1, D3). Never throws: a missing, unreadable, or malformed
  * manifest means the directory is not (yet) a listed item, not an error.
@@ -474,18 +497,5 @@ async function isInstallablePlugin(
     ...itemRepoRelPath("plugins", name).split("/"),
     ...PLUGIN_MANIFEST_REL.split("/"),
   );
-  const stat = lstatOrNull(manifestPath);
-  if (!stat?.isFile()) return false;
-  try {
-    const parsed: ConfigValue = JSON.parse(
-      await readFile(manifestPath, "utf-8"),
-    );
-    return (
-      isConfigObject(parsed) &&
-      isConfigString(parsed.name) &&
-      parsed.name === name
-    );
-  } catch {
-    return false;
-  }
+  return (await readPluginManifestName(manifestPath)) === name;
 }

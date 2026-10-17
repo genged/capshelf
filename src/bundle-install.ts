@@ -32,6 +32,7 @@ import { addManifestName } from "./manifest";
 import type { Manifest } from "./manifest";
 import {
   ITEM_KINDS,
+  installsAtSkillTarget,
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
   isFragmentItemKind,
@@ -258,7 +259,7 @@ export async function preflightBundleChecks(
     const item = ctx.masterByRef.get(m.ref);
     if (!item) continue;
     try {
-      if (item.kind === "skills") {
+      if (installsAtSkillTarget(item.kind)) {
         const external = await findSkillsShSkill(ctx.project, item.name);
         if (external) {
           throw new PreconditionError(skillsShConflictMessage(external));

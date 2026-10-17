@@ -4,6 +4,7 @@ import { findSkillsShSkill, skillsShConflictMessage } from "./external";
 import type { ItemRef } from "./item-ref";
 import { lockKeysForRef, parseItemRef } from "./item-ref";
 import type { Lock } from "./lock";
+import { installsAtSkillTarget } from "./master";
 import { REMOTE_ITEM_KIND } from "./remotes-lock";
 
 export interface ScopedTarget {
@@ -121,11 +122,11 @@ export async function resolveTrackedTarget(
   const ref = parseItemRef(itemRef);
   const matches = matchRefAcrossScopes(projectLock, localLock, ref, opts);
   if (matches.length === 0) {
-    if (ref.kind === undefined || ref.kind === "skills") {
+    if (ref.kind === undefined || installsAtSkillTarget(ref.kind)) {
       const external = await findSkillsShSkill(project, ref.name);
       if (external) {
         throw new PreconditionError(
-          `not ${opts.verb} skills/${ref.name} — ${skillsShConflictMessage(external)}`,
+          `not ${opts.verb} ${ref.kind ?? "skills"}/${ref.name} — ${skillsShConflictMessage(external)}`,
         );
       }
     }

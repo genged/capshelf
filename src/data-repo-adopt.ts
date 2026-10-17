@@ -2,10 +2,12 @@ import { existsSync, readlinkSync } from "node:fs";
 import { rm as fsRm } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import {
+  installsAtSkillTarget,
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
   isFragmentItemKind,
   itemRepoRelPath,
+  PLUGIN_MANIFEST_REL,
 } from "./master";
 import type { CopyDirectoryItemKind, ItemKind } from "./master";
 import type { Manifest } from "./manifest";
@@ -82,6 +84,10 @@ export async function adoptIntoDataRepo(
   // `allowPreviousOwner` and this refusal steps aside. Every other path still
   // refuses: adopting a name another tool manages would give one skill two
   // owners with nothing recording the fact.
+  //
+  // `kind === "skills"` deliberately, not `installsAtSkillTarget(kind)`:
+  // skills.sh never installs a plugin, so a plugin adopt has no previous
+  // owner to bypass here (spec D9).
   if (kind === "skills" && opts.allowPreviousOwner !== true) {
     const external = await findSkillsShSkill(project, name);
     if (external) {
@@ -110,7 +116,7 @@ export async function adoptIntoDataRepo(
     );
   }
 
-  if (kind === "skills") {
+  if (installsAtSkillTarget(kind)) {
     assertCanNormalizeAdoptedSkill(project, name, adoption, opts.installMode);
   }
   const adoptionRelPath = relative(project, adoption.path);
@@ -182,9 +188,10 @@ export async function adoptIntoDataRepo(
         },
       );
     }
-    if (kind === "skills") {
+    if (installsAtSkillTarget(kind)) {
       await normalizeAdoptedSkill(
         project,
+        kind,
         name,
         adoption,
         opts.installMode,
@@ -228,9 +235,10 @@ export async function adoptIntoDataRepo(
   });
   if (!pin) throw new Error(`expected a verified pin for ${kind}/${name}`);
 
-  if (kind === "skills") {
+  if (installsAtSkillTarget(kind)) {
     await normalizeAdoptedSkill(
       project,
+      kind,
       name,
       adoption,
       opts.installMode,
@@ -333,7 +341,7 @@ export function findAdoptionSource(
 
   if (codex && claudeStat && !claudeStat.isSymbolicLink()) {
     throw new PreconditionError(
-      `ambiguous local skill paths for skills/${name}: ${codexPath} and ${claudePath}\n` +
+      `ambiguous local paths for ${kind}/${name}: ${codexPath} and ${claudePath}\n` +
         "  remove one path or make .claude/skills point at .agents/skills before adopting",
     );
   }
@@ -341,7 +349,7 @@ export function findAdoptionSource(
 
   if (claudeStat?.isSymbolicLink()) {
     return existingItemDir(
-      installedPath(project, "skills", name, mode),
+      installedPath(project, kind, name, mode),
       "installed",
       kind,
     );
@@ -365,6 +373,14 @@ function existingItemDir(
   if (kind === "skills" && !existsSync(join(path, "SKILL.md"))) {
     throw new PreconditionError(`local skill is missing SKILL.md: ${path}`);
   }
+  if (
+    kind === "plugins" &&
+    !existsSync(join(path, ...PLUGIN_MANIFEST_REL.split("/")))
+  ) {
+    throw new PreconditionError(
+      `local plugin is missing ${PLUGIN_MANIFEST_REL}: ${path}`,
+    );
+  }
   if (kind === "pi-extensions" && !existsSync(join(path, "index.ts"))) {
     throw new PreconditionError(
       `local pi extension is missing index.ts: ${path}`,
@@ -375,6 +391,7 @@ function existingItemDir(
 
 async function normalizeAdoptedSkill(
   project: string,
+  kind: CopyDirectoryItemKind,
   name: string,
   adoption: AdoptionSource,
   mode: Manifest["installMode"],
@@ -397,5 +414,5 @@ async function normalizeAdoptedSkill(
     }
     await fsRm(adoption.path, { recursive: true, force: true });
   }
-  await ensureInstallAliases(project, "skills", name, mode);
+  await ensureInstallAliases(project, kind, name, mode);
 }

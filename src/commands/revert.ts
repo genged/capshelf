@@ -32,7 +32,11 @@ import { assertNotPulledSkill } from "../remote-refusal";
 import { materializeLockEntry } from "../materialize";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import { printRuntimeWarnings } from "../runtime-warnings";
-import { isCopyDirectoryItemKind, isMaterializedItemKind } from "../master";
+import {
+  installsAtSkillTarget,
+  isCopyDirectoryItemKind,
+  isMaterializedItemKind,
+} from "../master";
 import {
   applyFragmentOutputPlans,
   fragmentContributionState,
@@ -72,11 +76,11 @@ export function registerRevert(program: Command): void {
       await assertNotPulledSkill(project, ref, "reverting");
       const key = lockKeyForRef(lock, ref);
       if (!key) {
-        if (ref.kind === undefined || ref.kind === "skills") {
+        if (ref.kind === undefined || installsAtSkillTarget(ref.kind)) {
           const external = await findSkillsShSkill(project, ref.name);
           if (external) {
             throw new PreconditionError(
-              `not reverting skills/${ref.name} — ${skillsShConflictMessage(external)}`,
+              `not reverting ${ref.kind ?? "skills"}/${ref.name} — ${skillsShConflictMessage(external)}`,
             );
           }
         }
@@ -87,11 +91,11 @@ export function registerRevert(program: Command): void {
       if (opts.local) {
         assertLocalScopeSupported(parsed.kind, parsed.name, "revert --local");
       }
-      if (parsed.kind === "skills") {
+      if (installsAtSkillTarget(parsed.kind)) {
         const external = await findSkillsShSkill(project, parsed.name);
         if (external) {
           throw new PreconditionError(
-            `not reverting skills/${parsed.name} — ${skillsShConflictMessage(external)}`,
+            `not reverting ${parsed.kind}/${parsed.name} — ${skillsShConflictMessage(external)}`,
           );
         }
       }

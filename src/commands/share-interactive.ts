@@ -28,7 +28,7 @@ import { parseItemRef } from "../item-ref";
 import { assertWritableLock, dataKey, loadLocalLock, loadLock } from "../lock";
 import type { Lock } from "../lock";
 import { loadManifest } from "../manifest";
-import { isFragmentKindName } from "../master";
+import { installsAtSkillTarget, isFragmentKindName } from "../master";
 import type { FragmentItemKind } from "../master";
 import { capshelfCommandPrefix, projectRoot, shellArg } from "../paths";
 import { pickItems, pickTerminalUnavailable } from "../pick";
@@ -124,10 +124,10 @@ export async function runInteractiveShare(request: {
   const failed: string[] = [];
   const dataOverride = globalOpts(request.cmd).data;
   for (const planned of plannedItemSharesFromMarks(itemMarks)) {
-    // The named command's own default: skills adopt into local scope,
-    // Pi extensions and subagents into project scope, so the printed
+    // The named command's own default: skills and plugins adopt into local
+    // scope, Pi extensions and subagents into project scope, so the printed
     // equivalent command needs no --to flag.
-    const scope = planned.kind === "skills" ? "local" : "project";
+    const scope = installsAtSkillTarget(planned.kind) ? "local" : "project";
     const ref = sanitizeDisplayText(`${planned.kind}/${planned.name}`);
     // The equivalent line after a success and the retry line after a failure
     // are the same string for an on-disk item, because the item's name was

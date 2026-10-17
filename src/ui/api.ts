@@ -32,6 +32,7 @@ import {
   isCopyDirectoryItemKind,
   isMetadataSidecarPath,
   listMasterItems,
+  PLUGIN_MANIFEST_REL,
 } from "../master";
 import type { ItemKind, MasterItem } from "../master";
 import { loadDataItemMetadata, loadSystemItemMetadata } from "../metadata";
@@ -739,9 +740,11 @@ function primaryFile(kind: ItemKind, files: string[]): string | null {
   const preferred =
     kind === "skills"
       ? "SKILL.md"
-      : kind === "pi-extensions"
-        ? "index.ts"
-        : null;
+      : kind === "plugins"
+        ? PLUGIN_MANIFEST_REL
+        : kind === "pi-extensions"
+          ? "index.ts"
+          : null;
   if (preferred !== null && files.includes(preferred)) return preferred;
   return files[0] ?? null;
 }

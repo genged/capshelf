@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { findProjectRoot, projectRoot, homeRelative } from "../paths";
 import { resolveDataRepo, resolveDataRepoOptional } from "../data-repo";
@@ -18,12 +18,10 @@ import {
   listMasterItems,
   ITEM_KINDS,
   parseItemKind,
+  readPluginManifestName,
   shaOfGitVisibleItem,
   PLUGIN_MANIFEST_REL,
 } from "../master";
-import { isConfigObject, isConfigString } from "../config-values";
-import type { ConfigValue } from "../config-values";
-import { lstatOrNull } from "../fs-utils";
 import { sanitizeDisplayText } from "../pick-core";
 import { shaOfCurrentSubagent } from "../subagents";
 import type { ItemKind } from "../master";
@@ -147,18 +145,7 @@ async function pluginNameWarnings(
       entry.name,
       ...PLUGIN_MANIFEST_REL.split("/"),
     );
-    if (!lstatOrNull(manifestPath)?.isFile()) continue;
-    let manifestName: string | null = null;
-    try {
-      const parsed: ConfigValue = JSON.parse(
-        await readFile(manifestPath, "utf-8"),
-      );
-      if (isConfigObject(parsed) && isConfigString(parsed.name)) {
-        manifestName = parsed.name;
-      }
-    } catch {
-      continue;
-    }
+    const manifestName = await readPluginManifestName(manifestPath);
     if (manifestName === null || manifestName === entry.name) continue;
     const dirName = sanitizeDisplayText(entry.name);
     const safeManifestName = sanitizeDisplayText(manifestName);

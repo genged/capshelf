@@ -373,7 +373,13 @@ export function registerShow(program: Command): void {
           item.repoRelPath,
         );
         for (const file of files) {
-          if (item.kind !== "pi-extensions" && file.includes("/")) continue;
+          if (
+            item.kind !== "pi-extensions" &&
+            item.kind !== "plugins" &&
+            file.includes("/")
+          ) {
+            continue;
+          }
           if (isIgnoredDotEntry(file) || isMetadataSidecarPath(file)) continue;
           console.log(`─── ${file} ─────────────────────`);
           console.log(await readFile(join(item.path, file), "utf-8"));

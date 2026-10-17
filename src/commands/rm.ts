@@ -30,6 +30,7 @@ import {
 } from "../lock";
 import { CliError, NotFoundError, PreconditionError } from "../errors";
 import {
+  installsAtSkillTarget,
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
   isFragmentItemKind,
@@ -117,17 +118,19 @@ export function registerRm(program: Command): void {
         return parsed.source === "data";
       });
 
-      if (ref.kind === undefined || ref.kind === "skills") {
+      if (ref.kind === undefined || installsAtSkillTarget(ref.kind)) {
         const external = await findSkillsShSkill(project, ref.name);
-        const hasLockedSkill = dataKeys.some(
-          (key) => parseLockKey(key).kind === "skills",
+        const hasLockedSkillTarget = dataKeys.some((key) =>
+          installsAtSkillTarget(parseLockKey(key).kind),
         );
         if (
           external &&
-          (ref.kind === "skills" || hasLockedSkill || dataKeys.length === 0)
+          (ref.kind !== undefined ||
+            hasLockedSkillTarget ||
+            dataKeys.length === 0)
         ) {
           throw new PreconditionError(
-            `not removing skills/${ref.name} — ${skillsShConflictMessage(external)}`,
+            `not removing ${ref.kind ?? "skills"}/${ref.name} — ${skillsShConflictMessage(external)}`,
           );
         }
       }
