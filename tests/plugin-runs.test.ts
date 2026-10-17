@@ -174,6 +174,16 @@ describe("newRunsEntries", () => {
     };
     expect(newRunsEntries(runs("a"), next).unknown).toEqual(next.unknown);
   });
+  test("an unknown the previous tree also had is still reported (D7)", () => {
+    const both = {
+      ...runs("a"),
+      unknown: ["hooks/hooks.json could not be read"],
+    };
+    const fresh = newRunsEntries(both, both);
+    expect(fresh.unknown).toEqual(both.unknown);
+    expect(fresh.hooks).toEqual([]);
+    expect(runsHaveEntries(fresh)).toBe(true);
+  });
 });
 
 describe("pluginRunsAtCommit", () => {

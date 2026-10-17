@@ -526,6 +526,111 @@ describe("shelf update plugins/<n> (D3, D7 point 2)", () => {
   );
 
   test(
+    "an unreadable hooks/hooks.json in both trees still asks (D7)",
+    async () => {
+      const world = await shelfWorld();
+      expect(
+        (await world.run(["add", "plugins/broken", "--yes"])).exitCode,
+      ).toBe(0);
+      await writeUnder(
+        world.dataRepo,
+        "plugins/broken/hooks/hooks.json",
+        "{ still not json, but different",
+      );
+      await commitAll(world.dataRepo, "change the unreadable hooks");
+
+      const r = await world.run(["update", "plugins/broken"]);
+      expect(r.exitCode).toBe(3);
+      const err = r.stderr.toString();
+      expect(err).toContain("not updating plugins/broken without consent");
+      expect(err).toContain("hooks/hooks.json could not be read");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "--merge with no terminal does not tell the user to pass --yes",
+    async () => {
+      const world = await installedWorld();
+      await writeUnder(
+        world.dataRepo,
+        "plugins/gh-cli/hooks/hooks.json",
+        JSON.stringify(TWO_HOOKS),
+      );
+      await commitAll(world.dataRepo, "add a hook");
+
+      const r = await world.run(["update", "plugins/gh-cli", "--merge"]);
+      expect(r.exitCode).toBe(3);
+      const err = r.stderr.toString();
+      expect(err).toContain("not updating plugins/gh-cli without consent");
+      expect(err).toContain(
+        "review it first. --merge does not take --yes: run it in a terminal to answer the prompt, or take the new tree without your local edits with capshelf update plugins/gh-cli --yes",
+      );
+      expect(err).not.toContain("then authorize with --yes");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "--merge refuses when the data repo moves while the prompt is open",
+    async () => {
+      const world = await installedWorld();
+      const lockPath = join(world.project, ".capshelf", "capshelf.lock.json");
+      const lockBefore = await readFile(lockPath);
+      await writeUnder(
+        world.dataRepo,
+        "plugins/gh-cli/hooks/hooks.json",
+        JSON.stringify(TWO_HOOKS),
+      );
+      await commitAll(world.dataRepo, "add a hook");
+
+      const unseen = structuredClone(TWO_HOOKS);
+      unseen.hooks.SessionStart.push({
+        hooks: [{ type: "command", command: "bash hooks/unseen.sh" }],
+      });
+      const prompts: string[] = [];
+      const outer = setDestructiveConfirmationContext({
+        stdinIsTTY: true,
+        stderrIsTTY: true,
+        prompt: async (message) => {
+          prompts.push(message);
+          // A commit lands after the user saw the prompt and before the
+          // merge reads the data repo.
+          await writeUnder(
+            world.dataRepo,
+            "plugins/gh-cli/hooks/hooks.json",
+            JSON.stringify(unseen),
+          );
+          await commitAll(world.dataRepo, "add a hook nobody approved");
+          return "y";
+        },
+        stderr: { write: () => {} },
+      });
+      let r: CliResult;
+      try {
+        r = await world.run(["update", "plugins/gh-cli", "--merge"]);
+      } finally {
+        setDestructiveConfirmationContext(outer);
+      }
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]).toContain("bash hooks/format.sh");
+      expect(prompts[0]).not.toContain("unseen");
+      expect(r.exitCode).toBe(3);
+      expect(r.stderr.toString()).toContain(
+        "changed while preparing the merge; nothing was written",
+      );
+      expect(await readFile(lockPath)).toEqual(lockBefore);
+      expect(
+        await readFile(
+          join(pluginFolder(world.project, "gh-cli"), "hooks", "hooks.json"),
+          "utf-8",
+        ),
+      ).not.toContain("unseen");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "a commit that renames the plugin in plugin.json refuses before any write (D3)",
     async () => {
       const world = await installedWorld();

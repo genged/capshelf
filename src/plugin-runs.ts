@@ -328,6 +328,10 @@ function serverIdentity(server: PluginRunServer): string {
  * new when no previous hook shares its event, matcher, and command; a server
  * is new when no previous server shares its name, command, and url. A script
  * changing while its hook line stays the same is therefore not a new entry.
+ *
+ * Every unknown entry of `next` is kept, also one the previous tree had. An
+ * unreadable declaration can never be shown to be unchanged, and D7 says a
+ * non-empty unknown list always asks.
  */
 export function newRunsEntries(
   previous: PluginRuns,
@@ -335,13 +339,12 @@ export function newRunsEntries(
 ): PluginRuns {
   const previousHooks = new Set(previous.hooks.map(hookIdentity));
   const previousServers = new Set(previous.mcpServers.map(serverIdentity));
-  const previousUnknown = new Set(previous.unknown);
   return {
     hooks: next.hooks.filter((hook) => !previousHooks.has(hookIdentity(hook))),
     mcpServers: next.mcpServers.filter(
       (server) => !previousServers.has(serverIdentity(server)),
     ),
-    unknown: next.unknown.filter((entry) => !previousUnknown.has(entry)),
+    unknown: [...next.unknown],
   };
 }
 

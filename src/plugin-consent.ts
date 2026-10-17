@@ -178,6 +178,11 @@ export interface PluginConsentOptions {
   yes?: boolean;
   json?: boolean;
   dryRun?: boolean;
+  /**
+   * What the refusal tells the user to do, for a write that cannot take
+   * `--yes`. The default is `review it first, then authorize with --yes`.
+   */
+  advice?: string;
 }
 
 /**
@@ -219,7 +224,7 @@ export async function confirmPluginConsent(
         // The error boundary indents the first hint line itself.
         hint: [
           ...lines,
-          `  review it first, then authorize with --yes. See what it runs: ${shows}`,
+          `  ${opts.advice ?? "review it first, then authorize with --yes"}. See what it runs: ${shows}`,
         ]
           .join("\n")
           .replace(/^ {2}/, ""),

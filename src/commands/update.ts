@@ -35,6 +35,7 @@ import {
   itemTreeEntriesAtCommit,
   sourcePinDigest,
 } from "../pin";
+import type { PinnedSource } from "../pin";
 import type {
   DataLockEntryV4,
   Lock,
@@ -348,17 +349,18 @@ export function registerUpdate(program: Command): void {
           const mergeEntry = (
             target.scope === "local" ? writableLocalLock : writableProjectLock
           ).items[target.key];
-          const mergeRuns =
+          const mergeMove =
             mergeItem.kind === "plugins" &&
             mergeEntry?.source === "data" &&
             mergeEntry.local !== true
-              ? await shelfPluginNewRuns(
+              ? await shelfPluginPinMove(
                   dataRepo,
                   mergeItem.name,
                   mergeEntry,
                   new GitReadMemo(),
                 )
               : null;
+          const mergeRuns = mergeMove?.newRuns ?? null;
           const mergePoints: PluginConsentPoint[] =
             mergeRuns === null
               ? []
@@ -374,6 +376,8 @@ export function registerUpdate(program: Command): void {
               json: opts.json === true,
               yes: opts.yes === true,
               dryRun: opts.dryRun === true,
+              // `update` refuses `--merge --yes` for a shelf item.
+              advice: `review it first. --merge does not take --yes: run it in a terminal to answer the prompt, or take the new tree without your local edits with ${PRODUCT_NAME} update plugins/${mergeItem.name}${target.scope === "local" ? " --local" : ""} --yes`,
             }))
           ) {
             return;
@@ -383,6 +387,7 @@ export function registerUpdate(program: Command): void {
             manifest,
             dataRepo,
             target,
+            ...(mergeMove !== null && { upstreamPin: mergeMove.pin }),
             projectLock: writableProjectLock,
             localLock: writableLocalLock,
             remotes,
@@ -1094,6 +1099,12 @@ async function updateMergeTarget(input: {
   localLock: WritableLock;
   remotes: RemotesLock;
   dryRun: boolean;
+  /**
+   * The pin a consent prompt approved. The merge pins it instead of a fresh
+   * one, and `revalidateUpdateMergeInputs` refuses when the data repo moved
+   * past it while the prompt was open.
+   */
+  upstreamPin?: PinnedSource;
 }): Promise<UpdateResult> {
   const { project, dataRepo, target, dryRun } = input;
   const lock = target.scope === "local" ? input.localLock : input.projectLock;
@@ -1129,11 +1140,9 @@ async function updateMergeTarget(input: {
   await assertRepoClean(dataRepo);
   const repoRelPath = itemRepoRelPath(parsed.kind, parsed.name);
   const plannedHead = await headSha(dataRepo);
-  const upstreamPin = await pinCurrentSource(
-    dataRepo,
-    parsed.kind,
-    parsed.name,
-  );
+  const upstreamPin =
+    input.upstreamPin ??
+    (await pinCurrentSource(dataRepo, parsed.kind, parsed.name));
   const item = await findMasterItemByRef(dataRepo, {
     kind: parsed.kind,
     name: parsed.name,
@@ -1870,6 +1879,22 @@ async function shelfPluginNewRuns(
   entry: DataLockEntryV4,
   memo: GitReadMemo,
 ): Promise<PluginRuns | null> {
+  return (
+    (await shelfPluginPinMove(dataRepo, name, entry, memo))?.newRuns ?? null
+  );
+}
+
+/**
+ * `shelfPluginNewRuns` with the new pin it read. The `--merge` path passes
+ * that pin to `updateMergeTarget`, so the tree the user approved is the tree
+ * the merge pins.
+ */
+async function shelfPluginPinMove(
+  dataRepo: string,
+  name: string,
+  entry: DataLockEntryV4,
+  memo: GitReadMemo,
+): Promise<{ pin: PinnedSource; newRuns: PluginRuns } | null> {
   const next = await pinCurrentSource(dataRepo, "plugins", name, {
     memo,
   }).catch(() => null);
@@ -1892,7 +1917,8 @@ async function shelfPluginNewRuns(
     "plugins",
     memo,
   ).catch(() => []);
-  return (await pluginChange(dataRepo, name, previous, next.entries)).newRuns;
+  const change = await pluginChange(dataRepo, name, previous, next.entries);
+  return { pin: next, newRuns: change.newRuns };
 }
 
 /** A shelf row's new runs as a D7 point 2 consent point. */
