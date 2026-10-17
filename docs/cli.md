@@ -856,8 +856,18 @@ come from the installed copy. For a clean row that is the pinned tree. For a
 drifted row it is what Claude Code loads.
 
 Claude Code loads a skills-dir plugin only in a trusted workspace. `status`
-reads `projects["<path>"].hasTrustDialogAccepted` from `~/.claude.json`. It
-never writes that file. In an untrusted workspace, one hint follows the first
+looks up trust the way Claude Code does. It reads
+`projects["<path>"].hasTrustDialogAccepted` from `~/.claude.json` for these
+paths, in this order:
+
+1. The project path and its real path.
+2. The Git root of the project, if there is one.
+3. Each parent directory, up to the Git root. With no Git root, the walk
+   goes up to the filesystem root.
+
+One `true` value makes the workspace trusted. When `CLAUDE_CODE_SANDBOXED`
+is set, the workspace is trusted, as in Claude Code. `status` never writes
+`~/.claude.json`. In an untrusted workspace, one hint follows the first
 plugin row:
 
 ```text
