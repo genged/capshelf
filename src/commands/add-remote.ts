@@ -50,7 +50,7 @@ import type {
   RemoteDiscovery,
   RemoteSkillCandidate,
 } from "../remote-discovery";
-import { installRemoteSkill, reconcileRemoteSkill } from "../remote-item";
+import { installRemoteItem, reconcileRemoteItem } from "../remote-item";
 import {
   factsWarnOnInstall,
   hasSkills,
@@ -63,13 +63,12 @@ import {
 import { parseRemoteSkillUrl } from "../remote-url";
 import type { BrowserRefCandidate, RemoteSkillUrl } from "../remote-url";
 import {
-  REMOTE_ITEM_KIND,
   loadRemotesLock,
   remoteKey,
   remoteKeysForRef,
   saveRemotesLock,
 } from "../remotes-lock";
-import type { RemotesLock } from "../remotes-lock";
+import type { RemoteItemKind, RemotesLock } from "../remotes-lock";
 import { isSafeItemName } from "../assert";
 import { isSystemItemName } from "../bundled";
 import { shellCommand } from "../shell-quote";
@@ -115,6 +114,9 @@ export async function addRemoteSkill(
   // Deliberately not `loadAddContext`: that resolves a data repo, and D7 says
   // a remote skill needs none.
   const project = projectRoot();
+  // D4 widens a remote row to `skills` or `plugins`; this command only ever
+  // installs a skill today — installing a whole plugin is Task 8 (D5).
+  const kind: RemoteItemKind = "skills";
   const parsed = parseRemoteSkillUrl(input);
 
   // The network, and the only place this command reaches it.
@@ -250,7 +252,7 @@ export async function addRemoteSkill(
     );
   }
 
-  const chosen = await chooseCandidates(discovery.candidates, parsed);
+  const chosen = await chooseCandidates(discovery.candidates, kind, parsed);
   if (chosen.length === 0) return;
   if (chosen.length > 1 && opts.as !== undefined) {
     throw new PreconditionError(
@@ -284,6 +286,7 @@ export async function addRemoteSkill(
     const outcome = await installOne({
       project,
       cachePath: cache.path,
+      kind,
       commit,
       ref,
       upstream: parsed.upstream,
@@ -303,12 +306,12 @@ export async function addRemoteSkill(
     }
     if (outcome === null) {
       if (results.length > 0)
-        printInstalled(parsed, ref, commit, results, opts);
+        printInstalled(parsed, kind, ref, commit, results, opts);
       return;
     }
     results.push(outcome);
   }
-  printInstalled(parsed, ref, commit, results, opts);
+  printInstalled(parsed, kind, ref, commit, results, opts);
 }
 
 /**
@@ -411,6 +414,7 @@ function assertNoNameCollision(
 async function installOne(input: {
   project: string;
   cachePath: string;
+  kind: RemoteItemKind;
   commit: string;
   ref: string;
   upstream: string;
@@ -422,6 +426,7 @@ async function installOne(input: {
   const {
     project,
     cachePath,
+    kind,
     commit,
     ref,
     upstream,
@@ -431,7 +436,7 @@ async function installOne(input: {
   } = input;
   const pin = await pinItemAtCommit(
     remoteTreeSource(cachePath, commit, candidate.subpath),
-    REMOTE_ITEM_KIND,
+    kind,
     name,
   );
 
@@ -439,7 +444,7 @@ async function installOne(input: {
   // order is required. `findInstallConflict` reports any existing output path
   // with no exemption for the row that wrote it, so running it first would
   // make a second `add <same-url>` refuse instead of reporting the no-op.
-  const existing = remotes.items[remoteKey(name)];
+  const existing = remotes.items[remoteKey(kind, name)];
   if (
     existing !== undefined &&
     existing.upstream === upstream &&
@@ -452,24 +457,25 @@ async function installOne(input: {
     // obvious repair command a silent no-op, so the install is measured. The
     // reconcile itself belongs to `apply`, which owns the destructive plan that
     // gates a local edit; this only names it.
-    const measured = await reconcileRemoteSkill({
+    const measured = await reconcileRemoteItem({
       project,
+      kind,
       name,
       entry: existing,
       dryRun: true,
     });
     if (measured.action !== "already-current") {
       throw new PreconditionError(
-        `${REMOTE_ITEM_KIND}/${name} is already pulled from ${upstream} at this commit, but the installed files do not match it`,
+        `${kind}/${name} is already pulled from ${upstream} at this commit, but the installed files do not match it`,
         {
-          hint: `restore them: ${PRODUCT_NAME} apply ${REMOTE_ITEM_KIND}/${name}`,
+          hint: `restore them: ${PRODUCT_NAME} apply ${kind}/${name}`,
         },
       );
     }
     return {
       name,
       subpath: candidate.subpath,
-      path: installedPath(project, REMOTE_ITEM_KIND, name),
+      path: installedPath(project, kind, name),
       sha: existing.sourcePinDigest,
       action: "already-current",
       files: pin.entries.length,
@@ -478,7 +484,7 @@ async function installOne(input: {
     };
   }
 
-  await assertNameAvailable(project, name, remotes, upstream);
+  await assertNameAvailable(project, kind, name, remotes, upstream);
 
   const [summary, license] = await Promise.all([
     summarizeCandidate(cachePath, commit, candidate.subpath),
@@ -490,6 +496,7 @@ async function installOne(input: {
     ref,
     commit,
     candidate,
+    kind,
     name,
     summary,
     license,
@@ -497,24 +504,25 @@ async function installOne(input: {
   });
   if (!approved) return null;
 
-  const destination = installedPath(project, REMOTE_ITEM_KIND, name);
+  const destination = installedPath(project, kind, name);
   await assertNoDestinationCollisions(
-    `${REMOTE_ITEM_KIND}/${name}`,
+    `${kind}/${name}`,
     destination,
     pin.entries.map((entry) => entry.path),
   );
 
-  const result = await installRemoteSkill({
+  const result = await installRemoteItem({
     project,
     cachePath,
+    kind,
     name,
     upstream,
     ref,
     subpath: candidate.subpath,
     pin,
   });
-  await ensureLocalExcludes(project, REMOTE_ITEM_KIND, name);
-  remotes.items[remoteKey(name)] = result.entry;
+  await ensureLocalExcludes(project, kind, name);
+  remotes.items[remoteKey(kind, name)] = result.entry;
   return {
     name,
     subpath: candidate.subpath,
@@ -533,26 +541,27 @@ async function installOne(input: {
  */
 async function assertNameAvailable(
   project: string,
+  kind: RemoteItemKind,
   name: string,
   remotes: RemotesLock,
   upstream: string,
 ): Promise<void> {
-  const ref = parseItemRef(`${REMOTE_ITEM_KIND}/${name}`);
+  const ref = parseItemRef(`${kind}/${name}`);
   const projectLock = await loadLock(project);
   if (lockKeyForRef(projectLock, ref, "data")) {
     throw new PreconditionError(
-      `${REMOTE_ITEM_KIND}/${name} is already tracked in project scope (.capshelf/capshelf.lock.json)`,
+      `${kind}/${name} is already tracked in project scope (.capshelf/capshelf.lock.json)`,
       {
-        hint: `remove it first: ${PRODUCT_NAME} rm ${REMOTE_ITEM_KIND}/${name}`,
+        hint: `remove it first: ${PRODUCT_NAME} rm ${kind}/${name}`,
       },
     );
   }
   const localLock = await loadLocalLock(project);
   if (lockKeyForRef(localLock, ref, "data")) {
     throw new PreconditionError(
-      `${REMOTE_ITEM_KIND}/${name} is already tracked in local scope (.capshelf/local.lock.json)`,
+      `${kind}/${name} is already tracked in local scope (.capshelf/local.lock.json)`,
       {
-        hint: `remove it first: ${PRODUCT_NAME} rm ${REMOTE_ITEM_KIND}/${name} --local`,
+        hint: `remove it first: ${PRODUCT_NAME} rm ${kind}/${name} --local`,
       },
     );
   }
@@ -564,30 +573,30 @@ async function assertNameAvailable(
   const sameUpstream = held.some((entry) => entry.upstream === upstream);
   if (sameUpstream) {
     throw new PreconditionError(
-      `${REMOTE_ITEM_KIND}/${name} is already pulled from ${upstream}, at a different commit (.capshelf/remotes.lock.json)`,
+      `${kind}/${name} is already pulled from ${upstream}, at a different commit (.capshelf/remotes.lock.json)`,
       {
-        hint: `move the pin instead: ${PRODUCT_NAME} update ${REMOTE_ITEM_KIND}/${name}`,
+        hint: `move the pin instead: ${PRODUCT_NAME} update ${kind}/${name}`,
       },
     );
   }
   if (held.length > 0) {
     throw new PreconditionError(
-      `${REMOTE_ITEM_KIND}/${name} is already pulled from a different repository (.capshelf/remotes.lock.json)`,
+      `${kind}/${name} is already pulled from a different repository (.capshelf/remotes.lock.json)`,
       {
-        hint: `remove it first: ${PRODUCT_NAME} rm ${REMOTE_ITEM_KIND}/${name}, or install under another name with --as`,
+        hint: `remove it first: ${PRODUCT_NAME} rm ${kind}/${name}, or install under another name with --as`,
       },
     );
   }
   const external = await findSkillsShSkill(project, name);
   if (external) {
     throw new PreconditionError(
-      `not installing ${REMOTE_ITEM_KIND}/${name} — ${skillsShConflictMessage(external)}`,
+      `not installing ${kind}/${name} — ${skillsShConflictMessage(external)}`,
     );
   }
-  const conflict = findInstallConflict(project, REMOTE_ITEM_KIND, name);
+  const conflict = findInstallConflict(project, kind, name);
   if (conflict) {
     throw new PreconditionError(
-      `not installing ${REMOTE_ITEM_KIND}/${name} — the install path already exists and capshelf does not manage it`,
+      `not installing ${kind}/${name} — the install path already exists and capshelf does not manage it`,
       { hint: `existing path: ${conflict}` },
     );
   }
@@ -630,13 +639,14 @@ function pickDetail(candidate: RemoteSkillCandidate): string {
 
 async function chooseCandidates(
   candidates: RemoteSkillCandidate[],
+  kind: RemoteItemKind,
   parsed: RemoteSkillUrl,
 ): Promise<RemoteSkillCandidate[]> {
   if (candidates.length === 1) return candidates;
   const rows: PickRow[] = candidates.map((candidate) => ({
-    ref: `${REMOTE_ITEM_KIND}/${candidate.defaultName}`,
+    ref: `${kind}/${candidate.defaultName}`,
     id: candidate.subpath,
-    kind: REMOTE_ITEM_KIND,
+    kind,
     name: candidate.defaultName,
     ...(candidate.description !== null && {
       description: candidate.description,
@@ -673,6 +683,7 @@ async function confirmInstall(input: {
   ref: string;
   commit: string;
   candidate: RemoteSkillCandidate;
+  kind: RemoteItemKind;
   name: string;
   summary: {
     files: Array<{ path: string; bytes: number }>;
@@ -695,7 +706,7 @@ async function confirmInstall(input: {
   const block = renderConsent(input);
   if (input.opts.json === true || !context.stdinIsTTY || !context.stderrIsTTY) {
     throw new PreconditionError(
-      `not installing ${REMOTE_ITEM_KIND}/${input.name} without consent — capshelf does not review this content, and your agent runs it with your permissions`,
+      `not installing ${input.kind}/${input.name} without consent — capshelf does not review this content, and your agent runs it with your permissions`,
       {
         hint: `review it first, then authorize with --yes. See what it holds: ${PRODUCT_NAME} add <url> --list`,
       },
@@ -713,6 +724,7 @@ function renderConsent(input: {
   ref: string;
   commit: string;
   candidate: RemoteSkillCandidate;
+  kind: RemoteItemKind;
   name: string;
   summary: {
     files: Array<{ path: string; bytes: number }>;
@@ -722,7 +734,7 @@ function renderConsent(input: {
 }): string {
   const installPath = relative(
     input.project,
-    installedPath(input.project, REMOTE_ITEM_KIND, input.name),
+    installedPath(input.project, input.kind, input.name),
   );
   const width = Math.max(
     ...input.summary.files.map((file) => file.path.length),
@@ -975,6 +987,7 @@ function pluginJsonFields(facts: SkillPluginFacts) {
 
 function printInstalled(
   parsed: RemoteSkillUrl,
+  kind: RemoteItemKind,
   ref: string,
   commit: string,
   results: Installed[],
@@ -989,7 +1002,7 @@ function printInstalled(
           ? {
               verb: "add",
               source: "remote",
-              kind: REMOTE_ITEM_KIND,
+              kind,
               name: first.name,
               scope: "local",
               action: first.action,
@@ -1011,7 +1024,7 @@ function printInstalled(
               ref,
               sourceCommit: commit,
               items: results.map((result) => ({
-                kind: REMOTE_ITEM_KIND,
+                kind,
                 name: result.name,
                 action: result.action,
                 sha: result.sha,
@@ -1031,21 +1044,21 @@ function printInstalled(
   }
   if (results.length === 1 && first.action === "already-current") {
     console.log(
-      `= already current local/${remoteKey(first.name)} @ ${shortIdentity(first.sha)}`,
+      `= already current local/${remoteKey(kind, first.name)} @ ${shortIdentity(first.sha)}`,
     );
     console.log(`  ${first.path}`);
     return;
   }
   if (results.length === 1) {
     console.log(
-      `✓ added local/${remoteKey(first.name)} @ ${shortIdentity(first.sha)}`,
+      `✓ added local/${remoteKey(kind, first.name)} @ ${shortIdentity(first.sha)}`,
     );
     console.log(`  source commit: ${commit}`);
     console.log(`  ${first.path}`);
   } else {
     for (const result of results) {
       console.log(
-        `+ ${`${REMOTE_ITEM_KIND}/${result.name}`.padEnd(33)} @ ${shortIdentity(result.sha)}`,
+        `+ ${`${kind}/${result.name}`.padEnd(33)} @ ${shortIdentity(result.sha)}`,
       );
     }
     console.log("");
@@ -1054,7 +1067,7 @@ function printInstalled(
   }
   console.log("  not committed, so your teammates do not get it");
   console.log(
-    `  to give it to the team: ${PRODUCT_NAME} share ${REMOTE_ITEM_KIND}/${first.name} --adopt`,
+    `  to give it to the team: ${PRODUCT_NAME} share ${kind}/${first.name} --adopt`,
   );
 }
 

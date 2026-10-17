@@ -78,7 +78,7 @@ test(
     const { world, run } = await installOne();
     const result = await run(["status"], world.env);
     expect(result.stdout.toString()).toContain(
-      "remote/  (skills pinned to repos outside your shelf)",
+      "remote/  (items pinned to repos outside your shelf)",
     );
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,

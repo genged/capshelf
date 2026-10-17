@@ -67,7 +67,6 @@ import { removeSubagentOutputs } from "../subagents";
 import { remoteCacheState } from "../remote-cache";
 import { remoteTreeSource } from "../remote-discovery";
 import {
-  REMOTE_ITEM_KIND,
   loadRemotesLock,
   parseRemoteKey,
   remoteKeysForRef,
@@ -170,7 +169,7 @@ export function registerRm(program: Command): void {
         remoteKeys,
       );
       if (dataKeys.length === 0 && remoteKeys.length > 0) {
-        await removeRemoteSkill({
+        await removeRemoteItem({
           project,
           manifest,
           key: remoteKeys[0]!,
@@ -530,8 +529,8 @@ export function registerRm(program: Command): void {
 }
 
 /**
- * Remove a remote skill: the install, its compatibility alias, its exclude
- * lines, and its row.
+ * Remove a remote skill or plugin: the install, its compatibility alias, its
+ * exclude lines, and its row.
  *
  * A cold cache must not stop this. The locked file set is only used to label a
  * path as reproducible managed content rather than unique local state, so when
@@ -539,7 +538,7 @@ export function registerRm(program: Command): void {
  * named in the prompt, and is deleted only with consent. Failing instead would
  * strand the item in exactly the state `rm` exists for.
  */
-async function removeRemoteSkill(input: {
+async function removeRemoteItem(input: {
   project: string;
   manifest: Manifest;
   key: string;
@@ -548,10 +547,10 @@ async function removeRemoteSkill(input: {
   yes: boolean;
 }): Promise<void> {
   const { project, key, remotes } = input;
-  const { name } = parseRemoteKey(key);
+  const { kind, name } = parseRemoteKey(key);
   const entry = remotes.items[key]!;
   const cache = remoteCacheState(entry.upstream);
-  const reviewCommand = `${PRODUCT_NAME} status ${REMOTE_ITEM_KIND}/${name} --diff-view installed`;
+  const reviewCommand = `${PRODUCT_NAME} status ${kind}/${name} --diff-view installed`;
   const planRemoval = async (): Promise<
     ReturnType<typeof createDestructiveChangePlan>
   > => {
@@ -561,7 +560,7 @@ async function removeRemoteSkill(input: {
         ? remoteTreeSource(cache.path, entry.sourceCommit, entry.subpath)
         : null,
       manifest: input.manifest,
-      kind: REMOTE_ITEM_KIND,
+      kind,
       name,
       key,
       scope: "local",
@@ -580,22 +579,17 @@ async function removeRemoteSkill(input: {
       json: input.json,
       yes: input.yes,
       dryRun: false,
-      rerunCommand: `${PRODUCT_NAME} rm ${REMOTE_ITEM_KIND}/${name} --yes`,
+      rerunCommand: `${PRODUCT_NAME} rm ${kind}/${name} --yes`,
     }))
   ) {
     return;
   }
   assertDestructivePlanUnchanged(accepted, await planRemoval());
 
-  const path = installedPath(
-    project,
-    REMOTE_ITEM_KIND,
-    name,
-    input.manifest.installMode,
-  );
+  const path = installedPath(project, kind, name, input.manifest.installMode);
   let removed = await removeInstallAliases(
     project,
-    REMOTE_ITEM_KIND,
+    kind,
     name,
     path,
     input.manifest.installMode,
@@ -612,7 +606,7 @@ async function removeRemoteSkill(input: {
     }
     removed = true;
   }
-  await removeLocalExcludes(project, REMOTE_ITEM_KIND, name);
+  await removeLocalExcludes(project, kind, name);
   delete remotes.items[key];
   await saveRemotesLock(project, remotes);
 
@@ -622,7 +616,7 @@ async function removeRemoteSkill(input: {
         {
           source: "remote",
           scope: "local",
-          kind: REMOTE_ITEM_KIND,
+          kind,
           name,
           upstream: entry.upstream,
           path,

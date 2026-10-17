@@ -1,6 +1,6 @@
 /**
- * `.capshelf/remotes.lock.json`: the record of every skill pulled from a
- * repository outside the shelf.
+ * `.capshelf/remotes.lock.json`: the record of every skill or plugin pulled
+ * from a repository outside the shelf (spec D4).
  *
  * It is a separate document, not a third scope in the project lock. A remote
  * entry is not a `LockEntryV4` — it carries an upstream, a ref, and an item
@@ -11,6 +11,10 @@
  *
  * The file is gitignored. Every row is local scope, and a teammate who clones
  * the project gets none of them.
+ *
+ * The file moves to version 2 only when a row holds `plugins`: a skills-only
+ * file stays version 1, so an older capshelf can still read it. The writer
+ * computes the version from the rows every time; nothing sets it directly.
  */
 import { z } from "zod";
 import { mkdir, readFile } from "node:fs/promises";
@@ -29,10 +33,22 @@ import { ensureGitignored } from "./local-config";
 import { remotesLockPath } from "./paths";
 import { PIN_DIGEST_PATTERN } from "./pin";
 
-export const REMOTES_LOCK_VERSION = 1 as const;
+/**
+ * The newest version this build understands, read or write. A file that
+ * declares a higher number is refused with "upgrade capshelf" before it is
+ * parsed any further.
+ */
+export const REMOTES_LOCK_VERSION = 2 as const;
 
-/** The one kind a remote row may hold, by D4. */
-export const REMOTE_ITEM_KIND = "skills" as const;
+/** The kinds a remote row may hold, by D4. */
+export const REMOTE_ITEM_KINDS = ["skills", "plugins"] as const;
+export type RemoteItemKind = (typeof REMOTE_ITEM_KINDS)[number];
+
+function isRemoteItemKind(value: string | undefined): value is RemoteItemKind {
+  return (
+    value !== undefined && REMOTE_ITEM_KINDS.some((kind) => kind === value)
+  );
+}
 
 const REMOTE_KEY_PREFIX = "remote";
 
@@ -92,18 +108,30 @@ const RemoteLockEntrySchema = z
 
 const RemotesLockSchema = z
   .object({
-    version: z.literal(REMOTES_LOCK_VERSION),
+    version: z.union([z.literal(1), z.literal(2)]),
     items: z.record(z.string(), RemoteLockEntrySchema).default({}),
   })
   .superRefine((lock, ctx) => {
     for (const key of Object.keys(lock.items)) {
+      let kind: RemoteItemKind;
       try {
-        parseRemoteKey(key);
+        kind = parseRemoteKey(key).kind;
       } catch (error) {
         ctx.addIssue({
           code: "custom",
           path: ["items", key],
           message: error instanceof Error ? error.message : String(error),
+        });
+        continue;
+      }
+      // D4: a version 1 file predates the `plugins` kind, so a plugins row
+      // there would be silently unreadable by capshelf 0.13. The writer
+      // never produces this combination; only a hand-edited file can.
+      if (kind === "plugins" && lock.version === 1) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["items", key],
+          message: "plugins rows need remotes lock version 2",
         });
       }
     }
@@ -139,20 +167,20 @@ export interface RemoteLockEntry {
 }
 
 export interface RemotesLock {
-  version: typeof REMOTES_LOCK_VERSION;
+  version: 1 | 2;
   items: Record<string, RemoteLockEntry>;
 }
 
 export function emptyRemotesLock(): RemotesLock {
-  return { version: REMOTES_LOCK_VERSION, items: {} };
+  return { version: 1, items: {} };
 }
 
-export function remoteKey(name: string): string {
-  return `${REMOTE_KEY_PREFIX}/${REMOTE_ITEM_KIND}/${name}`;
+export function remoteKey(kind: RemoteItemKind, name: string): string {
+  return `${REMOTE_KEY_PREFIX}/${kind}/${name}`;
 }
 
 export interface RemoteKeyParts {
-  kind: typeof REMOTE_ITEM_KIND;
+  kind: RemoteItemKind;
   name: string;
 }
 
@@ -160,25 +188,32 @@ export function parseRemoteKey(key: string): RemoteKeyParts {
   const [prefix, kind, ...nameParts] = key.split("/");
   if (prefix !== REMOTE_KEY_PREFIX || nameParts.length === 0) {
     throw new Error(
-      `invalid remote key: ${key} (expected ${REMOTE_KEY_PREFIX}/${REMOTE_ITEM_KIND}/<name>)`,
+      `invalid remote key: ${key} (expected ${REMOTE_KEY_PREFIX}/<${REMOTE_ITEM_KINDS.join("|")}>/<name>)`,
     );
   }
-  if (kind !== REMOTE_ITEM_KIND) {
+  if (!isRemoteItemKind(kind)) {
     throw new Error(
-      `unsupported remote key kind: ${kind ?? "(missing)"} (only ${REMOTE_ITEM_KIND} can be pulled from a repository)`,
+      `unsupported remote key kind: ${kind ?? "(missing)"} (only ${REMOTE_ITEM_KINDS.join(", ")} can be pulled from a repository)`,
     );
   }
   const name = nameParts.join("/");
   assertSafeItemName(name, `remote key ${key}`);
-  return { kind: REMOTE_ITEM_KIND, name };
+  return { kind, name };
 }
 
-/** The remote keys an item ref selects. An unsafe name matches nothing. */
+/**
+ * The remote keys an item ref selects. An unsafe name matches nothing. With
+ * no kind named, both kinds are searched — a bare name does not say which
+ * one a repository published.
+ */
 export function remoteKeysForRef(lock: RemotesLock, ref: ItemRef): string[] {
-  if (ref.kind !== undefined && ref.kind !== REMOTE_ITEM_KIND) return [];
+  if (ref.kind !== undefined && !isRemoteItemKind(ref.kind)) return [];
   if (!isSafeItemName(ref.name)) return [];
-  const wanted = remoteKey(ref.name);
-  return Object.keys(lock.items).filter((key) => key === wanted);
+  const kinds: readonly RemoteItemKind[] = isRemoteItemKind(ref.kind)
+    ? [ref.kind]
+    : REMOTE_ITEM_KINDS;
+  const wanted = new Set(kinds.map((kind) => remoteKey(kind, ref.name)));
+  return Object.keys(lock.items).filter((key) => wanted.has(key));
 }
 
 export async function loadRemotesLock(project: string): Promise<RemotesLock> {
@@ -208,12 +243,19 @@ export async function saveRemotesLock(
  * Serialize and strict-parse the result, the way `serializeLock` does. A
  * candidate that a refinement rejects has to fail here, before any file is
  * published.
+ *
+ * The version is computed from the rows, not carried from `lock.version`: a
+ * file with a `plugins` row is written as version 2, and one with skill rows
+ * only is written as version 1, so removing the last plugin row moves the
+ * file back down and capshelf 0.13 can read it again.
  */
 export function serializeRemotesLock(lock: RemotesLock): string {
-  const parsed = RemotesLockSchema.parse({
-    ...lock,
-    version: REMOTES_LOCK_VERSION,
-  });
+  const version: 1 | 2 = Object.keys(lock.items).some(
+    (key) => parseRemoteKey(key).kind === "plugins",
+  )
+    ? 2
+    : 1;
+  const parsed = RemotesLockSchema.parse({ ...lock, version });
   return `${JSON.stringify(parsed, null, 2)}\n`;
 }
 

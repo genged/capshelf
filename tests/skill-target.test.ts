@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { assertSkillTargetFree, skillTargetOwners } from "../src/skill-target";
 import { createDataLockEntry, emptyLock } from "../src/lock";
-import { emptyRemotesLock } from "../src/remotes-lock";
+import { emptyRemotesLock, remoteKey } from "../src/remotes-lock";
 import { emptyNeeds } from "../src/metadata";
 import { pinCurrentSource } from "../src/pin";
 import { PreconditionError } from "../src/errors";
@@ -121,6 +121,25 @@ describe("skill-target owners", () => {
       owner: "unmanaged",
       path: join(project, ".agents", "skills", "rr"),
     });
+  });
+
+  test("a remote/plugins/<n> row is an owner of the folder", async () => {
+    // D4: a remote row can hold either kind, and `skillTargetOwners` must see
+    // a plugins row the same way it already sees a remote skills row.
+    const project = await tempDir("capshelf-target-");
+    const remotes = emptyRemotesLock();
+    remotes.items[remoteKey("plugins", "rr")] = {
+      upstream: "https://example.com/o/r",
+      ref: "main",
+      subpath: "plugins/rr",
+      sourceCommit: "9f2c1ab3d4e5f60718293a4b5c6d7e8f90a1b2c3",
+      sourcePinDigest: "a".repeat(64),
+      appliedAt: "2026-09-13T00:00:00.000Z",
+    };
+    const locks = { project: emptyLock(), local: emptyLock(), remotes };
+    expect(await skillTargetOwners(project, "rr", locks)).toEqual([
+      { owner: "remote", key: "remote/plugins/rr" },
+    ]);
   });
 
   test("a different kind at the same name is also a conflict message for the switch", async () => {

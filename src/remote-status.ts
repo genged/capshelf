@@ -17,12 +17,12 @@ import {
 } from "./remote-cache";
 import { remoteTreeSource } from "./remote-discovery";
 import { remoteEntryAsDataEntry } from "./remote-item";
-import {
-  REMOTES_LOCK_VERSION,
-  REMOTE_ITEM_KIND,
-  parseRemoteKey,
+import { REMOTES_LOCK_VERSION, parseRemoteKey } from "./remotes-lock";
+import type {
+  RemoteItemKind,
+  RemoteLockEntry,
+  RemotesLock,
 } from "./remotes-lock";
-import type { RemoteLockEntry, RemotesLock } from "./remotes-lock";
 import { buildStatusRow, deriveState } from "./status-core";
 import type { RemoteRowFacts, StatusRow } from "./status-core";
 import type { ItemRef } from "./item-ref";
@@ -42,20 +42,21 @@ export async function buildRemoteStatusRows(
 ): Promise<StatusRow[]> {
   const rows: StatusRow[] = [];
   for (const [key, entry] of Object.entries(input.remotes.items)) {
-    const { name } = parseRemoteKey(key);
+    const { kind, name } = parseRemoteKey(key);
     if (input.ref !== undefined) {
       if (input.ref.name !== name) continue;
-      if (input.ref.kind !== undefined && input.ref.kind !== REMOTE_ITEM_KIND) {
+      if (input.ref.kind !== undefined && input.ref.kind !== kind) {
         continue;
       }
     }
-    rows.push(await buildRemoteRow(input, name, entry));
+    rows.push(await buildRemoteRow(input, kind, name, entry));
   }
   return rows;
 }
 
 async function buildRemoteRow(
   input: RemoteStatusInput,
+  kind: RemoteItemKind,
   name: string,
   entry: RemoteLockEntry,
 ): Promise<StatusRow> {
@@ -68,7 +69,7 @@ async function buildRemoteRow(
     ? await describeInstallation(
         input.project,
         remoteTreeSource(cache.path, entry.sourceCommit, entry.subpath),
-        REMOTE_ITEM_KIND,
+        kind,
         name,
       )
     : null;
@@ -83,11 +84,11 @@ async function buildRemoteRow(
 
   const upstream = upstreamFacts(entry);
   const alsoTrackedInShelf =
-    input.projectLock.items[dataKey(REMOTE_ITEM_KIND, name)] !== undefined ||
-    input.localLock.items[dataKey(REMOTE_ITEM_KIND, name)] !== undefined;
+    input.projectLock.items[dataKey(kind, name)] !== undefined ||
+    input.localLock.items[dataKey(kind, name)] !== undefined;
 
   const state = deriveState({
-    kind: REMOTE_ITEM_KIND,
+    kind,
     // A remote row does have a real upstream, so it takes the data branch of
     // the state machine. The record it lives in is a different question.
     source: "data",
@@ -114,18 +115,14 @@ async function buildRemoteRow(
     scope: "local",
     source: "remote",
     remote: facts,
-    kind: REMOTE_ITEM_KIND,
+    kind,
     name,
     entry: synthetic,
     state,
     currentSha,
     upstreamSha: upstream.sha,
     upstreamDirty: false,
-    runtimeWarnings: runtimeWarningsForItem(
-      input.project,
-      REMOTE_ITEM_KIND,
-      name,
-    ),
+    runtimeWarnings: runtimeWarningsForItem(input.project, kind, name),
     ...(installation !== null && {
       axes: {
         pin: isTreePinned(synthetic)
@@ -317,7 +314,12 @@ async function fetchOneUpstream(
       // Compare content, never the repository commit. Two skills installed
       // from one repository share a `sourceCommit`, so a commit comparison
       // marks both updated when either one changes.
-      ...(await measuredPinDigest(path, head, entry.subpath)),
+      ...(await measuredPinDigest(
+        parseRemoteKey(key).kind,
+        path,
+        head,
+        entry.subpath,
+      )),
     };
   }
   return {
@@ -337,6 +339,7 @@ async function fetchOneUpstream(
  * no longer there. An absent digest beside a present head is `missing_upstream`.
  */
 async function measuredPinDigest(
+  kind: RemoteItemKind,
   cachePath: string,
   head: string,
   subpath: string,
@@ -344,7 +347,7 @@ async function measuredPinDigest(
   try {
     const entries = await itemTreeEntriesAtCommit(
       remoteTreeSource(cachePath, head, subpath),
-      REMOTE_ITEM_KIND,
+      kind,
     );
     if (entries.length === 0) return {};
     return { upstreamPinDigest: sourcePinDigest(entries) };

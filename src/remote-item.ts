@@ -31,8 +31,8 @@ import type { NamedFile } from "./merge-tree";
 import { beginInstalledReconciliation } from "./promote-transaction";
 import { remoteCacheState, resolveCachedRef } from "./remote-cache";
 import { remoteTreeSource } from "./remote-discovery";
-import { REMOTE_ITEM_KIND, remoteKey } from "./remotes-lock";
-import type { RemoteLockEntry } from "./remotes-lock";
+import { remoteKey } from "./remotes-lock";
+import type { RemoteItemKind, RemoteLockEntry } from "./remotes-lock";
 import {
   assertNoDestinationCollisions,
   hashWidthOf,
@@ -48,6 +48,7 @@ export interface RemoteInstallRequest {
   project: string;
   /** The cache clone the pin was read from. */
   cachePath: string;
+  kind: RemoteItemKind;
   name: string;
   upstream: string;
   ref: string;
@@ -68,7 +69,7 @@ export interface RemoteInstallResult {
 }
 
 /** Write the item and return the row. Never saves the lock: the caller does. */
-export async function installRemoteSkill(
+export async function installRemoteItem(
   request: RemoteInstallRequest,
 ): Promise<RemoteInstallResult> {
   const entry: RemoteLockEntry = {
@@ -86,12 +87,12 @@ export async function installRemoteSkill(
       request.pin.sourceCommit,
       request.subpath,
     ),
-    kind: REMOTE_ITEM_KIND,
+    kind: request.kind,
     name: request.name,
     // The writer's key is internal and never printed by this path: the result
     // row's `source` is an `ItemSource`, and the row a user sees is built by
     // `status` with `source: "remote"`.
-    key: dataKey(REMOTE_ITEM_KIND, request.name),
+    key: dataKey(request.kind, request.name),
     entry: remoteEntryAsDataEntry(entry),
     scope: "local",
   });
@@ -104,8 +105,9 @@ export async function installRemoteSkill(
 }
 
 /** Reconcile an installed remote row against its recorded pin. Offline. */
-export async function reconcileRemoteSkill(opts: {
+export async function reconcileRemoteItem(opts: {
   project: string;
+  kind: RemoteItemKind;
   name: string;
   entry: RemoteLockEntry;
   /**
@@ -126,7 +128,7 @@ export async function reconcileRemoteSkill(opts: {
   // that reconciles offline needs it, and one that only built the path reported
   // whatever git printed about a directory that is not a repository.
   const cache = remoteCacheState(opts.entry.upstream, opts.env);
-  if (!cache.present) throw coldCacheRefusal(opts.name, opts.entry);
+  if (!cache.present) throw coldCacheRefusal(opts.kind, opts.name, opts.entry);
   return await materializeLockEntry({
     project: opts.project,
     source: remoteTreeSource(
@@ -134,9 +136,9 @@ export async function reconcileRemoteSkill(opts: {
       opts.entry.sourceCommit,
       opts.entry.subpath,
     ),
-    kind: REMOTE_ITEM_KIND,
+    kind: opts.kind,
     name: opts.name,
-    key: dataKey(REMOTE_ITEM_KIND, opts.name),
+    key: dataKey(opts.kind, opts.name),
     entry: remoteEntryAsDataEntry(opts.entry),
     scope: "local",
     ...(opts.previous !== undefined && {
@@ -179,6 +181,7 @@ export function remoteEntryAsDataEntry(
  * network commands, which is the property D15 exists to protect.
  */
 export function coldCacheRefusal(
+  kind: RemoteItemKind,
   name: string,
   entry: RemoteLockEntry,
   detail = "has no local cache",
@@ -188,7 +191,7 @@ export function coldCacheRefusal(
   // hint-only instruction would never reach the one caller that cannot rerun
   // the command to see it.
   return new PreconditionError(
-    `${remoteKey(name)} ${detail} for ${entry.upstream}; fetch it with ${PRODUCT_NAME} status --check-upstream`,
+    `${remoteKey(kind, name)} ${detail} for ${entry.upstream}; fetch it with ${PRODUCT_NAME} status --check-upstream`,
     {
       hint: `${PRODUCT_NAME} never creates a cache offline, because that would make this a network command`,
     },
@@ -205,11 +208,12 @@ export function coldCacheRefusal(
  */
 export function remoteVerbRefusal(
   verb: string,
+  kind: RemoteItemKind,
   name: string,
 ): PreconditionError {
-  const ref = `${REMOTE_ITEM_KIND}/${name}`;
+  const ref = `${kind}/${name}`;
   return new PreconditionError(
-    `not ${verb} ${ref} — it is a remote skill, tracked in ${METADATA_DIR}/${REMOTES_LOCK_FILE} rather than in your shelf`,
+    `not ${verb} ${ref} — it is a remote item, tracked in ${METADATA_DIR}/${REMOTES_LOCK_FILE} rather than in your shelf`,
     {
       hint:
         `take ownership of it first: ${PRODUCT_NAME} share ${ref} --adopt\n` +
@@ -232,15 +236,17 @@ export interface RemoteUpdatePreview {
 /** Read the pending change without moving anything. Offline. */
 export async function previewRemoteUpdate(opts: {
   project: string;
+  kind: RemoteItemKind;
   name: string;
   entry: RemoteLockEntry;
 }): Promise<RemoteUpdatePreview> {
-  const { entry, name } = opts;
+  const { entry, kind, name } = opts;
   const cache = remoteCacheState(entry.upstream);
-  if (!cache.present) throw coldCacheRefusal(name, entry);
+  if (!cache.present) throw coldCacheRefusal(kind, name, entry);
   const head = await resolveCachedRef(cache.path, entry.ref);
   if (head === null) {
     throw coldCacheRefusal(
+      kind,
       name,
       entry,
       `has no cached ref ${entry.ref} in the cache`,
@@ -257,7 +263,7 @@ export async function previewRemoteUpdate(opts: {
 
   const pin = await pinItemAtCommit(
     remoteTreeSource(cache.path, head, entry.subpath),
-    REMOTE_ITEM_KIND,
+    kind,
     name,
   );
   // Content decides, not the commit. Two skills installed from one repository
@@ -267,7 +273,7 @@ export async function previewRemoteUpdate(opts: {
 
   const before = await itemTreeEntriesAtCommit(
     remoteTreeSource(cache.path, entry.sourceCommit, entry.subpath),
-    REMOTE_ITEM_KIND,
+    kind,
   ).catch(() => []);
   const previous = new Map(
     before.map((item) => [item.path, `${item.mode}:${item.blobId}`]),
@@ -349,8 +355,9 @@ export interface RemoteUpdateResult {
  * prompts: the command layer owns consent, because only it can see `--yes`,
  * `--json`, and whether a terminal is attached.
  */
-export async function updateRemoteSkill(opts: {
+export async function updateRemoteItem(opts: {
   project: string;
+  kind: RemoteItemKind;
   name: string;
   entry: RemoteLockEntry;
   preview: RemoteUpdatePreview;
@@ -366,8 +373,9 @@ export async function updateRemoteSkill(opts: {
     };
   }
   const next = movedRemoteEntry(entry, preview.pin);
-  await reconcileRemoteSkill({
+  await reconcileRemoteItem({
     project: opts.project,
+    kind: opts.kind,
     name: opts.name,
     entry: next,
     previous: entry,
@@ -397,25 +405,21 @@ export interface RemoteMergeResult extends RemoteUpdateResult {
  */
 export async function updateMergeRemoteTarget(opts: {
   project: string;
+  kind: RemoteItemKind;
   name: string;
   entry: RemoteLockEntry;
   preview: RemoteUpdatePreview;
   dryRun: boolean;
 }): Promise<RemoteMergeResult> {
-  const { project, name, entry, preview } = opts;
-  const snapshot = await installedSnapshot(
-    project,
-    REMOTE_ITEM_KIND,
-    name,
-    "local",
-  );
+  const { project, kind, name, entry, preview } = opts;
+  const snapshot = await installedSnapshot(project, kind, name, "local");
   if (snapshot === null) {
     throw new PreconditionError(
-      `installed item is missing: ${installedPath(project, REMOTE_ITEM_KIND, name)}`,
+      `installed item is missing: ${installedPath(project, kind, name)}`,
     );
   }
   const cache = remoteCacheState(entry.upstream);
-  if (!cache.present) throw coldCacheRefusal(name, entry);
+  if (!cache.present) throw coldCacheRefusal(kind, name, entry);
   const localFiles = await namedFilesFromInstalledSnapshot(snapshot);
 
   if (preview.current || preview.pin === null) {
@@ -434,11 +438,11 @@ export async function updateMergeRemoteTarget(opts: {
   // the lock never described. The same guard the shelf merge applies.
   const baseEntries = await itemTreeEntriesAtCommit(
     remoteTreeSource(cache.path, entry.sourceCommit, entry.subpath),
-    REMOTE_ITEM_KIND,
+    kind,
   );
   if (sourcePinDigest(baseEntries) !== entry.sourcePinDigest) {
     throw new PreconditionError(
-      `cannot merge ${remoteKey(name)}: the locked commit does not reproduce the locked item content; nothing changed`,
+      `cannot merge ${remoteKey(kind, name)}: the locked commit does not reproduce the locked item content; nothing changed`,
     );
   }
   const [baseFiles, upstreamFiles] = await Promise.all([
@@ -449,7 +453,7 @@ export async function updateMergeRemoteTarget(opts: {
   const merged = await mergeNamedTrees(baseFiles, localFiles, upstreamFiles);
   if (!merged.ok) {
     throw new PreconditionError(
-      `automatic merge conflicts in ${remoteKey(name)}; nothing changed.\n\n` +
+      `automatic merge conflicts in ${remoteKey(kind, name)}; nothing changed.\n\n` +
         `  conflicting paths:\n${merged.conflicts.map((path) => `    ${path}`).join("\n")}`,
     );
   }
@@ -471,7 +475,7 @@ export async function updateMergeRemoteTarget(opts: {
   }
   if (!namedFilesEqual(localFiles, merged.files)) {
     await assertNoDestinationCollisions(
-      remoteKey(name),
+      remoteKey(kind, name),
       snapshot.localPath,
       merged.files.map((file) => file.path),
     );

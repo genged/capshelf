@@ -280,7 +280,7 @@ function userSkillSurfaceLabel(surface: ExternalUserSkill["surface"]): string {
 }
 
 export const REMOTE_GROUP_HEADING =
-  "remote/  (skills pinned to repos outside your shelf)";
+  "remote/  (items pinned to repos outside your shelf)";
 
 function formatRow(r: StatusRow): string[] {
   const g = glyph(r.state).padEnd(3);

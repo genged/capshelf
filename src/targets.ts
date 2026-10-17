@@ -5,7 +5,7 @@ import type { ItemRef } from "./item-ref";
 import { lockKeysForRef, parseItemRef } from "./item-ref";
 import type { Lock } from "./lock";
 import { installsAtSkillTarget } from "./master";
-import { REMOTE_ITEM_KIND } from "./remotes-lock";
+import { parseRemoteKey } from "./remotes-lock";
 
 export interface ScopedTarget {
   scope: "project" | "local";
@@ -60,11 +60,12 @@ export function matchRefAcrossScopes(
  * `resolveTrackedTarget` already refuses an ambiguous bare ref inside one
  * population; this is the same rule across two.
  *
- * Naming the kind does not settle it. Every remote row is kind `skills`, so
- * `skills/pdf` is exactly as split as a bare `pdf` when the shelf tracks that
- * name too — the D18 "an adopt did not finish" state, which `status` reports
- * and `--strict` fails on, and which is reached by an interrupted adopt. A ref
- * that matches only one population passes through, whatever its shape.
+ * Naming the kind does not settle it. A remote row is kind `skills` or
+ * `plugins`, so `skills/pdf` is exactly as split as a bare `pdf` when the
+ * shelf tracks that name too — the D18 "an adopt did not finish" state, which
+ * `status` reports and `--strict` fails on, and which is reached by an
+ * interrupted adopt. A ref that matches only one population passes through,
+ * whatever its shape.
  */
 export function assertRefNotSplitAcrossPopulations(
   projectLock: Lock,
@@ -91,15 +92,22 @@ export function assertRefNotSplitAcrossPopulations(
  * refuses this state too, so the hint would send the user back to a refusal.
  * The adopt is the one command that resolves it, and it is what `status`
  * already prints for the same rows.
+ *
+ * `owners` carries at least one remote key (`assertRefNotSplitAcrossPopulations`
+ * never calls this with none), so its kind is read from the first one for the
+ * hint — the same kind the row itself holds.
  */
 export function splitPopulationRefusal(
   name: string,
   owners: readonly string[],
 ): PreconditionError {
+  const remoteOwner = owners.find((owner) => owner.startsWith("remote/"));
+  const kind =
+    remoteOwner !== undefined ? parseRemoteKey(remoteOwner).kind : "skills";
   return new PreconditionError(
     `ambiguous item "${name}": the shelf and a remote copy both own it — ${owners.join(", ")}`,
     {
-      hint: `leave one owner: ${PRODUCT_NAME} share ${REMOTE_ITEM_KIND}/${name} --adopt`,
+      hint: `leave one owner: ${PRODUCT_NAME} share ${kind}/${name} --adopt`,
     },
   );
 }

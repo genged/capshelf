@@ -18,12 +18,8 @@ import { isConfigObject, isConfigString } from "./config-values";
 import type { ConfigObject, ConfigValue } from "./config-values";
 import { PreconditionError } from "./errors";
 import { atomicWriteFile } from "./fs-utils";
-import {
-  REMOTE_ITEM_KIND,
-  loadRemotesLock,
-  remoteKey,
-  saveRemotesLock,
-} from "./remotes-lock";
+import { loadRemotesLock, remoteKey, saveRemotesLock } from "./remotes-lock";
+import type { RemoteItemKind } from "./remotes-lock";
 import { remotesLockPath } from "./paths";
 
 export type PreviousOwnerKind = "remote" | "skills.sh";
@@ -45,8 +41,17 @@ export interface PreviousOwnerRecord {
 }
 
 export interface PreviousOwner {
-  /** The record for this skill, or null when this owner does not hold it. */
-  find(project: string, name: string): Promise<PreviousOwnerRecord | null>;
+  /**
+   * The record for this item, or null when this owner does not hold it.
+   * `kind` only matters to a remote row — a skills.sh row carries no kind —
+   * and today's only caller, `findPreviousOwner`, always asks for `skills`
+   * (Task 11 widens it for plugins).
+   */
+  find(
+    project: string,
+    kind: RemoteItemKind,
+    name: string,
+  ): Promise<PreviousOwnerRecord | null>;
   /**
    * Delete the skill's row. Refuses when the file changed since `record` was
    * captured. Preserves every field capshelf does not understand and the
@@ -63,12 +68,12 @@ const SKILLS_SH_FILE = "skills-lock.json";
 const SKILLS_SH_VERSION = 1;
 
 export const REMOTE_PREVIOUS_OWNER: PreviousOwner = {
-  async find(project, name) {
+  async find(project, kind, name) {
     const path = remotesLockPath(project);
     if (!existsSync(path)) return null;
     const digest = await fileDigest(path);
     const lock = await loadRemotesLock(project);
-    const entry = lock.items[remoteKey(name)];
+    const entry = lock.items[remoteKey(kind, name)];
     if (entry === undefined) return null;
     return {
       kind: "remote",
@@ -82,21 +87,23 @@ export const REMOTE_PREVIOUS_OWNER: PreviousOwner = {
     };
   },
 
+  // Hardcoded to `skills`: today's only caller of `release` is the skill
+  // adopt path. Task 11 widens this for a plugin adopt.
   async release(project, name, record) {
     const path = remotesLockPath(project);
     await assertUnchanged(path, record, REMOTES_LOCK_LABEL, name);
     const lock = await loadRemotesLock(project);
-    delete lock.items[remoteKey(name)];
+    delete lock.items[remoteKey("skills", name)];
     await saveRemotesLock(project, lock);
     const after = await loadRemotesLock(project);
-    if (after.items[remoteKey(name)] !== undefined) {
+    if (after.items[remoteKey("skills", name)] !== undefined) {
       throw new Error(`failed to release the remote row for ${ref(name)}`);
     }
   },
 };
 
 export const SKILLS_SH_PREVIOUS_OWNER: PreviousOwner = {
-  async find(project, name) {
+  async find(project, _kind, name) {
     const path = join(project, SKILLS_SH_FILE);
     if (!existsSync(path)) return null;
     const text = await readFile(path, "utf-8");
@@ -141,13 +148,18 @@ export const SKILLS_SH_PREVIOUS_OWNER: PreviousOwner = {
   },
 };
 
-/** The first owner that holds the skill, in the order remote, then skills.sh. */
+/**
+ * The first owner that holds the skill, in the order remote, then skills.sh.
+ *
+ * Always asks for `skills`: every caller today is the skill adopt path. Task
+ * 11 widens this for a plugin adopt.
+ */
 export async function findPreviousOwner(
   project: string,
   name: string,
 ): Promise<PreviousOwnerRecord | null> {
   for (const owner of [REMOTE_PREVIOUS_OWNER, SKILLS_SH_PREVIOUS_OWNER]) {
-    const record = await owner.find(project, name);
+    const record = await owner.find(project, "skills", name);
     if (record !== null) return record;
   }
   return null;
@@ -165,7 +177,7 @@ export function previousOwnerSearchPaths(project: string): string[] {
 const REMOTES_LOCK_LABEL = "remotes.lock.json";
 
 function ref(name: string): string {
-  return `${REMOTE_ITEM_KIND}/${name}`;
+  return `skills/${name}`;
 }
 
 async function assertUnchanged(

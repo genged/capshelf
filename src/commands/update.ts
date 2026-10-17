@@ -121,18 +121,21 @@ import {
   previewRemoteUpdate,
   remoteEntryAsDataEntry,
   updateMergeRemoteTarget,
-  updateRemoteSkill,
+  updateRemoteItem,
 } from "../remote-item";
 import type { RemoteUpdateResult } from "../remote-item";
 import {
-  REMOTE_ITEM_KIND,
   loadRemotesLock,
   parseRemoteKey,
   remoteKey,
   remoteKeysForRef,
   saveRemotesLock,
 } from "../remotes-lock";
-import type { RemoteLockEntry, RemotesLock } from "../remotes-lock";
+import type {
+  RemoteItemKind,
+  RemoteLockEntry,
+  RemotesLock,
+} from "../remotes-lock";
 import { factsWarnOnInstall, renderPluginFacts } from "../remote-list-render";
 import { assertSkillTargetFree } from "../skill-target";
 
@@ -593,6 +596,7 @@ export function registerUpdate(program: Command): void {
 }
 
 interface RemoteTarget {
+  kind: RemoteItemKind;
   name: string;
   key: string;
   /**
@@ -609,18 +613,16 @@ function resolveRemoteTargets(
 ): RemoteTarget[] {
   if (refs.length > 0) {
     return refs.flatMap((itemRef) =>
-      remoteKeysForRef(remotes, parseItemRef(itemRef)).map((key) => ({
-        key,
-        name: parseRemoteKey(key).name,
-        named: true,
-      })),
+      remoteKeysForRef(remotes, parseItemRef(itemRef)).map((key) => {
+        const parsed = parseRemoteKey(key);
+        return { key, kind: parsed.kind, name: parsed.name, named: true };
+      }),
     );
   }
-  return Object.keys(remotes.items).map((key) => ({
-    key,
-    name: parseRemoteKey(key).name,
-    named: false,
-  }));
+  return Object.keys(remotes.items).map((key) => {
+    const parsed = parseRemoteKey(key);
+    return { key, kind: parsed.kind, name: parsed.name, named: false };
+  });
 }
 
 interface RemoteUpdateOutcome {
@@ -638,7 +640,7 @@ interface RemoteMergeFacts {
 /**
  * The remote half of `update`.
  *
- * Consent lives here rather than in `updateRemoteSkill`: that function sees no
+ * Consent lives here rather than in `updateRemoteItem`: that function sees no
  * `--yes`, no `--json`, and no terminal state, so it cannot decide anything.
  * Keeping the prompt in the command is also what lets a bare sweep return
  * `skipped` without ever entering the write path.
@@ -666,14 +668,14 @@ async function runRemoteUpdates(input: {
       const message = skillsShConflictMessage(external);
       if (target.named) {
         throw new PreconditionError(
-          `not updating ${remoteKey(target.name)} — ${message}`,
+          `not updating ${remoteKey(target.kind, target.name)} — ${message}`,
         );
       }
       results.push({
         key: target.key,
         scope: "local",
         source: "remote",
-        kind: REMOTE_ITEM_KIND,
+        kind: target.kind,
         name: target.name,
         action: "skipped-external",
         error: message,
@@ -688,6 +690,7 @@ async function runRemoteUpdates(input: {
     }
     const preview = await previewRemoteUpdate({
       project: input.project,
+      kind: target.kind,
       name: target.name,
       entry,
     });
@@ -700,6 +703,7 @@ async function runRemoteUpdates(input: {
     const consent = await confirmRemotePinMove({
       project: input.project,
       manifest: input.manifest,
+      kind: target.kind,
       name: target.name,
       entry,
       preview,
@@ -718,6 +722,7 @@ async function runRemoteUpdates(input: {
         await planRemotePinMove({
           project: input.project,
           manifest: input.manifest,
+          kind: target.kind,
           name: target.name,
           entry,
           preview,
@@ -727,6 +732,7 @@ async function runRemoteUpdates(input: {
     const mergeOutcome = input.merge
       ? await updateMergeRemoteTarget({
           project: input.project,
+          kind: target.kind,
           name: target.name,
           entry,
           preview,
@@ -735,8 +741,9 @@ async function runRemoteUpdates(input: {
       : null;
     const moved: RemoteUpdateResult =
       mergeOutcome ??
-      (await updateRemoteSkill({
+      (await updateRemoteItem({
         project: input.project,
+        kind: target.kind,
         name: target.name,
         entry,
         preview,
@@ -772,7 +779,7 @@ async function runRemoteUpdates(input: {
     });
     if (!input.dryRun && moved.action === "updated") {
       input.remotes.items[target.key] = moved.entry;
-      // Before the next row can refuse the command. `reconcileRemoteSkill`
+      // Before the next row can refuse the command. `reconcileRemoteItem`
       // already rewrote this row's files, so a save deferred to the end of the
       // run would leave them holding content the pin does not name — reported
       // as drift the user never introduced.
@@ -800,6 +807,7 @@ interface RemoteConsent {
 async function confirmRemotePinMove(input: {
   project: string;
   manifest: Manifest;
+  kind: RemoteItemKind;
   name: string;
   entry: RemoteLockEntry;
   preview: Awaited<ReturnType<typeof previewRemoteUpdate>>;
@@ -827,9 +835,9 @@ async function confirmRemotePinMove(input: {
   const context = confirmationContext();
   if (input.json || !context.stdinIsTTY || !context.stderrIsTTY) {
     throw new PreconditionError(
-      `not moving ${remoteKey(input.name)} to ${input.preview.to.slice(0, 7)} without consent — it is content from a repository outside your shelf`,
+      `not moving ${remoteKey(input.kind, input.name)} to ${input.preview.to.slice(0, 7)} without consent — it is content from a repository outside your shelf`,
       {
-        hint: `review it, then authorize with --yes: ${PRODUCT_NAME} update ${REMOTE_ITEM_KIND}/${input.name} --yes`,
+        hint: `review it, then authorize with --yes: ${PRODUCT_NAME} update ${input.kind}/${input.name} --yes`,
       },
     );
   }
@@ -874,6 +882,7 @@ async function remotePinMoveFactsLines(
 async function planRemotePinMove(input: {
   project: string;
   manifest: Manifest;
+  kind: RemoteItemKind;
   name: string;
   entry: RemoteLockEntry;
   preview: Awaited<ReturnType<typeof previewRemoteUpdate>>;
@@ -903,13 +912,13 @@ async function planRemotePinMove(input: {
     currentSource: current,
     selectedSource: selected,
     manifest: input.manifest,
-    kind: REMOTE_ITEM_KIND,
+    kind: input.kind,
     name: input.name,
-    key: remoteKey(input.name),
+    key: remoteKey(input.kind, input.name),
     scope: "local",
     currentEntry: remoteEntryAsDataEntry(input.entry),
     selectedEntry: remoteEntryAsDataEntry(next),
-    reviewCommand: `${PRODUCT_NAME} status ${REMOTE_ITEM_KIND}/${input.name} --diff-view installed`,
+    reviewCommand: `${PRODUCT_NAME} status ${input.kind}/${input.name} --diff-view installed`,
     repairUnresolvableCurrent: true,
   });
   return createDestructiveChangePlan(planned.changes, planned.snapshotParts);
@@ -926,7 +935,7 @@ function remoteResult(
     key: target.key,
     scope: "local",
     source: "remote",
-    kind: REMOTE_ITEM_KIND,
+    kind: target.kind,
     name: target.name,
     action,
     sha: next?.sourcePinDigest ?? entry.sourcePinDigest,

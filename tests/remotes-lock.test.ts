@@ -5,10 +5,13 @@ import {
   emptyRemotesLock,
   loadRemotesLock,
   parseRemoteKey,
+  parseRemotesLock,
   remoteKey,
+  remoteKeysForRef,
   saveRemotesLock,
   serializeRemotesLock,
 } from "../src/remotes-lock";
+import type { ConfigObject } from "../src/config-values";
 import { tempDir } from "./cli-fixtures";
 
 const ENTRY = {
@@ -20,10 +23,18 @@ const ENTRY = {
   appliedAt: "2026-09-13T00:00:00.000Z",
 };
 
+/**
+ * A valid remote lock entry, as a `ConfigObject` — the shape
+ * `parseRemotesLock` reads — for a test that only cares about the key.
+ */
+function row(): ConfigObject {
+  return { ...ENTRY };
+}
+
 test("a saved remotes lock round-trips and is gitignored", async () => {
   const project = await tempDir("capshelf-remotes-");
   const lock = emptyRemotesLock();
-  lock.items[remoteKey("brainstorming")] = { ...ENTRY };
+  lock.items[remoteKey("skills", "brainstorming")] = { ...ENTRY };
   await saveRemotesLock(project, lock);
 
   const loaded = await loadRemotesLock(project);
@@ -46,15 +57,20 @@ test("a newer schema version is refused by version, not by field", async () => {
   await saveRemotesLock(project, emptyRemotesLock());
   await Bun.write(
     join(project, ".capshelf", "remotes.lock.json"),
-    '{"version":2,"items":{}}\n',
+    '{"version":3,"items":{}}\n',
   );
-  await expect(loadRemotesLock(project)).rejects.toThrow(/version 2 is newer/);
+  await expect(loadRemotesLock(project)).rejects.toThrow(/version 3 is newer/);
 });
 
-test("the key grammar is remote/skills/<name>", () => {
-  expect(remoteKey("pdf")).toBe("remote/skills/pdf");
+test("the key grammar is remote/<kind>/<name>", () => {
+  expect(remoteKey("skills", "pdf")).toBe("remote/skills/pdf");
+  expect(remoteKey("plugins", "pdf")).toBe("remote/plugins/pdf");
   expect(parseRemoteKey("remote/skills/pdf")).toEqual({
     kind: "skills",
+    name: "pdf",
+  });
+  expect(parseRemoteKey("remote/plugins/pdf")).toEqual({
+    kind: "plugins",
     name: "pdf",
   });
   expect(() => parseRemoteKey("data/skills/pdf")).toThrow(/invalid remote key/);
@@ -66,6 +82,48 @@ test("the key grammar is remote/skills/<name>", () => {
 
 test("serialization strict-parses its own output", () => {
   const lock = emptyRemotesLock();
-  lock.items[remoteKey("pdf")] = { ...ENTRY, sourcePinDigest: "zz" };
+  lock.items[remoteKey("skills", "pdf")] = { ...ENTRY, sourcePinDigest: "zz" };
   expect(() => serializeRemotesLock(lock)).toThrow();
+});
+
+test("a plugins row is accepted and written as version 2", () => {
+  const lock = parseRemotesLock({
+    version: 2,
+    items: { "remote/plugins/gh-cli": row() },
+  });
+  expect(JSON.parse(serializeRemotesLock(lock)).version).toBe(2);
+});
+
+test("a skills-only lock is written as version 1", () => {
+  const lock = parseRemotesLock({
+    version: 2,
+    items: { "remote/skills/a": row() },
+  });
+  expect(JSON.parse(serializeRemotesLock(lock)).version).toBe(1);
+});
+
+test("a version 1 lock with a plugins row is refused", () => {
+  expect(() =>
+    parseRemotesLock({ version: 1, items: { "remote/plugins/x": row() } }),
+  ).toThrow(/plugins rows need remotes lock version 2/);
+});
+
+test("version 3 asks for an upgrade", () => {
+  expect(() => parseRemotesLock({ version: 3, items: {} })).toThrow(
+    /upgrade capshelf/,
+  );
+});
+
+test("remoteKeysForRef picks the kind from the ref", () => {
+  const lock = parseRemotesLock({
+    version: 2,
+    items: { "remote/plugins/x": row(), "remote/skills/x": row() },
+  });
+  expect(remoteKeysForRef(lock, { kind: "plugins", name: "x" })).toEqual([
+    "remote/plugins/x",
+  ]);
+  expect(remoteKeysForRef(lock, { name: "x" }).sort()).toEqual([
+    "remote/plugins/x",
+    "remote/skills/x",
+  ]);
 });

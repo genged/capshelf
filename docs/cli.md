@@ -1771,7 +1771,7 @@ rows in their own group:
 project/
   ✓   system/skills/capshelf                  57e5655fc9a5  up-to-date
 
-remote/  (skills pinned to repos outside your shelf)
+remote/  (items pinned to repos outside your shelf)
   ✓   skills/pdf                              b265cade3978  up-to-date
       acme/pdf-skills main @ cd91e33, never checked
       check for newer upstreams: capshelf status --check-upstream
@@ -1792,7 +1792,7 @@ capshelf status --check-upstream
 ```text
   fetching  https://github.com/acme/pdf-skills ... 1 new commit
 
-remote/  (skills pinned to repos outside your shelf)
+remote/  (items pinned to repos outside your shelf)
   ⚠   skills/pdf                              b265cade3978  update available → cd91e33a2bddb...
       acme/pdf-skills main @ cd91e33, checked 2026-09-17
 ```
@@ -1853,7 +1853,7 @@ A machine with no cache still has the files. It cannot compare them to the
 pin:
 
 ```text
-remote/  (skills pinned to repos outside your shelf)
+remote/  (items pinned to repos outside your shelf)
   !   skills/pdf                              b265cade3978  no clone cache on this machine — run: capshelf status --check-upstream
       acme/pdf-skills main @ cd91e33, never checked
       no clone cache on this machine, so the installed files cannot be

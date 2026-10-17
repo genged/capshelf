@@ -34,16 +34,19 @@ import { remoteCacheState } from "../remote-cache";
 import { remoteTreeSource } from "../remote-discovery";
 import {
   coldCacheRefusal,
-  reconcileRemoteSkill,
+  reconcileRemoteItem,
   remoteEntryAsDataEntry,
 } from "../remote-item";
 import {
-  REMOTE_ITEM_KIND,
   loadRemotesLock,
   parseRemoteKey,
   remoteKeysForRef,
 } from "../remotes-lock";
-import type { RemoteLockEntry, RemotesLock } from "../remotes-lock";
+import type {
+  RemoteItemKind,
+  RemoteLockEntry,
+  RemotesLock,
+} from "../remotes-lock";
 import type { MaterializeResult } from "../materialize";
 import {
   findSkillsShSkill,
@@ -109,7 +112,7 @@ interface ApplyRemoteResult {
   scope: "local";
   key: string;
   source: "remote";
-  kind: typeof REMOTE_ITEM_KIND;
+  kind: RemoteItemKind;
   name: string;
   action: MaterializeResult["action"];
   path: string;
@@ -140,6 +143,7 @@ interface ApplyPreflightInput {
 }
 
 interface RemoteApplyTarget {
+  kind: RemoteItemKind;
   name: string;
   key: string;
 }
@@ -179,7 +183,10 @@ export function registerApply(program: Command): void {
           itemRef === undefined
             ? Object.keys(remotes.items)
             : remoteKeysForRef(remotes, parseItemRef(itemRef))
-        ).map((key) => ({ key, name: parseRemoteKey(key).name }));
+        ).map((key) => {
+          const parsed = parseRemoteKey(key);
+          return { key, kind: parsed.kind, name: parsed.name };
+        });
 
         if (itemRef) {
           assertRefNotSplitAcrossPopulations(
@@ -497,7 +504,7 @@ export function registerApply(program: Command): void {
               scope: "local",
               key: target.key,
               source: "remote",
-              kind: REMOTE_ITEM_KIND,
+              kind: target.kind,
               name: target.name,
               action: "skipped-external",
               message: skillsShConflictMessage(external),
@@ -509,8 +516,9 @@ export function registerApply(program: Command): void {
               remoteApplyRow(
                 target,
                 entry,
-                await reconcileRemoteSkill({
+                await reconcileRemoteItem({
                   project,
+                  kind: target.kind,
                   name: target.name,
                   entry,
                 }),
@@ -521,7 +529,7 @@ export function registerApply(program: Command): void {
               scope: "local",
               key: target.key,
               source: "remote",
-              kind: REMOTE_ITEM_KIND,
+              kind: target.kind,
               name: target.name,
               action: "error",
               error: err instanceof Error ? err.message : String(err),
@@ -874,7 +882,7 @@ async function planApplyPreflight(
   for (const target of input.remoteTargets) {
     const entry = input.remotes.items[target.key]!;
     try {
-      const source = remoteApplySource(target.name, entry);
+      const source = remoteApplySource(target.kind, target.name, entry);
       results.push(
         remoteApplyRow(
           target,
@@ -883,9 +891,9 @@ async function planApplyPreflight(
             project: input.project,
             source,
             manifest: input.manifest,
-            kind: REMOTE_ITEM_KIND,
+            kind: target.kind,
             name: target.name,
-            key: dataKey(REMOTE_ITEM_KIND, target.name),
+            key: dataKey(target.kind, target.name),
             entry: remoteEntryAsDataEntry(entry),
             scope: "local",
             dryRun: true,
@@ -897,13 +905,13 @@ async function planApplyPreflight(
         currentSource: source,
         selectedSource: source,
         manifest: input.manifest,
-        kind: REMOTE_ITEM_KIND,
+        kind: target.kind,
         name: target.name,
         key: target.key,
         scope: "local",
         currentEntry: remoteEntryAsDataEntry(entry),
         selectedEntry: remoteEntryAsDataEntry(entry),
-        reviewCommand: `${PRODUCT_NAME} status ${REMOTE_ITEM_KIND}/${target.name} --diff-view installed`,
+        reviewCommand: `${PRODUCT_NAME} status ${target.kind}/${target.name} --diff-view installed`,
       });
       changes.push(...planned.changes);
       snapshotParts.push(...planned.snapshotParts);
@@ -915,7 +923,7 @@ async function planApplyPreflight(
         scope: "local",
         key: target.key,
         source: "remote",
-        kind: REMOTE_ITEM_KIND,
+        kind: target.kind,
         name: target.name,
         action: "error",
         error: error instanceof Error ? error.message : String(error),
@@ -934,11 +942,12 @@ async function planApplyPreflight(
 
 /** The cache tree a remote row reads, or the refusal that names the fetch. */
 function remoteApplySource(
+  kind: RemoteItemKind,
   name: string,
   entry: RemoteLockEntry,
 ): GitTreeSource {
   const cache = remoteCacheState(entry.upstream);
-  if (!cache.present) throw coldCacheRefusal(name, entry);
+  if (!cache.present) throw coldCacheRefusal(kind, name, entry);
   return remoteTreeSource(cache.path, entry.sourceCommit, entry.subpath);
 }
 
@@ -1045,7 +1054,7 @@ function remoteApplyRow(
     scope: "local",
     key: target.key,
     source: "remote",
-    kind: REMOTE_ITEM_KIND,
+    kind: target.kind,
     name: target.name,
     action: result.action,
     path: result.path,

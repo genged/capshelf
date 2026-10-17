@@ -47,7 +47,7 @@ const REMOTE_ENTRY = {
 async function projectWithRemoteRow(prefix: string): Promise<string> {
   const project = await tempDir(prefix);
   const lock = emptyRemotesLock();
-  lock.items[remoteKey("brainstorming")] = { ...REMOTE_ENTRY };
+  lock.items[remoteKey("skills", "brainstorming")] = { ...REMOTE_ENTRY };
   await saveRemotesLock(project, lock);
   return project;
 }
@@ -56,7 +56,11 @@ test("releasing one skills.sh row preserves every other field", async () => {
   const project = await tempDir("capshelf-owner-");
   await writeFile(join(project, "skills-lock.json"), LOCK);
 
-  const record = await SKILLS_SH_PREVIOUS_OWNER.find(project, "git-commit");
+  const record = await SKILLS_SH_PREVIOUS_OWNER.find(
+    project,
+    "skills",
+    "git-commit",
+  );
   expect(record).not.toBeNull();
   expect(record!.provenance.upstream).toBe("vercel-labs/agent-skills");
   expect(record!.provenance.upstreamPath).toBe("skills/git-commit/SKILL.md");
@@ -74,7 +78,11 @@ test("releasing one skills.sh row preserves every other field", async () => {
 test("a file that changed mid-transfer is refused and keeps the row", async () => {
   const project = await tempDir("capshelf-owner-race-");
   await writeFile(join(project, "skills-lock.json"), LOCK);
-  const record = await SKILLS_SH_PREVIOUS_OWNER.find(project, "git-commit");
+  const record = await SKILLS_SH_PREVIOUS_OWNER.find(
+    project,
+    "skills",
+    "git-commit",
+  );
   await writeFile(
     join(project, "skills-lock.json"),
     LOCK.replace("abc", "zzz"),
@@ -96,7 +104,11 @@ test("a file that changed mid-transfer is refused and keeps the row", async () =
 test("the mid-transfer refusal is the branch's string, semicolon included", async () => {
   const project = await tempDir("capshelf-owner-message-");
   await writeFile(join(project, "skills-lock.json"), LOCK);
-  const record = await SKILLS_SH_PREVIOUS_OWNER.find(project, "git-commit");
+  const record = await SKILLS_SH_PREVIOUS_OWNER.find(
+    project,
+    "skills",
+    "git-commit",
+  );
   await writeFile(
     join(project, "skills-lock.json"),
     LOCK.replace("abc", "zzz"),
@@ -117,7 +129,7 @@ test("an unsupported skills-lock version is refused before any write", async () 
     '{"version": 2, "skills": {"git-commit": {"source": "a/b"}}}\n',
   );
   await expect(
-    SKILLS_SH_PREVIOUS_OWNER.find(project, "git-commit"),
+    SKILLS_SH_PREVIOUS_OWNER.find(project, "skills", "git-commit"),
   ).rejects.toThrow(/version 2/);
 });
 
@@ -143,22 +155,33 @@ test("releasing a remote row deletes only that row", async () => {
   const project = await projectWithRemoteRow("capshelf-owner-remote-release-");
   const lockPath = join(project, ".capshelf", "remotes.lock.json");
   const both = JSON.parse(await readFile(lockPath, "utf-8"));
-  both.items[remoteKey("pdf")] = { ...REMOTE_ENTRY, subpath: "skills/pdf" };
+  both.items[remoteKey("skills", "pdf")] = {
+    ...REMOTE_ENTRY,
+    subpath: "skills/pdf",
+  };
   await writeFile(lockPath, `${JSON.stringify(both, null, 2)}\n`);
 
-  const record = await REMOTE_PREVIOUS_OWNER.find(project, "brainstorming");
+  const record = await REMOTE_PREVIOUS_OWNER.find(
+    project,
+    "skills",
+    "brainstorming",
+  );
   await REMOTE_PREVIOUS_OWNER.release(project, "brainstorming", record!);
 
   const after = JSON.parse(await readFile(lockPath, "utf-8"));
-  expect(Object.keys(after.items)).toEqual([remoteKey("pdf")]);
+  expect(Object.keys(after.items)).toEqual([remoteKey("skills", "pdf")]);
 });
 
 test("a remotes lock that changed mid-transfer is refused and keeps the row", async () => {
   const project = await projectWithRemoteRow("capshelf-owner-remote-race-");
   const lockPath = join(project, ".capshelf", "remotes.lock.json");
-  const record = await REMOTE_PREVIOUS_OWNER.find(project, "brainstorming");
+  const record = await REMOTE_PREVIOUS_OWNER.find(
+    project,
+    "skills",
+    "brainstorming",
+  );
   const raced = JSON.parse(await readFile(lockPath, "utf-8"));
-  raced.items[remoteKey("brainstorming")].appliedAt =
+  raced.items[remoteKey("skills", "brainstorming")].appliedAt =
     "2026-09-14T00:00:00.000Z";
   await writeFile(lockPath, `${JSON.stringify(raced, null, 2)}\n`);
 
@@ -166,7 +189,9 @@ test("a remotes lock that changed mid-transfer is refused and keeps the row", as
     REMOTE_PREVIOUS_OWNER.release(project, "brainstorming", record!),
   ).rejects.toThrow(/changed while adopting/);
   const after = JSON.parse(await readFile(lockPath, "utf-8"));
-  expect(Object.keys(after.items)).toEqual([remoteKey("brainstorming")]);
+  expect(Object.keys(after.items)).toEqual([
+    remoteKey("skills", "brainstorming"),
+  ]);
 });
 
 test("the remote row wins when both owners hold the name", async () => {
