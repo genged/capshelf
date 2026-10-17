@@ -5,8 +5,8 @@ import { z } from "zod";
 import { LOCAL_CONFIG_FILE, LOCAL_LOCK_FILE, METADATA_DIR } from "./identity";
 import { expandTilde } from "./paths";
 import { atomicWriteFile } from "./fs-utils";
-import type { ConfigValue } from "./config-values";
-import { hasShelvesKey } from "./manifest";
+import { isConfigObject, type ConfigValue } from "./config-values";
+import { assertFenceOrFederation, fenceFor } from "./manifest-fence";
 import { PreconditionError } from "./errors";
 import { assertNever, isSafeItemName } from "./assert";
 import type { ItemKind } from "./master";
@@ -49,13 +49,11 @@ export async function loadLocalConfig(
   const path = localConfigPath(project);
   if (!existsSync(path)) return null;
   const raw: ConfigValue = JSON.parse(await readFile(path, "utf-8"));
-  // "shelves" is reserved for multi-shelf federation. Fail loudly before zod
-  // strips it and a later saveLocalConfig silently deletes it.
-  if (hasShelvesKey(raw)) {
-    throw new Error(
-      `${path} declares "shelves": this project uses multi-shelf federation, which this capshelf version does not support; upgrade capshelf`,
-    );
-  }
+  // "shelves" is reserved for multi-shelf federation, with one exception: the
+  // plugin fence (M9). Fail loudly before zod strips it and a later
+  // saveLocalConfig silently deletes the federation config, or the fence.
+  assertFenceOrFederation(path, raw);
+  if (isConfigObject(raw)) delete raw.shelves;
   const parsed = LocalConfigSchema.parse(raw);
   return {
     dataRepo: expandTilde(parsed.dataRepo),
@@ -73,7 +71,8 @@ export async function saveLocalConfig(
 ): Promise<void> {
   const path = localConfigPath(project);
   await mkdir(dirname(path), { recursive: true });
-  await atomicWriteFile(path, `${JSON.stringify(cfg, null, 2)}\n`);
+  const out = { ...fenceFor(cfg.plugins.length), ...cfg };
+  await atomicWriteFile(path, `${JSON.stringify(out, null, 2)}\n`);
   await ensureGitignored(project, LOCAL_CONFIG_FILE);
   await ensureGitignored(project, LOCAL_LOCK_FILE);
 }
