@@ -3,7 +3,11 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { syncTrackedIntoDataRepo } from "../src/commands/promote-named";
 import { PreconditionError } from "../src/errors";
-import { lastTouchingContentCommit } from "../src/git";
+import {
+  headSha,
+  lastTouchingContentCommit,
+  statusPorcelain,
+} from "../src/git";
 import { installedPath } from "../src/installed";
 import { parseItemRef } from "../src/item-ref";
 import { dataKey, emptyLock } from "../src/lock";
@@ -162,6 +166,101 @@ describe("plugins kind", () => {
     expect(error.exitCode).toBe(3);
     expect(error.message).toContain(PLUGIN_MANIFEST_REL);
     expect(error.message).not.toContain("index.ts");
+  });
+
+  // D3: the manifest, not the directory, names a plugin. The installed copy
+  // here is named plugins/p by its lock key, but its plugin.json names it
+  // "q" — a renamed-upstream plugin — so promote must refuse with both
+  // names and write nothing, rather than publish "p" under "q"'s content.
+  test("promote of a plugin refuses when its manifest names it something else (D3)", async () => {
+    const dataRepo = await tempRepo(
+      "capshelf-plugin-kind-promote-mismatch-data-",
+      { origin: null },
+    );
+    const project = await tempRepo(
+      "capshelf-plugin-kind-promote-mismatch-project-",
+      { origin: null },
+    );
+    const dataItem = join(dataRepo, "plugins", "p");
+    await mkdir(join(dataItem, ".claude-plugin"), { recursive: true });
+    await writeFile(
+      join(dataItem, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "p" }),
+    );
+    await commitAll(dataRepo, "plugin p");
+
+    const installed = installedPath(project, "plugins", "p");
+    await mkdir(join(installed, ".claude-plugin"), { recursive: true });
+    // The installed copy's manifest names a different item than "p".
+    await writeFile(
+      join(installed, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "q" }),
+    );
+
+    const lock: WritableLock = {
+      version: 5,
+      items: {
+        [dataKey("plugins", "p")]: {
+          source: "data",
+          sourcePinDigest: await currentPinDigest(dataRepo, "plugins", "p"),
+          sourceCommit: await lastTouchingContentCommit(dataRepo, "plugins/p"),
+          appliedAt: "2026-10-17T00:00:00.000Z",
+        },
+      },
+    };
+    const headBefore = await headSha(dataRepo);
+
+    const error = await rejection(
+      syncTrackedIntoDataRepo(project, dataRepo, "plugins", "p", lock, {}),
+      PreconditionError,
+    );
+    expect(error.exitCode).toBe(3);
+    expect(error.message).toContain("plugins/p");
+    expect(error.message).toContain('names it "q"');
+
+    expect(await headSha(dataRepo)).toBe(headBefore);
+    expect((await statusPorcelain(dataRepo)).trim()).toBe("");
+  });
+
+  // The skills.sh conflict guard in syncTrackedIntoDataRepo tested
+  // `kind === "skills"` directly, so `promote plugins/<n>` never checked
+  // whether skills.sh already manages a same-named row at the shared
+  // install folder (spec D2) before this task.
+  test("promote of plugins/<n> whose name is a skills.sh row refuses with the skills.sh message", async () => {
+    const dataRepo = await tempRepo(
+      "capshelf-plugin-kind-promote-skillsh-data-",
+      { origin: null },
+    );
+    const project = await tempRepo(
+      "capshelf-plugin-kind-promote-skillsh-project-",
+      { origin: null },
+    );
+    await writeFile(
+      join(project, "skills-lock.json"),
+      JSON.stringify({
+        skills: { p: { source: "https://example.invalid/p" } },
+      }),
+    );
+
+    const lock: WritableLock = {
+      version: 5,
+      items: {
+        [dataKey("plugins", "p")]: {
+          source: "data",
+          sourcePinDigest: "a".repeat(64),
+          sourceCommit: "c".repeat(40),
+          appliedAt: "2026-10-17T00:00:00.000Z",
+        },
+      },
+    };
+
+    const error = await rejection(
+      syncTrackedIntoDataRepo(project, dataRepo, "plugins", "p", lock, {}),
+      PreconditionError,
+    );
+    expect(error.exitCode).toBe(3);
+    expect(error.message).toContain("plugins/p");
+    expect(error.message).toContain("managed by skills.sh");
   });
 
   // `show` hid every nested file for a copy-directory item unless its kind

@@ -33,6 +33,7 @@ import { assertCommittedTreeEqualsCandidate } from "../promote-proof";
 import { gitTreeSource } from "../item-source";
 import { installedPath, parseLockKey } from "../installed";
 import {
+  installsAtSkillTarget,
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
   allCanonicalItemRelPaths,
@@ -528,11 +529,11 @@ async function promoteLocalTracked(
 ): Promise<PromoteResult> {
   const key = lockKeyForRef(localLock, ref, "data");
   if (!key) {
-    if (ref.kind === undefined || ref.kind === "skills") {
+    if (ref.kind === undefined || installsAtSkillTarget(ref.kind)) {
       const external = await findSkillsShSkill(project, ref.name);
       if (external) {
         throw new PreconditionError(
-          `not promoting skills/${ref.name} — ${skillsShConflictMessage(external)}`,
+          `not promoting ${ref.kind ?? "skills"}/${ref.name} — ${skillsShConflictMessage(external)}`,
         );
       }
     }
@@ -561,11 +562,11 @@ async function rejectUntrackedPromote(
   lock: WritableLock,
   ref: ReturnType<typeof parseItemRef>,
 ): Promise<never> {
-  if (ref.kind === undefined || ref.kind === "skills") {
+  if (ref.kind === undefined || installsAtSkillTarget(ref.kind)) {
     const external = await findSkillsShSkill(project, ref.name);
     if (external) {
       throw new PreconditionError(
-        `not promoting skills/${ref.name} — ${skillsShConflictMessage(external)}`,
+        `not promoting ${ref.kind ?? "skills"}/${ref.name} — ${skillsShConflictMessage(external)}`,
       );
     }
   }
@@ -800,11 +801,11 @@ export async function syncTrackedIntoDataRepo(
     throw new Error(`no promotion strategy for ${kind}/${name}`);
   }
 
-  if (kind === "skills") {
+  if (installsAtSkillTarget(kind)) {
     const external = await findSkillsShSkill(project, name);
     if (external) {
       throw new PreconditionError(
-        `not promoting skills/${name} — ${skillsShConflictMessage(external)}`,
+        `not promoting ${kind}/${name} — ${skillsShConflictMessage(external)}`,
       );
     }
   }
