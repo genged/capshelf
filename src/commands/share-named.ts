@@ -41,6 +41,8 @@ import {
   installsAtSkillTarget,
   isCopyDirectoryItemKind,
   itemRepoRelPath,
+  PLUGIN_MANIFEST_REL,
+  readPluginManifestName,
 } from "../master";
 import type { CopyDirectoryItemKind, FragmentItemKind } from "../master";
 import { assertRepoClean, headSha, originRemoteUrl } from "../git";
@@ -68,9 +70,14 @@ import type { PreviousOwnerRecord } from "../previous-owner";
 import { remoteCacheState } from "../remote-cache";
 import { assertNotPulledSkill } from "../remote-refusal";
 import { findLicense } from "../remote-discovery";
+import { loadRemotesLock, remoteKey } from "../remotes-lock";
+import { assertSkillTargetFree } from "../skill-target";
+import { confirmPluginConsent } from "../plugin-consent";
+import { pluginRunsOnDisk } from "../plugin-runs";
+import { sanitizeDisplayText } from "../pick-core";
 import { installedPath } from "../installed";
 import { PRODUCT_NAME, METADATA_SIDECAR } from "../identity";
-import { adoptIntoDataRepo } from "../data-repo-adopt";
+import { adoptIntoDataRepo, findAdoptionSource } from "../data-repo-adopt";
 import { printPrivateDotenvWarnings } from "../dotfiles";
 import {
   printRuntimeWarnings,
@@ -139,6 +146,8 @@ export interface ShareOptions {
   boundRepo?: string;
   /** Take ownership from a previous owner: a remote row or a skills.sh row. */
   adopt?: boolean;
+  /** Authorize the commands a plugin runs in project scope (D7 point 3). */
+  yes?: boolean;
 }
 
 export async function shareOne(
@@ -157,9 +166,9 @@ export async function shareOne(
   // Step 1 of the adopt ordering, and it has to be here rather than in
   // `shareCopyItem`: a fragment or subagent ref is routed away below and would
   // never reach it.
-  if (opts.adopt === true && kind !== "skills") {
+  if (opts.adopt === true && !installsAtSkillTarget(kind)) {
     throw new PreconditionError(
-      `share --adopt supports skills only; ${kind}/${ref.name} is a ${kind} item`,
+      `share --adopt supports skills and plugins only; ${kind}/${ref.name} is a ${kind} item`,
     );
   }
   const name = ref.name;
@@ -235,13 +244,18 @@ export async function shareCopyItem(
     await assertNotPulledSkill(project, { kind, name }, "sharing");
   }
   const owner =
-    opts.adopt === true ? await findPreviousOwner(project, name) : null;
+    opts.adopt === true && installsAtSkillTarget(kind)
+      ? await findPreviousOwner(project, kind, name)
+      : null;
   if (opts.adopt === true) {
     if (owner === null && projectKey === null && localKey === null) {
+      const searched = installsAtSkillTarget(kind)
+        ? previousOwnerSearchPaths(project, kind)
+        : [];
       throw new PreconditionError(
         `nothing to adopt for ${kind}/${name}: no previous owner and no capshelf lock entry`,
         {
-          hint: `searched:\n    ${previousOwnerSearchPaths(project).join("\n    ")}`,
+          hint: `searched:\n    ${searched.join("\n    ")}`,
         },
       );
     }
@@ -305,7 +319,35 @@ export async function shareCopyItem(
   const writableProjectLock = assertWritableLock(projectLock, "capshelf share");
   const writableLocalLock = assertWritableLock(localLock, "capshelf share");
 
-  if (owner !== null) await warnAboutMissingLicense(project, name, owner);
+  // D2 guard 5. `self` is the remote row this adopt releases, so the item's
+  // own folder is not a second owner. It is never null here: null exempts an
+  // unmanaged folder, which is safe only for shelf `add` and its own
+  // recovery path.
+  if (owner?.kind === "remote" && installsAtSkillTarget(kind)) {
+    await assertSkillTargetFree(
+      project,
+      kind,
+      name,
+      {
+        project: projectLock,
+        local: localLock,
+        remotes: await loadRemotesLock(project),
+      },
+      { key: remoteKey(kind, name) },
+      { ignoreSkillsSh: true },
+    );
+  }
+  // Last of the refusals, so nobody is asked and then refused.
+  if (kind === "plugins") {
+    const approved = await checkPluginShare(project, name, scope, {
+      installMode: manifest.installMode,
+      json: opts.json === true,
+      yes: opts.yes === true,
+    });
+    if (!approved) return;
+  }
+
+  if (owner !== null) await warnAboutMissingLicense(project, kind, name, owner);
 
   // Before the snapshot, not after the commit, and unconditional the way
   // `move --to project` drops it. A project-scope adopt reads the installed
@@ -392,7 +434,7 @@ export async function shareCopyItem(
   // a second run converges through `finishInterruptedAdopt` above.
   let released = false;
   if (owner !== null) {
-    await previousOwnerFor(owner.kind).release(project, name, owner);
+    await releasePreviousOwner(project, kind, name, owner);
     released = true;
   }
 
@@ -471,7 +513,7 @@ async function finishInterruptedAdopt(input: {
     entry?.source === "data" ? entry.sourceCommit : "(unknown)";
   let released = false;
   if (owner !== null) {
-    await previousOwnerFor(owner.kind).release(project, name, owner);
+    await releasePreviousOwner(project, kind, name, owner);
     released = true;
   }
   if (input.json) {
@@ -506,6 +548,69 @@ async function finishInterruptedAdopt(input: {
   if (owner !== null) {
     console.log(`  released: ${ownerLabel(owner)} for ${kind}/${name}`);
   }
+}
+
+/**
+ * A previous owner exists only for a kind that installs at the skill target,
+ * because `findPreviousOwner` is asked for no other kind.
+ */
+async function releasePreviousOwner(
+  project: string,
+  kind: CopyDirectoryItemKind,
+  name: string,
+  owner: PreviousOwnerRecord,
+): Promise<void> {
+  if (!installsAtSkillTarget(kind)) {
+    throw new Error(`no previous owner can hold ${kind}/${name}`);
+  }
+  await previousOwnerFor(owner.kind).release(project, kind, name, owner);
+}
+
+/**
+ * The plugin checks of a share, before any data-repo write. D3: the copy
+ * being shared must carry the item name in its manifest, because Claude Code
+ * names the plugin from it. D7 point 3: project scope asks for consent with
+ * everything the copy runs. Returns false when the user answered no.
+ *
+ * The copy read here is the folder `adoptIntoDataRepo` snapshots. When no
+ * such folder exists, the adopt itself reports it.
+ */
+async function checkPluginShare(
+  project: string,
+  name: string,
+  scope: ShareScope,
+  opts: {
+    installMode: Manifest["installMode"];
+    json: boolean;
+    yes: boolean;
+  },
+): Promise<boolean> {
+  const source = findAdoptionSource(project, "plugins", name, opts.installMode);
+  if (source === null) return true;
+  const manifestName = await readPluginManifestName(
+    join(source.path, ...PLUGIN_MANIFEST_REL.split("/")),
+  );
+  if (manifestName !== name) {
+    throw new PreconditionError(
+      manifestName === null
+        ? `not sharing plugins/${name} — ${PLUGIN_MANIFEST_REL} has no "name" field`
+        : `not sharing plugins/${name} — its plugin.json names it "${sanitizeDisplayText(manifestName)}"`,
+      {
+        hint: `the item name is "${name}". ${PRODUCT_NAME} does not rename an item.`,
+      },
+    );
+  }
+  if (scope !== "project") return true;
+  return confirmPluginConsent(
+    [
+      {
+        kind: "project-scope",
+        ref: `plugins/${name}`,
+        runs: await pluginRunsOnDisk(source.path),
+      },
+    ],
+    { json: opts.json, yes: opts.yes },
+  );
 }
 
 function ownerLabel(owner: PreviousOwnerRecord): string {
@@ -567,6 +672,7 @@ async function printAdoptProvenance(
  */
 async function warnAboutMissingLicense(
   project: string,
+  kind: CopyDirectoryItemKind,
   name: string,
   owner: PreviousOwnerRecord,
 ): Promise<void> {
@@ -574,8 +680,19 @@ async function warnAboutMissingLicense(
     owner.kind === "remote" && owner.provenance.upstream !== null;
   const found = inspectedRoot
     ? await remoteLicense(owner)
-    : installedLicense(project, name);
-  if (found) return;
+    : { present: installedLicense(project, kind, name), insideItem: true };
+  // D9: a plugin is warned about a license at the repository root too. The
+  // adopt copies the plugin folder only, so a root license stays behind.
+  if (found.present && !found.insideItem && kind === "plugins") {
+    console.error(
+      `⚠ the license is at the ${owner.provenance.upstream ?? "upstream"} root${found.label ? ` (${found.label})` : ""}, not in the plugin`,
+    );
+    console.error(
+      "  you are copying someone else's work into your shelf. Check the terms yourself.",
+    );
+    return;
+  }
+  if (found.present) return;
   // The root is named only when it was read. A skills.sh row carries a `source`
   // URL too, but capshelf clones nothing for it, so the other branch inspects
   // the installed directory alone — claiming the root was checked would be a
@@ -590,23 +707,43 @@ async function warnAboutMissingLicense(
   );
 }
 
-async function remoteLicense(owner: PreviousOwnerRecord): Promise<boolean> {
+interface LicensePresence {
+  present: boolean;
+  /** False only when the license was found at the repository root. */
+  insideItem: boolean;
+  label?: string | null;
+}
+
+async function remoteLicense(
+  owner: PreviousOwnerRecord,
+): Promise<LicensePresence> {
+  const missing = { present: false, insideItem: false };
   const upstream = owner.provenance.upstream;
   const commit = owner.provenance.upstreamCommit;
   const subpath = owner.provenance.upstreamPath;
-  if (upstream === null || commit === null || subpath === null) return false;
+  if (upstream === null || commit === null || subpath === null) return missing;
   const cache = remoteCacheState(upstream);
-  if (!cache.present) return false;
+  if (!cache.present) return missing;
   // A cold cache cannot answer, and a warning nobody can act on is worse than
   // none, so an unreachable cache reports "found" and stays quiet.
   const finding = await findLicense(cache.path, commit, subpath).catch(
     () => null,
   );
-  return finding === null || finding.path !== null;
+  if (finding === null) return { present: true, insideItem: true };
+  if (finding.path === null) return missing;
+  return {
+    present: true,
+    insideItem: finding.insideItem,
+    label: finding.label,
+  };
 }
 
-function installedLicense(project: string, name: string): boolean {
-  const root = installedPath(project, "skills", name);
+function installedLicense(
+  project: string,
+  kind: CopyDirectoryItemKind,
+  name: string,
+): boolean {
+  const root = installedPath(project, kind, name);
   return ["LICENSE", "LICENSE.md", "LICENCE", "LICENCE.md", "COPYING"].some(
     (file) => existsSync(join(root, file)),
   );

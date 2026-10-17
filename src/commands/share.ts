@@ -33,7 +33,11 @@ export function registerShare(program: Command): void {
     )
     .option(
       "--adopt",
-      "take ownership of a skill installed from a repository URL or by skills.sh",
+      "take ownership of a skill or plugin installed from a repository URL, or of a skill installed by skills.sh",
+    )
+    .option(
+      "--yes",
+      "authorize the commands a plugin runs in project scope without prompting",
     )
     .option("-m, --message <msg>", "git commit message")
     .option("--json", "output JSON")
@@ -69,10 +73,11 @@ async function shareWithoutItem(
     opts.pick !== undefined ||
     opts.target !== undefined ||
     opts.to !== undefined ||
-    opts.adopt !== undefined
+    opts.adopt !== undefined ||
+    opts.yes !== undefined
   ) {
     throw new PreconditionError(
-      "share --from, --pick, --target, --to, and --adopt require an item; run capshelf share with no flags to pick interactively",
+      "share --from, --pick, --target, --to, --adopt, and --yes require an item; run capshelf share with no flags to pick interactively",
     );
   }
   // `--json` names a scripted caller, and a script cannot answer a prompt.

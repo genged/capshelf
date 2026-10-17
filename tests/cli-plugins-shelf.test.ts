@@ -1,6 +1,7 @@
 /**
  * A plugin on the shelf (`plugins/<n>` in the data repo): `add`, `move`,
- * `update`, `promote`, and `status` (spec D3, D7 points 1 to 3, D11, M2).
+ * `update`, `promote`, `status`, and `share --adopt` (spec D3, D7 points 1
+ * to 3, D9, D11, M2, M3, M4).
  */
 import { describe, expect, test } from "bun:test";
 import { $ } from "bun";
@@ -19,6 +20,13 @@ import {
   tempRepo,
 } from "./cli-fixtures";
 import type { CliResult } from "./cli-fixtures";
+import type { PluginSpec } from "./plugin-fixtures";
+import {
+  initRemoteProject,
+  pluginUpstream,
+  pushPluginChange,
+} from "./remote-fixtures";
+import type { RemoteProject, Upstream } from "./remote-fixtures";
 import { setDestructiveConfirmationContext } from "../src/destructive-change";
 import { PLUGIN_FENCE } from "../src/manifest-fence";
 
@@ -763,6 +771,320 @@ describe("status of a shelf plugin row (D11)", () => {
         "items",
       );
       expect(rows[0]?.runs).toEqual({ hooks: 1, mcpServers: 0, unknown: [] });
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+});
+
+const REMOTE_GH: PluginSpec = {
+  dir: "plugins/gh-cli",
+  manifestName: "gh-cli",
+  skills: [{ name: "gh-cli", description: "GitHub CLI" }],
+  files: {
+    "hooks/hooks.json": JSON.stringify(SETUP_HOOK),
+    "hooks/setup.sh": "echo hi\n",
+  },
+};
+
+interface AdoptWorld {
+  world: RemoteProject;
+  upstream: Upstream;
+  run: (args: string[]) => Promise<CliResult>;
+}
+
+/**
+ * `plugins/gh-cli` installed from an upstream as a remote row (Task 8).
+ * `rootLicense` commits a LICENSE at the upstream root, outside the plugin,
+ * before the install.
+ */
+async function remotePluginWorld(
+  opts: { rootLicense?: boolean; pluginLicense?: boolean } = {},
+): Promise<AdoptWorld> {
+  const world = await initRemoteProject();
+  const spec: PluginSpec = opts.pluginLicense
+    ? {
+        ...REMOTE_GH,
+        files: { ...REMOTE_GH.files, LICENSE: "MIT License\n" },
+      }
+    : REMOTE_GH;
+  const upstream = await pluginUpstream([spec], {});
+  if (opts.rootLicense) {
+    await pushPluginChange(upstream, "LICENSE", "MIT License\n\nCopyright\n");
+  }
+  const inProcess = runInProcess(world.project);
+  const run = (args: string[]): Promise<CliResult> =>
+    inProcess(args, world.env);
+  const added = await run([
+    "add",
+    upstream.url,
+    "--path",
+    "plugins/gh-cli",
+    "--yes",
+  ]);
+  expect(added.exitCode).toBe(0);
+  return { world, upstream, run };
+}
+
+async function headOf(repo: string): Promise<string> {
+  return (await $`git -C ${repo} rev-parse HEAD`.quiet().text()).trim();
+}
+
+function remotesLockPath(project: string): string {
+  return join(project, ".capshelf", "remotes.lock.json");
+}
+
+describe("share plugins/<n> --adopt (D9, M3, M4)", () => {
+  test(
+    "copies the edited plugin to the shelf, records provenance, and releases the remote row",
+    async () => {
+      const { world, run } = await remotePluginWorld();
+      const installed = pluginFolder(world.project, "gh-cli");
+      await writeFile(join(installed, "hooks", "setup.sh"), "echo edited\n");
+
+      const r = await run([
+        "share",
+        "plugins/gh-cli",
+        "--adopt",
+        "-m",
+        "adopt",
+        "--yes",
+      ]);
+      expect(r.exitCode).toBe(0);
+      const out = r.stdout.toString();
+      expect(out).toContain("✓ adopted local/data/plugins/gh-cli @ ");
+      expect(out).toContain(
+        "provenance recorded in plugins/gh-cli/.capshelf.yml:",
+      );
+      expect(out).toContain("released: remote row for plugins/gh-cli");
+
+      const shelfCopy = join(world.dataRepo, "plugins", "gh-cli");
+      expect(
+        await readFile(join(shelfCopy, "hooks", "setup.sh"), "utf-8"),
+      ).toBe("echo edited\n");
+      expect(existsSync(join(shelfCopy, ".claude-plugin", "plugin.json"))).toBe(
+        true,
+      );
+      const sidecar = await readFile(join(shelfCopy, ".capshelf.yml"), "utf-8");
+      expect(sidecar).toContain("upstream: ");
+      expect(sidecar).toMatch(/^upstreamCommit: [0-9a-f]{40}$/m);
+      expect(sidecar).toContain("upstreamPath: plugins/gh-cli");
+      expect(
+        (
+          await $`git -C ${world.dataRepo} status --porcelain`.quiet().text()
+        ).trim(),
+      ).toBe("");
+
+      const localLock = await readJsonObject(
+        join(world.project, ".capshelf", "local.lock.json"),
+      );
+      expect(Object.keys(objectField(localLock, "items"))).toContain(
+        "data/plugins/gh-cli",
+      );
+      expect(await lockKeys(world.project)).not.toContain(
+        "data/plugins/gh-cli",
+      );
+      const remotes = await readJsonObject(remotesLockPath(world.project));
+      expect(objectField(remotes, "items")).toEqual({});
+      // M3: the sidecar stays on the shelf, never in the installed copy.
+      expect(existsSync(join(installed, ".capshelf.yml"))).toBe(false);
+      expect(
+        await readFile(join(installed, "hooks", "setup.sh"), "utf-8"),
+      ).toBe("echo edited\n");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "never touches a skills.sh row with the same name (D9 correction)",
+    async () => {
+      const { world, run } = await remotePluginWorld();
+      const skillsLock = join(world.project, "skills-lock.json");
+      await writeFile(
+        skillsLock,
+        `${JSON.stringify(
+          {
+            version: 1,
+            skills: {
+              "gh-cli": {
+                source: "someone/skills",
+                sourceType: "github",
+                skillPath: "skills/gh-cli/SKILL.md",
+                computedHash: "abc",
+              },
+            },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      const before = await readFile(skillsLock);
+
+      const r = await run(["share", "plugins/gh-cli", "--adopt", "--yes"]);
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout.toString()).toContain(
+        "released: remote row for plugins/gh-cli",
+      );
+      expect(await readFile(skillsLock)).toEqual(before);
+      const remotes = await readJsonObject(remotesLockPath(world.project));
+      expect(objectField(remotes, "items")).toEqual({});
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "--to project with no terminal refuses before any data-repo write (point 3)",
+    async () => {
+      const { world, run } = await remotePluginWorld();
+      const headBefore = await headOf(world.dataRepo);
+      const remotesBefore = await readFile(remotesLockPath(world.project));
+
+      const r = await run([
+        "share",
+        "plugins/gh-cli",
+        "--adopt",
+        "--to",
+        "project",
+      ]);
+      expect(r.exitCode).toBe(3);
+      const err = r.stderr.toString();
+      expect(err).toContain("plugins/gh-cli");
+      expect(err).toContain("without consent");
+      expect(err).toContain("1 hook");
+      expect(err).toContain("every teammate's");
+      expect(err).toContain("--yes");
+      expect(await headOf(world.dataRepo)).toBe(headBefore);
+      expect(existsSync(join(world.dataRepo, "plugins", "gh-cli"))).toBe(false);
+      expect(await readFile(remotesLockPath(world.project))).toEqual(
+        remotesBefore,
+      );
+      expect(await lockKeys(world.project)).not.toContain(
+        "data/plugins/gh-cli",
+      );
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "--to project --yes commits the plugin to project scope",
+    async () => {
+      const { world, run } = await remotePluginWorld();
+      const r = await run([
+        "share",
+        "plugins/gh-cli",
+        "--adopt",
+        "--to",
+        "project",
+        "--yes",
+      ]);
+      expect(r.exitCode).toBe(0);
+      expect(r.stdout.toString()).toContain(
+        "✓ adopted project/data/plugins/gh-cli @ ",
+      );
+      // `--yes` skips the question, so the authorized runs go to stderr.
+      expect(r.stderr.toString()).toContain("every teammate's");
+      expect(await lockKeys(world.project)).toContain("data/plugins/gh-cli");
+      const manifest = await readJsonObject(manifestPath(world.project));
+      expect(manifest.shelves).toBe(PLUGIN_FENCE);
+      const remotes = await readJsonObject(remotesLockPath(world.project));
+      expect(objectField(remotes, "items")).toEqual({});
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "--to project answered no in a terminal writes nothing",
+    async () => {
+      const { world, run } = await remotePluginWorld();
+      const headBefore = await headOf(world.dataRepo);
+      const prompts: string[] = [];
+      const outer = setDestructiveConfirmationContext({
+        stdinIsTTY: true,
+        stderrIsTTY: true,
+        prompt: async (message) => {
+          prompts.push(message);
+          return "n";
+        },
+        stderr: { write: () => {} },
+      });
+      let r: CliResult;
+      try {
+        r = await run([
+          "share",
+          "plugins/gh-cli",
+          "--adopt",
+          "--to",
+          "project",
+        ]);
+      } finally {
+        setDestructiveConfirmationContext(outer);
+      }
+      expect(r.exitCode).toBe(0);
+      expect(prompts).toEqual([
+        "  plugins/gh-cli runs 1 hook.\n" +
+          "  project scope commits it. The hooks then run in every teammate's\n" +
+          "  Claude Code session after they trust this workspace.\n" +
+          "Commit it to the project? [y/N] ",
+      ]);
+      expect(await headOf(world.dataRepo)).toBe(headBefore);
+      const remotes = await readJsonObject(remotesLockPath(world.project));
+      expect(Object.keys(objectField(remotes, "items"))).toEqual([
+        "remote/plugins/gh-cli",
+      ]);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "warns when the license is at the repository root, outside the plugin",
+    async () => {
+      const { run } = await remotePluginWorld({ rootLicense: true });
+      const r = await run(["share", "plugins/gh-cli", "--adopt", "--yes"]);
+      expect(r.exitCode).toBe(0);
+      const err = r.stderr.toString();
+      expect(err).toMatch(
+        /⚠ the license is at the file:\/\/\S+ root \(MIT\), not in the plugin/,
+      );
+      expect(err).toContain(
+        "you are copying someone else's work into your shelf. Check the terms yourself.",
+      );
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "does not warn when the license is inside the plugin",
+    async () => {
+      const { run } = await remotePluginWorld({ pluginLicense: true });
+      const r = await run(["share", "plugins/gh-cli", "--adopt", "--yes"]);
+      expect(r.exitCode).toBe(0);
+      expect(r.stderr.toString()).not.toContain("license");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "refuses when the installed manifest names a different plugin (D3)",
+    async () => {
+      const { world, run } = await remotePluginWorld();
+      await writeFile(
+        join(
+          pluginFolder(world.project, "gh-cli"),
+          ".claude-plugin",
+          "plugin.json",
+        ),
+        JSON.stringify({ name: "gh-tools" }),
+      );
+      const headBefore = await headOf(world.dataRepo);
+      const r = await run(["share", "plugins/gh-cli", "--adopt", "--yes"]);
+      expect(r.exitCode).toBe(3);
+      const err = r.stderr.toString();
+      expect(err).toContain('"gh-tools"');
+      expect(err).toContain('"gh-cli"');
+      expect(await headOf(world.dataRepo)).toBe(headBefore);
+      const remotes = await readJsonObject(remotesLockPath(world.project));
+      expect(Object.keys(objectField(remotes, "items"))).toEqual([
+        "remote/plugins/gh-cli",
+      ]);
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );

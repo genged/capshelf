@@ -60,6 +60,44 @@ describe("skill-target owners", () => {
     });
   });
 
+  test("an adopt passes its remote row as self, and a lock owner still refuses", async () => {
+    const project = await tempDir("capshelf-target-");
+    const remotes = emptyRemotesLock();
+    remotes.items[remoteKey("plugins", "rr")] = {
+      upstream: "https://example.com/o/r",
+      ref: "main",
+      subpath: "plugins/rr",
+      sourceCommit: "1".repeat(40),
+      sourcePinDigest: "b".repeat(64),
+      appliedAt: "2024-01-01T00:00:00.000Z",
+    };
+    await writeFile(
+      join(project, "skills-lock.json"),
+      JSON.stringify({ version: 1, skills: { rr: { source: "o/r" } } }),
+    );
+    const self = { key: remoteKey("plugins", "rr") };
+    const alone = { project: emptyLock(), local: emptyLock(), remotes };
+    await assertSkillTargetFree(project, "plugins", "rr", alone, self, {
+      ignoreSkillsSh: true,
+    });
+    await expect(
+      assertSkillTargetFree(project, "plugins", "rr", alone, self),
+    ).rejects.toThrow(/already installed by skills\.sh/);
+    await expect(
+      assertSkillTargetFree(
+        project,
+        "plugins",
+        "rr",
+        {
+          ...alone,
+          local: { ...emptyLock(), items: { "data/skills/rr": entry } },
+        },
+        self,
+        { ignoreSkillsSh: true },
+      ),
+    ).rejects.toThrow(/already installed by data\/skills\/rr \(local scope\)/);
+  });
+
   test("skills.sh and an unmanaged folder are owners", async () => {
     const project = await tempDir("capshelf-target-");
     await writeFile(

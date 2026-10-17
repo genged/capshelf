@@ -55,7 +55,8 @@ export interface SkillTargetLocks {
  * The item's own lock key in the scope being written. For `move`, this is the
  * key in the scope the item is leaving: an owner equal to it is the item's own
  * folder, not a conflict, and `assertSkillTargetFree` drops it before it
- * refuses on the first owner left.
+ * refuses on the first owner left. For `share --adopt`, it is the remote key
+ * the adopt releases (`remote/<kind>/<n>`).
  */
 export interface SkillTargetSelf {
   key: string;
@@ -65,9 +66,16 @@ export interface SkillTargetSelf {
  * `addCommand` replaces `capshelf add <kind>/<name>` in the switch message.
  * A remote install passes its own command, because a shelf `add` of the
  * same ref would not install from the upstream.
+ *
+ * `ignoreSkillsSh` drops a skills.sh owner. Only `share --adopt` of a remote
+ * row sets it: that adopt keeps the folder where it is, changes only which
+ * capshelf record owns it, and never reads or releases a skills.sh row (spec
+ * D9 correction). A skills.sh row there was already beside the remote row,
+ * and the adopt leaves it as it found it.
  */
-export interface SkillTargetMessageOptions {
+export interface SkillTargetOptions {
   addCommand?: string;
+  ignoreSkillsSh?: boolean;
 }
 
 export type SkillTargetOwner =
@@ -160,17 +168,22 @@ export async function assertSkillTargetFree(
   name: string,
   locks: SkillTargetLocks,
   self: SkillTargetSelf | null,
-  options: SkillTargetMessageOptions = {},
+  options: SkillTargetOptions = {},
 ): Promise<void> {
   const owners = (await skillTargetOwners(project, name, locks)).filter(
     (owner) => {
       if (
-        (owner.owner === "project" || owner.owner === "local") &&
+        (owner.owner === "project" ||
+          owner.owner === "local" ||
+          owner.owner === "remote") &&
         owner.key === self?.key
       ) {
         return false;
       }
       if (self === null && owner.owner === "unmanaged") return false;
+      if (options.ignoreSkillsSh === true && owner.owner === "skills.sh") {
+        return false;
+      }
       return true;
     },
   );
@@ -195,7 +208,7 @@ async function skillTargetConflictMessage(
   kind: SkillTargetKind,
   name: string,
   owner: SkillTargetOwner,
-  options: SkillTargetMessageOptions,
+  options: SkillTargetOptions,
 ): Promise<string> {
   if (owner.owner === "skills.sh") {
     const external: ExternalSkill = (await findSkillsShSkill(
@@ -229,7 +242,7 @@ function lockOwnerConflictMessage(
   kind: SkillTargetKind,
   name: string,
   owner: { owner: "project" | "local" | "remote"; key: string },
-  options: SkillTargetMessageOptions,
+  options: SkillTargetOptions,
 ): string {
   const ownerRef = skillTargetRefFromKey(owner.key);
   const ownerLabel = `${ownerRef.kind}/${ownerRef.name}`;

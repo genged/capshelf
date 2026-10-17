@@ -1,10 +1,11 @@
 /**
- * Who owned a skill before `share --adopt` took it.
+ * Who owned a skill or a plugin before `share --adopt` took it.
  *
  * One interface with two implementations, by D13. A remote row and a skills.sh
  * row differ only in which file holds the record and how one row is deleted
  * from it; everything else in the transfer is identical, so nothing in
- * `share --adopt` branches on which owner it found.
+ * `share --adopt` branches on which owner it found. A plugin has one possible
+ * previous owner, its remote row: skills.sh never installs a plugin.
  *
  * Each record carries a digest over the *whole* file, captured when the record
  * was read and re-checked before the release. A file that changed in between is
@@ -43,9 +44,8 @@ export interface PreviousOwnerRecord {
 export interface PreviousOwner {
   /**
    * The record for this item, or null when this owner does not hold it.
-   * `kind` only matters to a remote row — a skills.sh row carries no kind —
-   * and today's only caller, `findPreviousOwner`, always asks for `skills`
-   * (Task 11 widens it for plugins).
+   * `kind` only matters to a remote row — a skills.sh row carries no kind, so
+   * `findPreviousOwner` never asks skills.sh about a plugin.
    */
   find(
     project: string,
@@ -53,12 +53,13 @@ export interface PreviousOwner {
     name: string,
   ): Promise<PreviousOwnerRecord | null>;
   /**
-   * Delete the skill's row. Refuses when the file changed since `record` was
+   * Delete the item's row. Refuses when the file changed since `record` was
    * captured. Preserves every field capshelf does not understand and the
    * file's trailing newline. Re-reads afterwards to prove the row is gone.
    */
   release(
     project: string,
+    kind: RemoteItemKind,
     name: string,
     record: PreviousOwnerRecord,
   ): Promise<void>;
@@ -87,17 +88,15 @@ export const REMOTE_PREVIOUS_OWNER: PreviousOwner = {
     };
   },
 
-  // Hardcoded to `skills`: today's only caller of `release` is the skill
-  // adopt path. Task 11 widens this for a plugin adopt.
-  async release(project, name, record) {
+  async release(project, kind, name, record) {
     const path = remotesLockPath(project);
-    await assertUnchanged(path, record, REMOTES_LOCK_LABEL, name);
+    await assertUnchanged(path, record, REMOTES_LOCK_LABEL, kind, name);
     const lock = await loadRemotesLock(project);
-    delete lock.items[remoteKey("skills", name)];
+    delete lock.items[remoteKey(kind, name)];
     await saveRemotesLock(project, lock);
     const after = await loadRemotesLock(project);
-    if (after.items[remoteKey("skills", name)] !== undefined) {
-      throw new Error(`failed to release the remote row for ${ref(name)}`);
+    if (after.items[remoteKey(kind, name)] !== undefined) {
+      throw new Error(`failed to release the remote row for ${kind}/${name}`);
     }
   },
 };
@@ -122,9 +121,9 @@ export const SKILLS_SH_PREVIOUS_OWNER: PreviousOwner = {
     };
   },
 
-  async release(project, name, record) {
+  async release(project, kind, name, record) {
     const path = join(project, SKILLS_SH_FILE);
-    await assertUnchanged(path, record, SKILLS_SH_FILE, name);
+    await assertUnchanged(path, record, SKILLS_SH_FILE, kind, name);
     const text = await readFile(path, "utf-8");
     const document = parseSkillsShLock(text);
     const skills = document.skills;
@@ -143,54 +142,65 @@ export const SKILLS_SH_PREVIOUS_OWNER: PreviousOwner = {
     );
     const after = parseSkillsShLock(await readFile(path, "utf-8"));
     if (skillsShRow(after, name) !== null) {
-      throw new Error(`failed to release the skills.sh row for ${ref(name)}`);
+      throw new Error(
+        `failed to release the skills.sh row for ${kind}/${name}`,
+      );
     }
   },
 };
 
 /**
- * The first owner that holds the skill, in the order remote, then skills.sh.
- *
- * Always asks for `skills`: every caller today is the skill adopt path. Task
- * 11 widens this for a plugin adopt.
+ * The first owner that holds the item. A skill asks remote, then skills.sh.
+ * A plugin asks its remote row only (spec D9 correction): the skills.sh owner
+ * matches a row by name alone, so asking it would find a skills.sh *skill*
+ * named like the plugin and release that skill's row.
  */
 export async function findPreviousOwner(
   project: string,
+  kind: RemoteItemKind,
   name: string,
 ): Promise<PreviousOwnerRecord | null> {
-  for (const owner of [REMOTE_PREVIOUS_OWNER, SKILLS_SH_PREVIOUS_OWNER]) {
-    const record = await owner.find(project, "skills", name);
+  for (const owner of previousOwnersFor(kind)) {
+    const record = await owner.find(project, kind, name);
     if (record !== null) return record;
   }
   return null;
+}
+
+function previousOwnersFor(kind: RemoteItemKind): PreviousOwner[] {
+  return kind === "skills"
+    ? [REMOTE_PREVIOUS_OWNER, SKILLS_SH_PREVIOUS_OWNER]
+    : [REMOTE_PREVIOUS_OWNER];
 }
 
 export function previousOwnerFor(kind: PreviousOwnerKind): PreviousOwner {
   return kind === "remote" ? REMOTE_PREVIOUS_OWNER : SKILLS_SH_PREVIOUS_OWNER;
 }
 
-/** Both places `share --adopt` searched, for the refusal that found neither. */
-export function previousOwnerSearchPaths(project: string): string[] {
-  return [remotesLockPath(project), join(project, SKILLS_SH_FILE)];
+/** Every place `share --adopt` searched, for the refusal that found none. */
+export function previousOwnerSearchPaths(
+  project: string,
+  kind: RemoteItemKind,
+): string[] {
+  return kind === "skills"
+    ? [remotesLockPath(project), join(project, SKILLS_SH_FILE)]
+    : [remotesLockPath(project)];
 }
 
 const REMOTES_LOCK_LABEL = "remotes.lock.json";
-
-function ref(name: string): string {
-  return `skills/${name}`;
-}
 
 async function assertUnchanged(
   path: string,
   record: PreviousOwnerRecord,
   label: string,
+  kind: RemoteItemKind,
   name: string,
 ): Promise<void> {
   if (existsSync(path) && (await fileDigest(path)) === record.digest) return;
   throw new PreconditionError(
-    `${label} changed while adopting ${ref(name)}; Capshelf kept the ${record.kind === "remote" ? "remote row" : "skills.sh entry"}`,
+    `${label} changed while adopting ${kind}/${name}; Capshelf kept the ${record.kind === "remote" ? "remote row" : "skills.sh entry"}`,
     {
-      hint: `check ${ref(name)} with capshelf status, then retry with --adopt`,
+      hint: `check ${kind}/${name} with capshelf status, then retry with --adopt`,
     },
   );
 }
