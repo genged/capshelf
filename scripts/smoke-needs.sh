@@ -75,7 +75,7 @@ assert after["items"][key]["needs"]["network"] == [
     "api.example.com",
     "mcp.exa.ai",
 ]
-assert after["version"] == 4
+assert after["version"] == 5
 PY
 
 echo "✓ smoke-needs ok ($TMP)"
