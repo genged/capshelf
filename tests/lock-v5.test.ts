@@ -1,5 +1,6 @@
 import { file } from "bun";
 import { describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -102,6 +103,54 @@ describe("lock version 5", () => {
       expect(localAfter.items).toEqual(localBefore.items);
 
       // Assert: the second run reports action "already-current".
+      const second = await run(["lock", "migrate", "--json"]);
+      expect(second.exitCode).toBe(0);
+      expect(JSON.parse(second.stdout.toString()).action).toBe(
+        "already-current",
+      );
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "lock migrate moves a version 4 project lock to 5 when no local lock file exists",
+    async () => {
+      // Arrange: init a project, add one shelf skill in project scope only
+      // — no `--local` add, so `.capshelf/local.lock.json` is never
+      // written — then rewrite the project lock with version 4.
+      const project = await tempRepo("capshelf-migrate-v5-no-local-");
+      const dataRepo = await tempRepo("capshelf-migrate-v5-no-local-data-");
+      const run = runInProcess(project);
+      await addSkill(dataRepo, "alpha", "alpha v1\n");
+      await commitAll(dataRepo, "skills v1");
+      expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+      expect((await run(["add", "skills/alpha"])).exitCode).toBe(0);
+
+      const projectPath = join(project, LOCK);
+      const localPath = join(project, LOCAL_LOCK);
+      expect(existsSync(localPath)).toBe(false);
+
+      const projectBefore = await file(projectPath).json();
+      expect(projectBefore.version).toBe(LOCK_VERSION);
+      await writeFile(
+        projectPath,
+        `${JSON.stringify({ ...projectBefore, version: 4 }, null, 2)}\n`,
+      );
+
+      // Act: `loadLocalLock` reads a missing file as an empty version-5
+      // lock (`emptyLock()`), so this snapshot pair is version 4 (project)
+      // beside version 5 (local, implicit) — the mixed case the fast path
+      // must also take, not just the uniform-v4 case above.
+      const migrated = await run(["lock", "migrate", "--yes", "--json"]);
+      expect(migrated.exitCode).toBe(0);
+
+      // Assert: the project lock becomes version 5 with items unchanged,
+      // and no local.lock.json is created.
+      const projectAfter = await file(projectPath).json();
+      expect(projectAfter.version).toBe(5);
+      expect(projectAfter.items).toEqual(projectBefore.items);
+      expect(existsSync(localPath)).toBe(false);
+
       const second = await run(["lock", "migrate", "--json"]);
       expect(second.exitCode).toBe(0);
       expect(JSON.parse(second.stdout.toString()).action).toBe(
