@@ -277,7 +277,7 @@ test(
         expectExit(refused, 3);
         expectOutputContains(
           refused,
-          "update --merge supports only skills and pi-extensions",
+          "update --merge supports only skills, plugins, pi-extensions",
         );
         expectOutputContains(refused, `${ref} is not supported`);
         expectSameState(before, await snapshot(), `refused --merge for ${ref}`);

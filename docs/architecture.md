@@ -10,7 +10,7 @@ real managed copies per project for copy items and reconciles shared JSON/TOML
 fragments into project config outputs.
 
 Requirements:
-1. Share skills, Pi extensions, subagents, settings, and MCPs across repos
+1. Share skills, plugins, Pi extensions, subagents, settings, and MCPs across repos
    from one or more user-owned **data repos**.
 2. Updates can stay local or be pushed up to the data repo.
 3. A change to a data repo **must not** disturb in-flight PRs on other projects.
@@ -112,18 +112,19 @@ the content and who owns the record.
 |---|---|---|---|
 | **system** | `bundled` — the CLI binary | the binary owns both | no — submit a PR to the capshelf repo |
 | **data** | `git-tree` — a repository, a commit, and an item root | the data repo owns the content, capshelf owns the record | yes — `share` and `promote` commit to the data repo |
-| **remote** | `git-tree` — a clone cache, a commit, and the subpath the URL named | an outside repository owns the content, capshelf owns a gitignored record | no — `share --adopt` vendors it into the shelf first |
+| **remote** | `git-tree`: a clone cache, a commit, and the subpath the URL named | an outside repository owns the content, capshelf owns a gitignored record | no. `share --adopt` vendors it into the shelf first |
 
 The first two populations live in the same lockfile with different entry
 schemas (see Lock below), and they differ on both axes at once, so one field
 could answer both questions. The third separates them: a remote skill is
 git-tree sourced like a data item and unpublishable like a system item.
 
-A remote skill is pinned by the same committed-tree digest every other item
-uses. Its record is `.capshelf/remotes.lock.json`, schema version 1, which is
-gitignored: every row is local scope, and a teammate who clones the project
-gets none of them. The version 4 project lock is untouched, so no project
-migrates because a remote skill exists. `share --adopt` is the one exit.
+A remote skill or plugin is pinned by the same committed-tree digest every
+other item uses. Its record is `.capshelf/remotes.lock.json`, which is
+gitignored. Every row is local scope, and a teammate who clones the project
+gets none of them. A file with skill rows only is schema version 1. A file
+with a `plugins` row is version 2, which capshelf 0.13 refuses. The project
+lock is untouched by a remote row. `share --adopt` is the one exit.
 
 Both values are derived in memory when a lock entry is read
 (`src/item-source.ts`). Ownership comes from two facts already on disk: which
@@ -146,6 +147,11 @@ A data repo is any directory matching this layout, with its own git history:
 │   └── <name>/
 │       ├── SKILL.md
 │       └── assets/…
+├── plugins/                    whole Claude Code plugin directories
+│   └── <name>/
+│       ├── .claude-plugin/
+│       │   └── plugin.json     required. Its "name" is the item name
+│       └── skills/ agents/ hooks/ …
 ├── pi/
 │   └── extensions/             project-local Pi extension copy items
 │       └── <name>/
@@ -184,10 +190,12 @@ commit-based reads accept only blob modes `100644` and `100755`.
 
 Items may carry an optional `.capshelf.yml` metadata sidecar at their
 directory root (see Item Metadata below). The CLI discovers installable
-items only from `skills/`, `pi/extensions/`, `subagents/`, `settings/`,
-`mcp/`, and
+items only from `skills/`, `plugins/`, `pi/extensions/`, `subagents/`,
+`settings/`, `mcp/`, and
 `codex/config/`; `bundles/*.yml` files are catalog data, not items (see
-Bundles below).
+Bundles below). A directory under `plugins/` is an item only when it holds
+`.claude-plugin/plugin.json` as a regular file. The manifest `name` must also
+equal the directory name, because Claude Code names a plugin from that field.
 
 Multiple data repos can coexist on a single machine. Projects pick one in
 their manifest.
@@ -202,8 +210,8 @@ their manifest.
 │   ├── local.json            gitignored binding plus clone-local copy-item intent
 │   ├── capshelf.lock.json    committed lock: pinned sha + sourceCommit, tool-managed
 │   ├── local.lock.json       gitignored lock for local-only items
-│   └── remotes.lock.json     gitignored record of skills pulled from outside repos
-├── .agents/skills/<name>/      default real skill directories
+│   └── remotes.lock.json     gitignored record of skills and plugins pulled from outside repos
+├── .agents/skills/<name>/      default real skill and plugin directories
 ├── .claude/skills/<name>       default per-skill symlink to .agents/skills/<name>
 ├── .pi/extensions/<name>/      project-local Pi extension directories
 ├── .claude/settings.json       Claude settings output, with local values preserved
@@ -227,6 +235,7 @@ Manifest:
   "installMode": "codex-compatible",
   "dataRepoUpstream": "https://github.com/acme/work-skills",
   "skills":   ["security-review"],
+  "plugins":  [],
   "settings": [],
   "mcp":      [],
   "codexConfig": [],
@@ -246,7 +255,8 @@ Local manifest:
 }
 ```
 
-Local scope is available to copy-directory items: skills and Pi extensions.
+Local scope is available to copy-directory items: skills, plugins, and Pi
+extensions.
 Subagents are project-scope only.
 Fragment kinds preserve project-local values inside generated outputs instead
 of using clone-local manifest entries. In Git projects, local-scope copy items
@@ -279,7 +289,7 @@ scheme/host URLs all canonicalize to `https://github.com/org/repo`. The scheme
 and host are lowercased, credentials and one trailing `.git` are stripped, and
 path case is preserved.
 
-### Lock schema (v4)
+### Lock schema (v5)
 
 Each entry is a discriminated union on `source`:
 
@@ -290,11 +300,13 @@ system: { source: "system", sha,             cliVersion,   appliedAt }
 
 The lock version describes **every entry in the file**: version 4 has no
 legacy data-entry variant, because a union would keep two identity models
-alive in every consumer. `capshelf lock migrate` builds a complete
-version-4 candidate for both locks, or writes nothing.
+alive in every consumer. Version 5 is version 4 plus the `plugins` kind, with
+the same entry shapes. Every writer requires version 5. `capshelf lock
+migrate` builds a complete version-5 candidate for both locks, or writes
+nothing. From version 4 it changes only the version number.
 
 Lock keys are prefixed, for example `data/skills/<name>`,
-`data/pi-extensions/<name>`, `data/settings/<name>`, `data/mcp/<name>`,
+`data/plugins/<name>`, `data/pi-extensions/<name>`, `data/settings/<name>`, `data/mcp/<name>`,
 `data/codex-config/<name>`, `data/subagents/<name>`, or
 `system/skills/<name>`. This avoids collisions and makes the source obvious.
 
@@ -332,6 +344,36 @@ Unrelated changes in the data repo do not bump `sourceCommit` for unaffected
 data items. An edit to another item or to a top-level README is such a
 change. `lastTouchingCommit` is path-scoped.
 
+### The shelves fence
+
+Capshelf 0.13 parses the manifest with a schema that keeps only the fields it
+knows. Its next save drops the rest. A project with a plugin holds a
+`plugins` array that 0.13 would delete with no error.
+
+Lock version 5 stops every 0.13 command that reads the lock. One 0.13 writer,
+`data upstream`, saves the manifest without a read of the lock. The fence
+covers that writer. 0.13 refuses any manifest or local config that holds a
+`shelves` key, before the schema strips fields. That key is reserved for
+multi-shelf federation. So a manifest with a non-empty `plugins` array also
+holds:
+
+```json
+"shelves": "plugin items: this project needs a capshelf release that supports plugins"
+```
+
+`.capshelf/local.json` holds the same fence when its own `plugins` array is
+not empty. The fence and the array are in one file, and one atomic write
+saves both. When the last plugin leaves the file, the fence goes with it.
+This capshelf accepts the exact fence string only, and only beside a
+non-empty `plugins` array. Any other `shelves` value is still refused with
+the federation message. A future federation release must accept the fence or
+replace it.
+
+0.13 prints a federation message for a plugin project. That reason is wrong,
+but its advice, "upgrade capshelf", is correct. `scripts/smoke-older-binary.sh`
+runs the 0.13 source against a plugin project and checks that each writer
+refuses and leaves the manifest and both locks unchanged.
+
 ### Item metadata
 
 Items carry catalog metadata from two sources:
@@ -339,7 +381,7 @@ Items carry catalog metadata from two sources:
 1. An optional `.capshelf.yml` sidecar at the **item directory root** in the
    data repo (`skills/<name>/.capshelf.yml`,
    `pi/extensions/<name>/.capshelf.yml`, `codex/config/<name>/.capshelf.yml`,
-   …), for all six kinds:
+   …), for all seven kinds:
 
    ```yaml
    description: Deep multi-pass security audit of changed files.
@@ -560,6 +602,7 @@ ignores.
 | kind | strategy | output |
 |---|---|---|
 | skills | copy whole directory | default: `.agents/skills/<name>/` plus `.claude/skills/<name>` symlink; `--claude-only`: `.claude/skills/<name>/` |
+| plugins | copy whole directory, with a required `.claude-plugin/plugin.json` | the same folder as a skill of that name |
 | pi-extensions | copy whole directory | `.pi/extensions/<name>/`; requires `index.ts`, no aliases or settings edits |
 | subagents | copy every present canonical target file | `.claude/agents/<name>.md` and/or `.codex/agents/<name>.toml` |
 | settings | merge `settings/<name>/settings.json` fragments in manifest order | `.claude/settings.json` |
@@ -572,6 +615,15 @@ or `subagents` item may carry one of its two candidate sources or both, so
 `add`, `show`, and `status` report its **target coverage** — every candidate
 runtime target, marked present or absent, with the output path it feeds — read
 at the commit the project pinned, never at the data repo's working tree.
+
+Skills and plugins share one install folder per name. The shelf can hold
+`skills/<name>` and `plugins/<name>` together, so a project can switch from
+one to the other on its own schedule. A project can install only one of them.
+A write that creates, replaces, or deletes that folder first checks every
+owner of it. The owners are both locks, the remote rows, skills.sh, and an
+unmanaged folder. It compares folders, with case and Unicode folding, not lock
+keys. Claude Code loads a plugin folder as `<name>@skills-dir` in a trusted
+workspace, and Codex sees its skills only.
 
 Apply and revert build a complete replacement copy-item tree in a temporary
 sibling directory, verify its bytes and modes, then publish it with renames.
@@ -793,6 +845,12 @@ the real managed directory when a skill is capshelf-owned.
 | 3rd-party | github via skills.sh | read-only | `skills-lock.json` |
 | Claude plugins | Claude plugin marketplaces/settings | read-only | Claude `enabledPlugins` settings |
 | project-only | this project | edit freely | nothing |
+
+A plugin that capshelf installs as a `plugins/<name>` item is in the first
+row, not the third. Its record is a capshelf lock, and no other tool owns it.
+Claude Code loads it from the skill folder with no `enabledPlugins` entry.
+The external Claude plugin rows print as `claude-plugins/<id>`, so they do not
+look like a `plugins/<name>` item.
 
 Everything outside the first row is external state: capshelf reports or
 warns, refuses to co-manage the paths, and never mutates the other tool's
