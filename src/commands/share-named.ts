@@ -44,7 +44,11 @@ import {
   PLUGIN_MANIFEST_REL,
   readPluginManifestName,
 } from "../master";
-import type { CopyDirectoryItemKind, FragmentItemKind } from "../master";
+import type {
+  CopyDirectoryItemKind,
+  FragmentItemKind,
+  SkillTargetKind,
+} from "../master";
 import { assertRepoClean, headSha, originRemoteUrl } from "../git";
 import { commitDataRepoMutation } from "../marketplace-files";
 import { PreconditionError } from "../errors";
@@ -73,7 +77,7 @@ import { findLicense } from "../remote-discovery";
 import { loadRemotesLock, remoteKey } from "../remotes-lock";
 import { assertSkillTargetFree } from "../skill-target";
 import { confirmPluginConsent } from "../plugin-consent";
-import { pluginRunsOnDisk } from "../plugin-runs";
+import { itemPluginRunsOnDisk } from "../plugin-runs";
 import { sanitizeDisplayText } from "../pick-core";
 import { installedPath } from "../installed";
 import { PRODUCT_NAME, METADATA_SIDECAR } from "../identity";
@@ -340,8 +344,8 @@ export async function shareCopyItem(
     );
   }
   // Last of the refusals, so nobody is asked and then refused.
-  if (kind === "plugins") {
-    const approved = await checkPluginShare(project, name, scope, {
+  if (installsAtSkillTarget(kind)) {
+    const approved = await checkPluginShare(project, kind, name, scope, {
       installMode: manifest.installMode,
       json: opts.json === true,
       yes: opts.yes === true,
@@ -570,15 +574,18 @@ async function releasePreviousOwner(
 
 /**
  * The plugin checks of a share, before any data-repo write. D3: the copy
- * being shared must carry the item name in its manifest, because Claude Code
- * names the plugin from it. D7 point 3: project scope asks for consent with
- * everything the copy runs. Returns false when the user answered no.
+ * of a plugin being shared must carry the item name in its manifest, because
+ * Claude Code names the plugin from it. D7 point 3: project scope asks for
+ * consent with everything the copy runs. A skill whose copy holds a plugin
+ * manifest asks the same way, because Claude Code loads it as a plugin (R1),
+ * but it keeps its name. Returns false when the user answered no.
  *
  * The copy read here is the folder `adoptIntoDataRepo` snapshots. When no
  * such folder exists, the adopt itself reports it.
  */
 async function checkPluginShare(
   project: string,
+  kind: SkillTargetKind,
   name: string,
   scope: ShareScope,
   opts: {
@@ -587,11 +594,14 @@ async function checkPluginShare(
     yes: boolean;
   },
 ): Promise<boolean> {
-  const source = findAdoptionSource(project, "plugins", name, opts.installMode);
+  const source = findAdoptionSource(project, kind, name, opts.installMode);
   if (source === null) return true;
-  const manifestName = await readPluginManifestName(
-    join(source.path, ...PLUGIN_MANIFEST_REL.split("/")),
-  );
+  const manifestName =
+    kind === "plugins"
+      ? await readPluginManifestName(
+          join(source.path, ...PLUGIN_MANIFEST_REL.split("/")),
+        )
+      : name;
   if (manifestName !== name) {
     throw new PreconditionError(
       manifestName === null
@@ -603,14 +613,10 @@ async function checkPluginShare(
     );
   }
   if (scope !== "project") return true;
+  const runs = await itemPluginRunsOnDisk(kind, source.path);
+  if (runs === null) return true;
   return confirmPluginConsent(
-    [
-      {
-        kind: "project-scope",
-        ref: `plugins/${name}`,
-        runs: await pluginRunsOnDisk(source.path),
-      },
-    ],
+    [{ kind: "project-scope", ref: `${kind}/${name}`, runs }],
     { json: opts.json, yes: opts.yes },
   );
 }

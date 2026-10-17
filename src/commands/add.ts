@@ -130,7 +130,7 @@ import type { BundlePlan, MemberPlan } from "../bundle-install";
 import { formatDeclaredNeeds } from "../needs-format";
 import { confirmPluginConsent } from "../plugin-consent";
 import type { PluginConsentPoint } from "../plugin-consent";
-import { pluginRunsAtCommit } from "../plugin-runs";
+import { itemPluginRunsAtCommit } from "../plugin-runs";
 import type { PluginRuns } from "../plugin-runs";
 import {
   assertSubagentOutputAvailable,
@@ -1071,23 +1071,26 @@ async function addBundle(
   }
 
   // D7 points 1 and 3 reach a bundle member too, or a plugin with hooks would
-  // install unasked through the bundle that holds it. One prompt covers every
-  // plugin member, and each member installs the pin its runs were read from.
+  // install unasked through the bundle that holds it. A skill member whose
+  // tree holds a plugin manifest is a plugin to Claude Code (R1), so it asks
+  // the same way. One prompt covers every such member, and each member
+  // installs the pin its runs were read from.
   const pluginPins = new Map<string, PinnedSource>();
   const pluginPoints: PluginConsentPoint[] = [];
   for (const member of plan.members) {
-    if (member.status !== "install" || member.kind !== "plugins") continue;
+    if (member.status !== "install") continue;
+    if (member.kind !== "plugins" && member.kind !== "skills") continue;
     const pin = await pinCurrentSource(ctx.dataRepo, member.kind, member.name, {
       memo: ctx.memo,
     });
-    pluginPins.set(member.ref, pin);
-    pluginPoints.push(
-      ...shelfPluginAddPoints(
-        member.name,
-        await pluginRunsAtCommit(ctx.dataRepo, pin.entries),
-        ctx.local,
-      ),
+    const runs = await itemPluginRunsAtCommit(
+      ctx.dataRepo,
+      member.kind,
+      pin.entries,
     );
+    if (runs === null) continue;
+    pluginPins.set(member.ref, pin);
+    pluginPoints.push(...shelfPluginAddPoints(member.ref, runs, ctx.local));
   }
   if (
     !(await confirmPluginConsent(pluginPoints, {
@@ -1404,23 +1407,30 @@ function systemItemAddRefusal(name: string): string {
  * typed by hand: preflight, confirm, then re-plan and prove the plan
  * unchanged — the consent was for the plan the user saw.
  *
- * A plugin asks before it installs commands (D7 points 1 and 3). The pin the
- * runs were read from travels to `installDataItem`, so the tree the user
- * approved is the tree that gets written. Any other item has no gate and
- * proceeds with no pin.
+ * A plugin asks before it installs commands (D7 points 1 and 3). So does a
+ * skill whose tree holds a plugin manifest, because Claude Code loads it as a
+ * plugin (R1). The pin the runs were read from travels to `installDataItem`,
+ * so the tree the user approved is the tree that gets written. Any other item
+ * has no gate and proceeds with no pin.
  */
 async function approveAddPin(
   ctx: Awaited<ReturnType<typeof loadAddContext>>,
   item: MasterItem,
   opts: { json: boolean; yes: boolean },
 ): Promise<{ proceed: boolean; pin: PinnedSource | null }> {
-  if (item.kind === "plugins") {
+  if (item.kind === "plugins" || item.kind === "skills") {
     const pin = await pinCurrentSource(ctx.dataRepo, item.kind, item.name, {
       memo: ctx.memo,
     });
+    const runs = await itemPluginRunsAtCommit(
+      ctx.dataRepo,
+      item.kind,
+      pin.entries,
+    );
+    if (runs === null) return { proceed: true, pin };
     const points = shelfPluginAddPoints(
-      item.name,
-      await pluginRunsAtCommit(ctx.dataRepo, pin.entries),
+      `${item.kind}/${item.name}`,
+      runs,
       ctx.local,
     );
     return { proceed: await confirmPluginConsent(points, opts), pin };
@@ -1446,13 +1456,14 @@ async function approveAddPin(
 /**
  * D7 point 1 for every shelf plugin add, and point 3 when the add writes
  * project scope, the default for a shelf add. The two go in one prompt.
+ * `ref` is `plugins/<name>`, or `skills/<name>` for a skill that holds a
+ * plugin manifest.
  */
 function shelfPluginAddPoints(
-  name: string,
+  ref: string,
   runs: PluginRuns,
   local: boolean,
 ): PluginConsentPoint[] {
-  const ref = `plugins/${name}`;
   return [
     { kind: "install", ref, runs },
     ...(local ? [] : [{ kind: "project-scope" as const, ref, runs }]),

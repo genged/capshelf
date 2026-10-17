@@ -52,7 +52,11 @@ import {
 } from "../plugin-consent";
 import { isRegularFile, pluginPath } from "../plugin-discovery";
 import type { DiscoveredPlugin, SkippedEntry } from "../plugin-discovery";
-import { pluginRunsAtCommit, runsHaveEntries } from "../plugin-runs";
+import {
+  itemPluginRunsAtCommit,
+  pluginRunsAtCommit,
+  runsHaveEntries,
+} from "../plugin-runs";
 import type { PluginRuns } from "../plugin-runs";
 import type { SkillPluginFacts } from "../plugin-facts";
 import {
@@ -771,6 +775,9 @@ async function installOne(input: {
     kind,
     name,
   );
+  // A skill whose tree holds a plugin manifest loads in Claude Code as a
+  // plugin and runs its hooks (R1), so the prompt shows what it runs.
+  const runs = await itemPluginRunsAtCommit(cachePath, kind, pin.entries);
 
   // The already-current check runs *before* the ownership checks, and the
   // order is required. `findInstallConflict` reports any existing output path
@@ -829,6 +836,7 @@ async function installOne(input: {
     name,
     summary,
     license,
+    runs,
     opts: input.opts,
   });
   if (!approved) return null;
@@ -1101,8 +1109,11 @@ async function confirmInstall(input: {
     totalBytes: number;
   };
   license: LicenseFinding;
+  /** What the skill runs as a plugin, or null when it holds no manifest. */
+  runs: PluginRuns | null;
   opts: RemoteAddOptions;
 }): Promise<boolean> {
+  const { runs } = input;
   if (input.opts.yes === true) {
     // D4/D7: `--yes` skips the prompt, so this is the only place the facts
     // block reaches a `--yes` install. It goes to stderr, never stdout, so
@@ -1111,15 +1122,24 @@ async function confirmInstall(input: {
     if (factsWarnOnInstall(facts)) {
       for (const line of renderPluginFacts(facts!)) console.error(line);
     }
+    if (runs !== null && runsHaveEntries(runs)) {
+      for (const line of pluginRunsField(runs)) console.error(line);
+    }
     return true;
   }
   const context = confirmationContext();
   const block = renderConsent(input);
   if (input.opts.json === true || !context.stdinIsTTY || !context.stderrIsTTY) {
+    const review = `review it first, then authorize with --yes. See what it holds: ${PRODUCT_NAME} add <url> --list`;
     throw new PreconditionError(
-      `not installing ${input.kind}/${input.name} without consent — capshelf does not review this content, and your agent runs it with your permissions`,
+      runs === null
+        ? `not installing ${input.kind}/${input.name} without consent — capshelf does not review this content, and your agent runs it with your permissions`
+        : `not installing ${input.kind}/${input.name} without consent — ${pluginConsentReason(runs)}`,
       {
-        hint: `review it first, then authorize with --yes. See what it holds: ${PRODUCT_NAME} add <url> --list`,
+        hint:
+          runs === null
+            ? review
+            : multilineHint([...pluginRunsField(runs), `  ${review}`]),
       },
     );
   }
@@ -1142,6 +1162,7 @@ function renderConsent(input: {
     totalBytes: number;
   };
   license: LicenseFinding;
+  runs: PluginRuns | null;
 }): string {
   const installPath = relative(
     input.project,
@@ -1165,6 +1186,7 @@ function renderConsent(input: {
       (file) =>
         `              ${safe(file.path).padEnd(width)}  ${formatBytes(file.bytes)}`,
     ),
+    ...(input.runs === null ? [] : pluginRunsField(input.runs)),
     `  license   ${describeLicense(input.license)}`,
     "",
     ...(factsWarnOnInstall(facts) ? [...renderPluginFacts(facts!), ""] : []),

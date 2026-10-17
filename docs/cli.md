@@ -800,6 +800,12 @@ Commit it to the project? [y/N]
 A shelf write asks only when the plugin has an entry. An `unknown` entry
 always counts as an entry, at all three points. One command asks once, for all of its points.
 
+A skill whose folder holds `.claude-plugin/plugin.json` is a plugin to
+Claude Code. Claude Code loads it as `<name>@skills-dir` and runs its hooks.
+Capshelf gives that skill the same consent points as a plugin, with the same
+`runs` block. The remote `add <url>` and `update` prompts for that skill also
+show the `runs` block. The skill keeps its name and its install folder.
+
 With no terminal, or with `--json`, each point refuses with exit 3 unless
 `--yes` is given. The refusal names the entries:
 

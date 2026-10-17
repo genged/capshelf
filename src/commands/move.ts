@@ -30,7 +30,7 @@ import { assertSkillTargetFree } from "../skill-target";
 import { gitTreeSource } from "../item-source";
 import { itemTreeEntriesAtCommit } from "../pin";
 import { confirmPluginConsent } from "../plugin-consent";
-import { pluginRunsAtCommit } from "../plugin-runs";
+import { itemPluginRunsAtCommit } from "../plugin-runs";
 
 interface MoveOptions {
   to?: string;
@@ -129,14 +129,16 @@ export function registerMove(program: Command): void {
 
       // D7 point 3, after `moveScope` refused drift and before any save: the
       // pinned tree is then what the installed folder holds, and what every
-      // teammate gets from the committed lock.
+      // teammate gets from the committed lock. A skill that holds a plugin
+      // manifest is a plugin to Claude Code (R1) and asks too.
       if (
         !result.alreadyCurrent &&
         result.to === "project" &&
-        result.kind === "plugins"
+        installsAtSkillTarget(result.kind)
       ) {
-        const runs = await pluginRunsAtCommit(
+        const runs = await itemPluginRunsAtCommit(
           dataRepo,
+          result.kind,
           await itemTreeEntriesAtCommit(
             gitTreeSource({
               repo: dataRepo,
@@ -147,10 +149,18 @@ export function registerMove(program: Command): void {
             result.kind,
           ),
         );
-        const approved = await confirmPluginConsent(
-          [{ kind: "project-scope", ref: `plugins/${result.name}`, runs }],
-          { json: opts.json === true, yes: opts.yes === true },
-        );
+        const approved =
+          runs === null ||
+          (await confirmPluginConsent(
+            [
+              {
+                kind: "project-scope",
+                ref: `${result.kind}/${result.name}`,
+                runs,
+              },
+            ],
+            { json: opts.json === true, yes: opts.yes === true },
+          ));
         if (!approved) return;
       }
 

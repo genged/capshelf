@@ -33,7 +33,11 @@ import { PLUGIN_MANIFEST_REL } from "./master";
 import { mergeNamedTrees, namedFilesEqual } from "./merge-tree";
 import type { NamedFile } from "./merge-tree";
 import { sanitizeDisplayText } from "./pick-core";
-import { newRunsEntries, pluginRunsAtCommit } from "./plugin-runs";
+import {
+  itemPluginNewRuns,
+  newRunsEntries,
+  pluginRunsAtCommit,
+} from "./plugin-runs";
 import type { PluginRuns } from "./plugin-runs";
 import { beginInstalledReconciliation } from "./promote-transaction";
 import { remoteCacheState, resolveCachedRef } from "./remote-cache";
@@ -240,6 +244,13 @@ export interface RemoteUpdatePreview {
   pin: PinnedSource | null;
   /** A plugin row's pin move. Null for a skill row and when nothing moves. */
   plugin: RemotePluginChange | null;
+  /**
+   * The runs entries the new pin adds (D7 point 2): for a plugin row, and
+   * for a skill row whose new tree holds a plugin manifest, because Claude
+   * Code loads that skill as a plugin (R1). Null for any other row and when
+   * nothing moves.
+   */
+  newRuns: PluginRuns | null;
 }
 
 /** What a plugin pin move changes in what the consent prompt reports. */
@@ -278,6 +289,7 @@ export async function previewRemoteUpdate(opts: {
     current: true,
     pin: null,
     plugin: null,
+    newRuns: null,
   };
   if (head === entry.sourceCommit) return unchanged;
 
@@ -308,6 +320,10 @@ export async function previewRemoteUpdate(opts: {
     kind === "plugins"
       ? await pluginChange(cache.path, name, before, pin.entries)
       : null;
+  const newRuns =
+    plugin !== null
+      ? plugin.newRuns
+      : await itemPluginNewRuns(cache.path, kind, before, pin.entries);
   return {
     from: entry.sourceCommit,
     to: head,
@@ -315,6 +331,7 @@ export async function previewRemoteUpdate(opts: {
     current: false,
     pin,
     plugin,
+    newRuns,
   };
 }
 

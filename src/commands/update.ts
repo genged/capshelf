@@ -61,6 +61,7 @@ import {
   PLUGIN_MANIFEST_REL,
   type CopyDirectoryItemKind,
   type ItemKind,
+  type SkillTargetKind,
 } from "../master";
 import {
   assertRepoClean,
@@ -145,7 +146,7 @@ import { assertSkillTargetFree } from "../skill-target";
 import { sanitizeDisplayText } from "../pick-core";
 import { confirmPluginConsent, newPluginRunsField } from "../plugin-consent";
 import type { PluginConsentPoint } from "../plugin-consent";
-import { runsHaveEntries } from "../plugin-runs";
+import { itemPluginNewRuns, runsHaveEntries } from "../plugin-runs";
 import type { PluginRuns } from "../plugin-runs";
 
 interface UpdateOptions {
@@ -350,11 +351,12 @@ export function registerUpdate(program: Command): void {
             target.scope === "local" ? writableLocalLock : writableProjectLock
           ).items[target.key];
           const mergeMove =
-            mergeItem.kind === "plugins" &&
+            installsAtSkillTarget(mergeItem.kind) &&
             mergeEntry?.source === "data" &&
             mergeEntry.local !== true
               ? await shelfPluginPinMove(
                   dataRepo,
+                  mergeItem.kind,
                   mergeItem.name,
                   mergeEntry,
                   new GitReadMemo(),
@@ -367,7 +369,7 @@ export function registerUpdate(program: Command): void {
               : [
                   {
                     kind: "pin-move",
-                    ref: `plugins/${mergeItem.name}`,
+                    ref: `${mergeItem.kind}/${mergeItem.name}`,
                     runs: mergeRuns,
                   },
                 ];
@@ -377,7 +379,7 @@ export function registerUpdate(program: Command): void {
               yes: opts.yes === true,
               dryRun: opts.dryRun === true,
               // `update` refuses `--merge --yes` for a shelf item.
-              advice: `review it first. --merge does not take --yes: run it in a terminal to answer the prompt, or take the new tree without your local edits with ${PRODUCT_NAME} update plugins/${mergeItem.name}${target.scope === "local" ? " --local" : ""} --yes`,
+              advice: `review it first. --merge does not take --yes: run it in a terminal to answer the prompt, or take the new tree without your local edits with ${PRODUCT_NAME} update ${mergeItem.kind}/${mergeItem.name}${target.scope === "local" ? " --local" : ""} --yes`,
             }))
           ) {
             return;
@@ -835,9 +837,9 @@ async function runRemoteUpdates(input: {
     // ask about: the runs entries the move adds.
     const wouldAsk =
       input.dryRun &&
-      preview.plugin !== null &&
-      runsHaveEntries(preview.plugin.newRuns)
-        ? preview.plugin.newRuns
+      preview.newRuns !== null &&
+      runsHaveEntries(preview.newRuns)
+        ? preview.newRuns
         : null;
     results.push({
       ...remoteResult(
@@ -894,9 +896,10 @@ async function confirmRemotePinMove(input: {
 }): Promise<RemoteConsent> {
   if (input.dryRun) return { approved: true, plan: null };
   const plugin = input.preview.plugin;
+  const newRuns = input.preview.newRuns;
   const runsLines =
-    plugin !== null && runsHaveEntries(plugin.newRuns)
-      ? newPluginRunsField("runs", plugin.newRuns)
+    newRuns !== null && runsHaveEntries(newRuns)
+      ? newPluginRunsField("runs", newRuns)
       : [];
   if (input.yes) {
     // `--yes` skips the prompt, so what the move adds goes to stderr, the
@@ -1828,10 +1831,11 @@ async function updateOneTarget(
   }
   // D3 and D7 point 2, outside the per-item `try` for the reason the check
   // above gives: an explicit `update plugins/<n>` whose new tree renames the
-  // plugin refuses with exit 3, before any write.
+  // plugin refuses with exit 3, before any write. A skill whose new tree
+  // holds a plugin manifest asks the same way (R1).
   let newRuns: PluginRuns | null = null;
   if (
-    parsed.kind === "plugins" &&
+    installsAtSkillTarget(parsed.kind) &&
     entry.source === "data" &&
     entry.local !== true &&
     ctx.dataRepo !== undefined
@@ -1839,6 +1843,7 @@ async function updateOneTarget(
     try {
       newRuns = await shelfPluginNewRuns(
         ctx.dataRepo,
+        parsed.kind,
         parsed.name,
         entry,
         ctx.memo,
@@ -1866,21 +1871,25 @@ async function updateOneTarget(
 
 /**
  * The runs entries a shelf plugin's pin move adds (D7 point 2). Null when
- * the pin would not move, or when the new pin cannot be built:
- * `updateDataTarget` reports that failure itself. Throws the D3 refusal when
- * the new tree's manifest names another plugin.
+ * the pin would not move, when the new pin cannot be built
+ * (`updateDataTarget` reports that failure itself), or for a skill whose new
+ * tree holds no plugin manifest. Throws the D3 refusal when a plugin's new
+ * tree names another plugin. A skill is never renamed, so a skill that holds
+ * a manifest only reports its new runs.
  *
  * Only an added entry asks. A script that changes behind an unchanged hook
  * line is not a new entry (D7 limit, M2).
  */
 async function shelfPluginNewRuns(
   dataRepo: string,
+  kind: SkillTargetKind,
   name: string,
   entry: DataLockEntryV4,
   memo: GitReadMemo,
 ): Promise<PluginRuns | null> {
   return (
-    (await shelfPluginPinMove(dataRepo, name, entry, memo))?.newRuns ?? null
+    (await shelfPluginPinMove(dataRepo, kind, name, entry, memo))?.newRuns ??
+    null
   );
 }
 
@@ -1891,11 +1900,12 @@ async function shelfPluginNewRuns(
  */
 async function shelfPluginPinMove(
   dataRepo: string,
+  kind: SkillTargetKind,
   name: string,
   entry: DataLockEntryV4,
   memo: GitReadMemo,
 ): Promise<{ pin: PinnedSource; newRuns: PluginRuns } | null> {
-  const next = await pinCurrentSource(dataRepo, "plugins", name, {
+  const next = await pinCurrentSource(dataRepo, kind, name, {
     memo,
   }).catch(() => null);
   if (next === null) return null;
@@ -1910,15 +1920,24 @@ async function shelfPluginPinMove(
   const previous = await itemTreeEntriesAtCommit(
     gitTreeSource({
       repo: dataRepo,
-      kind: "plugins",
+      kind,
       name,
       commit: entry.sourceCommit,
     }),
-    "plugins",
+    kind,
     memo,
   ).catch(() => []);
-  const change = await pluginChange(dataRepo, name, previous, next.entries);
-  return { pin: next, newRuns: change.newRuns };
+  if (kind === "plugins") {
+    const change = await pluginChange(dataRepo, name, previous, next.entries);
+    return { pin: next, newRuns: change.newRuns };
+  }
+  const newRuns = await itemPluginNewRuns(
+    dataRepo,
+    kind,
+    previous,
+    next.entries,
+  );
+  return newRuns === null ? null : { pin: next, newRuns };
 }
 
 /** A shelf row's new runs as a D7 point 2 consent point. */

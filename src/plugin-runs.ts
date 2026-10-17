@@ -33,6 +33,7 @@ import { lstatOrNull } from "./fs-utils";
 import { catFileBlobs } from "./git";
 import type { GitTreeSource } from "./item-source";
 import { PLUGIN_MANIFEST_REL } from "./master";
+import type { ItemKind } from "./master";
 import { itemTreeEntriesAtCommit } from "./pin";
 import type { PinTreeEntry } from "./pin";
 import { normalizeCatalogPath } from "./plugin-discovery";
@@ -595,6 +596,71 @@ export async function pluginRunsOnDisk(dir: string): Promise<PluginRuns> {
     return info !== null && info !== undefined && !info.isFile();
   });
   return runs;
+}
+
+/**
+ * Whether an item is a plugin to Claude Code, and so needs plugin consent
+ * (D7). A `plugins` item always is. A `skills` item is one when its tree
+ * holds `.claude-plugin/plugin.json`: Claude Code loads the skill folder as
+ * `<name>@skills-dir` and runs its hooks (spec R1). Any entry at that path
+ * counts, also a non-regular one, so an unsafe manifest gets the reader's
+ * unknown entry instead of no question.
+ */
+function carriesPluginManifest(
+  kind: ItemKind,
+  hasManifestEntry: () => boolean,
+): boolean {
+  if (kind === "plugins") return true;
+  return kind === "skills" && hasManifestEntry();
+}
+
+/**
+ * What a pinned item tree runs as a plugin, or null when the item is not a
+ * plugin to Claude Code (see `carriesPluginManifest`). Every consent site
+ * asks this instead of checking for the `plugins` kind.
+ */
+export async function itemPluginRunsAtCommit(
+  repo: string,
+  kind: ItemKind,
+  entries: readonly PinTreeEntry[],
+): Promise<PluginRuns | null> {
+  const isPlugin = carriesPluginManifest(kind, () =>
+    entries.some((entry) => entry.path === PLUGIN_MANIFEST_REL),
+  );
+  return isPlugin ? await pluginRunsAtCommit(repo, entries) : null;
+}
+
+/** `itemPluginRunsAtCommit` for an item directory on disk. */
+export async function itemPluginRunsOnDisk(
+  kind: ItemKind,
+  dir: string,
+): Promise<PluginRuns | null> {
+  const isPlugin = carriesPluginManifest(kind, () =>
+    Boolean(lstatOrNull(join(dir, ...PLUGIN_MANIFEST_REL.split("/")))),
+  );
+  return isPlugin ? await pluginRunsOnDisk(dir) : null;
+}
+
+/**
+ * The runs entries a pin move adds (D7 point 2) for an item that is a plugin
+ * to Claude Code at the new tree, or null when it is not one there. A tree
+ * that was not a plugin before (a skill that gains a manifest) counts as
+ * running nothing, so each of its entries is new.
+ */
+export async function itemPluginNewRuns(
+  repo: string,
+  kind: ItemKind,
+  before: readonly PinTreeEntry[],
+  after: readonly PinTreeEntry[],
+): Promise<PluginRuns | null> {
+  const next = await itemPluginRunsAtCommit(repo, kind, after);
+  if (next === null) return null;
+  const previous = (await itemPluginRunsAtCommit(repo, kind, before)) ?? {
+    hooks: [],
+    mcpServers: [],
+    unknown: [],
+  };
+  return newRunsEntries(previous, next);
 }
 
 /** What a plugin status row reports: counts, and each unread source (D11). */
