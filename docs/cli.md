@@ -721,8 +721,8 @@ with exit 3 and prints the switch:
 The check compares install folders, not lock keys. Names that differ only in
 case or in Unicode form count as one folder. Every owner counts: the project
 lock, the local lock, a remote row, a skills.sh row, and a folder that no
-tool manages. `add`, `update`, `apply`, `move`, `revert`, and
-`share --adopt` run the check before they write.
+tool manages. `add`, `update`, `apply`, `move`, `revert`, and `share`
+run the check before they write. `share` runs it with or without `--adopt`.
 
 A first `add` can take an unmanaged folder at the exact install path when
 its content matches the pin. An unmanaged folder whose name only folds to

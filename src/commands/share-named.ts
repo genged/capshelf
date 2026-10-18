@@ -323,13 +323,23 @@ export async function shareCopyItem(
   const writableProjectLock = assertWritableLock(projectLock, "capshelf share");
   const writableLocalLock = assertWritableLock(localLock, "capshelf share");
 
-  // D2 guard 5. `self` is the remote row this adopt releases, so the item's
-  // own folder is not a second owner. It is never null here: null exempts an
-  // unmanaged folder, which is safe only for shelf `add` and its own
-  // recovery path. A skills.sh row of the same name is a legitimate previous
-  // owner of a skill, so a skill adopt keeps its pre-guard behavior. For a
-  // plugin it is a second owner of the folder, and the adopt refuses.
-  if (owner?.kind === "remote" && installsAtSkillTarget(kind)) {
+  // D2 guard 5, for every share that acquires the skill-target folder, not
+  // only a remote adopt: a plain `share plugins/<n>` beside a tracked
+  // `skills/<n>` finds no plugin lock entry, and only this folder check stops
+  // a second owner. `self` is the key the share takes the folder from: the
+  // remote row an adopt releases, or the local entry a `--to project` share
+  // moves. With neither, `self` is null, which exempts only an unmanaged
+  // folder at the exact destination, the folder being shared. A skills.sh row
+  // of the same name is a legitimate previous owner of a skill, so a skill
+  // share keeps its pre-guard behavior. For a plugin it is a second owner of
+  // the folder, and the share refuses.
+  if (installsAtSkillTarget(kind)) {
+    const self =
+      owner?.kind === "remote"
+        ? { key: remoteKey(kind, name) }
+        : localKey !== null
+          ? { key: localKey }
+          : null;
     await assertSkillTargetFree(
       project,
       kind,
@@ -339,7 +349,7 @@ export async function shareCopyItem(
         local: localLock,
         remotes: await loadRemotesLock(project),
       },
-      { key: remoteKey(kind, name) },
+      self,
       { ignoreSkillsSh: kind === "skills" },
     );
   }

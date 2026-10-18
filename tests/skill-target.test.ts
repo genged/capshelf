@@ -485,6 +485,34 @@ describe("skill-target ownership at each write (D2 guard 5)", () => {
     expect(healthyRow?.action).not.toBe("error");
   });
 
+  test("share plugins/<n> refuses while skills/<n> owns the folder", async () => {
+    // A skill whose tree holds a valid plugin manifest. A plain share of
+    // `plugins/rr` finds no plugin lock entry, so only the folder check
+    // stops a second owner of `.agents/skills/rr`.
+    const project = await tempRepo("capshelf-target-share-project-");
+    const dataRepo = await tempRepo("capshelf-target-share-data-");
+    await writeSkill(dataRepo, "rr");
+    await mkdir(join(dataRepo, "skills", "rr", ".claude-plugin"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(dataRepo, "skills", "rr", ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "rr" }),
+    );
+    await commitAll(dataRepo, "baseline");
+
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/rr", "--local"])).exitCode).toBe(0);
+
+    const share = await run(["share", "plugins/rr", "--to", "local", "--yes"]);
+    expect(share.exitCode).toBe(3);
+    expect(share.stderr.toString()).toContain(
+      "is already installed by data/skills/rr (local scope)",
+    );
+    expect(existsSync(join(dataRepo, "plugins", "rr"))).toBe(false);
+  });
+
   test("rm keeps the folder when another owner still claims it", async () => {
     const project = await tempRepo("capshelf-target-rm-project-");
     const dataRepo = await tempRepo("capshelf-target-rm-data-");
