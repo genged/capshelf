@@ -689,6 +689,30 @@ describe("skill-target ownership at each write (D2 guard 5)", () => {
     );
   });
 
+  test("rm of a tracked skill beside a skills.sh row still refuses", async () => {
+    const project = await tempRepo(
+      "capshelf-target-rm-skillssh-skill-project-",
+    );
+    const dataRepo = await tempRepo("capshelf-target-rm-skillssh-skill-data-");
+    await writeSkill(dataRepo, "foo");
+    await commitAll(dataRepo, "baseline");
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/foo"])).exitCode).toBe(0);
+    await writeFile(
+      join(project, "skills-lock.json"),
+      JSON.stringify({ version: 1, skills: { foo: { source: "o/r" } } }),
+    );
+
+    const removed = await run(["rm", "skills/foo"]);
+    expect(removed.exitCode).toBe(3);
+    expect(removed.stderr.toString()).toContain("not removing skills/foo");
+    expect(removed.stderr.toString()).toContain("skills.sh");
+    expect(existsSync(join(project, ".agents", "skills", "foo"))).toBe(true);
+    const lock = JSON.parse(await readFile(lockPath(project), "utf-8"));
+    expect(lock.items["data/skills/foo"]).toBeDefined();
+  });
+
   test("rm keeps the folder when another owner still claims it", async () => {
     const project = await tempRepo("capshelf-target-rm-project-");
     const dataRepo = await tempRepo("capshelf-target-rm-data-");
@@ -863,6 +887,32 @@ describe("remote rows and folder ownership (D2 guard 5)", () => {
     expect(remotes.items["remote/skills/pdf"]).toBeUndefined();
     const lock = JSON.parse(await readFile(lockPath(world.project), "utf-8"));
     expect(lock.items["data/plugins/pdf"]).toBeDefined();
+  });
+
+  test("rm of a remote skill row beside a skills.sh row still refuses", async () => {
+    const upstream = await upstreamWith([["skills/pdf", "Extract text"]]);
+    const world = await initRemoteProject();
+    const run = runInProcess(world.project);
+    expect(
+      (await run(["add", upstream.url, "--yes"], world.env)).exitCode,
+    ).toBe(0);
+    await writeFile(
+      join(world.project, "skills-lock.json"),
+      JSON.stringify({ version: 1, skills: { pdf: { source: "o/r" } } }),
+    );
+    const removed = await run(["rm", "skills/pdf"], world.env);
+    expect(removed.exitCode).toBe(3);
+    expect(removed.stderr.toString()).toContain("not removing skills/pdf");
+    expect(existsSync(join(world.project, ".agents", "skills", "pdf"))).toBe(
+      true,
+    );
+    const remotes = JSON.parse(
+      await readFile(
+        join(world.project, ".capshelf", "remotes.lock.json"),
+        "utf-8",
+      ),
+    );
+    expect(remotes.items["remote/skills/pdf"]).toBeDefined();
   });
 
   test("rm --json of the remote row reports keptBy, and a local owner keeps the excludes", async () => {

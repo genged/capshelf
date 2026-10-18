@@ -121,20 +121,26 @@ export function registerRm(program: Command): void {
         return parsed.source === "data";
       });
 
-      // Before the skills.sh check: a tracked row beside a skills.sh row is
-      // removed with the folder kept (D2 guard 5), so only an untracked
-      // name refuses here.
+      // Before the skills.sh check. A tracked plugin row beside a skills.sh
+      // row is removed with the folder kept (D2 guard 5): skills.sh never
+      // installs a plugin, so the folder is the other tool's. A skill keeps
+      // the refusal, because skills.sh owns that skill.
       const remotes = await loadRemotesLock(project);
       const remoteKeys = remoteKeysForNamedRef(remotes, ref);
       if (ref.kind === undefined || installsAtSkillTarget(ref.kind)) {
         const external = await findSkillsShSkill(project, ref.name);
-        const tracksSkillTarget =
-          remoteKeys.length > 0 ||
-          dataKeys.some((key) => installsAtSkillTarget(parseLockKey(key).kind));
+        const hasLockedSkillTarget = dataKeys.some((key) =>
+          installsAtSkillTarget(parseLockKey(key).kind),
+        );
+        const tracksPlugin =
+          remoteKeys.some((key) => parseRemoteKey(key).kind === "plugins") ||
+          dataKeys.some((key) => parseLockKey(key).kind === "plugins");
         if (
           external &&
-          !tracksSkillTarget &&
-          (ref.kind !== undefined || dataKeys.length === 0)
+          !tracksPlugin &&
+          (ref.kind !== undefined ||
+            hasLockedSkillTarget ||
+            dataKeys.length === 0)
         ) {
           throw new PreconditionError(
             `not removing ${ref.kind ?? "skills"}/${ref.name} — ${skillsShConflictMessage(external)}`,

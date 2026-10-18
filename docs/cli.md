@@ -729,9 +729,9 @@ member. Two members that install to one folder, such as `skills/foo` and
 remote row too. A named row refuses with
 exit 3, and a sweep reports the row as an error.
 
-`rm` does not refuse when another owner claims the folder. This includes
-skills.sh: `rm` of a tracked row beside a skills.sh row keeps the folder.
-`rm` of a name that capshelf does not track still refuses beside skills.sh. It removes its
+`rm` does not refuse when another owner claims the folder. For a plugin
+this includes skills.sh: `rm` of a tracked plugin row beside a skills.sh
+row keeps the folder. `rm` of a skill that skills.sh claims still refuses. It removes its
 own record and keeps the folder and its alias. The text output prints `kept
 <folder>: it is installed by <owner>`, and `--json` adds `keptBy`. This
 applies to a shelf entry and to a remote row. The exclude lines for the
