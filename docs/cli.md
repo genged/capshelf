@@ -1583,6 +1583,12 @@ pass and nothing is written. Three explicit choices resolve one:
   source, through the ordinary consent boundary;
 - `--remove-item <ref>` drops the entry.
 
+A re-pin moves a pin to new content, so it asks plugin consent the way
+`update` does (point 2). It compares the installed folder with the new tree
+and the ignored local files that the write keeps. With no terminal or with
+`--json`, it refuses with exit 3 unless `--yes` is given. `--dry-run`
+reports the entries under `would ask`, and `--json` adds `wouldAsk`.
+
 A fragment cannot be re-pinned: its installed state lives inside a merged
 output file, so once its commit is gone capshelf cannot tell its former
 contribution from a project-local value. Remove it and `add` it again.

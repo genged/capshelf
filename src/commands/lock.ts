@@ -13,7 +13,7 @@ import { PreconditionError, ResultExitError } from "../errors";
 import { atomicWriteFile } from "../fs-utils";
 import { resolveCommit } from "../git";
 import { PRODUCT_NAME } from "../identity";
-import { parseLockKey } from "../installed";
+import { installedPath, parseLockKey } from "../installed";
 import {
   contentSourceFor,
   contentSourceOrNull,
@@ -33,8 +33,24 @@ import type { DataLockEntry, LockEntryV4, Lock, WritableLock } from "../lock";
 import { legacyShaAtCommit } from "../lock-verify";
 import { loadManifest } from "../manifest";
 import type { Manifest } from "../manifest";
-import { isCopyDirectoryItemKind, itemRepoRelPath } from "../master";
-import { materializeLockEntry } from "../materialize";
+import {
+  installsAtSkillTarget,
+  isCopyDirectoryItemKind,
+  itemRepoRelPath,
+} from "../master";
+import {
+  installedPreservedEntries,
+  materializeLockEntry,
+} from "../materialize";
+import { confirmPluginConsent, newPluginRunsField } from "../plugin-consent";
+import type { PluginConsentPoint } from "../plugin-consent";
+import {
+  itemPluginRunsAtCommit,
+  itemPluginRunsOnDisk,
+  newRunsEntries,
+  pluginExtraFile,
+  runsHaveEntries,
+} from "../plugin-runs";
 import { captureCommittedItemNeeds, loadCommittedItemNeeds } from "../metadata";
 import { localLockPath, lockPath, lockReadPath, projectRoot } from "../paths";
 import {
@@ -208,8 +224,23 @@ async function runMigrate(
     throw new ResultExitError(3);
   }
 
+  // D7 point 2: a repin moves a pin to new content, as `update` does, so it
+  // asks the same consent before any write.
+  const pluginPoints = await repinPluginPoints(project, dataRepo, plan);
   if (opts.dryRun) {
-    printPlan(plan, { dryRun: true, json: opts.json === true });
+    printPlan(plan, {
+      dryRun: true,
+      json: opts.json === true,
+      wouldAsk: pluginPoints,
+    });
+    return;
+  }
+  if (
+    !(await confirmPluginConsent(pluginPoints, {
+      json: opts.json === true,
+      yes: opts.yes === true,
+    }))
+  ) {
     return;
   }
 
@@ -569,6 +600,60 @@ async function repinEntry(
   };
 }
 
+/**
+ * The plugin consent points of the repinned skill-target entries. The old
+ * side is the installed folder, which is what Claude Code runs now. The new
+ * side is the repinned tree plus the ignored local files the write keeps.
+ * A repinned tree that is not a plugin to Claude Code asks nothing.
+ */
+async function repinPluginPoints(
+  project: string,
+  dataRepo: string,
+  plan: MigrationPlan,
+): Promise<PluginConsentPoint[]> {
+  const points: PluginConsentPoint[] = [];
+  for (const repair of plan.repinned) {
+    const parsed = parseLockKey(repair.key);
+    if (!installsAtSkillTarget(parsed.kind)) continue;
+    if (repair.entry.source !== "data") continue;
+    const entries = await itemTreeEntriesAtCommit(
+      gitTreeSource({
+        repo: dataRepo,
+        kind: parsed.kind,
+        name: parsed.name,
+        commit: repair.entry.sourceCommit,
+      }),
+      parsed.kind,
+    );
+    const extras = (
+      await installedPreservedEntries({
+        project,
+        kind: parsed.kind,
+        name: parsed.name,
+        scope: repair.scope,
+        managedPaths: new Set(entries.map((entry) => entry.path)),
+      })
+    ).map(pluginExtraFile);
+    const next = await itemPluginRunsAtCommit(
+      dataRepo,
+      parsed.kind,
+      entries,
+      extras,
+    );
+    if (next === null) continue;
+    const installed = installedPath(project, parsed.kind, parsed.name);
+    const previous = (existsSync(installed)
+      ? await itemPluginRunsOnDisk(parsed.kind, installed)
+      : null) ?? { hooks: [], mcpServers: [], unknown: [] };
+    points.push({
+      kind: "pin-move",
+      ref: repair.ref,
+      runs: newRunsEntries(previous, next),
+    });
+  }
+  return points;
+}
+
 async function plannedRepairLoss(
   input: { project: string; dataRepo: string; manifest: Manifest },
   scope: MigrationScope,
@@ -712,8 +797,16 @@ function printBlocked(plan: MigrationPlan, json: boolean): void {
 
 function printPlan(
   plan: MigrationPlan,
-  opts: { dryRun: boolean; json: boolean },
+  opts: {
+    dryRun: boolean;
+    json: boolean;
+    /** A dry run's consent points: what the real run would ask about. */
+    wouldAsk?: readonly PluginConsentPoint[];
+  },
 ): void {
+  const wouldAsk = (opts.wouldAsk ?? []).filter((point) =>
+    runsHaveEntries(point.runs),
+  );
   const repaired = plan.converted.filter(
     (entry) => entry.outcome === "repaired-legacy-identity",
   );
@@ -729,6 +822,12 @@ function printPlan(
           repinned: refsOf(plan.repinned),
           removed: plan.removed.map((entry) => `${entry.scope}/${entry.ref}`),
           blocked: [],
+          ...(wouldAsk.length > 0 && {
+            wouldAsk: wouldAsk.map((point) => ({
+              ref: `${plan.repinned.find((entry) => entry.ref === point.ref)?.scope ?? "project"}/${point.ref}`,
+              newRuns: point.runs,
+            })),
+          }),
         },
         null,
         2,
@@ -752,6 +851,12 @@ function printPlan(
     console.log(`  removed                    ${plan.removed.length}`);
   }
   console.log("  blocked                    0");
+  for (const point of wouldAsk) {
+    console.log(`  plugin    ${point.ref}`);
+    for (const line of newPluginRunsField("would ask", point.runs)) {
+      console.log(line);
+    }
+  }
   if (opts.dryRun) console.log("Dry run; nothing written.");
 }
 

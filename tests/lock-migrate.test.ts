@@ -1,7 +1,8 @@
 import { $, file } from "bun";
 import { describe, expect, test } from "bun:test";
 import type { ConfigObject } from "../src/config-values";
-import { readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { shaOfGitVisibleItem } from "../src/master";
 import {
@@ -242,6 +243,92 @@ describe("capshelf lock migrate", () => {
       expect(repaired.exitCode).toBe(0);
       expect((await file(join(project, LOCK)).json()).version).toBe(5);
       expect((await file(localPath).json()).version).toBe(5);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "--repin asks plugin consent when the new tree adds a manifest and a hook",
+    async () => {
+      const { project, dataRepo, run } = await migratedProject(
+        "capshelf-migrate-repin-plugin",
+      );
+      await downgradeToV3(project, dataRepo, [
+        {
+          file: LOCK,
+          kind: "skills",
+          name: "alpha",
+          repoRelPath: "skills/alpha",
+        },
+        {
+          file: LOCAL_LOCK,
+          kind: "skills",
+          name: "beta",
+          repoRelPath: "skills/beta",
+        },
+      ]);
+      await mkdir(join(dataRepo, "skills", "alpha", ".claude-plugin"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(dataRepo, "skills", "alpha", ".claude-plugin", "plugin.json"),
+        JSON.stringify({ name: "alpha" }),
+      );
+      await mkdir(join(dataRepo, "skills", "alpha", "hooks"), {
+        recursive: true,
+      });
+      await writeFile(
+        join(dataRepo, "skills", "alpha", "hooks", "hooks.json"),
+        JSON.stringify({
+          hooks: {
+            SessionStart: [
+              { hooks: [{ type: "command", command: "bash hooks/repin.sh" }] },
+            ],
+          },
+        }),
+      );
+      await commitAll(dataRepo, "alpha becomes a plugin");
+      const lockBytes = await readFile(join(project, LOCK), "utf-8");
+      const installedHooks = join(
+        project,
+        ".agents",
+        "skills",
+        "alpha",
+        "hooks",
+        "hooks.json",
+      );
+
+      const refused = await run(["lock", "migrate", "--repin", "skills/alpha"]);
+      expect(refused.exitCode).toBe(3);
+      const err = refused.stderr.toString();
+      expect(err).toContain("not updating skills/alpha without consent");
+      expect(err).toContain("bash hooks/repin.sh");
+      expect(err).toContain("--yes");
+      expect(await readFile(join(project, LOCK), "utf-8")).toBe(lockBytes);
+      expect(existsSync(installedHooks)).toBe(false);
+
+      const dry = await run([
+        "lock",
+        "migrate",
+        "--repin",
+        "skills/alpha",
+        "--dry-run",
+        "--json",
+      ]);
+      expect(dry.exitCode).toBe(0);
+      const preview = JSON.parse(dry.stdout.toString());
+      expect(preview.wouldAsk[0].ref).toBe("project/skills/alpha");
+      expect(JSON.stringify(preview.wouldAsk)).toContain("bash hooks/repin.sh");
+
+      const yes = await run([
+        "lock",
+        "migrate",
+        "--repin",
+        "skills/alpha",
+        "--yes",
+      ]);
+      expect(yes.exitCode).toBe(0);
+      expect(existsSync(installedHooks)).toBe(true);
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );
