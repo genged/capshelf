@@ -672,6 +672,23 @@ describe("skill-target ownership at each write (D2 guard 5)", () => {
     expect(await readFile(excludePath, "utf-8")).toContain(".agents/skills/p/");
   });
 
+  test("update refuses while one key is in both locks", async () => {
+    const project = await tempRepo("capshelf-target-update-both-project-");
+    const dataRepo = await tempRepo("capshelf-target-update-both-data-");
+    await writePlugin(dataRepo, "p", "p");
+    await commitAll(dataRepo, "baseline");
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "plugins/p", "--local"])).exitCode).toBe(0);
+    await injectConflictingEntry(project, dataRepo, "plugins", "p", "project");
+
+    const update = await run(["update", "--json"]);
+    expect(update.exitCode).toBe(3);
+    expect(update.stderr.toString()).toContain(
+      "owned by both project and local scope: data/plugins/p",
+    );
+  });
+
   test("rm keeps the folder when another owner still claims it", async () => {
     const project = await tempRepo("capshelf-target-rm-project-");
     const dataRepo = await tempRepo("capshelf-target-rm-data-");

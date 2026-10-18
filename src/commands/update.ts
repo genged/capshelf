@@ -151,6 +151,7 @@ import type {
 } from "../remotes-lock";
 import { factsWarnOnInstall, renderPluginFacts } from "../remote-list-render";
 import { assertSkillTargetFree } from "../skill-target";
+import { assertNoScopeCollisions } from "../status-core";
 import { sanitizeDisplayText } from "../pick-core";
 import { confirmPluginConsent, newPluginRunsField } from "../plugin-consent";
 import type {
@@ -250,6 +251,9 @@ export function registerUpdate(program: Command): void {
         }
         const { project, manifest, projectLock, localLock } =
           await loadProjectContext({ cmd });
+        // As `apply` and `status` do: one key in both locks is two owners of
+        // one install, and a sweep would write it twice from two pins.
+        assertNoScopeCollisions(projectLock, localLock, "updating");
         // A remote row is in neither capshelf lock by A3, so it is resolved
         // here rather than by `resolveTrackedTarget`: widening that resolver
         // would change the return type for `apply` and `status` at once.

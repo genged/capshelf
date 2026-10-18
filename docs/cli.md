@@ -736,6 +736,9 @@ own record and keeps the folder and its alias. The text output prints `kept
 <folder>: it is installed by <owner>`, and `--json` adds `keptBy`. This
 applies to a shelf entry and to a remote row. The exclude lines for the
 folder stay while a local-scope entry or a remote row still uses them.
+An interrupted `move` can leave one key in both locks. `rm` of one scope
+then keeps the folder for the other scope. `status`, `apply`, and `update`
+refuse that state until one owner is removed.
 
 A first `add` can take an unmanaged folder at the exact install path when
 its content matches the pin. The add keeps the ignored local files in that
