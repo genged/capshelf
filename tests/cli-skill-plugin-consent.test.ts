@@ -10,6 +10,13 @@ import { $ } from "bun";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { updateOneTarget } from "../src/commands/update";
+import { setDestructiveConfirmationContext } from "../src/destructive-change";
+import { GitReadMemo } from "../src/git-read-memo";
+import { assertWritableLock, loadLocalLock, loadLock } from "../src/lock";
+import { loadManifest } from "../src/manifest";
+import { pinCurrentSource } from "../src/pin";
+import { emptyRemotesLock } from "../src/remotes-lock";
 import {
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
   commitAll,
@@ -637,6 +644,105 @@ describe("a remote skill that holds a plugin manifest", () => {
       expect(existsSync(join(installed, ".claude-plugin", "plugin.json"))).toBe(
         true,
       );
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+});
+
+describe("shelf update installs the pin the user approved", () => {
+  test(
+    "a commit during the consent prompt does not install unasked",
+    async () => {
+      const w = await world();
+      expect((await w.run(["add", "skills/inert"])).exitCode).toBe(0);
+      await writeUnder(
+        w.dataRepo,
+        "skills/inert/hooks/hooks.json",
+        hooksJson("bash hooks/asked.sh"),
+      );
+      await commitAll(w.dataRepo, "add an asked hook");
+
+      const prompts: string[] = [];
+      const outer = setDestructiveConfirmationContext({
+        stdinIsTTY: true,
+        stderrIsTTY: true,
+        prompt: async (message) => {
+          prompts.push(message);
+          if (prompts.length === 1) {
+            await writeUnder(
+              w.dataRepo,
+              "skills/inert/hooks/hooks.json",
+              hooksJson("bash hooks/unasked.sh"),
+            );
+            await commitAll(
+              w.dataRepo,
+              "swap the hook while the prompt is open",
+            );
+          }
+          return "y";
+        },
+        stderr: { write: () => {} },
+      });
+      try {
+        await w.run(["update", "skills/inert"]);
+      } finally {
+        setDestructiveConfirmationContext(outer);
+      }
+      expect(prompts[0]).toContain("bash hooks/asked.sh");
+      const hooksPath = join(
+        w.project,
+        ".agents",
+        "skills",
+        "inert",
+        "hooks",
+        "hooks.json",
+      );
+      if (existsSync(hooksPath)) {
+        expect(await readFile(hooksPath, "utf-8")).not.toContain("unasked.sh");
+      }
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "the write pass installs the approved pin, not a later commit",
+    async () => {
+      const w = await world();
+      expect((await w.run(["add", "skills/inert"])).exitCode).toBe(0);
+      await writeUnder(w.dataRepo, "skills/inert/notes.md", "notes\n");
+      await commitAll(w.dataRepo, "notes");
+      const approved = await pinCurrentSource(w.dataRepo, "skills", "inert");
+      // A commit after the re-plan check: the write pass must not read it.
+      await writeUnder(
+        w.dataRepo,
+        "skills/inert/hooks/hooks.json",
+        hooksJson("bash hooks/late.sh"),
+      );
+      await commitAll(w.dataRepo, "a late hook");
+
+      const projectLock = assertWritableLock(await loadLock(w.project), "test");
+      const key = "data/skills/inert";
+      const outcome = await updateOneTarget(
+        {
+          memo: new GitReadMemo(),
+          project: w.project,
+          manifest: await loadManifest(w.project),
+          dataRepo: w.dataRepo,
+          dryRun: false,
+          explicit: true,
+          externalSkillByName: new Map(),
+          projectLock,
+          localLock: await loadLocalLock(w.project),
+          remotes: emptyRemotesLock(),
+          approvedPins: new Map([[`project:${key}`, approved]]),
+        },
+        { scope: "project", key },
+        projectLock.items[key]!,
+      );
+      expect(outcome.pin?.sourceCommit).toBe(approved.sourceCommit);
+      const installed = join(w.project, ".agents", "skills", "inert");
+      expect(existsSync(join(installed, "notes.md"))).toBe(true);
+      expect(existsSync(join(installed, "hooks", "hooks.json"))).toBe(false);
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );

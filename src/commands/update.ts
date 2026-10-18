@@ -539,7 +539,12 @@ export function registerUpdate(program: Command): void {
           const lock =
             scope === "local" ? writableLocalLock : writableProjectLock;
           const entry = lock.items[key]!;
-          const outcome = await updateOneTarget(ctx, target, entry);
+          // The pins the user approved, not a fresh read of the data repo.
+          const outcome = await updateOneTarget(
+            { ...ctx, approvedPins: preflight.pins },
+            target,
+            entry,
+          );
           results.push(outcome.result);
           if (outcome.fragment) {
             const contribution = outcome.fragment;
@@ -1607,7 +1612,7 @@ function mergeUpdateProvenanceError(
   );
 }
 
-interface UpdateContext {
+export interface UpdateContext {
   memo: GitReadMemo;
   project: string;
   manifest: Manifest;
@@ -1619,11 +1624,23 @@ interface UpdateContext {
   projectLock: Lock;
   localLock: Lock;
   remotes: RemotesLock;
+  /**
+   * The pins the preflight read, keyed by `pinKey`. The write pass installs
+   * exactly these, so a data-repo commit after the consent prompt or after
+   * the re-plan check cannot reach the folder unasked.
+   */
+  approvedPins?: ReadonlyMap<string, PinnedSource>;
 }
 
 interface UpdatePreflight {
   results: UpdateResult[];
   destructivePlan: DestructiveChangePlan;
+  /** The pin each data target was planned at, keyed by `pinKey`. */
+  pins: Map<string, PinnedSource>;
+}
+
+function pinKey(scope: "project" | "local", key: string): string {
+  return `${scope}:${key}`;
 }
 
 async function planUpdatePreflight(
@@ -1640,11 +1657,13 @@ async function planUpdatePreflight(
   const fragmentTargets = new Set<FragmentTarget>();
   const fragmentItems = new Map<FragmentTarget, Set<string>>();
 
+  const pins = new Map<string, PinnedSource>();
   for (const target of targets) {
     const lock = target.scope === "local" ? localLock : projectLock;
     const currentEntry = lock.items[target.key]!;
     const outcome = await updateOneTarget(dryContext, target, currentEntry);
     results.push(outcome.result);
+    if (outcome.pin) pins.set(pinKey(target.scope, target.key), outcome.pin);
     snapshotParts.push(
       `update-result:${target.scope}:${target.key}:${JSON.stringify(outcome.result)}`,
     );
@@ -1818,6 +1837,7 @@ async function planUpdatePreflight(
   return {
     results,
     destructivePlan: createDestructiveChangePlan(changes, snapshotParts),
+    pins,
   };
 }
 
@@ -1878,7 +1898,7 @@ interface FragmentContribution {
   lockChanged: boolean;
 }
 
-interface TargetOutcome {
+export interface TargetOutcome {
   result: UpdateResult;
   /** Lock entry to write into the target's scope when this is not a dry run. */
   newEntry?: LockEntryV4;
@@ -1886,9 +1906,16 @@ interface TargetOutcome {
   changed?: boolean;
   /** Fragment items defer their lock write and reconcile after the loop. */
   fragment?: FragmentContribution;
+  /** The pin a data target was planned or written at. */
+  pin?: PinnedSource;
 }
 
-async function updateOneTarget(
+/**
+ * Plan or write one target. The preflight and the write pass both call it.
+ * Exported for tests, which check that the write pass installs the pin in
+ * `ctx.approvedPins` and not a fresh read of the data repo.
+ */
+export async function updateOneTarget(
   ctx: UpdateContext,
   target: ScopedTarget,
   entry: LockEntryV4,
@@ -1958,12 +1985,25 @@ async function updateOneTarget(
   // above gives: an explicit `update plugins/<n>` whose new tree renames the
   // plugin refuses with exit 3, before any write. A skill whose new tree
   // holds a plugin manifest asks the same way (R1).
+  // One pin for the consent read and for the write: the approved pin in the
+  // write pass, else the current committed tree. Null here means the pin
+  // cannot be built; `updateDataTarget` then reports that failure itself.
+  const pin =
+    entry.source === "data" &&
+    entry.local !== true &&
+    ctx.dataRepo !== undefined
+      ? (ctx.approvedPins?.get(pinKey(scope, key)) ??
+        (await pinCurrentSource(ctx.dataRepo, parsed.kind, parsed.name, {
+          memo: ctx.memo,
+        }).catch(() => null)))
+      : null;
   let newRuns: PluginRuns | null = null;
   if (
     installsAtSkillTarget(parsed.kind) &&
     entry.source === "data" &&
     entry.local !== true &&
-    ctx.dataRepo !== undefined
+    ctx.dataRepo !== undefined &&
+    pin !== null
   ) {
     try {
       newRuns = await shelfPluginNewRuns(
@@ -1973,6 +2013,7 @@ async function updateOneTarget(
         entry,
         ctx.memo,
         { project: ctx.project, scope },
+        pin,
       );
     } catch (err) {
       if (ctx.explicit) throw err;
@@ -1982,7 +2023,7 @@ async function updateOneTarget(
   try {
     const outcome =
       entry.source === "data"
-        ? await updateDataTarget(ctx, scope, key, parsed, entry)
+        ? await updateDataTarget(ctx, scope, key, parsed, entry, pin)
         : await updateSystemTarget(ctx, scope, key, parsed, entry);
     // A dry pass carries what the real run asks about. The preflight is a
     // dry pass, so the command reads the consent points from these rows.
@@ -2013,10 +2054,20 @@ async function shelfPluginNewRuns(
   entry: DataLockEntryV4,
   memo: GitReadMemo,
   installed: InstalledItem,
+  next: PinnedSource,
 ): Promise<PluginRuns | null> {
   return (
-    (await shelfPluginPinMove(dataRepo, kind, name, entry, memo, installed))
-      ?.newRuns ?? null
+    (
+      await shelfPluginPinMove(
+        dataRepo,
+        kind,
+        name,
+        entry,
+        memo,
+        installed,
+        next,
+      )
+    )?.newRuns ?? null
   );
 }
 
@@ -2038,10 +2089,14 @@ async function shelfPluginPinMove(
   entry: DataLockEntryV4,
   memo: GitReadMemo,
   installed?: InstalledItem,
+  /** The pin to read; the current committed tree when absent. */
+  given?: PinnedSource,
 ): Promise<{ pin: PinnedSource; newRuns: PluginRuns } | null> {
-  const next = await pinCurrentSource(dataRepo, kind, name, {
-    memo,
-  }).catch(() => null);
+  const next =
+    given ??
+    (await pinCurrentSource(dataRepo, kind, name, {
+      memo,
+    }).catch(() => null));
   if (next === null) return null;
   if (
     next.sourcePinDigest === entryIdentity(entry) &&
@@ -2118,6 +2173,8 @@ async function updateDataTarget(
   key: string,
   parsed: ReturnType<typeof parseLockKey>,
   entry: DataLockEntryV4,
+  /** The pin `updateOneTarget` read for consent, or null to resolve here. */
+  givenPin: PinnedSource | null,
 ): Promise<TargetOutcome> {
   if (scope === "local") {
     assertLocalScopeSupported(parsed.kind, parsed.name, "update --local");
@@ -2165,9 +2222,11 @@ async function updateDataTarget(
   // version 4 there is no second identity to keep in step: the working tree is
   // not consulted, so a checkout filter or an index bit cannot move the value
   // this records.
-  const pin = await pinCurrentSource(ctx.dataRepo, parsed.kind, parsed.name, {
-    memo: ctx.memo,
-  });
+  const pin =
+    givenPin ??
+    (await pinCurrentSource(ctx.dataRepo, parsed.kind, parsed.name, {
+      memo: ctx.memo,
+    }));
   const sha = pin.sourcePinDigest;
   const sourceCommit = pin.sourceCommit;
   if (isCopyDirectoryItemKind(parsed.kind)) {
@@ -2255,6 +2314,7 @@ async function updateDataTarget(
         ...(ctx.dryRun && { dryRun: true as const }),
       },
       fragment: { key, entry: newEntry, targets, lockChanged: lockWouldChange },
+      pin,
     };
   }
 
@@ -2360,6 +2420,7 @@ async function updateDataTarget(
     },
     newEntry,
     changed: lockWouldChange,
+    pin,
   };
 }
 

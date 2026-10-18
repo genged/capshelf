@@ -872,6 +872,9 @@ merge adds an entry, run it in a terminal and answer the prompt. To take the
 new tree without your local edits, run `capshelf update plugins/<name> --yes`
 with no `--merge` (with `--local` for a local-scope plugin).
 
+The update installs exactly the tree that the prompt showed. A commit to
+the data repo after the prompt does not reach the folder.
+
 Point 2 also reads the ignored local files that the update keeps in the
 installed folder. Both the old and the new tree get these files. An
 unchanged local file therefore asks nothing alone. A kept local manifest
