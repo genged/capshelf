@@ -20,7 +20,7 @@
  * reads files from an installed directory.
  */
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import {
@@ -34,9 +34,10 @@ import { catFileBlobs } from "./git";
 import type { GitTreeSource } from "./item-source";
 import { PLUGIN_MANIFEST_REL } from "./master";
 import type { ItemKind } from "./master";
-import { itemTreeEntriesAtCommit } from "./pin";
+import { destinationKey, itemTreeEntriesAtCommit } from "./pin";
 import type { PinTreeEntry } from "./pin";
 import { normalizeCatalogPath } from "./plugin-discovery";
+import { shellCommand } from "./shell-quote";
 
 const HOOKS_DEFAULT_REL = "hooks/hooks.json";
 const MCP_DEFAULT_REL = ".mcp.json";
@@ -82,7 +83,10 @@ export interface PluginRunHook {
 
 export interface PluginRunServer {
   name: string;
+  /** The executable, or null for a server with no `command`. */
   command: string | null;
+  /** The arguments, one element each, so their boundaries stay exact. */
+  args: string[];
   url: string | null;
   source: string;
 }
@@ -311,14 +315,6 @@ async function collectDefaultFileUnknowns(
 
 // --------------------------------------------------------------- MCP servers
 
-function serverCommand(config: McpServersMap[string]): string | null {
-  if (config.command === undefined) return null;
-  if (config.args === undefined || config.args.length === 0) {
-    return config.command;
-  }
-  return `${config.command} ${config.args.join(" ")}`;
-}
-
 function pushServersFromMap(
   map: McpServersMap,
   source: string,
@@ -327,7 +323,8 @@ function pushServersFromMap(
   for (const [name, config] of Object.entries(map)) {
     servers.push({
       name,
-      command: serverCommand(config),
+      command: config.command ?? null,
+      args: config.args ?? [],
       url: config.url ?? null,
       source,
     });
@@ -409,15 +406,30 @@ function hookIdentity(hook: PluginRunHook): string {
   return JSON.stringify([hook.event, hook.matcher, hook.command]);
 }
 
+/**
+ * The arguments stay an array: joined with spaces, `["-c", "a", "; b"]` and
+ * `["-c", "a ; b"]` would be one identity, but only the second runs `b`.
+ */
 function serverIdentity(server: PluginRunServer): string {
-  return JSON.stringify([server.name, server.command, server.url]);
+  return JSON.stringify([server.name, server.command, server.args, server.url]);
+}
+
+/**
+ * The command line a person reads: the executable and each argument, quoted
+ * for a POSIX shell so the argument boundaries show. Null for a server with
+ * no `command`.
+ */
+export function serverCommandLine(server: PluginRunServer): string | null {
+  if (server.command === null) return null;
+  return shellCommand([server.command, ...server.args]);
 }
 
 /**
  * The entries in `next` that `previous` did not have (D7 point 2). A hook is
  * new when no previous hook shares its event, matcher, and command; a server
- * is new when no previous server shares its name, command, and url. A script
- * changing while its hook line stays the same is therefore not a new entry.
+ * is new when no previous server shares its name, command, arguments, and
+ * url. A script changing while its hook line stays the same is therefore not
+ * a new entry.
  *
  * Every unknown entry of `next` is kept, also one the previous tree had. An
  * unreadable declaration can never be shown to be unchanged, and D7 says a
@@ -478,14 +490,84 @@ function addUnsafeDefaultUnknowns(
   }
 }
 
+/** The widest folding a destination filesystem applies: NFC, then case. */
+const FULL_FOLDING = { caseFolding: true, normalizationFolding: true };
+
+function foldedPath(path: string): string {
+  return destinationKey(path, FULL_FOLDING);
+}
+
 /**
- * The manifest `hooks` field's string path(s), normalized and resolved, for
- * prefetching only. `pluginRunsAtCommit`'s correctness never depends on this
- * finding every path: a path it misses is still read, one blob at a time, by
- * the per-path fallback in its reader.
+ * The paths Claude Code reads a declaration from: the default candidates and
+ * each path the manifest `hooks` field names.
  */
-function manifestNamedHookPaths(manifestBytes: Buffer | undefined): string[] {
-  if (manifestBytes === undefined) return [];
+function declarationPaths(manifestBytes: Buffer | null): string[] {
+  return [...DEFAULT_CANDIDATE_RELS, ...manifestNamedHookPaths(manifestBytes)];
+}
+
+/**
+ * D6's conservative-reader rule for a destination that folds names. On a
+ * case-insensitive or normalization-insensitive volume, Claude Code finds
+ * `HOOKS/hooks.json` when it asks for `hooks/hooks.json`. The reader asks for
+ * the exact bytes, so each present path that folds to a declaration path,
+ * but is not that path, is one unknown entry. Both readers call this with
+ * the paths they found, so the two cannot disagree.
+ */
+function addCaseVariantUnknowns(
+  runs: PluginRuns,
+  declared: readonly string[],
+  present: readonly string[],
+): void {
+  const exact = new Set(declared);
+  for (const expected of declared) {
+    const key = foldedPath(expected);
+    for (const actual of present) {
+      if (exact.has(actual) || foldedPath(actual) !== key) continue;
+      const message = `${actual} differs only in case from ${expected}; capshelf does not read it`;
+      if (!runs.unknown.includes(message)) runs.unknown.push(message);
+    }
+  }
+}
+
+/**
+ * The paths under `dir` that fold to `relPath`, found one segment at a time.
+ * Each name in a directory is compared folded, so this finds `HOOKS/hooks.json`
+ * on a case-sensitive volume too, where a teammate's volume may fold it.
+ */
+async function foldedMatchesOnDisk(
+  dir: string,
+  relPath: string,
+): Promise<string[]> {
+  let matches = [""];
+  for (const segment of relPath.split("/")) {
+    const key = foldedPath(segment);
+    const next: string[] = [];
+    for (const parent of matches) {
+      let names: string[];
+      try {
+        names = await readdir(join(dir, ...parent.split("/")));
+      } catch {
+        continue;
+      }
+      for (const name of names) {
+        if (foldedPath(name) === key) {
+          next.push(parent === "" ? name : `${parent}/${name}`);
+        }
+      }
+    }
+    matches = next;
+  }
+  return matches;
+}
+
+/**
+ * The manifest `hooks` field's string path(s), normalized and resolved. Two
+ * uses: prefetching in `pluginRunsAtCommit`, where a missed path is still
+ * read one blob at a time, and the case-variant check, which reads the field
+ * the same way `readManifestHooks` does.
+ */
+function manifestNamedHookPaths(manifestBytes: Buffer | null): string[] {
+  if (manifestBytes === null) return [];
   let parsed: unknown;
   try {
     parsed = JSON.parse(manifestBytes.toString("utf8"));
@@ -553,8 +635,11 @@ export async function pluginRunsAtCommit(
   await fetchBlobsFor(DEFAULT_CANDIDATE_RELS);
   const manifestEntry = regularEntryAt(PLUGIN_MANIFEST_REL);
   const manifestBytes =
-    manifestEntry === undefined ? undefined : blobs.get(manifestEntry.blobId);
-  await fetchBlobsFor(manifestNamedHookPaths(manifestBytes));
+    manifestEntry === undefined
+      ? null
+      : (blobs.get(manifestEntry.blobId) ?? null);
+  const declared = declarationPaths(manifestBytes);
+  await fetchBlobsFor(declared);
 
   const reader: PluginFileReader = async (relPath) => {
     const entry = regularEntryAt(relPath);
@@ -568,6 +653,11 @@ export async function pluginRunsAtCommit(
     const entry = byPath.get(relPath);
     return entry !== undefined && !isRegularBlobMode(entry.mode);
   });
+  addCaseVariantUnknowns(
+    runs,
+    declared,
+    entries.map((entry) => entry.path),
+  );
   return runs;
 }
 
@@ -595,6 +685,12 @@ export async function pluginRunsOnDisk(dir: string): Promise<PluginRuns> {
     const info = lstatOrNull(join(dir, ...relPath.split("/")));
     return info !== null && info !== undefined && !info.isFile();
   });
+  const declared = declarationPaths(await reader(PLUGIN_MANIFEST_REL));
+  const present: string[] = [];
+  for (const relPath of declared) {
+    present.push(...(await foldedMatchesOnDisk(dir, relPath)));
+  }
+  addCaseVariantUnknowns(runs, declared, present);
   return runs;
 }
 
@@ -604,14 +700,15 @@ export async function pluginRunsOnDisk(dir: string): Promise<PluginRuns> {
  * holds `.claude-plugin/plugin.json`: Claude Code loads the skill folder as
  * `<name>@skills-dir` and runs its hooks (spec R1). Any entry at that path
  * counts, also a non-regular one, so an unsafe manifest gets the reader's
- * unknown entry instead of no question.
+ * unknown entry instead of no question. So does an entry that differs only
+ * in case or normalization, because a folding volume loads it.
  */
-function carriesPluginManifest(
+async function carriesPluginManifest(
   kind: ItemKind,
-  hasManifestEntry: () => boolean,
-): boolean {
+  hasManifestEntry: () => Promise<boolean>,
+): Promise<boolean> {
   if (kind === "plugins") return true;
-  return kind === "skills" && hasManifestEntry();
+  return kind === "skills" && (await hasManifestEntry());
 }
 
 /**
@@ -624,8 +721,9 @@ export async function itemPluginRunsAtCommit(
   kind: ItemKind,
   entries: readonly PinTreeEntry[],
 ): Promise<PluginRuns | null> {
-  const isPlugin = carriesPluginManifest(kind, () =>
-    entries.some((entry) => entry.path === PLUGIN_MANIFEST_REL),
+  const manifestKey = foldedPath(PLUGIN_MANIFEST_REL);
+  const isPlugin = await carriesPluginManifest(kind, async () =>
+    entries.some((entry) => foldedPath(entry.path) === manifestKey),
   );
   return isPlugin ? await pluginRunsAtCommit(repo, entries) : null;
 }
@@ -635,8 +733,10 @@ export async function itemPluginRunsOnDisk(
   kind: ItemKind,
   dir: string,
 ): Promise<PluginRuns | null> {
-  const isPlugin = carriesPluginManifest(kind, () =>
-    Boolean(lstatOrNull(join(dir, ...PLUGIN_MANIFEST_REL.split("/")))),
+  const isPlugin = await carriesPluginManifest(
+    kind,
+    async () =>
+      (await foldedMatchesOnDisk(dir, PLUGIN_MANIFEST_REL)).length > 0,
   );
   return isPlugin ? await pluginRunsOnDisk(dir) : null;
 }

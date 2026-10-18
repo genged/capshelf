@@ -11,7 +11,7 @@ import { confirmationContext } from "./destructive-change";
 import { PreconditionError } from "./errors";
 import { PRODUCT_NAME } from "./identity";
 import { PLUGIN_MANIFEST_REL } from "./master";
-import { runsHaveEntries } from "./plugin-runs";
+import { runsHaveEntries, serverCommandLine } from "./plugin-runs";
 import type { PluginRunHook, PluginRuns, PluginRunServer } from "./plugin-runs";
 import { formatBytes, plural, safe } from "./remote-list-render";
 
@@ -377,7 +377,10 @@ function hookCells(hook: PluginRunHook): string[] {
 }
 
 function serverCells(server: PluginRunServer): string[] {
-  return [server.name, server.command ?? server.url ?? "(no command)"];
+  return [
+    server.name,
+    serverCommandLine(server) ?? server.url ?? "(no command)",
+  ];
 }
 
 /** Rows of cells, sanitized, padded to aligned columns, indented two spaces. */

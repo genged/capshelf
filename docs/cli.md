@@ -741,7 +741,9 @@ both from the pinned tree:
 
 The manifest `hooks` file adds to `hooks/hooks.json`. It does not replace it.
 The `runs` block shows each hook with its event, its command, and its
-matcher, and each MCP server with its name and its command:
+matcher, and each MCP server with its name and its command. Capshelf
+quotes each argument of an MCP command for a POSIX shell, so the argument
+boundaries show:
 
 ```text
   runs      1 hook, with no request from the agent
@@ -754,6 +756,11 @@ Capshelf does not guess. Some declarations cannot be read: a file that does
 not parse, a manifest path outside the plugin, or a symlinked default file.
 Each one shows as `unknown: <path> could not be read`. An unknown entry
 never reads as "no hooks".
+
+A volume that folds case or Unicode normalization can load a file whose
+name differs from the declaration path, for example `HOOKS/hooks.json`.
+Capshelf reads only the exact path. Each such file shows as `unknown: <path>
+differs only in case from <declaration>; capshelf does not read it`.
 
 Hooks and MCP servers are not the only commands that a plugin can run.
 Capshelf does not list the other ones. It reports each of them as an
@@ -783,7 +790,8 @@ There are three consent points:
    prompt shows the same `runs` block.
 2. **Pin move.** A shelf `update` asks when the new tree runs an entry that
    the old tree did not. An entry is one hook (event, matcher, and command)
-   or one MCP server (name and command). A changed command is a new entry. A
+   or one MCP server (name, command, and each argument). A changed
+   command is a new entry. A
    removed entry asks nothing. A remote `update` asks for every pin move,
    and its prompt shows the new entries.
 3. **Project scope.** `add plugins/<name>` in project scope, `move --to
@@ -805,6 +813,8 @@ Claude Code. Claude Code loads it as `<name>@skills-dir` and runs its hooks.
 Capshelf gives that skill the same consent points as a plugin, with the same
 `runs` block. The remote `add <url>` and `update` prompts for that skill also
 show the `runs` block. The skill keeps its name and its install folder.
+A manifest path that differs only in case, such as
+`.Claude-Plugin/plugin.json`, also makes the skill a plugin.
 
 With no terminal, or with `--json`, each point refuses with exit 3 unless
 `--yes` is given. The refusal names the entries:

@@ -1,16 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, symlink, writeFile } from "node:fs/promises";
+import { cp, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ConfigObject } from "../src/config-values";
 import { gitTreeSource } from "../src/item-source";
 import { itemTreeEntriesAtCommit } from "../src/pin";
 import type { PinTreeEntry } from "../src/pin";
 import {
+  itemPluginRunsAtCommit,
+  itemPluginRunsOnDisk,
   newRunsEntries,
   pluginRunsAtCommit,
   pluginRunsOnDisk,
   readPluginRuns,
   runsHaveEntries,
+  serverCommandLine,
 } from "../src/plugin-runs";
 import { commitAll, tempDir, tempRepo } from "./cli-fixtures";
 
@@ -92,7 +95,13 @@ describe("readPluginRuns", () => {
       }),
     );
     expect(flat.mcpServers).toEqual([
-      { name: "srv", command: "docker run", url: null, source: ".mcp.json" },
+      {
+        name: "srv",
+        command: "docker",
+        args: ["run"],
+        url: null,
+        source: ".mcp.json",
+      },
     ]);
     const wrapped = await readPluginRuns(
       reader({
@@ -266,6 +275,30 @@ describe("newRunsEntries", () => {
     };
     expect(newRunsEntries(runs("a"), next).unknown).toEqual(next.unknown);
   });
+  test("MCP arguments keep their boundaries in the identity", () => {
+    const server = (args: string[]) => ({
+      hooks: [],
+      mcpServers: [
+        { name: "s", command: "sh", args, url: null, source: ".mcp.json" },
+      ],
+      unknown: [],
+    });
+    const before = server(["-c", "echo ready", "; touch /tmp/pwn"]);
+    const after = server(["-c", "echo ready ; touch /tmp/pwn"]);
+    expect(newRunsEntries(before, after).mcpServers).toEqual(after.mcpServers);
+    expect(runsHaveEntries(newRunsEntries(before, before))).toBe(false);
+  });
+  test("serverCommandLine quotes each argument", () => {
+    expect(
+      serverCommandLine({
+        name: "s",
+        command: "sh",
+        args: ["-c", "echo ready", "; touch /tmp/pwn"],
+        url: null,
+        source: ".mcp.json",
+      }),
+    ).toBe("sh -c 'echo ready' '; touch /tmp/pwn'");
+  });
   test("an unknown the previous tree also had is still reported (D7)", () => {
     const both = {
       ...runs("a"),
@@ -318,10 +351,17 @@ describe("pluginRunsAtCommit", () => {
       "bash b.sh",
     ]);
     expect(runs.mcpServers).toEqual([
-      { name: "srv", command: "docker", url: null, source: ".mcp.json" },
+      {
+        name: "srv",
+        command: "docker",
+        args: [],
+        url: null,
+        source: ".mcp.json",
+      },
       {
         name: "i",
         command: "node",
+        args: [],
         url: null,
         source: ".claude-plugin/plugin.json",
       },
@@ -436,6 +476,72 @@ describe("pluginRunsAtCommit and pluginRunsOnDisk: monitors and LSP", () => {
   });
 });
 
+describe("pluginRunsAtCommit and pluginRunsOnDisk: case variants of declarations", () => {
+  async function writeCaseVariantPlugin(dir: string): Promise<void> {
+    await mkdir(join(dir, ".claude-plugin"), { recursive: true });
+    await mkdir(join(dir, "HOOKS"), { recursive: true });
+    await mkdir(join(dir, "Custom"), { recursive: true });
+    await writeFile(
+      join(dir, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "p", hooks: "./custom/h.json" }),
+    );
+    await writeFile(
+      join(dir, "HOOKS", "hooks.json"),
+      hooksJson("Stop", "bash x.sh"),
+    );
+    await writeFile(join(dir, "Custom", "h.json"), hooksJson("Stop", "b"));
+    await writeFile(
+      join(dir, ".MCP.json"),
+      JSON.stringify({ srv: { command: "evil" } }),
+    );
+  }
+  const expected = [
+    "custom/h.json could not be read",
+    "HOOKS/hooks.json differs only in case from hooks/hooks.json; capshelf does not read it",
+    ".MCP.json differs only in case from .mcp.json; capshelf does not read it",
+    "Custom/h.json differs only in case from custom/h.json; capshelf does not read it",
+  ];
+  test("at a commit", async () => {
+    const repo = await tempRepo("capshelf-plugin-runs-commit-case-");
+    await writeCaseVariantPlugin(join(repo, "plugins", "p"));
+    await commitAll(repo, "plugin p");
+    const entries = await itemTreeEntriesAtCommit(
+      gitTreeSource({ repo, kind: "plugins", name: "p", commit: "HEAD" }),
+      "plugins",
+    );
+    const runs = await pluginRunsAtCommit(repo, entries);
+    expect(runs.hooks).toEqual([]);
+    expect(runs.unknown).toEqual(expected);
+  });
+  test("on disk", async () => {
+    const dir = await tempDir("capshelf-plugin-runs-disk-case-");
+    await writeCaseVariantPlugin(dir);
+    const runs = await pluginRunsOnDisk(dir);
+    expect(runs.hooks).toEqual([]);
+    expect(runs.unknown).toEqual(expected);
+  });
+  test("a skill with a case-variant manifest is a plugin", async () => {
+    const dir = await tempDir("capshelf-plugin-runs-disk-case-skill-");
+    await mkdir(join(dir, ".Claude-Plugin"), { recursive: true });
+    await writeFile(join(dir, "SKILL.md"), "---\nname: s\n---\n");
+    await writeFile(join(dir, ".Claude-Plugin", "plugin.json"), "{}");
+    const onDisk = await itemPluginRunsOnDisk("skills", dir);
+    expect(onDisk?.unknown).toContain(
+      ".Claude-Plugin/plugin.json differs only in case from .claude-plugin/plugin.json; capshelf does not read it",
+    );
+    const repo = await tempRepo("capshelf-plugin-runs-commit-case-skill-");
+    await mkdir(join(repo, "skills"), { recursive: true });
+    await cp(dir, join(repo, "skills", "s"), { recursive: true });
+    await commitAll(repo, "skill s");
+    const entries = await itemTreeEntriesAtCommit(
+      gitTreeSource({ repo, kind: "skills", name: "s", commit: "HEAD" }),
+      "skills",
+    );
+    const atCommit = await itemPluginRunsAtCommit(repo, "skills", entries);
+    expect(atCommit?.unknown).toEqual(onDisk?.unknown);
+  });
+});
+
 describe("pluginRunsOnDisk", () => {
   test("reads hooks and mcp servers from an installed directory", async () => {
     const dir = await tempDir("capshelf-plugin-runs-disk-");
@@ -458,7 +564,13 @@ describe("pluginRunsOnDisk", () => {
 
     expect(runs.hooks.map((h) => h.command)).toEqual(["bash stop.sh"]);
     expect(runs.mcpServers).toEqual([
-      { name: "web", command: null, url: "https://x", source: ".mcp.json" },
+      {
+        name: "web",
+        command: null,
+        args: [],
+        url: "https://x",
+        source: ".mcp.json",
+      },
     ]);
     expect(runs.unknown).toEqual([]);
   });

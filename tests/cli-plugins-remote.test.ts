@@ -940,13 +940,15 @@ describe("plugin consent text", () => {
       mcpServers: [
         {
           name: "db",
-          command: "npx db-server",
+          command: "npx",
+          args: ["db-server", "--name", "my db"],
           url: null,
           source: ".mcp.json",
         },
         {
           name: "web",
           command: null,
+          args: [],
           url: "https://x.test",
           source: ".mcp.json",
         },
@@ -959,7 +961,7 @@ describe("plugin consent text", () => {
     expect(lines.join("\n")).toMatch(
       /PreToolUse\s+bash hooks\/curl\.sh\s+Bash/,
     );
-    expect(lines.join("\n")).toMatch(/db\s+npx db-server/);
+    expect(lines.join("\n")).toMatch(/db\s+npx db-server --name 'my db'/);
     expect(lines.join("\n")).toMatch(/web\s+https:\/\/x\.test/);
     expect(lines).toContain("  unknown: hooks/extra.json could not be read");
     expect(lines.at(-1)).toBe(
