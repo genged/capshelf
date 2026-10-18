@@ -41,6 +41,7 @@ import { globalOpts } from "../global-options";
 import { NotFoundError, PreconditionError } from "../errors";
 import { findMasterItemByRef, parseItemRef } from "../item-ref";
 import { isIgnoredDotEntry } from "../dotfiles";
+import { sanitizeDisplayText } from "../pick-core";
 import {
   currentFragmentSourcesForItem,
   fragmentOutputPath,
@@ -305,7 +306,7 @@ export function registerShow(program: Command): void {
           console.log(`  source commit: ${lockedSource.commit}`);
         }
         if (lockEntry.source === "data" && lockEntry.label) {
-          console.log(`  label:      ${lockEntry.label}`);
+          console.log(`  label:      ${sanitizeDisplayText(lockEntry.label)}`);
         }
         console.log(`  applied:    ${lockEntry.appliedAt}`);
       } else {
@@ -337,8 +338,8 @@ export function registerShow(program: Command): void {
 
       if (isFragmentItemKind(item.kind)) {
         for (const source of fragmentSources) {
-          console.log(`─── ${source.relPath} ─────────────────────`);
-          console.log(
+          printFile(
+            source.relPath,
             await readFile(
               join(dataRepo, ...source.relPath.split("/")),
               "utf-8",
@@ -349,8 +350,8 @@ export function registerShow(program: Command): void {
       }
       if (item.kind === "subagents") {
         for (const source of subagentSources) {
-          console.log(`─── ${source.relPath} ─────────────────────`);
-          console.log(
+          printFile(
+            source.relPath,
             await readFile(
               join(dataRepo, ...source.relPath.split("/")),
               "utf-8",
@@ -365,8 +366,7 @@ export function registerShow(program: Command): void {
 
       const info = await stat(item.path);
       if (info.isFile()) {
-        console.log(`─── ${item.name} ─────────────────────`);
-        console.log(await readFile(item.path, "utf-8"));
+        printFile(item.name, await readFile(item.path, "utf-8"));
       } else {
         const files = await sourceVisibleFilesUnderPath(
           dataRepo,
@@ -381,11 +381,26 @@ export function registerShow(program: Command): void {
             continue;
           }
           if (isIgnoredDotEntry(file) || isMetadataSidecarPath(file)) continue;
-          console.log(`─── ${file} ─────────────────────`);
-          console.log(await readFile(join(item.path, file), "utf-8"));
+          printFile(file, await readFile(join(item.path, file), "utf-8"));
         }
       }
     });
+}
+
+/**
+ * One file of the content dump. The name and the content come from the
+ * repository, so each line goes through `sanitizeDisplayText`: an ESC or OSC
+ * sequence could clear or forge the output a person reviews. Line breaks and
+ * tabs are kept, because they cannot move the cursor back over text.
+ */
+function printFile(name: string, content: string): void {
+  console.log(`─── ${sanitizeDisplayText(name)} ─────────────────────`);
+  console.log(
+    content
+      .split("\n")
+      .map((line) => line.split("\t").map(sanitizeDisplayText).join("\t"))
+      .join("\n"),
+  );
 }
 
 function relativeProjectPath(project: string, path: string): string {
@@ -585,10 +600,12 @@ async function showBundle(
 
   console.log(`bundles/${bundle.name}  (${homeRelative(bundle.path)})`);
   if (bundle.description !== undefined) {
-    console.log(`  description: ${bundle.description}`);
+    console.log(`  description: ${sanitizeDisplayText(bundle.description)}`);
   }
   if (bundle.tags.length > 0) {
-    console.log(`  tags:        ${bundle.tags.join(", ")}`);
+    console.log(
+      `  tags:        ${sanitizeDisplayText(bundle.tags.join(", "))}`,
+    );
   }
   printNeedsBlock(bundleNeeds);
   if (bundle.malformed !== undefined) {
@@ -667,10 +684,7 @@ async function showSystem(
   printMetadataBlock(meta, locks);
 
   if (opts.content === false) return;
-  for (const f of item.files) {
-    console.log(`─── ${f.relPath} ─────────────────────`);
-    console.log(f.content);
-  }
+  for (const f of item.files) printFile(f.relPath, f.content);
 }
 
 interface RelationState {
@@ -714,10 +728,10 @@ function metadataJson(meta: ItemMetadata, locks: Lock[]): MetadataJson {
 
 function printMetadataBlock(meta: ItemMetadata, locks: Lock[]): void {
   if (meta.description !== undefined) {
-    console.log(`  description: ${meta.description}`);
+    console.log(`  description: ${sanitizeDisplayText(meta.description)}`);
   }
   if (meta.tags.length > 0) {
-    console.log(`  tags:        ${meta.tags.join(", ")}`);
+    console.log(`  tags:        ${sanitizeDisplayText(meta.tags.join(", "))}`);
   }
   for (const [label, refs] of [
     ["requires:   ", meta.requires],

@@ -288,6 +288,36 @@ describe("plugins kind", () => {
     expect(shown.stdout.toString()).toContain("─── hooks/hooks.json");
   });
 
+  // `show plugins/<n>` is the review command a consent refusal names, so a
+  // file name or content with ESC must not reach the terminal raw.
+  test("show prints no ESC from a file name or content, and keeps line breaks", async () => {
+    const project = await tempRepo("capshelf-plugin-kind-show-esc-project-");
+    const dataRepo = await tempRepo("capshelf-plugin-kind-show-esc-data-");
+    const pluginDir = join(dataRepo, "plugins", "p");
+    await mkdir(join(pluginDir, ".claude-plugin"), { recursive: true });
+    await writeFile(
+      join(pluginDir, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "p" }),
+    );
+    await mkdir(join(pluginDir, "scripts"), { recursive: true });
+    await writeFile(
+      join(pluginDir, "scripts", "x\u001b[2Jy.sh"),
+      "line one\u001b]0;forged\u0007\nline\ttwo\n",
+    );
+    await commitAll(dataRepo, "plugin p");
+
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+
+    const shown = await run(["show", "plugins/p"]);
+    expect(shown.exitCode).toBe(0);
+    const out = shown.stdout.toString();
+    expect(out).not.toContain("\u001b");
+    expect(out).not.toContain("\u0007");
+    expect(out).toContain("─── scripts/x [2Jy.sh");
+    expect(out).toContain("line one ]0;forged \nline\ttwo\n");
+  });
+
   // The share scanner walked every directory under the shared skill-target
   // folder (spec D2) and treated each as an untracked skill, with no check
   // for a lock entry recorded as `plugins/<n>` at that same folder — so an

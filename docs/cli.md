@@ -1223,6 +1223,12 @@ install state (`installed` means present in either `capshelf.lock.json` or
 `tags`, `requires`, `conflictsWith`, and `needs` (possibly empty) so consumers
 can rely on the keys; `description` is included when present.
 
+The text output replaces each terminal control character with a space. This
+covers file names, file content, the description, the tags, and the label.
+Line breaks and tabs stay. An ESC sequence in a repository file therefore
+cannot clear or forge the output that you review. `--json` keeps the exact
+text.
+
 The sidecar is catalog data, not item content: it is never hashed or
 materialized into projects. Tags, descriptions, and relations remain live
 catalog data and need no project update. Declared needs are pinned separately
