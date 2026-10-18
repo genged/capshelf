@@ -778,7 +778,8 @@ not parse, a manifest path outside the plugin, or a symlinked default file.
 Each one shows as `unknown: <path> could not be read`. An unknown entry
 never reads as "no hooks". Capshelf never follows a symlink. A symlink at a
 declaration path, or at a directory above one such as `hooks/` or
-`.claude-plugin/`, is one unknown entry for that path.
+`.claude-plugin/`, is one unknown entry for that path. The match folds case
+and Unicode form, so a `HOOKS` symlink counts for `hooks/hooks.json`.
 
 A volume that folds case or Unicode normalization can load a file whose
 name differs from the declaration path, for example `HOOKS/hooks.json`.

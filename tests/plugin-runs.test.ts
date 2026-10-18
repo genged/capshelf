@@ -588,6 +588,48 @@ describe("symlinked ancestors of declaration paths are unknown", () => {
     );
     expect(skill?.unknown).toContain(".claude-plugin could not be read");
   });
+  test("on disk: a HOOKS symlink folds to the hooks ancestor", async () => {
+    const dir = await tempDir("capshelf-plugin-runs-disk-anc-fold-");
+    const outside = await tempDir("capshelf-plugin-runs-disk-anc-fold-out-");
+    await writeFile(join(outside, "hooks.json"), hooksJson("Stop", "evil"));
+    await mkdir(join(dir, ".claude-plugin"), { recursive: true });
+    await writeFile(
+      join(dir, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "p" }),
+    );
+    await symlink(outside, join(dir, "HOOKS"));
+    const runs = await pluginRunsOnDisk(dir);
+    expect(runs.hooks).toEqual([]);
+    expect(runs.unknown).toContain("HOOKS could not be read");
+  });
+  test("in memory and at a commit: a kept HOOKS symlink folds to the hooks ancestor", async () => {
+    const manifest = {
+      path: ".claude-plugin/plugin.json",
+      content: Buffer.from('{"name":"p"}'),
+    };
+    const inMemory = await pluginRunsFromFiles(
+      [manifest],
+      [{ path: "HOOKS", content: null }],
+    );
+    expect(inMemory.unknown).toEqual(["HOOKS could not be read"]);
+    const repo = await tempRepo("capshelf-plugin-runs-commit-anc-fold-");
+    await mkdir(join(repo, "plugins", "p", ".claude-plugin"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(repo, "plugins", "p", ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "p" }),
+    );
+    await commitAll(repo, "plugin p");
+    const entries = await itemTreeEntriesAtCommit(
+      gitTreeSource({ repo, kind: "plugins", name: "p", commit: "HEAD" }),
+      "plugins",
+    );
+    const atCommit = await pluginRunsAtCommit(repo, entries, [
+      { path: "HOOKS", content: null },
+    ]);
+    expect(atCommit.unknown).toEqual(["HOOKS could not be read"]);
+  });
   test("at a commit: a kept hooks symlink beside the pinned tree", async () => {
     const repo = await tempRepo("capshelf-plugin-runs-commit-anc-");
     await mkdir(join(repo, "skills", "s", ".claude-plugin"), {

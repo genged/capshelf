@@ -511,21 +511,37 @@ function isRegularBlobMode(mode: string): boolean {
  * Runs after `readPluginRuns` and skips a message that is already present,
  * so a source flagged for another reason is not reported twice.
  */
-function addUnsafeDeclarationUnknowns(
+async function addUnsafeDeclarationUnknowns(
   runs: PluginRuns,
   declared: readonly string[],
-  isUnsafe: (relPath: string, ancestor: boolean) => boolean,
-): void {
+  unsafeAt: (prefix: string, ancestor: boolean) => Promise<string[]>,
+): Promise<void> {
   for (const relPath of declared) {
     const segments = relPath.split("/");
     for (let depth = 1; depth <= segments.length; depth += 1) {
-      const path = segments.slice(0, depth).join("/");
-      if (!isUnsafe(path, depth < segments.length)) continue;
-      const message = unknownEntry(path);
-      if (!runs.unknown.includes(message)) runs.unknown.push(message);
-      break;
+      const prefix = segments.slice(0, depth).join("/");
+      const unsafe = await unsafeAt(prefix, depth < segments.length);
+      for (const path of unsafe) {
+        const message = unknownEntry(path);
+        if (!runs.unknown.includes(message)) runs.unknown.push(message);
+      }
+      if (unsafe.length > 0) break;
     }
   }
+}
+
+/**
+ * For a listed tree: the unsafe entries whose path folds to `prefix`. Case
+ * and Unicode folding, because a folding volume resolves `hooks/hooks.json`
+ * through a kept `HOOKS` symlink.
+ */
+function foldedUnsafeEntries(
+  unsafePaths: readonly string[],
+): (prefix: string) => Promise<string[]> {
+  return async (prefix) => {
+    const key = foldedPath(prefix);
+    return unsafePaths.filter((path) => foldedPath(path) === key);
+  };
 }
 
 /** True when some ancestor directory of `relPath` is a symlink on disk. */
@@ -702,11 +718,18 @@ export async function pluginRunsAtCommit(
   };
   const runs = await readPluginRuns(reader);
 
-  addUnsafeDeclarationUnknowns(runs, declared, (relPath) => {
-    const entry = byPath.get(relPath);
-    if (entry !== undefined) return !isRegularBlobMode(entry.mode);
-    return extraByPath.has(relPath) && extraByPath.get(relPath) === null;
-  });
+  await addUnsafeDeclarationUnknowns(
+    runs,
+    declared,
+    foldedUnsafeEntries([
+      ...entries
+        .filter((entry) => !isRegularBlobMode(entry.mode))
+        .map((entry) => entry.path),
+      ...extras
+        .filter((extra) => extra.content === null)
+        .map((extra) => extra.path),
+    ]),
+  );
   addCaseVariantUnknowns(runs, declared, [
     ...entries.map((entry) => entry.path),
     ...extras.map((extra) => extra.path),
@@ -736,11 +759,15 @@ export async function pluginRunsOnDisk(dir: string): Promise<PluginRuns> {
   const runs = await readPluginRuns(reader);
 
   const declared = declarationPaths(await reader(PLUGIN_MANIFEST_REL));
-  addUnsafeDeclarationUnknowns(runs, declared, (relPath, ancestor) => {
-    const info = lstatOrNull(join(dir, ...relPath.split("/")));
-    if (info === null || info === undefined) return false;
-    return ancestor ? !info.isDirectory() && !info.isFile() : !info.isFile();
-  });
+  // Every spelling that folds to the prefix, so a `HOOKS` symlink counts
+  // for `hooks/hooks.json` on a case-sensitive volume too.
+  await addUnsafeDeclarationUnknowns(runs, declared, async (prefix, ancestor) =>
+    (await foldedMatchesOnDisk(dir, prefix)).filter((match) => {
+      const info = lstatOrNull(join(dir, ...match.split("/")));
+      if (info === null || info === undefined) return false;
+      return ancestor ? !info.isDirectory() && !info.isFile() : !info.isFile();
+    }),
+  );
   const present: string[] = [];
   for (const relPath of declared) {
     present.push(...(await foldedMatchesOnDisk(dir, relPath)));
@@ -772,10 +799,12 @@ export async function pluginRunsFromFiles(
     byPath.get(relPath) ?? null;
   const runs = await readPluginRuns(reader);
   const declared = declarationPaths(byPath.get(PLUGIN_MANIFEST_REL) ?? null);
-  addUnsafeDeclarationUnknowns(
+  await addUnsafeDeclarationUnknowns(
     runs,
     declared,
-    (relPath) => byPath.has(relPath) && byPath.get(relPath) === null,
+    foldedUnsafeEntries(
+      [...byPath].filter(([, content]) => content === null).map(([p]) => p),
+    ),
   );
   addCaseVariantUnknowns(runs, declared, [...byPath.keys()]);
   return runs;
