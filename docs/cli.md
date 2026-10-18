@@ -856,7 +856,8 @@ with no `--merge` (with `--local` for a local-scope plugin).
 alone. A merge can run a command that neither side runs alone. For example,
 the local copy adds a manifest and the upstream adds `hooks/hooks.json`. The
 merged files then run the hook, and the update asks. The same rule applies
-to a skill.
+to a skill, and to a remote `update --merge`, whose prompt lists the entries
+of the merged files.
 
 A new tree whose `plugin.json` gives a different name refuses before any
 write. This applies to `update`, `update --merge`, `promote`, and

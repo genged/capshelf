@@ -348,4 +348,52 @@ describe("a remote skill that holds a plugin manifest", () => {
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );
+
+  test(
+    "update --merge names a hook that only the merged files run",
+    async () => {
+      const remote = await initRemoteProject();
+      const work = await tempRepo("capshelf-skill-plugin-plain-upstream-", {
+        origin: null,
+      });
+      await writeUnder(work, "SKILL.md", skillText("plainr", "d"));
+      await commitAll(work, "skill");
+      await $`git -C ${work} branch -M main`.quiet();
+      const bare = join(
+        await tempDir("capshelf-skill-plugin-plain-bare-"),
+        "repo.git",
+      );
+      await $`git clone -q --bare ${work} ${bare}`.quiet();
+      await $`git -C ${work} remote add origin ${bare}`.quiet();
+      const run = runInProcess(remote.project);
+      expect(
+        (
+          await run(
+            ["add", `file://${bare}`, "--as", "plainr", "--yes"],
+            remote.env,
+          )
+        ).exitCode,
+      ).toBe(0);
+      const installed = join(remote.project, ".agents", "skills", "plainr");
+      await writeUnder(
+        installed,
+        ".claude-plugin/plugin.json",
+        JSON.stringify({ name: "plainr" }),
+      );
+      await pushPluginChange(
+        { url: `file://${bare}`, work },
+        "hooks/hooks.json",
+        hooksJson("bash hooks/merged.sh"),
+      );
+      expect(
+        (await run(["status", "--check-upstream"], remote.env)).exitCode,
+      ).toBe(0);
+
+      const r = await run(["update", "skills/plainr", "--merge"], remote.env);
+      expect(r.exitCode).toBe(3);
+      expect(r.stderr.toString()).toContain("bash hooks/merged.sh");
+      expect(existsSync(join(installed, "hooks", "hooks.json"))).toBe(false);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
 });

@@ -125,6 +125,7 @@ import {
   pluginChange,
   previewRemoteUpdate,
   remoteEntryAsDataEntry,
+  remoteMergeNewRuns,
   updateMergeRemoteTarget,
   updateRemoteItem,
 } from "../remote-item";
@@ -750,12 +751,28 @@ async function runRemoteUpdates(input: {
       results.push(remoteResult(target, "skipped", entry, entry.sourceCommit));
       continue;
     }
-    const preview = await previewRemoteUpdate({
+    const upstreamPreview = await previewRemoteUpdate({
       project: input.project,
       kind: target.kind,
       name: target.name,
       entry,
     });
+    // D7 point 2 for `--merge` reads the merged files, not the upstream tree
+    // alone, and the merge writes only the files the prompt showed.
+    const mergePlan =
+      input.merge && !upstreamPreview.current
+        ? await remoteMergeNewRuns({
+            project: input.project,
+            kind: target.kind,
+            name: target.name,
+            entry,
+            preview: upstreamPreview,
+          })
+        : null;
+    const preview =
+      mergePlan === null
+        ? upstreamPreview
+        : { ...upstreamPreview, newRuns: mergePlan.newRuns };
     if (preview.current) {
       results.push(
         remoteResult(target, "already-current", entry, preview.to, entry),
@@ -799,6 +816,8 @@ async function runRemoteUpdates(input: {
           entry,
           preview,
           dryRun: input.dryRun,
+          ...(mergePlan !== null &&
+            mergePlan.files !== null && { approvedFiles: mergePlan.files }),
         })
       : null;
     const moved: RemoteUpdateResult =

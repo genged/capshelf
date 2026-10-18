@@ -35,6 +35,8 @@ import type { NamedFile } from "./merge-tree";
 import { sanitizeDisplayText } from "./pick-core";
 import {
   itemPluginNewRuns,
+  itemPluginRunsAtCommit,
+  itemPluginRunsFromFiles,
   newRunsEntries,
   pluginRunsAtCommit,
 } from "./plugin-runs";
@@ -544,7 +546,102 @@ export async function updateMergeRemoteTarget(opts: {
   entry: RemoteLockEntry;
   preview: RemoteUpdatePreview;
   dryRun: boolean;
+  /**
+   * The merged files a consent prompt approved. The merge refuses when its
+   * own result differs, so the approved files are the written files.
+   */
+  approvedFiles?: readonly NamedFile[];
 }): Promise<RemoteMergeResult> {
+  const { kind, name, entry } = opts;
+  const plan = await planRemoteMerge(opts);
+  if (plan.kind === "current") {
+    return {
+      action: "already-current",
+      from: entry.sourceCommit,
+      to: plan.to,
+      entry,
+      merged: false,
+      mergeBase: entry.sourceCommit,
+      mergeResultDigest: entry.sourcePinDigest,
+    };
+  }
+  const { snapshot, localFiles, files, pin } = plan;
+  if (
+    opts.approvedFiles !== undefined &&
+    !namedFilesEqual([...opts.approvedFiles], files)
+  ) {
+    throw new PreconditionError(
+      `${remoteKey(kind, name)} changed while the prompt was open; nothing was written. Rerun update --merge.`,
+    );
+  }
+  const upstreamFiles = plan.upstreamFiles;
+  const performedMerge = !namedFilesEqual(files, upstreamFiles);
+  const next = movedRemoteEntry(entry, pin);
+  const mergeResultDigest = sourcePinDigest(
+    namedFilesTreeEntries(files, hashWidthOf(pin.entries)),
+  );
+  if (opts.dryRun) {
+    return {
+      action: "would-update",
+      from: entry.sourceCommit,
+      to: next.sourceCommit,
+      entry,
+      merged: performedMerge,
+      mergeBase: entry.sourceCommit,
+      mergeResultDigest,
+    };
+  }
+  if (!namedFilesEqual(localFiles, files)) {
+    await assertNoDestinationCollisions(
+      remoteKey(kind, name),
+      snapshot.localPath,
+      files.map((file) => file.path),
+    );
+    const transaction = await beginInstalledReconciliation(
+      snapshot.localPath,
+      localFiles,
+      files,
+    );
+    try {
+      await transaction.commit();
+    } catch (error) {
+      await transaction.rollback();
+      throw error;
+    }
+  }
+  return {
+    action: "updated",
+    from: entry.sourceCommit,
+    to: next.sourceCommit,
+    entry: next,
+    merged: performedMerge,
+    mergeBase: entry.sourceCommit,
+    mergeResultDigest,
+  };
+}
+
+type RemoteMergePlan =
+  | { kind: "current"; to: string }
+  | {
+      kind: "merge";
+      snapshot: NonNullable<Awaited<ReturnType<typeof installedSnapshot>>>;
+      localFiles: NamedFile[];
+      upstreamFiles: NamedFile[];
+      baseEntries: PinTreeEntry[];
+      cachePath: string;
+      /** The merged files the write puts in the folder. */
+      files: NamedFile[];
+      pin: PinnedSource;
+    };
+
+/** The merge `updateMergeRemoteTarget` writes, computed and not written. */
+async function planRemoteMerge(opts: {
+  project: string;
+  kind: RemoteItemKind;
+  name: string;
+  entry: RemoteLockEntry;
+  preview: RemoteUpdatePreview;
+}): Promise<RemoteMergePlan> {
   const { project, kind, name, entry, preview } = opts;
   const snapshot = await installedSnapshot(project, kind, name, "local");
   if (snapshot === null) {
@@ -557,15 +654,7 @@ export async function updateMergeRemoteTarget(opts: {
   const localFiles = await namedFilesFromInstalledSnapshot(snapshot);
 
   if (preview.current || preview.pin === null) {
-    return {
-      action: "already-current",
-      from: entry.sourceCommit,
-      to: preview.to,
-      entry,
-      merged: false,
-      mergeBase: entry.sourceCommit,
-      mergeResultDigest: entry.sourcePinDigest,
-    };
+    return { kind: "current", to: preview.to };
   }
 
   // The base has to reproduce the locked pin, or the merge is against content
@@ -591,49 +680,44 @@ export async function updateMergeRemoteTarget(opts: {
         `  conflicting paths:\n${merged.conflicts.map((path) => `    ${path}`).join("\n")}`,
     );
   }
-  const performedMerge = !namedFilesEqual(merged.files, upstreamFiles);
-  const next = movedRemoteEntry(entry, preview.pin);
-  const mergeResultDigest = sourcePinDigest(
-    namedFilesTreeEntries(merged.files, hashWidthOf(preview.pin.entries)),
-  );
-  if (opts.dryRun) {
-    return {
-      action: "would-update",
-      from: entry.sourceCommit,
-      to: next.sourceCommit,
-      entry,
-      merged: performedMerge,
-      mergeBase: entry.sourceCommit,
-      mergeResultDigest,
-    };
-  }
-  if (!namedFilesEqual(localFiles, merged.files)) {
-    await assertNoDestinationCollisions(
-      remoteKey(kind, name),
-      snapshot.localPath,
-      merged.files.map((file) => file.path),
-    );
-    const transaction = await beginInstalledReconciliation(
-      snapshot.localPath,
-      localFiles,
-      merged.files,
-    );
-    try {
-      await transaction.commit();
-    } catch (error) {
-      await transaction.rollback();
-      throw error;
-    }
-  }
   return {
-    action: "updated",
-    from: entry.sourceCommit,
-    to: next.sourceCommit,
-    entry: next,
-    merged: performedMerge,
-    mergeBase: entry.sourceCommit,
-    mergeResultDigest,
+    kind: "merge",
+    snapshot,
+    localFiles,
+    upstreamFiles,
+    baseEntries,
+    cachePath: cache.path,
+    files: merged.files,
+    pin: preview.pin,
   };
+}
+
+/**
+ * D7 point 2 for a remote `update --merge`: the runs entries the merged
+ * files add over the locked pin, and those files. A merge can run a command
+ * that neither the local copy nor the upstream runs alone, so the prompt
+ * reads the merged files. Null `files` when nothing would move; `newRuns` is
+ * null when the merged files are not a plugin to Claude Code.
+ */
+export async function remoteMergeNewRuns(opts: {
+  project: string;
+  kind: RemoteItemKind;
+  name: string;
+  entry: RemoteLockEntry;
+  preview: RemoteUpdatePreview;
+}): Promise<{ newRuns: PluginRuns | null; files: NamedFile[] | null }> {
+  const plan = await planRemoteMerge(opts);
+  if (plan.kind === "current") {
+    return { newRuns: opts.preview.newRuns, files: null };
+  }
+  const merged = await itemPluginRunsFromFiles(opts.kind, plan.files);
+  if (merged === null) return { newRuns: null, files: plan.files };
+  const previous = (await itemPluginRunsAtCommit(
+    plan.cachePath,
+    opts.kind,
+    plan.baseEntries,
+  )) ?? { hooks: [], mcpServers: [], unknown: [] };
+  return { newRuns: newRunsEntries(previous, merged), files: plan.files };
 }
 
 /** The bytes of a pinned tree, named the way the merge machinery names them. */
