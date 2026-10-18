@@ -191,6 +191,49 @@ describe("a shelf skill that holds a plugin manifest", () => {
   );
 
   test(
+    "a recovery add asks for the ignored manifest and hook it keeps",
+    async () => {
+      // The unmanaged folder matches the pin on the pinned paths, so add
+      // adopts it and keeps its ignored files. They make it a plugin.
+      const w = await world();
+      await writeUnder(
+        w.dataRepo,
+        "skills/foo/SKILL.md",
+        skillText("foo", "d"),
+      );
+      await commitAll(w.dataRepo, "foo skill");
+      const folder = join(w.project, ".agents", "skills", "foo");
+      await writeUnder(folder, "SKILL.md", skillText("foo", "d"));
+      await writeUnder(
+        w.project,
+        ".gitignore",
+        ".agents/skills/foo/.claude-plugin/\n.agents/skills/foo/hooks/\n",
+      );
+      await writeUnder(
+        folder,
+        ".claude-plugin/plugin.json",
+        JSON.stringify({ name: "foo" }),
+      );
+      await writeUnder(
+        folder,
+        "hooks/hooks.json",
+        hooksJson("bash hooks/rec.sh"),
+      );
+
+      const r = await w.run(["add", "skills/foo"]);
+      expect(r.exitCode).toBe(3);
+      const err = r.stderr.toString();
+      expect(err).toContain("not installing skills/foo without consent");
+      expect(err).toContain("bash hooks/rec.sh");
+      expect(await lockKeys(w.project)).not.toContain("data/skills/foo");
+      expect(existsSync(join(w.project, ".claude", "skills", "foo"))).toBe(
+        false,
+      );
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "update asks when a kept ignored local manifest arms a new upstream hook",
     async () => {
       // The update keeps the ignored local manifest beside the new pinned

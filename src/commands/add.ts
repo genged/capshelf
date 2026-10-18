@@ -34,7 +34,10 @@ import {
   targetsUnderRoot,
 } from "../pin";
 import type { PinnedSource } from "../pin";
-import { materializeLockEntry } from "../materialize";
+import {
+  installedPreservedEntries,
+  materializeLockEntry,
+} from "../materialize";
 import {
   ITEM_KINDS,
   allCanonicalItemRelPaths,
@@ -130,7 +133,7 @@ import type { BundlePlan, MemberPlan } from "../bundle-install";
 import { formatDeclaredNeeds } from "../needs-format";
 import { confirmPluginConsent } from "../plugin-consent";
 import type { PluginConsentPoint } from "../plugin-consent";
-import { itemPluginRunsAtCommit } from "../plugin-runs";
+import { itemPluginRunsAtCommit, pluginExtraFile } from "../plugin-runs";
 import type { PluginRuns } from "../plugin-runs";
 import {
   assertSubagentOutputAvailable,
@@ -1083,11 +1086,7 @@ async function addBundle(
     const pin = await pinCurrentSource(ctx.dataRepo, member.kind, member.name, {
       memo: ctx.memo,
     });
-    const runs = await itemPluginRunsAtCommit(
-      ctx.dataRepo,
-      member.kind,
-      pin.entries,
-    );
+    const runs = await addPluginRuns(ctx, member.kind, member.name, pin);
     if (runs === null) continue;
     pluginPins.set(member.ref, pin);
     pluginPoints.push(...shelfPluginAddPoints(member.ref, runs, ctx.local));
@@ -1400,6 +1399,30 @@ function systemItemAddRefusal(name: string): string {
 }
 
 /**
+ * What an add puts in reach of Claude Code: the pinned tree, plus the
+ * ignored local files that materialization keeps when the add adopts an
+ * existing matching folder (the recovery path, `matchesPinnedInstall`). A
+ * kept local manifest or hook file runs as part of the plugin.
+ */
+async function addPluginRuns(
+  ctx: Awaited<ReturnType<typeof loadAddContext>>,
+  kind: "plugins" | "skills",
+  name: string,
+  pin: PinnedSource,
+): Promise<PluginRuns | null> {
+  const extras = (
+    await installedPreservedEntries({
+      project: ctx.project,
+      kind,
+      name,
+      scope: ctx.local ? "local" : "project",
+      managedPaths: new Set(pin.entries.map((entry) => entry.path)),
+    })
+  ).map(pluginExtraFile);
+  return await itemPluginRunsAtCommit(ctx.dataRepo, kind, pin.entries, extras);
+}
+
+/**
  * The consent gates both entry points into `installDataItem` run, and the
  * pin each gate approved.
  *
@@ -1422,11 +1445,7 @@ async function approveAddPin(
     const pin = await pinCurrentSource(ctx.dataRepo, item.kind, item.name, {
       memo: ctx.memo,
     });
-    const runs = await itemPluginRunsAtCommit(
-      ctx.dataRepo,
-      item.kind,
-      pin.entries,
-    );
+    const runs = await addPluginRuns(ctx, item.kind, item.name, pin);
     if (runs === null) return { proceed: true, pin };
     const points = shelfPluginAddPoints(
       `${item.kind}/${item.name}`,

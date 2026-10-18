@@ -733,7 +733,8 @@ applies to a shelf entry and to a remote row. The exclude lines for the
 folder stay while a local-scope entry or a remote row still uses them.
 
 A first `add` can take an unmanaged folder at the exact install path when
-its content matches the pin. An unmanaged folder whose name only folds to
+its content matches the pin. The add keeps the ignored local files in that
+folder, so its install consent reads them with the pinned tree. An unmanaged folder whose name only folds to
 the item name, such as `.agents/skills/RR` for `rr`, always refuses. This
 is also true when a lock entry or a remote row tracks `rr`, for example an
 `apply` that would create the missing `rr` folder beside `RR`. `rm` of `rr`
