@@ -734,7 +734,10 @@ folder stay while a local-scope entry or a remote row still uses them.
 
 A first `add` can take an unmanaged folder at the exact install path when
 its content matches the pin. An unmanaged folder whose name only folds to
-the item name, such as `.agents/skills/RR` for `rr`, always refuses.
+the item name, such as `.agents/skills/RR` for `rr`, always refuses. This
+is also true when a lock entry or a remote row tracks `rr`, for example an
+`apply` that would create the missing `rr` folder beside `RR`. `rm` of `rr`
+still deletes its own folder and keeps `RR`.
 
 Capshelf sees one project at a time. It cannot know when the last project
 has switched from the skill to the plugin. It therefore never removes

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { assertSkillTargetFree, skillTargetOwners } from "../src/skill-target";
 import { createDataLockEntry, emptyLock } from "../src/lock";
@@ -512,6 +512,45 @@ describe("skill-target ownership at each write (D2 guard 5)", () => {
       "is already installed by data/skills/rr (local scope)",
     );
     expect(existsSync(join(dataRepo, "plugins", "rr"))).toBe(false);
+  });
+
+  test("apply plugins/<n> refuses while an unmanaged folded sibling exists", async () => {
+    // The lock owner explains `rr`, not `RR`. On a case-sensitive volume the
+    // apply would otherwise create `rr` beside `RR`.
+    const project = await tempRepo("capshelf-target-apply-folded-project-");
+    const dataRepo = await tempRepo("capshelf-target-apply-folded-data-");
+    await writePlugin(dataRepo, "rr", "rr");
+    await commitAll(dataRepo, "baseline");
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "plugins/rr"])).exitCode).toBe(0);
+    await rm(join(project, ".agents", "skills", "rr"), {
+      recursive: true,
+      force: true,
+    });
+    await rm(join(project, ".claude", "skills", "rr"), { force: true });
+    await mkdir(join(project, ".agents", "skills", "RR"), { recursive: true });
+
+    const apply = await run(["apply", "plugins/rr", "--yes"]);
+    expect(apply.exitCode).toBe(3);
+    expect(apply.stderr.toString()).toContain("is already in use at");
+    expect(existsSync(join(project, ".agents", "skills", "rr"))).toBe(false);
+  });
+
+  test("rm deletes the item's own folder beside an unmanaged folded sibling", async () => {
+    const project = await tempRepo("capshelf-target-rm-folded-project-");
+    const dataRepo = await tempRepo("capshelf-target-rm-folded-data-");
+    await writeSkill(dataRepo, "rr");
+    await commitAll(dataRepo, "baseline");
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/rr"])).exitCode).toBe(0);
+    await mkdir(join(project, ".agents", "skills", "RR"), { recursive: true });
+
+    const removed = await run(["rm", "skills/rr"]);
+    expect(removed.exitCode).toBe(0);
+    expect(existsSync(join(project, ".agents", "skills", "rr"))).toBe(false);
+    expect(existsSync(join(project, ".agents", "skills", "RR"))).toBe(true);
   });
 
   test("rm keeps the folder when another owner still claims it", async () => {

@@ -249,6 +249,9 @@ export function registerRm(program: Command): void {
           })
         ).filter(
           (owner) =>
+            // An unmanaged folded sibling is another folder: it does not
+            // keep this item's own folder.
+            owner.owner !== "unmanaged" &&
             !(
               (owner.owner === "project" || owner.owner === "local") &&
               owner.key === dataKey(kind, name)
@@ -572,7 +575,11 @@ async function removeRemoteItem(input: {
       local: input.localLock,
       remotes,
     })
-  ).filter((owner) => !(owner.owner === "remote" && owner.key === key));
+  ).filter(
+    (owner) =>
+      owner.owner !== "unmanaged" &&
+      !(owner.owner === "remote" && owner.key === key),
+  );
   const keptBy = otherOwners[0] ?? null;
   const excludesNeeded = otherOwners.some(
     (owner) => owner.owner === "local" || owner.owner === "remote",

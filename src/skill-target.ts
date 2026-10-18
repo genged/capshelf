@@ -16,7 +16,7 @@
  * delete that folder while another owner holds it.
  */
 import { dirname, join, relative } from "node:path";
-import { readdir } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { PreconditionError } from "./errors";
 import type { ExternalSkill } from "./external";
 import {
@@ -79,11 +79,13 @@ export interface SkillTargetOptions {
   ignoreSkillsSh?: boolean;
 }
 
+type UnmanagedOwner = { owner: "unmanaged"; path: string };
+
 export type SkillTargetOwner =
   | { owner: "project" | "local"; key: string }
   | { owner: "remote"; key: string }
   | { owner: "skills.sh"; name: string }
-  | { owner: "unmanaged"; path: string };
+  | UnmanagedOwner;
 
 /** A short label for an owner, for a message that only needs to name it. */
 export function skillTargetOwnerLabel(owner: SkillTargetOwner): string {
@@ -107,9 +109,12 @@ export function skillTargetOwnerLabel(owner: SkillTargetOwner): string {
  * An owner is any lock key `<source>/<skills|plugins>/<n2>` in the project or
  * local lock, any remote key `remote/<skills|plugins>/<n2>`, or any skills.sh
  * row `<n2>`, where `destinationKey(n2, ALL)` equals `destinationKey(name,
- * ALL)`. An unmanaged path — an existing directory entry, folded the same
- * way, at the codex or Claude skill location for `name` — counts as an owner
- * only when none of those three populations already explains the folder.
+ * ALL)`. An unmanaged path is an existing directory entry, folded the same
+ * way, at the codex or Claude skill location for `name`. It counts as an
+ * owner unless it is the exact destination of one of those owners, or the
+ * same file as one (an alias symlink, or a folding volume). The scan runs
+ * even when a lock explains the name: a lock entry for `rr` does not explain
+ * an unmanaged `.agents/skills/RR` on a case-sensitive volume.
  */
 export async function skillTargetOwners(
   project: string,
@@ -118,6 +123,8 @@ export async function skillTargetOwners(
 ): Promise<SkillTargetOwner[]> {
   const wanted = destinationKey(name, ALL_FOLDING);
   const owners: SkillTargetOwner[] = [];
+
+  const managedNames: string[] = [];
 
   for (const [scope, lock] of [
     ["project", locks.project],
@@ -128,6 +135,7 @@ export async function skillTargetOwners(
       if (!installsAtSkillTarget(parsed.kind)) continue;
       if (destinationKey(parsed.name, ALL_FOLDING) !== wanted) continue;
       owners.push({ owner: scope, key });
+      managedNames.push(parsed.name);
     }
   }
 
@@ -135,18 +143,47 @@ export async function skillTargetOwners(
     const parsed = parseRemoteKey(key);
     if (destinationKey(parsed.name, ALL_FOLDING) !== wanted) continue;
     owners.push({ owner: "remote", key });
+    managedNames.push(parsed.name);
   }
 
   for (const skill of await listSkillsShSkills(project)) {
     if (destinationKey(skill.name, ALL_FOLDING) !== wanted) continue;
     owners.push({ owner: "skills.sh", name: skill.name });
+    managedNames.push(skill.name);
   }
 
-  if (owners.length === 0) {
-    owners.push(...(await unmanagedSkillTargetOwners(project, name)));
+  const managedDestinations = managedNames.flatMap((managed) => [
+    codexSkillPath(project, managed),
+    claudeSkillPath(project, managed),
+  ]);
+  for (const unmanaged of await unmanagedSkillTargetOwners(project, name)) {
+    if (!(await isManagedDestination(unmanaged.path, managedDestinations))) {
+      owners.push(unmanaged);
+    }
   }
 
   return owners;
+}
+
+/**
+ * Whether `path` is a managed owner's destination: the exact path, or the
+ * same file by device and inode. The second case covers the Claude alias
+ * symlink and a volume that folds case, where `RR` and `rr` are one folder.
+ */
+async function isManagedDestination(
+  path: string,
+  destinations: readonly string[],
+): Promise<boolean> {
+  if (destinations.includes(path)) return true;
+  const info = await stat(path).catch(() => null);
+  if (info === null) return false;
+  for (const destination of destinations) {
+    const other = await stat(destination).catch(() => null);
+    if (other !== null && other.dev === info.dev && other.ino === info.ino) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -305,16 +342,15 @@ function skillTargetRefFromKey(key: string): SkillTargetRef {
  * itself (spec D2 guard 5). Every match is returned, so an exact entry cannot
  * hide a folded one beside it.
  *
- * The codex entries come first. A Claude-side symlink to the matching codex
- * entry is the compatibility alias of an install. For a managed install a
- * lock owner already explains the folder, so this scan does not run.
+ * The codex entries come first. `skillTargetOwners` drops the entries that
+ * a managed owner explains.
  */
 async function unmanagedSkillTargetOwners(
   project: string,
   name: string,
-): Promise<SkillTargetOwner[]> {
+): Promise<UnmanagedOwner[]> {
   const wanted = destinationKey(name, ALL_FOLDING);
-  const owners: SkillTargetOwner[] = [];
+  const owners: UnmanagedOwner[] = [];
   for (const skillsDir of [
     dirname(codexSkillPath(project, name)),
     dirname(claudeSkillPath(project, name)),
