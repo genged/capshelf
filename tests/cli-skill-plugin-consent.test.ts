@@ -191,6 +191,121 @@ describe("a shelf skill that holds a plugin manifest", () => {
   );
 
   test(
+    "update asks when a kept ignored local manifest arms a new upstream hook",
+    async () => {
+      // The update keeps the ignored local manifest beside the new pinned
+      // files, so the folder becomes a plugin that runs the new hook.
+      const w = await world();
+      await writeUnder(
+        w.dataRepo,
+        "skills/plain/SKILL.md",
+        skillText("plain", "d"),
+      );
+      await commitAll(w.dataRepo, "plain skill");
+      expect((await w.run(["add", "skills/plain"])).exitCode).toBe(0);
+      await writeUnder(
+        w.project,
+        ".gitignore",
+        ".agents/skills/plain/.claude-plugin/\n",
+      );
+      const installed = join(w.project, ".agents", "skills", "plain");
+      await writeUnder(
+        installed,
+        ".claude-plugin/plugin.json",
+        JSON.stringify({ name: "plain" }),
+      );
+      await writeUnder(
+        w.dataRepo,
+        "skills/plain/hooks/hooks.json",
+        hooksJson("bash hooks/kept.sh"),
+      );
+      await commitAll(w.dataRepo, "add a hook");
+
+      const r = await w.run(["update", "skills/plain"]);
+      expect(r.exitCode).toBe(3);
+      const err = r.stderr.toString();
+      expect(err).toContain("not updating skills/plain without consent");
+      expect(err).toContain("bash hooks/kept.sh");
+      expect(existsSync(join(installed, "hooks", "hooks.json"))).toBe(false);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "update --merge asks when a kept ignored local manifest arms a new upstream hook",
+    async () => {
+      const w = await world();
+      await writeUnder(
+        w.dataRepo,
+        "skills/plain/SKILL.md",
+        skillText("plain", "d"),
+      );
+      await commitAll(w.dataRepo, "plain skill");
+      expect((await w.run(["add", "skills/plain"])).exitCode).toBe(0);
+      await writeUnder(
+        w.project,
+        ".gitignore",
+        ".agents/skills/plain/.claude-plugin/\n",
+      );
+      const installed = join(w.project, ".agents", "skills", "plain");
+      await writeUnder(
+        installed,
+        ".claude-plugin/plugin.json",
+        JSON.stringify({ name: "plain" }),
+      );
+      // A visible local edit, so the merge has a local side.
+      await writeUnder(installed, "local.md", "mine\n");
+      await writeUnder(
+        w.dataRepo,
+        "skills/plain/hooks/hooks.json",
+        hooksJson("bash hooks/kept.sh"),
+      );
+      await commitAll(w.dataRepo, "add a hook");
+
+      const r = await w.run(["update", "skills/plain", "--merge"]);
+      expect(r.exitCode).toBe(3);
+      expect(r.stderr.toString()).toContain("bash hooks/kept.sh");
+      expect(existsSync(join(installed, "hooks", "hooks.json"))).toBe(false);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "update asks nothing for an unchanged kept local manifest",
+    async () => {
+      const w = await world();
+      await writeUnder(
+        w.dataRepo,
+        "skills/plain/SKILL.md",
+        skillText("plain", "d"),
+      );
+      await commitAll(w.dataRepo, "plain skill");
+      expect((await w.run(["add", "skills/plain"])).exitCode).toBe(0);
+      await writeUnder(
+        w.project,
+        ".gitignore",
+        ".agents/skills/plain/.claude-plugin/\n",
+      );
+      const installed = join(w.project, ".agents", "skills", "plain");
+      await writeUnder(
+        installed,
+        ".claude-plugin/plugin.json",
+        JSON.stringify({ name: "plain" }),
+      );
+      await writeUnder(w.dataRepo, "skills/plain/notes.md", "notes\n");
+      await commitAll(w.dataRepo, "add notes");
+
+      const r = await w.run(["update", "skills/plain"]);
+      expect(r.exitCode).toBe(0);
+      expect(existsSync(join(installed, "notes.md"))).toBe(true);
+      expect(existsSync(join(installed, ".claude-plugin", "plugin.json"))).toBe(
+        true,
+      );
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "update --merge asks for what the merged tree runs",
     async () => {
       // Neither side is a plugin with hooks alone: the local copy gains an
@@ -393,6 +508,62 @@ describe("a remote skill that holds a plugin manifest", () => {
       expect(r.exitCode).toBe(3);
       expect(r.stderr.toString()).toContain("bash hooks/merged.sh");
       expect(existsSync(join(installed, "hooks", "hooks.json"))).toBe(false);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "update names a hook that a kept ignored local manifest arms",
+    async () => {
+      const remote = await initRemoteProject();
+      const work = await tempRepo("capshelf-skill-plugin-kept-upstream-", {
+        origin: null,
+      });
+      await writeUnder(work, "SKILL.md", skillText("keptr", "d"));
+      await commitAll(work, "skill");
+      await $`git -C ${work} branch -M main`.quiet();
+      const bare = join(
+        await tempDir("capshelf-skill-plugin-kept-bare-"),
+        "repo.git",
+      );
+      await $`git clone -q --bare ${work} ${bare}`.quiet();
+      await $`git -C ${work} remote add origin ${bare}`.quiet();
+      const run = runInProcess(remote.project);
+      expect(
+        (
+          await run(
+            ["add", `file://${bare}`, "--as", "keptr", "--yes"],
+            remote.env,
+          )
+        ).exitCode,
+      ).toBe(0);
+      const installed = join(remote.project, ".agents", "skills", "keptr");
+      // Ignored inside the item, so the move keeps it (row 4).
+      await writeUnder(
+        installed,
+        ".gitignore",
+        ".claude-plugin/\n.gitignore\n",
+      );
+      await writeUnder(
+        installed,
+        ".claude-plugin/plugin.json",
+        JSON.stringify({ name: "keptr" }),
+      );
+      await pushPluginChange(
+        { url: `file://${bare}`, work },
+        "hooks/hooks.json",
+        hooksJson("bash hooks/kept.sh"),
+      );
+      expect(
+        (await run(["status", "--check-upstream"], remote.env)).exitCode,
+      ).toBe(0);
+
+      const r = await run(["update", "skills/keptr", "--yes"], remote.env);
+      expect(r.exitCode).toBe(0);
+      expect(r.stderr.toString()).toContain("bash hooks/kept.sh");
+      expect(existsSync(join(installed, ".claude-plugin", "plugin.json"))).toBe(
+        true,
+      );
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );

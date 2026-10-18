@@ -85,6 +85,7 @@ import {
   assertNoPreservedPathCollisions,
   copyDirectoryReconciliationFiles,
   materializeLockEntry,
+  installedPreservedEntries,
 } from "../materialize";
 import {
   findSkillsShSkill,
@@ -157,6 +158,7 @@ import {
   itemPluginRunsAtCommit,
   itemPluginRunsFromFiles,
   newRunsEntries,
+  pluginExtraFile,
   runsHaveEntries,
 } from "../plugin-runs";
 import type { PluginRuns } from "../plugin-runs";
@@ -1363,13 +1365,15 @@ async function updateMergeTarget(input: {
   // written files.
   const newRuns =
     (lockChanged || filesChanged) && installsAtSkillTarget(kind)
-      ? await mergedPluginNewRuns(
+      ? await mergedPluginNewRuns({
           dataRepo,
           kind,
-          parsed.name,
+          name: parsed.name,
           entry,
-          resultFiles,
-        )
+          files: resultFiles,
+          installed: { project, scope: target.scope },
+          localPaths: localFiles.map((file) => file.path),
+        })
       : null;
   if (
     newRuns !== null &&
@@ -1456,23 +1460,43 @@ async function updateMergeTarget(input: {
  * when the merged files are not a plugin to Claude Code. PIN-8: an unreadable
  * old pin counts as a tree that runs nothing, so every entry is new.
  */
-async function mergedPluginNewRuns(
-  dataRepo: string,
-  kind: SkillTargetKind,
-  name: string,
-  entry: DataLockEntryV4,
-  files: readonly NamedFile[],
-): Promise<PluginRuns | null> {
-  const merged = await itemPluginRunsFromFiles(kind, files);
-  if (merged === null) return null;
+async function mergedPluginNewRuns(input: {
+  dataRepo: string;
+  kind: SkillTargetKind;
+  name: string;
+  entry: DataLockEntryV4;
+  files: readonly NamedFile[];
+  installed: InstalledItem;
+  /** The installed files the merge read; the write replaces only these. */
+  localPaths: readonly string[];
+}): Promise<PluginRuns | null> {
+  const { dataRepo, kind, name, entry } = input;
   const previousEntries = await itemTreeEntriesAtCommit(
     gitTreeSource({ repo: dataRepo, kind, name, commit: entry.sourceCommit }),
     kind,
   ).catch(() => []);
+  // The merge write keeps every installed file it did not read (row 4), so
+  // the runs reader reads those beside the merged files, on both sides.
+  const extras = (
+    await installedPreservedEntries({
+      project: input.installed.project,
+      kind,
+      name,
+      scope: input.installed.scope,
+      managedPaths: new Set([
+        ...input.localPaths,
+        ...input.files.map((file) => file.path),
+        ...previousEntries.map((item) => item.path),
+      ]),
+    })
+  ).map(pluginExtraFile);
+  const merged = await itemPluginRunsFromFiles(kind, input.files, extras);
+  if (merged === null) return null;
   const previous = (await itemPluginRunsAtCommit(
     dataRepo,
     kind,
     previousEntries,
+    extras,
   )) ?? { hooks: [], mcpServers: [], unknown: [] };
   return newRunsEntries(previous, merged);
 }
@@ -1951,6 +1975,7 @@ async function updateOneTarget(
         parsed.name,
         entry,
         ctx.memo,
+        { project: ctx.project, scope },
       );
     } catch (err) {
       if (ctx.explicit) throw err;
@@ -1990,11 +2015,18 @@ async function shelfPluginNewRuns(
   name: string,
   entry: DataLockEntryV4,
   memo: GitReadMemo,
+  installed: InstalledItem,
 ): Promise<PluginRuns | null> {
   return (
-    (await shelfPluginPinMove(dataRepo, kind, name, entry, memo))?.newRuns ??
-    null
+    (await shelfPluginPinMove(dataRepo, kind, name, entry, memo, installed))
+      ?.newRuns ?? null
   );
+}
+
+/** Where a shelf item is installed, for the local files its update keeps. */
+interface InstalledItem {
+  project: string;
+  scope: "project" | "local";
 }
 
 /**
@@ -2008,6 +2040,7 @@ async function shelfPluginPinMove(
   name: string,
   entry: DataLockEntryV4,
   memo: GitReadMemo,
+  installed?: InstalledItem,
 ): Promise<{ pin: PinnedSource; newRuns: PluginRuns } | null> {
   const next = await pinCurrentSource(dataRepo, kind, name, {
     memo,
@@ -2031,8 +2064,32 @@ async function shelfPluginPinMove(
     kind,
     memo,
   ).catch(() => []);
+  // The update keeps ignored local files beside the new pinned files, so
+  // the runs reader reads both (row 4). A kept local manifest can arm a hook
+  // the new tree adds.
+  const extras =
+    installed === undefined
+      ? []
+      : (
+          await installedPreservedEntries({
+            project: installed.project,
+            kind,
+            name,
+            scope: installed.scope,
+            managedPaths: new Set([
+              ...previous.map((item) => item.path),
+              ...next.entries.map((item) => item.path),
+            ]),
+          })
+        ).map(pluginExtraFile);
   if (kind === "plugins") {
-    const change = await pluginChange(dataRepo, name, previous, next.entries);
+    const change = await pluginChange(
+      dataRepo,
+      name,
+      previous,
+      next.entries,
+      extras,
+    );
     return { pin: next, newRuns: change.newRuns };
   }
   const newRuns = await itemPluginNewRuns(
@@ -2040,6 +2097,7 @@ async function shelfPluginPinMove(
     kind,
     previous,
     next.entries,
+    extras,
   );
   return newRuns === null ? null : { pin: next, newRuns };
 }

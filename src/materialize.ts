@@ -476,56 +476,12 @@ export async function copyDirectoryReconciliationFiles(opts: {
     ...expected.map((file) => file.path),
     ...previousPaths,
   ]);
-  const inventory = await inventoryLocalTree(dst);
-  const extras = [
-    ...inventory.files,
-    ...inventory.irregular.map((object) => object.path),
-  ].filter((path) => !managedPaths.has(path));
-  const visibleExtras = await visibleExtraPaths(
-    opts.project,
+  const preserved = await preservedLocalEntries({
+    project: opts.project,
     dst,
-    extras,
-    opts.scope,
-  );
-  const preserved: PreservedEntry[] = [];
-  for (const path of inventory.files) {
-    // Row 5: the sidecar is excluded from hashing and materialization
-    // everywhere, so it is carried across regardless of Git visibility. Every
-    // other Git-visible extra is row 3 — drift the caller reconciles away.
-    if (!isMetadataSidecarPath(path) && visibleExtras.has(path)) continue;
-    if (managedPaths.has(path)) continue;
-    const fullPath = join(dst, ...path.split("/"));
-    const info = await lstat(fullPath);
-    preserved.push({
-      kind: "file",
-      path,
-      content: await readFile(fullPath),
-      mode: info.mode & 0o7777,
-    });
-  }
-  for (const object of inventory.irregular) {
-    // A non-recreatable object is refused whatever its ignore status: a
-    // directory replacement cannot put a fifo, socket, or device node back,
-    // and deleting one silently is not a thing consent can authorize.
-    if (object.type !== "symlink") {
-      throw new PreconditionError(
-        `${dst} contains an unsupported filesystem object: ${object.path}; fifos, sockets, and device nodes cannot be recreated by a directory replacement`,
-        {
-          hint: `Remove or relocate the path, then rerun the command. \`${PRODUCT_NAME} rm\` can still delete the item with it in place.`,
-        },
-      );
-    }
-    // A Git-visible symlink is an extra the project owns through its own
-    // policy, so reconciliation removes it (row 3) rather than carrying it.
-    if (visibleExtras.has(object.path)) continue;
-    if (managedPaths.has(object.path)) continue;
-    const fullPath = join(dst, ...object.path.split("/"));
-    preserved.push({
-      kind: "symlink",
-      path: object.path,
-      target: await readlink(fullPath),
-    });
-  }
+    managedPaths,
+    scope: opts.scope,
+  });
 
   await assertNoPreservedPathCollisions({
     destination: dst,
@@ -542,6 +498,90 @@ export async function copyDirectoryReconciliationFiles(opts: {
       left.path.localeCompare(right.path),
     ),
   };
+}
+
+/**
+ * Row 4 and row 5 of an installed directory: the local paths that a
+ * directory replacement carries across. `managedPaths` are the pinned paths
+ * of the old and the new tree. A path outside them that the project does not
+ * see in Git is kept, and so is the metadata sidecar. Refuses a fifo, socket,
+ * or device node, because a replacement cannot put one back.
+ */
+export async function preservedLocalEntries(opts: {
+  project: string;
+  dst: string;
+  managedPaths: ReadonlySet<string>;
+  scope: Scope;
+}): Promise<PreservedEntry[]> {
+  const inventory = await inventoryLocalTree(opts.dst);
+  const extras = [
+    ...inventory.files,
+    ...inventory.irregular.map((object) => object.path),
+  ].filter((path) => !opts.managedPaths.has(path));
+  const visibleExtras = await visibleExtraPaths(
+    opts.project,
+    opts.dst,
+    extras,
+    opts.scope,
+  );
+  const preserved: PreservedEntry[] = [];
+  for (const path of inventory.files) {
+    // Row 5: the sidecar is excluded from hashing and materialization
+    // everywhere, so it is carried across regardless of Git visibility. Every
+    // other Git-visible extra is row 3 — drift the caller reconciles away.
+    if (!isMetadataSidecarPath(path) && visibleExtras.has(path)) continue;
+    if (opts.managedPaths.has(path)) continue;
+    const fullPath = join(opts.dst, ...path.split("/"));
+    const info = await lstat(fullPath);
+    preserved.push({
+      kind: "file",
+      path,
+      content: await readFile(fullPath),
+      mode: info.mode & 0o7777,
+    });
+  }
+  for (const object of inventory.irregular) {
+    // A non-recreatable object is refused whatever its ignore status: a
+    // directory replacement cannot put a fifo, socket, or device node back,
+    // and deleting one silently is not a thing consent can authorize.
+    if (object.type !== "symlink") {
+      throw new PreconditionError(
+        `${opts.dst} contains an unsupported filesystem object: ${object.path}; fifos, sockets, and device nodes cannot be recreated by a directory replacement`,
+        {
+          hint: `Remove or relocate the path, then rerun the command. \`${PRODUCT_NAME} rm\` can still delete the item with it in place.`,
+        },
+      );
+    }
+    // A Git-visible symlink is an extra the project owns through its own
+    // policy, so reconciliation removes it (row 3) rather than carrying it.
+    if (visibleExtras.has(object.path)) continue;
+    if (opts.managedPaths.has(object.path)) continue;
+    const fullPath = join(opts.dst, ...object.path.split("/"));
+    preserved.push({
+      kind: "symlink",
+      path: object.path,
+      target: await readlink(fullPath),
+    });
+  }
+
+  return preserved;
+}
+
+/**
+ * `preservedLocalEntries` for an installed item, or none when its folder is
+ * missing. A plugin consent point reads these with the new pinned files: the
+ * write keeps them, so they are part of the tree Claude Code loads.
+ */
+export async function installedPreservedEntries(opts: {
+  project: string;
+  kind: CopyDirectoryItemKind;
+  name: string;
+  scope: Scope;
+  managedPaths: ReadonlySet<string>;
+}): Promise<PreservedEntry[]> {
+  const dst = installedPath(opts.project, opts.kind, opts.name);
+  if (!existsSync(dst)) return [];
+  return await preservedLocalEntries({ ...opts, dst });
 }
 
 export async function assertNoPreservedPathCollisions(opts: {

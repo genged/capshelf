@@ -97,6 +97,15 @@ export interface PluginRuns {
   unknown: string[];
 }
 
+/**
+ * A local file that the write keeps beside the pinned files (row 4 of the
+ * object model). `content` is null for a symlink: present, never read.
+ */
+export interface PluginExtraFile {
+  path: string;
+  content: Buffer | null;
+}
+
 /** Returns the file's bytes, or null when the path is absent or unusable. */
 export type PluginFileReader = (relPath: string) => Promise<Buffer | null>;
 
@@ -632,8 +641,12 @@ function manifestNamedHookPaths(manifestBytes: Buffer | null): string[] {
 export async function pluginRunsAtCommit(
   repo: string,
   entries: readonly PinTreeEntry[],
+  extras: readonly PluginExtraFile[] = [],
 ): Promise<PluginRuns> {
   const byPath = new Map(entries.map((entry) => [entry.path, entry] as const));
+  const extraByPath = new Map(
+    extras.map((extra) => [extra.path, extra.content] as const),
+  );
   const blobs = new Map<string, Buffer>();
 
   function regularEntryAt(relPath: string): PinTreeEntry | undefined {
@@ -659,14 +672,14 @@ export async function pluginRunsAtCommit(
   const manifestEntry = regularEntryAt(PLUGIN_MANIFEST_REL);
   const manifestBytes =
     manifestEntry === undefined
-      ? null
+      ? (extraByPath.get(PLUGIN_MANIFEST_REL) ?? null)
       : (blobs.get(manifestEntry.blobId) ?? null);
   const declared = declarationPaths(manifestBytes);
   await fetchBlobsFor(declared);
 
   const reader: PluginFileReader = async (relPath) => {
     const entry = regularEntryAt(relPath);
-    if (entry === undefined) return null;
+    if (entry === undefined) return extraByPath.get(relPath) ?? null;
     if (!blobs.has(entry.blobId)) await fetchBlobsFor([relPath]);
     return blobs.get(entry.blobId) ?? null;
   };
@@ -674,13 +687,13 @@ export async function pluginRunsAtCommit(
 
   addUnsafeDefaultUnknowns(runs, (relPath) => {
     const entry = byPath.get(relPath);
-    return entry !== undefined && !isRegularBlobMode(entry.mode);
+    if (entry !== undefined) return !isRegularBlobMode(entry.mode);
+    return extraByPath.has(relPath) && extraByPath.get(relPath) === null;
   });
-  addCaseVariantUnknowns(
-    runs,
-    declared,
-    entries.map((entry) => entry.path),
-  );
+  addCaseVariantUnknowns(runs, declared, [
+    ...entries.map((entry) => entry.path),
+    ...extras.map((extra) => extra.path),
+  ]);
   return runs;
 }
 
@@ -725,20 +738,28 @@ export interface PluginTreeFile {
 
 /**
  * Read a plugin's runs from files held in memory, such as an `update
- * --merge` result before it is written. Every file here is a regular file,
- * so the unsafe-default rule has nothing to add.
+ * --merge` result before it is written, plus the local files the write
+ * keeps. A kept symlink at a default path is unknown (D6).
  */
 export async function pluginRunsFromFiles(
   files: readonly PluginTreeFile[],
+  extras: readonly PluginExtraFile[] = [],
 ): Promise<PluginRuns> {
-  const byPath = new Map(files.map((file) => [file.path, file.content]));
+  const byPath = new Map<string, Buffer | null>([
+    ...extras.map((extra) => [extra.path, extra.content] as const),
+    ...files.map((file) => [file.path, file.content] as const),
+  ]);
   const reader: PluginFileReader = async (relPath) =>
     byPath.get(relPath) ?? null;
   const runs = await readPluginRuns(reader);
+  addUnsafeDefaultUnknowns(
+    runs,
+    (relPath) => byPath.has(relPath) && byPath.get(relPath) === null,
+  );
   addCaseVariantUnknowns(
     runs,
     declarationPaths(byPath.get(PLUGIN_MANIFEST_REL) ?? null),
-    files.map((file) => file.path),
+    [...byPath.keys()],
   );
   return runs;
 }
@@ -769,12 +790,15 @@ export async function itemPluginRunsAtCommit(
   repo: string,
   kind: ItemKind,
   entries: readonly PinTreeEntry[],
+  extras: readonly PluginExtraFile[] = [],
 ): Promise<PluginRuns | null> {
   const manifestKey = foldedPath(PLUGIN_MANIFEST_REL);
   const isPlugin = await carriesPluginManifest(kind, async () =>
-    entries.some((entry) => foldedPath(entry.path) === manifestKey),
+    [...entries, ...extras].some(
+      (entry) => foldedPath(entry.path) === manifestKey,
+    ),
   );
-  return isPlugin ? await pluginRunsAtCommit(repo, entries) : null;
+  return isPlugin ? await pluginRunsAtCommit(repo, entries, extras) : null;
 }
 
 /** `itemPluginRunsAtCommit` for an item directory on disk. */
@@ -794,29 +818,51 @@ export async function itemPluginRunsOnDisk(
 export async function itemPluginRunsFromFiles(
   kind: ItemKind,
   files: readonly PluginTreeFile[],
+  extras: readonly PluginExtraFile[] = [],
 ): Promise<PluginRuns | null> {
   const manifestKey = foldedPath(PLUGIN_MANIFEST_REL);
   const isPlugin = await carriesPluginManifest(kind, async () =>
-    files.some((file) => foldedPath(file.path) === manifestKey),
+    [...files, ...extras].some((file) => foldedPath(file.path) === manifestKey),
   );
-  return isPlugin ? await pluginRunsFromFiles(files) : null;
+  return isPlugin ? await pluginRunsFromFiles(files, extras) : null;
+}
+
+/** A kept local entry as the runs reader takes it: a symlink is unread. */
+export function pluginExtraFile(entry: {
+  path: string;
+  kind: "file" | "symlink";
+  content?: Buffer;
+}): PluginExtraFile {
+  return {
+    path: entry.path,
+    content: entry.kind === "file" ? (entry.content ?? null) : null,
+  };
 }
 
 /**
  * The runs entries a pin move adds (D7 point 2) for an item that is a plugin
  * to Claude Code at the new tree, or null when it is not one there. A tree
  * that was not a plugin before (a skill that gains a manifest) counts as
- * running nothing, so each of its entries is new.
+ * running nothing, so each of its entries is new. `extras` are the local
+ * files the write keeps. Both sides read them, so an unchanged local file
+ * adds no entry by itself, but a hook that a kept local manifest now arms
+ * is new.
  */
 export async function itemPluginNewRuns(
   repo: string,
   kind: ItemKind,
   before: readonly PinTreeEntry[],
   after: readonly PinTreeEntry[],
+  extras: readonly PluginExtraFile[] = [],
 ): Promise<PluginRuns | null> {
-  const next = await itemPluginRunsAtCommit(repo, kind, after);
+  const next = await itemPluginRunsAtCommit(repo, kind, after, extras);
   if (next === null) return null;
-  const previous = (await itemPluginRunsAtCommit(repo, kind, before)) ?? {
+  const previous = (await itemPluginRunsAtCommit(
+    repo,
+    kind,
+    before,
+    extras,
+  )) ?? {
     hooks: [],
     mcpServers: [],
     unknown: [],

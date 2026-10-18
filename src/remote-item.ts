@@ -23,7 +23,7 @@ import { METADATA_DIR, PRODUCT_NAME, REMOTES_LOCK_FILE } from "./identity";
 import { installedPath } from "./installed";
 import { dataKey } from "./lock";
 import type { DataLockEntryV4 } from "./lock";
-import { materializeLockEntry } from "./materialize";
+import { installedPreservedEntries, materializeLockEntry } from "./materialize";
 import type { MaterializeResult } from "./materialize";
 import {
   installedSnapshot,
@@ -39,9 +39,10 @@ import {
   itemPluginRunsAtCommit,
   itemPluginRunsFromFiles,
   newRunsEntries,
+  pluginExtraFile,
   pluginRunsAtCommit,
 } from "./plugin-runs";
-import type { PluginRuns } from "./plugin-runs";
+import type { PluginExtraFile, PluginRuns } from "./plugin-runs";
 import { beginInstalledReconciliation } from "./promote-transaction";
 import { remoteCacheState, resolveCachedRef } from "./remote-cache";
 import { remoteTreeSource } from "./remote-discovery";
@@ -319,14 +320,29 @@ export async function previewRemoteUpdate(opts: {
   const changed = [...new Set([...previous.keys(), ...next.keys()])]
     .filter((path) => previous.get(path) !== next.get(path))
     .sort();
+  // The move keeps ignored local files beside the new pinned files (row 4),
+  // so the runs reader reads both. A kept local manifest can arm a hook the
+  // new tree adds.
+  const extras = (
+    await installedPreservedEntries({
+      project: opts.project,
+      kind,
+      name,
+      scope: "local",
+      managedPaths: new Set([
+        ...before.map((item) => item.path),
+        ...pin.entries.map((item) => item.path),
+      ]),
+    })
+  ).map(pluginExtraFile);
   const plugin =
     kind === "plugins"
-      ? await pluginChange(cache.path, name, before, pin.entries)
+      ? await pluginChange(cache.path, name, before, pin.entries, extras)
       : null;
   const newRuns =
     plugin !== null
       ? plugin.newRuns
-      : await itemPluginNewRuns(cache.path, kind, before, pin.entries);
+      : await itemPluginNewRuns(cache.path, kind, before, pin.entries, extras);
   return {
     from: entry.sourceCommit,
     to: head,
@@ -354,6 +370,7 @@ export async function pluginChange(
   name: string,
   before: readonly PinTreeEntry[],
   after: readonly PinTreeEntry[],
+  extras: readonly PluginExtraFile[] = [],
 ): Promise<RemotePluginChange> {
   const [manifestBefore, manifestAfter] = await Promise.all([
     pluginManifestAt(repo, before),
@@ -364,8 +381,8 @@ export async function pluginChange(
     throw pluginRenameRefusal(name, renamedTo);
   }
   const [runsBefore, runsAfter] = await Promise.all([
-    pluginRunsAtCommit(repo, before),
-    pluginRunsAtCommit(repo, after),
+    pluginRunsAtCommit(repo, before, extras),
+    pluginRunsAtCommit(repo, after, extras),
   ]);
   return {
     versionFrom: manifestString(manifestBefore, "version"),
@@ -741,12 +758,27 @@ export async function remoteMergeNewRuns(opts: {
   if (plan.kind === "current") {
     return { newRuns: opts.preview.newRuns, files: null };
   }
-  const merged = await itemPluginRunsFromFiles(opts.kind, plan.files);
+  // The merge write keeps every installed file it did not read (row 4).
+  const extras = (
+    await installedPreservedEntries({
+      project: opts.project,
+      kind: opts.kind,
+      name: opts.name,
+      scope: "local",
+      managedPaths: new Set([
+        ...plan.localFiles.map((file) => file.path),
+        ...plan.files.map((file) => file.path),
+        ...plan.baseEntries.map((item) => item.path),
+      ]),
+    })
+  ).map(pluginExtraFile);
+  const merged = await itemPluginRunsFromFiles(opts.kind, plan.files, extras);
   if (merged === null) return { newRuns: null, files: plan.files };
   const previous = (await itemPluginRunsAtCommit(
     plan.cachePath,
     opts.kind,
     plan.baseEntries,
+    extras,
   )) ?? { hooks: [], mcpServers: [], unknown: [] };
   return { newRuns: newRunsEntries(previous, merged), files: plan.files };
 }
