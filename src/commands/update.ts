@@ -122,6 +122,7 @@ import { beginInstalledReconciliation } from "../promote-transaction";
 import { remoteCacheState } from "../remote-cache";
 import { candidateAtSubpath, remoteTreeSource } from "../remote-discovery";
 import {
+  assertMergedPluginName,
   pluginChange,
   previewRemoteUpdate,
   remoteEntryAsDataEntry,
@@ -1297,6 +1298,8 @@ async function updateMergeTarget(input: {
   } else if (localChanged && !upstreamChanged) {
     resultFiles = localFiles;
   }
+  // D3 over the files the write puts in the folder, before any write.
+  assertMergedPluginName(kind, parsed.name, resultFiles);
 
   const newEntry = refreshDataLockEntry(entry, {
     pin: upstreamPin,

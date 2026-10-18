@@ -30,6 +30,7 @@ import {
   namedFilesFromInstalledSnapshot,
 } from "./item-snapshot";
 import { PLUGIN_MANIFEST_REL } from "./master";
+import type { ItemKind } from "./master";
 import { mergeNamedTrees, namedFilesEqual } from "./merge-tree";
 import type { NamedFile } from "./merge-tree";
 import { sanitizeDisplayText } from "./pick-core";
@@ -415,6 +416,35 @@ async function pluginManifestAt(
   return isConfigObject(parsed) ? parsed : null;
 }
 
+/**
+ * D3 for a merge result: the files a merge writes keep the item name in
+ * their manifest. A local edit can rename the plugin while the upstream
+ * changes another file, so the upstream check alone does not cover it. A
+ * merged tree with no manifest is not checked here.
+ */
+export function assertMergedPluginName(
+  kind: ItemKind,
+  name: string,
+  files: readonly NamedFile[],
+): void {
+  if (kind !== "plugins") return;
+  const file = files.find(
+    (candidate) => candidate.path === PLUGIN_MANIFEST_REL,
+  );
+  if (file === undefined) return;
+  let parsed: ConfigValue = null;
+  try {
+    parsed = JSON.parse(file.content.toString("utf8"));
+  } catch {
+    // An unparseable manifest names no plugin.
+  }
+  const manifestName = manifestString(
+    isConfigObject(parsed) ? parsed : null,
+    "name",
+  );
+  if (manifestName !== name) throw pluginRenameRefusal(name, manifestName);
+}
+
 function manifestString(
   manifest: ConfigObject | null,
   field: string,
@@ -680,6 +710,7 @@ async function planRemoteMerge(opts: {
         `  conflicting paths:\n${merged.conflicts.map((path) => `    ${path}`).join("\n")}`,
     );
   }
+  assertMergedPluginName(kind, name, merged.files);
   return {
     kind: "merge",
     snapshot,

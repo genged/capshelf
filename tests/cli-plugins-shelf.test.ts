@@ -657,6 +657,33 @@ describe("shelf update plugins/<n> (D3, D7 point 2)", () => {
   );
 
   test(
+    "--merge refuses a merged tree whose local manifest renames the plugin (D3)",
+    async () => {
+      const world = await installedWorld();
+      const lockPath = join(world.project, ".capshelf", "capshelf.lock.json");
+      const lockBefore = await readFile(lockPath, "utf-8");
+      await writeUnder(
+        pluginFolder(world.project, "gh-cli"),
+        ".claude-plugin/plugin.json",
+        JSON.stringify({ name: "gh-tools", version: "1.0.0" }),
+      );
+      await writeUnder(world.dataRepo, "plugins/gh-cli/README.md", "x\n");
+      await commitAll(world.dataRepo, "change another file");
+
+      const r = await world.run(["update", "plugins/gh-cli", "--merge"]);
+      expect(r.exitCode).toBe(3);
+      expect(r.stderr.toString()).toContain(
+        'plugins/gh-cli: the new tree names the plugin "gh-tools"',
+      );
+      expect(await readFile(lockPath, "utf-8")).toBe(lockBefore);
+      expect(
+        existsSync(join(pluginFolder(world.project, "gh-cli"), "README.md")),
+      ).toBe(false);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "--merge with no terminal does not tell the user to pass --yes",
     async () => {
       const world = await installedWorld();

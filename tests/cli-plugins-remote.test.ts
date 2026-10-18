@@ -706,6 +706,31 @@ describe("remote plugin rows: update, apply, rm, status", () => {
   );
 
   test(
+    "update --merge refuses a merged tree whose local manifest renames the plugin",
+    async () => {
+      const { world, up, run } = await installGh();
+      await writeFile(
+        join(ghDir(world.project), ".claude-plugin", "plugin.json"),
+        JSON.stringify({ name: "gh-tools" }),
+      );
+      await pushPluginChange(up, "plugins/gh-cli/README.md", "changed\n");
+      await fetchUpstream(run, world);
+      const before = await readRemotesLock(world.project);
+      const r = await run(
+        ["update", "plugins/gh-cli", "--merge", "--yes"],
+        world.env,
+      );
+      expect(r.exitCode).toBe(3);
+      expect(r.stderr.toString()).toContain(
+        'plugins/gh-cli: the new tree names the plugin "gh-tools"',
+      );
+      expect(await readRemotesLock(world.project)).toEqual(before);
+      expect(existsSync(join(ghDir(world.project), "README.md"))).toBe(false);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "update --dry-run asks nothing and lists the new hook under would ask",
     async () => {
       const { world, up, run } = await installGh();
