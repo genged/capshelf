@@ -1285,6 +1285,69 @@ describe("share plugins/<n> --adopt (D9, M3, M4)", () => {
   );
 
   test(
+    "--to project never commits a hook added to the installed copy during the prompt",
+    async () => {
+      const { world, run } = await remotePluginWorld();
+      const installed = pluginFolder(world.project, "gh-cli");
+      const prompts: string[] = [];
+      const outer = setDestructiveConfirmationContext({
+        stdinIsTTY: true,
+        stderrIsTTY: true,
+        prompt: async (message) => {
+          prompts.push(message);
+          await writeFile(
+            join(installed, "hooks", "hooks.json"),
+            JSON.stringify(TWO_HOOKS),
+          );
+          return "y";
+        },
+        stderr: { write: () => {} },
+      });
+      try {
+        await run(["share", "plugins/gh-cli", "--adopt", "--to", "project"]);
+      } finally {
+        setDestructiveConfirmationContext(outer);
+      }
+      expect(prompts[0]).toContain("runs 1 hook");
+      const shelfHooks = join(
+        world.dataRepo,
+        "plugins",
+        "gh-cli",
+        "hooks",
+        "hooks.json",
+      );
+      if (existsSync(shelfHooks)) {
+        expect(await readFile(shelfHooks, "utf-8")).not.toContain(
+          "hooks/format.sh",
+        );
+      }
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "refuses before any write when the plugin's own .gitignore hides its manifest",
+    async () => {
+      const { world, run } = await remotePluginWorld();
+      const installed = pluginFolder(world.project, "gh-cli");
+      await writeFile(join(installed, ".gitignore"), ".claude-plugin/\n");
+      const headBefore = await headOf(world.dataRepo);
+
+      const r = await run(["share", "plugins/gh-cli", "--adopt", "--yes"]);
+      expect(r.exitCode).toBe(3);
+      const err = r.stderr.toString();
+      expect(err).toContain(".claude-plugin/plugin.json");
+      expect(err).toContain("ignore rule");
+      expect(await headOf(world.dataRepo)).toBe(headBefore);
+      const remotes = await readJsonObject(remotesLockPath(world.project));
+      expect(Object.keys(objectField(remotes, "items"))).toEqual([
+        "remote/plugins/gh-cli",
+      ]);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "warns when the license is at the repository root, outside the plugin",
     async () => {
       const { run } = await remotePluginWorld({ rootLicense: true });

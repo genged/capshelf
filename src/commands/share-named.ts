@@ -42,14 +42,18 @@ import {
   isCopyDirectoryItemKind,
   itemRepoRelPath,
   PLUGIN_MANIFEST_REL,
-  readPluginManifestName,
 } from "../master";
 import type {
   CopyDirectoryItemKind,
   FragmentItemKind,
   SkillTargetKind,
 } from "../master";
-import { assertRepoClean, headSha, originRemoteUrl } from "../git";
+import {
+  assertRepoClean,
+  headSha,
+  originRemoteUrl,
+  projectIgnoreRule,
+} from "../git";
 import { commitDataRepoMutation } from "../marketplace-files";
 import { PreconditionError } from "../errors";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
@@ -64,7 +68,7 @@ import {
   saveLocalConfig,
 } from "../local-config";
 import { addToManifest } from "../promote-core";
-import type { PromoteResult, Scope } from "../promote-core";
+import type { AdoptionCandidate, PromoteResult, Scope } from "../promote-core";
 import {
   findPreviousOwner,
   previousOwnerFor,
@@ -77,11 +81,11 @@ import { findLicense } from "../remote-discovery";
 import { loadRemotesLock, remoteKey } from "../remotes-lock";
 import { assertSkillTargetFree } from "../skill-target";
 import { confirmPluginConsent } from "../plugin-consent";
-import { itemPluginRunsOnDisk } from "../plugin-runs";
+import { itemPluginRunsFromFiles } from "../plugin-runs";
 import { sanitizeDisplayText } from "../pick-core";
 import { installedPath } from "../installed";
 import { PRODUCT_NAME, METADATA_SIDECAR } from "../identity";
-import { adoptIntoDataRepo, findAdoptionSource } from "../data-repo-adopt";
+import { adoptIntoDataRepo } from "../data-repo-adopt";
 import { printPrivateDotenvWarnings } from "../dotfiles";
 import {
   printRuntimeWarnings,
@@ -112,9 +116,12 @@ import {
   unmanagedRemainder,
 } from "../fragment-pick";
 import {
+  isConfigObject,
+  isConfigString,
   isPlainConfigObject,
   mergeConfigObjects,
   type ConfigObject,
+  type ConfigValue,
 } from "../config-values";
 import { captureCommittedItemNeeds, readSidecarBytes } from "../metadata";
 import {
@@ -353,15 +360,21 @@ export async function shareCopyItem(
       { ignoreSkillsSh: kind === "skills" },
     );
   }
-  // Last of the refusals, so nobody is asked and then refused.
-  if (installsAtSkillTarget(kind)) {
-    const approved = await checkPluginShare(project, kind, name, scope, {
-      installMode: manifest.installMode,
-      json: opts.json === true,
-      yes: opts.yes === true,
-    });
-    if (!approved) return;
-  }
+  // The plugin checks (D3, D7 point 3) run inside the adopt, over the
+  // candidate it commits (`checkCandidate`), before any data-repo write.
+  const checkCandidate = installsAtSkillTarget(kind)
+    ? async (candidate: AdoptionCandidate): Promise<void> => {
+        const approved = await checkPluginShareCandidate(
+          project,
+          kind,
+          name,
+          scope,
+          candidate,
+          { json: opts.json === true, yes: opts.yes === true },
+        );
+        if (!approved) throw new ShareDeclined();
+      }
+    : undefined;
 
   if (owner !== null) await warnAboutMissingLicense(project, kind, name, owner);
 
@@ -405,6 +418,7 @@ export async function shareCopyItem(
         allowPreviousOwner: true,
       }),
       ...(owner !== null && { provenance: owner.provenance }),
+      ...(checkCandidate !== undefined && { checkCandidate }),
     });
 
     snapshot = await captureCommittedItemNeeds(dataRepo, { kind, name });
@@ -442,6 +456,8 @@ export async function shareCopyItem(
     if (excludeDropped && !ownerEstablished) {
       await ensureLocalExcludes(project, kind, name).catch(() => {});
     }
+    // The user answered no: nothing was written, and that is not an error.
+    if (error instanceof ShareDeclined) return;
     throw error;
   }
   const runtimeWarnings = runtimeWarningsForItem(project, kind, name);
@@ -582,52 +598,99 @@ async function releasePreviousOwner(
   await previousOwnerFor(owner.kind).release(project, kind, name, owner);
 }
 
+/** The user declined plugin consent inside the adopt. */
+class ShareDeclined extends Error {
+  constructor() {
+    super("share declined");
+  }
+}
+
 /**
- * The plugin checks of a share, before any data-repo write. D3: the copy
- * of a plugin being shared must carry the item name in its manifest, because
- * Claude Code names the plugin from it. D7 point 3: project scope asks for
- * consent with everything the copy runs. A skill whose copy holds a plugin
- * manifest asks the same way, because Claude Code loads it as a plugin (R1),
- * but it keeps its name. Returns false when the user answered no.
- *
- * The copy read here is the folder `adoptIntoDataRepo` snapshots. When no
- * such folder exists, the adopt itself reports it.
+ * The plugin checks of a share, over the candidate the adopt commits and
+ * before any data-repo write. D3: a plugin's candidate must hold
+ * `.claude-plugin/plugin.json` as a regular file, and the manifest must carry
+ * the item name, because Claude Code names the plugin from it. A manifest
+ * that exists on disk but that an ignore rule keeps out of the candidate
+ * refuses and names the rule. D7 point 3: project scope asks for consent with
+ * everything the candidate runs. A skill whose candidate holds a plugin
+ * manifest asks the same way (R1), but it keeps its name. Returns false when
+ * the user answered no.
  */
-async function checkPluginShare(
+async function checkPluginShareCandidate(
   project: string,
   kind: SkillTargetKind,
   name: string,
   scope: ShareScope,
-  opts: {
-    installMode: Manifest["installMode"];
-    json: boolean;
-    yes: boolean;
-  },
+  candidate: AdoptionCandidate,
+  opts: { json: boolean; yes: boolean },
 ): Promise<boolean> {
-  const source = findAdoptionSource(project, kind, name, opts.installMode);
-  if (source === null) return true;
-  const manifestName =
-    kind === "plugins"
-      ? await readPluginManifestName(
-          join(source.path, ...PLUGIN_MANIFEST_REL.split("/")),
-        )
-      : name;
-  if (manifestName !== name) {
-    throw new PreconditionError(
-      manifestName === null
-        ? `not sharing plugins/${name} — ${PLUGIN_MANIFEST_REL} has no "name" field`
-        : `not sharing plugins/${name} — its plugin.json names it "${sanitizeDisplayText(manifestName)}"`,
-      {
-        hint: `the item name is "${name}". ${PRODUCT_NAME} does not rename an item.`,
-      },
+  if (kind === "plugins") {
+    const file = candidate.files.find(
+      (entry) => entry.path === PLUGIN_MANIFEST_REL,
     );
+    if (file === undefined) {
+      throw await missingManifestRefusal(project, name, candidate);
+    }
+    let parsed: ConfigValue = null;
+    try {
+      parsed = JSON.parse(file.content.toString("utf8"));
+    } catch {
+      // An unparseable manifest names no plugin.
+    }
+    const manifestName =
+      isConfigObject(parsed) && isConfigString(parsed.name)
+        ? parsed.name
+        : null;
+    if (manifestName !== name) {
+      throw new PreconditionError(
+        manifestName === null
+          ? `not sharing plugins/${name} — ${PLUGIN_MANIFEST_REL} has no "name" field`
+          : `not sharing plugins/${name} — its plugin.json names it "${sanitizeDisplayText(manifestName)}"`,
+        {
+          hint: `the item name is "${name}". ${PRODUCT_NAME} does not rename an item.`,
+        },
+      );
+    }
   }
   if (scope !== "project") return true;
-  const runs = await itemPluginRunsOnDisk(kind, source.path);
+  const runs = await itemPluginRunsFromFiles(kind, candidate.files);
   if (runs === null) return true;
   return confirmPluginConsent(
     [{ kind: "project-scope", ref: `${kind}/${name}`, runs }],
     { json: opts.json, yes: opts.yes },
+  );
+}
+
+/**
+ * The refusal for a plugin candidate with no manifest. When the file is on
+ * disk, an ignore rule kept it out of the snapshot, and the message names
+ * the rule: Git's for a project-scope share, the plugin folder's own
+ * `.gitignore` for a local-scope share.
+ */
+async function missingManifestRefusal(
+  project: string,
+  name: string,
+  candidate: AdoptionCandidate,
+): Promise<PreconditionError> {
+  const manifestPath = join(candidate.path, ...PLUGIN_MANIFEST_REL.split("/"));
+  if (!lstatOrNull(manifestPath)?.isFile()) {
+    return new PreconditionError(
+      `not sharing plugins/${name} — required ${PLUGIN_MANIFEST_REL} is missing or not a regular file`,
+    );
+  }
+  const rule =
+    candidate.snapshot.source === "git-visible"
+      ? await projectIgnoreRule(project, relative(project, manifestPath))
+      : null;
+  const where =
+    rule !== null
+      ? `the ignore rule "${sanitizeDisplayText(rule.pattern)}" in ${sanitizeDisplayText(rule.source)}:${rule.line}`
+      : `an ignore rule in ${relative(project, join(candidate.path, ".gitignore"))}`;
+  return new PreconditionError(
+    `not sharing plugins/${name} — ${PLUGIN_MANIFEST_REL} exists, but ${where} keeps it out of the share`,
+    {
+      hint: "A shared plugin needs its manifest on the shelf. Remove the rule, then share again.",
+    },
   );
 }
 

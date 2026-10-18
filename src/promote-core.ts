@@ -14,6 +14,7 @@ import type { PinnedSource } from "./pin";
 import type { ItemRef } from "./item-ref";
 import type { PreviousOwnerKind } from "./previous-owner";
 import type { SidecarProvenance } from "./metadata";
+import type { NamedFile } from "./merge-tree";
 import { claudeSkillPath, codexSkillPath, installedPath } from "./installed";
 
 export type Scope = "project" | "local";
@@ -61,6 +62,21 @@ export interface AdoptOptions {
    * identity.
    */
   provenance?: SidecarProvenance;
+  /**
+   * Called with the adoption candidate, the exact files the adopt commits,
+   * before any data-repo write. A check that throws stops the adopt. The
+   * commit proof then refuses any commit whose tree differs from these files,
+   * so a check over them binds the commit.
+   */
+  checkCandidate?: (candidate: AdoptionCandidate) => Promise<void>;
+}
+
+/** The files an adopt commits, read once from the installed folder. */
+export interface AdoptionCandidate {
+  files: NamedFile[];
+  snapshot: ItemSnapshot;
+  /** The installed folder the snapshot was read from. */
+  path: string;
 }
 
 export interface MoveScopeState {

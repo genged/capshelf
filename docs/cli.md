@@ -822,7 +822,12 @@ There are three consent points:
    project`, and `share --adopt --to project` ask, because the project commit
    gives the plugin to every teammate. `move --to project` reads both the
    pinned tree and the installed folder. It asks for an entry that only the
-   installed folder holds, such as an unpinned `hooks/hooks.json`:
+   installed folder holds, such as an unpinned `hooks/hooks.json`.
+   `share --to project` reads the exact files that it commits, before any
+   data-repo write. A change to the folder while the prompt is open makes
+   the commit check refuse. A shared plugin must carry
+   `.claude-plugin/plugin.json` in those files. When an ignore rule keeps
+   the manifest out, the share refuses and names the rule:
 
 ```text
   plugins/gh-cli runs 1 hook.

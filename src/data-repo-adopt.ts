@@ -162,6 +162,13 @@ export async function adoptIntoDataRepo(
   // held so their Git ids can be computed after the commit, using whatever
   // object-name width the committed tree turns out to use.
   const projectSnapshot = await namedFilesFromInstalledSnapshot(snapshot);
+  // Before any data-repo write. The commit proof below refuses a tree that
+  // differs from `projectSnapshot`, so a check over it binds the commit.
+  await opts.checkCandidate?.({
+    files: projectSnapshot,
+    snapshot,
+    path: adoption.path,
+  });
 
   // The already-upstream case. The data repo can already hold the item, from
   // an interrupted run or from another project. Identical content is not an
