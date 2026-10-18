@@ -43,7 +43,10 @@ import {
   pluginRunsAtCommit,
 } from "./plugin-runs";
 import type { PluginExtraFile, PluginRuns } from "./plugin-runs";
-import { beginInstalledReconciliation } from "./promote-transaction";
+import {
+  beginInstalledReconciliation,
+  keptByInstalledReconciliation,
+} from "./promote-transaction";
 import { remoteCacheState, resolveCachedRef } from "./remote-cache";
 import { remoteTreeSource } from "./remote-discovery";
 import { remoteKey } from "./remotes-lock";
@@ -758,20 +761,12 @@ export async function remoteMergeNewRuns(opts: {
   if (plan.kind === "current") {
     return { newRuns: opts.preview.newRuns, files: null };
   }
-  // The merge write keeps every installed file it did not read (row 4).
-  const extras = (
-    await installedPreservedEntries({
-      project: opts.project,
-      kind: opts.kind,
-      name: opts.name,
-      scope: "local",
-      managedPaths: new Set([
-        ...plan.localFiles.map((file) => file.path),
-        ...plan.files.map((file) => file.path),
-        ...plan.baseEntries.map((item) => item.path),
-      ]),
-    })
-  ).map(pluginExtraFile);
+  // Every installed entry the merge writer keeps, from the writer's rule.
+  const extras = await keptByInstalledReconciliation(
+    plan.snapshot.localPath,
+    plan.localFiles,
+    plan.files,
+  );
   const merged = await itemPluginRunsFromFiles(opts.kind, plan.files, extras);
   if (merged === null) return { newRuns: null, files: plan.files };
   const previous = (await itemPluginRunsAtCommit(

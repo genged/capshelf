@@ -119,7 +119,10 @@ import {
 } from "../item-snapshot";
 import { mergeNamedTrees, namedFilesEqual } from "../merge-tree";
 import type { NamedFile } from "../merge-tree";
-import { beginInstalledReconciliation } from "../promote-transaction";
+import {
+  beginInstalledReconciliation,
+  keptByInstalledReconciliation,
+} from "../promote-transaction";
 import { remoteCacheState } from "../remote-cache";
 import { candidateAtSubpath, remoteTreeSource } from "../remote-discovery";
 import {
@@ -1371,8 +1374,8 @@ async function updateMergeTarget(input: {
           name: parsed.name,
           entry,
           files: resultFiles,
-          installed: { project, scope: target.scope },
-          localPaths: localFiles.map((file) => file.path),
+          installedDir: snapshot.localPath,
+          localFiles,
         })
       : null;
   if (
@@ -1466,30 +1469,24 @@ async function mergedPluginNewRuns(input: {
   name: string;
   entry: DataLockEntryV4;
   files: readonly NamedFile[];
-  installed: InstalledItem;
-  /** The installed files the merge read; the write replaces only these. */
-  localPaths: readonly string[];
+  /** The installed folder the merge writes. */
+  installedDir: string;
+  /** The installed files the merge read; the writer deletes only these. */
+  localFiles: readonly NamedFile[];
 }): Promise<PluginRuns | null> {
   const { dataRepo, kind, name, entry } = input;
   const previousEntries = await itemTreeEntriesAtCommit(
     gitTreeSource({ repo: dataRepo, kind, name, commit: entry.sourceCommit }),
     kind,
   ).catch(() => []);
-  // The merge write keeps every installed file it did not read (row 4), so
-  // the runs reader reads those beside the merged files, on both sides.
-  const extras = (
-    await installedPreservedEntries({
-      project: input.installed.project,
-      kind,
-      name,
-      scope: input.installed.scope,
-      managedPaths: new Set([
-        ...input.localPaths,
-        ...input.files.map((file) => file.path),
-        ...previousEntries.map((item) => item.path),
-      ]),
-    })
-  ).map(pluginExtraFile);
+  // Every installed entry the writer keeps sits beside the merged files, so
+  // the runs reader reads those too, on both sides. The set comes from the
+  // writer's own rule (`keptByInstalledReconciliation`).
+  const extras = await keptByInstalledReconciliation(
+    input.installedDir,
+    input.localFiles,
+    input.files,
+  );
   const merged = await itemPluginRunsFromFiles(kind, input.files, extras);
   if (merged === null) return null;
   const previous = (await itemPluginRunsAtCommit(

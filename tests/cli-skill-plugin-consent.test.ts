@@ -271,6 +271,36 @@ describe("a shelf skill that holds a plugin manifest", () => {
   );
 
   test(
+    "update --merge asks when the writer keeps a pinned manifest that Git ignores",
+    async () => {
+      // The pinned manifest is ignored in the project, so the merge reads it
+      // as a local deletion. The merge writer replaces only the files it
+      // read, so the manifest stays beside the new hook.
+      const w = await world();
+      expect((await w.run(["add", "skills/inert"])).exitCode).toBe(0);
+      await writeUnder(
+        w.project,
+        ".gitignore",
+        ".agents/skills/inert/.claude-plugin/\n",
+      );
+      const installed = join(w.project, ".agents", "skills", "inert");
+      await writeUnder(installed, "local.md", "mine\n");
+      await writeUnder(
+        w.dataRepo,
+        "skills/inert/hooks/hooks.json",
+        hooksJson("bash hooks/writer.sh"),
+      );
+      await commitAll(w.dataRepo, "add a hook");
+
+      const r = await w.run(["update", "skills/inert", "--merge"]);
+      expect(r.exitCode).toBe(3);
+      expect(r.stderr.toString()).toContain("bash hooks/writer.sh");
+      expect(existsSync(join(installed, "hooks", "hooks.json"))).toBe(false);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "update asks nothing for an unchanged kept local manifest",
     async () => {
       const w = await world();
