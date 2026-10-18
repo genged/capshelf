@@ -497,29 +497,46 @@ function isRegularBlobMode(mode: string): boolean {
 }
 
 /**
- * D6's conservative-reader rule extended to the three default candidate
- * paths themselves. `collectHooks`/`collectServers`/`readManifest` treat a
- * `null` read of one of these as "genuinely absent" and stay quiet — correct
- * for a truly missing file, wrong for one that exists but is unsafe to read
- * (a symlink on disk, a non-regular blob at a commit). `readPluginRuns` has
- * no way to tell those two "null" cases apart through `PluginFileReader`
- * alone, so each caller checks presence its own way and this adds the one
- * unknown entry that quiet absence would otherwise swallow.
+ * D6's conservative-reader rule for the declaration paths themselves and
+ * each of their ancestor directories. `collectHooks`, `collectServers`, and
+ * `readManifest` treat a `null` read as "genuinely absent" and stay quiet.
+ * That is correct for a missing file and wrong for one that exists but is
+ * unsafe to read: a symlink, a non-regular entry, or a file under a
+ * symlinked directory such as `hooks -> elsewhere`. The reader never follows
+ * a symlink, so it cannot tell the two cases apart through
+ * `PluginFileReader`. Each caller checks presence its own way, and this adds
+ * one unknown entry for each unsafe path, at the path or at the ancestor
+ * that is unsafe.
  *
- * Runs after `readPluginRuns`, so a source already flagged unknown for
- * another reason (the manifest's own parse failure, say) is never
- * duplicated — `isUnsafePresent` only asks "does this exist and refuse to be
- * read", not "does it already appear in `unknown`".
+ * Runs after `readPluginRuns` and skips a message that is already present,
+ * so a source flagged for another reason is not reported twice.
  */
-function addUnsafeDefaultUnknowns(
+function addUnsafeDeclarationUnknowns(
   runs: PluginRuns,
-  isUnsafePresent: (relPath: string) => boolean,
+  declared: readonly string[],
+  isUnsafe: (relPath: string, ancestor: boolean) => boolean,
 ): void {
-  for (const relPath of DEFAULT_CANDIDATE_RELS) {
-    if (!isUnsafePresent(relPath)) continue;
-    const message = unknownEntry(relPath);
-    if (!runs.unknown.includes(message)) runs.unknown.push(message);
+  for (const relPath of declared) {
+    const segments = relPath.split("/");
+    for (let depth = 1; depth <= segments.length; depth += 1) {
+      const path = segments.slice(0, depth).join("/");
+      if (!isUnsafe(path, depth < segments.length)) continue;
+      const message = unknownEntry(path);
+      if (!runs.unknown.includes(message)) runs.unknown.push(message);
+      break;
+    }
   }
+}
+
+/** True when some ancestor directory of `relPath` is a symlink on disk. */
+function hasUnsafeAncestorOnDisk(dir: string, relPath: string): boolean {
+  const segments = relPath.split("/");
+  for (let depth = 1; depth < segments.length; depth += 1) {
+    const info = lstatOrNull(join(dir, ...segments.slice(0, depth)));
+    if (info === null || info === undefined) return false;
+    if (!info.isDirectory()) return true;
+  }
+  return false;
 }
 
 /** The widest folding a destination filesystem applies: NFC, then case. */
@@ -685,7 +702,7 @@ export async function pluginRunsAtCommit(
   };
   const runs = await readPluginRuns(reader);
 
-  addUnsafeDefaultUnknowns(runs, (relPath) => {
+  addUnsafeDeclarationUnknowns(runs, declared, (relPath) => {
     const entry = byPath.get(relPath);
     if (entry !== undefined) return !isRegularBlobMode(entry.mode);
     return extraByPath.has(relPath) && extraByPath.get(relPath) === null;
@@ -706,6 +723,7 @@ export async function pluginRunsAtCommit(
  */
 export async function pluginRunsOnDisk(dir: string): Promise<PluginRuns> {
   const reader: PluginFileReader = async (relPath) => {
+    if (hasUnsafeAncestorOnDisk(dir, relPath)) return null;
     const fullPath = join(dir, ...relPath.split("/"));
     const info = lstatOrNull(fullPath);
     if (!info?.isFile()) return null;
@@ -717,11 +735,12 @@ export async function pluginRunsOnDisk(dir: string): Promise<PluginRuns> {
   };
   const runs = await readPluginRuns(reader);
 
-  addUnsafeDefaultUnknowns(runs, (relPath) => {
-    const info = lstatOrNull(join(dir, ...relPath.split("/")));
-    return info !== null && info !== undefined && !info.isFile();
-  });
   const declared = declarationPaths(await reader(PLUGIN_MANIFEST_REL));
+  addUnsafeDeclarationUnknowns(runs, declared, (relPath, ancestor) => {
+    const info = lstatOrNull(join(dir, ...relPath.split("/")));
+    if (info === null || info === undefined) return false;
+    return ancestor ? !info.isDirectory() && !info.isFile() : !info.isFile();
+  });
   const present: string[] = [];
   for (const relPath of declared) {
     present.push(...(await foldedMatchesOnDisk(dir, relPath)));
@@ -752,16 +771,34 @@ export async function pluginRunsFromFiles(
   const reader: PluginFileReader = async (relPath) =>
     byPath.get(relPath) ?? null;
   const runs = await readPluginRuns(reader);
-  addUnsafeDefaultUnknowns(
+  const declared = declarationPaths(byPath.get(PLUGIN_MANIFEST_REL) ?? null);
+  addUnsafeDeclarationUnknowns(
     runs,
+    declared,
     (relPath) => byPath.has(relPath) && byPath.get(relPath) === null,
   );
-  addCaseVariantUnknowns(
-    runs,
-    declarationPaths(byPath.get(PLUGIN_MANIFEST_REL) ?? null),
-    [...byPath.keys()],
-  );
+  addCaseVariantUnknowns(runs, declared, [...byPath.keys()]);
   return runs;
+}
+
+/** The folded manifest path and its folded ancestor directories. */
+const MANIFEST_KEY = foldedPath(PLUGIN_MANIFEST_REL);
+const MANIFEST_ANCESTOR_KEYS = PLUGIN_MANIFEST_REL.split("/")
+  .slice(0, -1)
+  .map((_, index, segments) =>
+    foldedPath(segments.slice(0, index + 1).join("/")),
+  );
+
+/**
+ * Whether a listed entry makes the tree a plugin: any entry at the manifest
+ * path, folded, or a non-regular entry at one of its ancestors, such as a
+ * `.claude-plugin` symlink that Claude Code would follow.
+ */
+function marksPluginManifest(path: string, regular: boolean): boolean {
+  const key = foldedPath(path);
+  return (
+    key === MANIFEST_KEY || (!regular && MANIFEST_ANCESTOR_KEYS.includes(key))
+  );
 }
 
 /**
@@ -792,11 +829,15 @@ export async function itemPluginRunsAtCommit(
   entries: readonly PinTreeEntry[],
   extras: readonly PluginExtraFile[] = [],
 ): Promise<PluginRuns | null> {
-  const manifestKey = foldedPath(PLUGIN_MANIFEST_REL);
-  const isPlugin = await carriesPluginManifest(kind, async () =>
-    [...entries, ...extras].some(
-      (entry) => foldedPath(entry.path) === manifestKey,
-    ),
+  const isPlugin = await carriesPluginManifest(
+    kind,
+    async () =>
+      entries.some((entry) =>
+        marksPluginManifest(entry.path, isRegularBlobMode(entry.mode)),
+      ) ||
+      extras.some((extra) =>
+        marksPluginManifest(extra.path, extra.content !== null),
+      ),
   );
   return isPlugin ? await pluginRunsAtCommit(repo, entries, extras) : null;
 }
@@ -806,11 +847,17 @@ export async function itemPluginRunsOnDisk(
   kind: ItemKind,
   dir: string,
 ): Promise<PluginRuns | null> {
-  const isPlugin = await carriesPluginManifest(
-    kind,
-    async () =>
-      (await foldedMatchesOnDisk(dir, PLUGIN_MANIFEST_REL)).length > 0,
-  );
+  const isPlugin = await carriesPluginManifest(kind, async () => {
+    if ((await foldedMatchesOnDisk(dir, PLUGIN_MANIFEST_REL)).length > 0) {
+      return true;
+    }
+    // A `.claude-plugin` symlink, which `readdir` may not open.
+    const [ancestor = ""] = PLUGIN_MANIFEST_REL.split("/");
+    return (await foldedMatchesOnDisk(dir, ancestor)).some((match) => {
+      const info = lstatOrNull(join(dir, ...match.split("/")));
+      return info !== null && info !== undefined && !info.isDirectory();
+    });
+  });
   return isPlugin ? await pluginRunsOnDisk(dir) : null;
 }
 
@@ -820,9 +867,13 @@ export async function itemPluginRunsFromFiles(
   files: readonly PluginTreeFile[],
   extras: readonly PluginExtraFile[] = [],
 ): Promise<PluginRuns | null> {
-  const manifestKey = foldedPath(PLUGIN_MANIFEST_REL);
-  const isPlugin = await carriesPluginManifest(kind, async () =>
-    [...files, ...extras].some((file) => foldedPath(file.path) === manifestKey),
+  const isPlugin = await carriesPluginManifest(
+    kind,
+    async () =>
+      files.some((file) => marksPluginManifest(file.path, true)) ||
+      extras.some((extra) =>
+        marksPluginManifest(extra.path, extra.content !== null),
+      ),
   );
   return isPlugin ? await pluginRunsFromFiles(files, extras) : null;
 }

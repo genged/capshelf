@@ -8,8 +8,10 @@ import type { PinTreeEntry } from "../src/pin";
 import {
   itemPluginRunsAtCommit,
   itemPluginRunsOnDisk,
+  itemPluginRunsFromFiles,
   newRunsEntries,
   pluginRunsAtCommit,
+  pluginRunsFromFiles,
   pluginRunsOnDisk,
   readPluginRuns,
   runsHaveEntries,
@@ -539,6 +541,72 @@ describe("pluginRunsAtCommit and pluginRunsOnDisk: case variants of declarations
     );
     const atCommit = await itemPluginRunsAtCommit(repo, "skills", entries);
     expect(atCommit?.unknown).toEqual(onDisk?.unknown);
+  });
+});
+
+describe("symlinked ancestors of declaration paths are unknown", () => {
+  test("on disk: a hooks directory symlink", async () => {
+    const dir = await tempDir("capshelf-plugin-runs-disk-anc-");
+    const outside = await tempDir("capshelf-plugin-runs-disk-anc-out-");
+    await writeFile(join(outside, "hooks.json"), hooksJson("Stop", "evil"));
+    await mkdir(join(dir, ".claude-plugin"), { recursive: true });
+    await writeFile(
+      join(dir, ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "p" }),
+    );
+    await symlink(outside, join(dir, "hooks"));
+    const runs = await pluginRunsOnDisk(dir);
+    expect(runs.hooks).toEqual([]);
+    expect(runs.unknown).toEqual(["hooks could not be read"]);
+  });
+  test("on disk: a .claude-plugin symlink makes a skill a plugin", async () => {
+    const dir = await tempDir("capshelf-plugin-runs-disk-anc-skill-");
+    const outside = await tempDir("capshelf-plugin-runs-disk-anc-skill-out-");
+    await writeFile(
+      join(outside, "plugin.json"),
+      JSON.stringify({ name: "s" }),
+    );
+    await writeFile(join(dir, "SKILL.md"), "---\nname: s\n---\n");
+    await symlink(outside, join(dir, ".claude-plugin"));
+    const runs = await itemPluginRunsOnDisk("skills", dir);
+    expect(runs?.unknown).toContain(".claude-plugin could not be read");
+  });
+  test("in memory: a kept hooks symlink, and a kept .claude-plugin symlink", async () => {
+    const manifest = {
+      path: ".claude-plugin/plugin.json",
+      content: Buffer.from('{"name":"p"}'),
+    };
+    const runs = await pluginRunsFromFiles(
+      [manifest],
+      [{ path: "hooks", content: null }],
+    );
+    expect(runs.unknown).toEqual(["hooks could not be read"]);
+    const skill = await itemPluginRunsFromFiles(
+      "skills",
+      [{ path: "SKILL.md", content: Buffer.from("x") }],
+      [{ path: ".claude-plugin", content: null }],
+    );
+    expect(skill?.unknown).toContain(".claude-plugin could not be read");
+  });
+  test("at a commit: a kept hooks symlink beside the pinned tree", async () => {
+    const repo = await tempRepo("capshelf-plugin-runs-commit-anc-");
+    await mkdir(join(repo, "skills", "s", ".claude-plugin"), {
+      recursive: true,
+    });
+    await writeFile(join(repo, "skills", "s", "SKILL.md"), "x\n");
+    await writeFile(
+      join(repo, "skills", "s", ".claude-plugin", "plugin.json"),
+      JSON.stringify({ name: "s" }),
+    );
+    await commitAll(repo, "skill s");
+    const entries = await itemTreeEntriesAtCommit(
+      gitTreeSource({ repo, kind: "skills", name: "s", commit: "HEAD" }),
+      "skills",
+    );
+    const runs = await itemPluginRunsAtCommit(repo, "skills", entries, [
+      { path: "hooks", content: null },
+    ]);
+    expect(runs?.unknown).toEqual(["hooks could not be read"]);
   });
 });
 

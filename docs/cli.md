@@ -770,7 +770,9 @@ A plugin that runs nothing shows `runs      no hooks, no MCP servers`.
 Capshelf does not guess. Some declarations cannot be read: a file that does
 not parse, a manifest path outside the plugin, or a symlinked default file.
 Each one shows as `unknown: <path> could not be read`. An unknown entry
-never reads as "no hooks".
+never reads as "no hooks". Capshelf never follows a symlink. A symlink at a
+declaration path, or at a directory above one such as `hooks/` or
+`.claude-plugin/`, is one unknown entry for that path.
 
 A volume that folds case or Unicode normalization can load a file whose
 name differs from the declaration path, for example `HOOKS/hooks.json`.
