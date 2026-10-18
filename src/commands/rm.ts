@@ -121,16 +121,20 @@ export function registerRm(program: Command): void {
         return parsed.source === "data";
       });
 
+      // Before the skills.sh check: a tracked row beside a skills.sh row is
+      // removed with the folder kept (D2 guard 5), so only an untracked
+      // name refuses here.
+      const remotes = await loadRemotesLock(project);
+      const remoteKeys = remoteKeysForNamedRef(remotes, ref);
       if (ref.kind === undefined || installsAtSkillTarget(ref.kind)) {
         const external = await findSkillsShSkill(project, ref.name);
-        const hasLockedSkillTarget = dataKeys.some((key) =>
-          installsAtSkillTarget(parseLockKey(key).kind),
-        );
+        const tracksSkillTarget =
+          remoteKeys.length > 0 ||
+          dataKeys.some((key) => installsAtSkillTarget(parseLockKey(key).kind));
         if (
           external &&
-          (ref.kind !== undefined ||
-            hasLockedSkillTarget ||
-            dataKeys.length === 0)
+          !tracksSkillTarget &&
+          (ref.kind !== undefined || dataKeys.length === 0)
         ) {
           throw new PreconditionError(
             `not removing ${ref.kind ?? "skills"}/${ref.name} — ${skillsShConflictMessage(external)}`,
@@ -151,8 +155,6 @@ export function registerRm(program: Command): void {
 
       // Before the not-tracked error: a remote row is in neither capshelf lock
       // by A3, so `lockKeysForRef` above found nothing for one.
-      const remotes = await loadRemotesLock(project);
-      const remoteKeys = remoteKeysForNamedRef(remotes, ref);
       // Two populations count as much as two kinds, and `rm` is exactly the
       // verb a user reaches for in the two-owner state. Whichever side won,
       // the other was left orphaned: the shelf path deleted the install and

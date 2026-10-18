@@ -602,6 +602,34 @@ describe("skill-target ownership at each write (D2 guard 5)", () => {
     expect(existsSync(join(project, ".agents", "skills", "other"))).toBe(false);
   });
 
+  test("rm of a tracked plugin beside a skills.sh row keeps the folder", async () => {
+    const project = await tempRepo("capshelf-target-rm-skillssh-project-");
+    const dataRepo = await tempRepo("capshelf-target-rm-skillssh-data-");
+    await writePlugin(dataRepo, "foo", "foo");
+    await commitAll(dataRepo, "baseline");
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "plugins/foo"])).exitCode).toBe(0);
+    await writeFile(
+      join(project, "skills-lock.json"),
+      JSON.stringify({ version: 1, skills: { foo: { source: "o/r" } } }),
+    );
+
+    const removed = await run(["rm", "plugins/foo"]);
+    expect(removed.exitCode).toBe(0);
+    expect(removed.stdout.toString()).toContain(
+      "kept .agents/skills/foo: it is installed by skills.sh",
+    );
+    expect(existsSync(join(project, ".agents", "skills", "foo"))).toBe(true);
+    const lock = JSON.parse(await readFile(lockPath(project), "utf-8"));
+    expect(lock.items["data/plugins/foo"]).toBeUndefined();
+
+    // An untracked name beside skills.sh still refuses.
+    const untracked = await run(["rm", "plugins/foo"]);
+    expect(untracked.exitCode).toBe(3);
+    expect(untracked.stderr.toString()).toContain("skills.sh");
+  });
+
   test("rm keeps the folder when another owner still claims it", async () => {
     const project = await tempRepo("capshelf-target-rm-project-");
     const dataRepo = await tempRepo("capshelf-target-rm-data-");

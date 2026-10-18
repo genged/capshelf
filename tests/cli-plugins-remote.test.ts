@@ -731,6 +731,26 @@ describe("remote plugin rows: update, apply, rm, status", () => {
   );
 
   test(
+    "rm of the remote plugin row beside a skills.sh row keeps the folder",
+    async () => {
+      const { world, run } = await installGh();
+      await writeFile(
+        join(world.project, "skills-lock.json"),
+        JSON.stringify({ version: 1, skills: { "gh-cli": { source: "o/r" } } }),
+      );
+      const r = await run(["rm", "plugins/gh-cli", "--json"], world.env);
+      expect(r.exitCode).toBe(0);
+      const parsed = JSON.parse(r.stdout.toString());
+      expect(parsed.keptBy).toBe("skills.sh");
+      expect(parsed.removedFiles).toBe(false);
+      expect(existsSync(ghDir(world.project))).toBe(true);
+      const lock = await readRemotesLock(world.project);
+      expect(JSON.stringify(lock)).not.toContain("remote/plugins/gh-cli");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "update --dry-run asks nothing and lists the new hook under would ask",
     async () => {
       const { world, up, run } = await installGh();
