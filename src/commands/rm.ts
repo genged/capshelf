@@ -254,8 +254,10 @@ export function registerRm(program: Command): void {
             // An unmanaged folded sibling is another folder: it does not
             // keep this item's own folder.
             owner.owner !== "unmanaged" &&
+            // Only the selected scope's entry is this item. The same key in
+            // the other scope (an interrupted `move`) still owns the folder.
             !(
-              (owner.owner === "project" || owner.owner === "local") &&
+              owner.owner === (opts.local ? "local" : "project") &&
               owner.key === dataKey(kind, name)
             ),
         );

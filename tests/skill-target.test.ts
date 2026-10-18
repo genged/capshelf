@@ -630,6 +630,48 @@ describe("skill-target ownership at each write (D2 guard 5)", () => {
     expect(untracked.stderr.toString()).toContain("skills.sh");
   });
 
+  test("rm --local keeps the folder while the project lock holds the same key", async () => {
+    // An interrupted move leaves data/plugins/p in both locks.
+    const project = await tempRepo("capshelf-target-rm-both-local-project-");
+    const dataRepo = await tempRepo("capshelf-target-rm-both-local-data-");
+    await writePlugin(dataRepo, "p", "p");
+    await commitAll(dataRepo, "baseline");
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "plugins/p", "--local"])).exitCode).toBe(0);
+    await injectConflictingEntry(project, dataRepo, "plugins", "p", "project");
+
+    const removed = await run(["rm", "plugins/p", "--local"]);
+    expect(removed.exitCode).toBe(0);
+    expect(removed.stdout.toString()).toContain(
+      "kept .agents/skills/p: it is installed by data/plugins/p (project scope)",
+    );
+    expect(existsSync(join(project, ".agents", "skills", "p"))).toBe(true);
+    expect(existsSync(join(project, ".claude", "skills", "p"))).toBe(true);
+  });
+
+  test("rm keeps the folder and the excludes while the local lock holds the same key", async () => {
+    const project = await tempRepo("capshelf-target-rm-both-project-project-");
+    const dataRepo = await tempRepo("capshelf-target-rm-both-project-data-");
+    await writePlugin(dataRepo, "p", "p");
+    await writeSkill(dataRepo, "other");
+    await commitAll(dataRepo, "baseline");
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "plugins/p", "--local"])).exitCode).toBe(0);
+    await injectConflictingEntry(project, dataRepo, "plugins", "p", "project");
+    const excludePath = join(project, ".git", "info", "exclude");
+    expect(await readFile(excludePath, "utf-8")).toContain(".agents/skills/p/");
+
+    const removed = await run(["rm", "plugins/p"]);
+    expect(removed.exitCode).toBe(0);
+    expect(removed.stdout.toString()).toContain(
+      "kept .agents/skills/p: it is installed by data/plugins/p (local scope)",
+    );
+    expect(existsSync(join(project, ".agents", "skills", "p"))).toBe(true);
+    expect(await readFile(excludePath, "utf-8")).toContain(".agents/skills/p/");
+  });
+
   test("rm keeps the folder when another owner still claims it", async () => {
     const project = await tempRepo("capshelf-target-rm-project-");
     const dataRepo = await tempRepo("capshelf-target-rm-data-");
