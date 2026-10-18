@@ -25,8 +25,16 @@ import { assertPathClean } from "./git";
 import type { GitReadMemo } from "./git-read-memo";
 import { findInstallConflict } from "./installed";
 import { assertLocalInstallPathsUntracked } from "./local-config";
-import { assertWritableLock, createDataLockEntry, dataKey } from "./lock";
-import { pinCurrentSource } from "./pin";
+import {
+  assertWritableLock,
+  createDataLockEntry,
+  dataKey,
+  emptyLock,
+} from "./lock";
+import { loadRemotesLock } from "./remotes-lock";
+import { assertSkillTargetFree } from "./skill-target";
+import type { SkillTargetLocks } from "./skill-target";
+import { destinationKey, pinCurrentSource } from "./pin";
 import type { Lock } from "./lock";
 import { addManifestName } from "./manifest";
 import type { Manifest } from "./manifest";
@@ -241,6 +249,11 @@ export interface BundlePreflightContext {
   masterByRef: Map<string, MasterItem>;
   /** Injectable for tests; defaults to fragments.ts planFragmentOutput. */
   planFragmentOutputFn?: typeof planFragmentOutput;
+  /**
+   * D2 guard 5: every existing owner population. Defaults to the target-scope
+   * lock, an empty other lock, and the project's remote rows.
+   */
+  skillTargetLocks?: SkillTargetLocks;
 }
 
 /**
@@ -254,6 +267,8 @@ export async function preflightBundleChecks(
   plan: BundlePlan,
   ctx: BundlePreflightContext,
 ): Promise<void> {
+  // First, so an owner conflict is named as one, not as an unmanaged path.
+  await preflightSkillTargetOwners(plan, ctx);
   for (const m of plan.members) {
     if (m.status !== "install") continue;
     const item = ctx.masterByRef.get(m.ref);
@@ -309,6 +324,52 @@ export async function preflightBundleChecks(
   }
   if (plan.scope !== "local") {
     await preflightFragmentCollisions(plan, ctx);
+  }
+}
+
+/**
+ * D2 guard 5 across the whole bundle, before any member runs. Two members
+ * whose names fold to one install folder (`skills/foo` and `plugins/foo`)
+ * both refuse, and so does a member whose folder already has another owner.
+ * A refused member refuses the whole bundle, so a deterministic conflict
+ * never leaves a partial install.
+ */
+async function preflightSkillTargetOwners(
+  plan: BundlePlan,
+  ctx: BundlePreflightContext,
+): Promise<void> {
+  const locks: SkillTargetLocks = ctx.skillTargetLocks ?? {
+    project: ctx.lock,
+    local: emptyLock(),
+    remotes: await loadRemotesLock(ctx.project),
+  };
+  const members = plan.members.filter(
+    (m) => m.status === "install" && installsAtSkillTarget(m.kind),
+  );
+  const byFolder = new Map<string, MemberPlan[]>();
+  for (const m of members) {
+    const folder = destinationKey(m.name, {
+      caseFolding: true,
+      normalizationFolding: true,
+    });
+    byFolder.set(folder, [...(byFolder.get(folder) ?? []), m]);
+  }
+  for (const group of byFolder.values()) {
+    if (group.length < 2) continue;
+    for (const m of group) {
+      const others = group.filter((other) => other !== m).map((o) => o.ref);
+      m.status = "refused";
+      m.reason = `${m.ref} and ${others.join(", ")} install to one folder; a project uses one of them`;
+    }
+  }
+  for (const m of members) {
+    if (m.status !== "install" || !installsAtSkillTarget(m.kind)) continue;
+    try {
+      await assertSkillTargetFree(ctx.project, m.kind, m.name, locks, null);
+    } catch (err) {
+      m.status = "refused";
+      m.reason = err instanceof Error ? err.message : String(err);
+    }
   }
 }
 

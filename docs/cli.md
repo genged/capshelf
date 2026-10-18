@@ -723,7 +723,10 @@ case or in Unicode form count as one folder. Every owner counts: the project
 lock, the local lock, a remote row, a skills.sh row, and a folder that no
 tool manages. `add`, `update`, `apply`, `move`, `revert`, and `share`
 run the check before they write. `share` runs it with or without `--adopt`.
-`apply` and `update` run it for a remote row too. A named row refuses with
+`add bundles/<name>` runs it for every member before it installs any
+member. Two members that install to one folder, such as `skills/foo` and
+`plugins/foo`, refuse the whole bundle. `apply` and `update` run it for a
+remote row too. A named row refuses with
 exit 3, and a sweep reports the row as an error.
 
 `rm` does not refuse when another owner claims the folder. It removes its

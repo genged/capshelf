@@ -553,6 +553,55 @@ describe("skill-target ownership at each write (D2 guard 5)", () => {
     expect(existsSync(join(project, ".agents", "skills", "RR"))).toBe(true);
   });
 
+  test("a bundle with skills/<n> and plugins/<n> installs nothing", async () => {
+    const project = await tempRepo("capshelf-target-bundle-project-");
+    const dataRepo = await tempRepo("capshelf-target-bundle-data-");
+    await writeSkill(dataRepo, "foo");
+    await writePlugin(dataRepo, "foo", "foo");
+    await writeSkill(dataRepo, "other");
+    await mkdir(join(dataRepo, "bundles"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "bundles", "pair.yml"),
+      "includes:\n  skills: [foo, other]\n  plugins: [foo]\n",
+    );
+    await commitAll(dataRepo, "baseline");
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+
+    const add = await run(["add", "bundles/pair", "--yes"]);
+    expect(add.exitCode).toBe(3);
+    const out = add.stdout.toString() + add.stderr.toString();
+    expect(out).toContain("install to one folder");
+    expect(existsSync(join(project, ".agents", "skills", "foo"))).toBe(false);
+    expect(existsSync(join(project, ".agents", "skills", "other"))).toBe(false);
+    const lock = JSON.parse(await readFile(lockPath(project), "utf-8"));
+    expect(Object.keys(lock.items)).not.toContain("data/skills/other");
+  });
+
+  test("a bundle member whose folder has another owner refuses the bundle", async () => {
+    const project = await tempRepo("capshelf-target-bundle-owner-project-");
+    const dataRepo = await tempRepo("capshelf-target-bundle-owner-data-");
+    await writeSkill(dataRepo, "foo");
+    await writePlugin(dataRepo, "foo", "foo");
+    await writeSkill(dataRepo, "other");
+    await mkdir(join(dataRepo, "bundles"), { recursive: true });
+    await writeFile(
+      join(dataRepo, "bundles", "plug.yml"),
+      "includes:\n  skills: [other]\n  plugins: [foo]\n",
+    );
+    await commitAll(dataRepo, "baseline");
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/foo", "--local"])).exitCode).toBe(0);
+
+    const add = await run(["add", "bundles/plug", "--yes"]);
+    expect(add.exitCode).toBe(3);
+    expect(add.stdout.toString() + add.stderr.toString()).toContain(
+      "is already installed by data/skills/foo",
+    );
+    expect(existsSync(join(project, ".agents", "skills", "other"))).toBe(false);
+  });
+
   test("rm keeps the folder when another owner still claims it", async () => {
     const project = await tempRepo("capshelf-target-rm-project-");
     const dataRepo = await tempRepo("capshelf-target-rm-data-");

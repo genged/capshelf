@@ -1059,6 +1059,11 @@ async function addBundle(
     dataRepo: ctx.dataRepo,
     manifest: ctx.manifest,
     lock: ctx.local ? ctx.localLock : ctx.projectLock,
+    skillTargetLocks: {
+      project: ctx.projectLock,
+      local: ctx.localLock,
+      remotes: await loadRemotesLock(ctx.project),
+    },
     masterByRef,
     memo: ctx.memo,
   });
