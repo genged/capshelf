@@ -123,6 +123,7 @@ import {
   beginInstalledReconciliation,
   keptByInstalledReconciliation,
 } from "../promote-transaction";
+import type { KeptInstalledEntry } from "../promote-transaction";
 import { remoteCacheState } from "../remote-cache";
 import { candidateAtSubpath, remoteTreeSource } from "../remote-discovery";
 import {
@@ -1309,7 +1310,14 @@ async function updateMergeTarget(input: {
     resultFiles = localFiles;
   }
   // D3 over the files the write puts in the folder, before any write.
-  assertMergedPluginName(kind, parsed.name, resultFiles);
+  // The installed entries the merge writer keeps beside the merged files,
+  // from the writer's own rule. D3 and D7 point 2 both read them.
+  const kept = await keptByInstalledReconciliation(
+    snapshot.localPath,
+    localFiles,
+    resultFiles,
+  );
+  assertMergedPluginName(kind, parsed.name, resultFiles, kept);
 
   const newEntry = refreshDataLockEntry(entry, {
     pin: upstreamPin,
@@ -1379,8 +1387,7 @@ async function updateMergeTarget(input: {
           name: parsed.name,
           entry,
           files: resultFiles,
-          installedDir: snapshot.localPath,
-          localFiles,
+          kept,
         })
       : null;
   if (
@@ -1474,10 +1481,8 @@ async function mergedPluginNewRuns(input: {
   name: string;
   entry: DataLockEntryV4;
   files: readonly NamedFile[];
-  /** The installed folder the merge writes. */
-  installedDir: string;
-  /** The installed files the merge read; the writer deletes only these. */
-  localFiles: readonly NamedFile[];
+  /** The installed entries the merge writer keeps beside `files`. */
+  kept: readonly KeptInstalledEntry[];
 }): Promise<PluginRuns | null> {
   const { dataRepo, kind, name, entry } = input;
   const previousEntries = await itemTreeEntriesAtCommit(
@@ -1485,13 +1490,8 @@ async function mergedPluginNewRuns(input: {
     kind,
   ).catch(() => []);
   // Every installed entry the writer keeps sits beside the merged files, so
-  // the runs reader reads those too, on both sides. The set comes from the
-  // writer's own rule (`keptByInstalledReconciliation`).
-  const extras = await keptByInstalledReconciliation(
-    input.installedDir,
-    input.localFiles,
-    input.files,
-  );
+  // the runs reader reads those too, on both sides.
+  const extras = input.kept;
   const merged = await itemPluginRunsFromFiles(kind, input.files, extras);
   if (merged === null) return null;
   const previous = (await itemPluginRunsAtCommit(

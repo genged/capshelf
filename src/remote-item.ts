@@ -47,6 +47,7 @@ import {
   beginInstalledReconciliation,
   keptByInstalledReconciliation,
 } from "./promote-transaction";
+import type { KeptInstalledEntry } from "./promote-transaction";
 import { remoteCacheState, resolveCachedRef } from "./remote-cache";
 import { remoteTreeSource } from "./remote-discovery";
 import { remoteKey } from "./remotes-lock";
@@ -446,15 +447,22 @@ export function assertMergedPluginName(
   kind: ItemKind,
   name: string,
   files: readonly NamedFile[],
+  kept: readonly KeptInstalledEntry[],
 ): void {
   if (kind !== "plugins") return;
-  const file = files.find(
-    (candidate) => candidate.path === PLUGIN_MANIFEST_REL,
-  );
+  // The effective tree: the merged files, then the installed entries the
+  // writer keeps. An ignored installed manifest is not in `files`, but it
+  // stays in the folder and Claude Code loads it.
+  const file =
+    files.find((candidate) => candidate.path === PLUGIN_MANIFEST_REL) ??
+    kept.find((candidate) => candidate.path === PLUGIN_MANIFEST_REL);
   if (file === undefined) return;
   let parsed: ConfigValue = null;
   try {
-    parsed = JSON.parse(file.content.toString("utf8"));
+    // A kept non-regular entry has no content and names no plugin.
+    if (file.content !== null) {
+      parsed = JSON.parse(file.content.toString("utf8"));
+    }
   } catch {
     // An unparseable manifest names no plugin.
   }
@@ -681,6 +689,8 @@ type RemoteMergePlan =
       cachePath: string;
       /** The merged files the write puts in the folder. */
       files: NamedFile[];
+      /** The installed entries the writer keeps beside `files`. */
+      kept: KeptInstalledEntry[];
       pin: PinnedSource;
     };
 
@@ -730,7 +740,12 @@ async function planRemoteMerge(opts: {
         `  conflicting paths:\n${merged.conflicts.map((path) => `    ${path}`).join("\n")}`,
     );
   }
-  assertMergedPluginName(kind, name, merged.files);
+  const kept = await keptByInstalledReconciliation(
+    snapshot.localPath,
+    localFiles,
+    merged.files,
+  );
+  assertMergedPluginName(kind, name, merged.files, kept);
   return {
     kind: "merge",
     snapshot,
@@ -739,6 +754,7 @@ async function planRemoteMerge(opts: {
     baseEntries,
     cachePath: cache.path,
     files: merged.files,
+    kept,
     pin: preview.pin,
   };
 }
@@ -762,11 +778,7 @@ export async function remoteMergeNewRuns(opts: {
     return { newRuns: opts.preview.newRuns, files: null };
   }
   // Every installed entry the merge writer keeps, from the writer's rule.
-  const extras = await keptByInstalledReconciliation(
-    plan.snapshot.localPath,
-    plan.localFiles,
-    plan.files,
-  );
+  const extras = plan.kept;
   const merged = await itemPluginRunsFromFiles(opts.kind, plan.files, extras);
   if (merged === null) return { newRuns: null, files: plan.files };
   const previous = (await itemPluginRunsAtCommit(

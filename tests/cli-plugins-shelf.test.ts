@@ -769,6 +769,38 @@ describe("shelf update plugins/<n> (D3, D7 point 2)", () => {
   );
 
   test(
+    "--merge refuses when the writer keeps an ignored installed manifest renamed to q (D3)",
+    async () => {
+      const world = await installedWorld();
+      const lockPath = join(world.project, ".capshelf", "capshelf.lock.json");
+      const lockBefore = await readFile(lockPath, "utf-8");
+      await writeUnder(
+        world.project,
+        ".gitignore",
+        ".agents/skills/gh-cli/.claude-plugin/\n",
+      );
+      const folder = pluginFolder(world.project, "gh-cli");
+      await writeUnder(
+        folder,
+        ".claude-plugin/plugin.json",
+        JSON.stringify({ name: "q", version: "1.0.0" }),
+      );
+      await writeUnder(folder, "local.md", "mine\n");
+      await writeUnder(world.dataRepo, "plugins/gh-cli/README.md", "x\n");
+      await commitAll(world.dataRepo, "change another file");
+
+      const r = await world.run(["update", "plugins/gh-cli", "--merge"]);
+      expect(r.exitCode).toBe(3);
+      expect(r.stderr.toString()).toContain(
+        'plugins/gh-cli: the new tree names the plugin "q"',
+      );
+      expect(await readFile(lockPath, "utf-8")).toBe(lockBefore);
+      expect(existsSync(join(folder, "README.md"))).toBe(false);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "--merge with no terminal does not tell the user to pass --yes",
     async () => {
       const world = await installedWorld();

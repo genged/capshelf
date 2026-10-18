@@ -751,6 +751,36 @@ describe("remote plugin rows: update, apply, rm, status", () => {
   );
 
   test(
+    "update --merge refuses when the writer keeps an ignored installed manifest renamed to q",
+    async () => {
+      const { world, up, run } = await installGh();
+      // The item's own .gitignore hides the manifest from the snapshot, so
+      // the merge reads it as deleted, but the writer keeps it.
+      await writeFile(
+        join(ghDir(world.project), ".gitignore"),
+        ".claude-plugin/\n",
+      );
+      await writeFile(
+        join(ghDir(world.project), ".claude-plugin", "plugin.json"),
+        JSON.stringify({ name: "q" }),
+      );
+      await pushPluginChange(up, "plugins/gh-cli/README.md", "changed\n");
+      await fetchUpstream(run, world);
+      const before = await readRemotesLock(world.project);
+      const r = await run(
+        ["update", "plugins/gh-cli", "--merge", "--yes"],
+        world.env,
+      );
+      expect(r.exitCode).toBe(3);
+      expect(r.stderr.toString()).toContain(
+        'plugins/gh-cli: the new tree names the plugin "q"',
+      );
+      expect(await readRemotesLock(world.project)).toEqual(before);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "update --dry-run asks nothing and lists the new hook under would ask",
     async () => {
       const { world, up, run } = await installGh();

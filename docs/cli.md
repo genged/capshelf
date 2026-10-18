@@ -891,7 +891,9 @@ A new tree whose `plugin.json` gives a different name refuses before any
 write. This applies to `update`, `update --merge`, `promote`, and
 `share --adopt`. A rename needs a new item: `rm` the old one, then `add` the
 new one. For `update --merge`, shelf or remote, the check also reads the
-merged files. A local edit that renames the plugin therefore refuses too.
+merged files and the installed files that the merge keeps, such as an
+ignored manifest. A local edit that renames the plugin therefore refuses
+too.
 
 #### Plugins in status
 
