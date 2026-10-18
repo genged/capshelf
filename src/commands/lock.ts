@@ -123,7 +123,10 @@ export function registerLock(program: Command): void {
       "--remove-item <ref...>",
       "remove a blocked item instead of migrating it",
     )
-    .option("--yes", "authorize the installed-state loss a repair would cause")
+    .option(
+      "--yes",
+      "authorize the installed-state loss a repair would cause, and the commands a re-pinned plugin runs",
+    )
     .option("--json", "output JSON")
     .action(
       async (
