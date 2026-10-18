@@ -474,6 +474,37 @@ describe("move plugins/<n> --to project (D7 point 3)", () => {
   );
 
   test(
+    "asks for a hook the installed copy holds but the pin does not",
+    async () => {
+      const world = await shelfWorld();
+      expect(
+        (await world.run(["add", "plugins/quiet", "--local"])).exitCode,
+      ).toBe(0);
+      // `moveScope` compares only pinned paths, so an extra file passes it.
+      await writeUnder(
+        pluginFolder(world.project, "quiet"),
+        "hooks/hooks.json",
+        JSON.stringify(SETUP_HOOK),
+      );
+
+      const refused = await world.run([
+        "move",
+        "plugins/quiet",
+        "--to",
+        "project",
+      ]);
+      expect(refused.exitCode).toBe(3);
+      const err = refused.stderr.toString();
+      expect(err).toContain(
+        "not moving plugins/quiet to project scope without consent",
+      );
+      expect(err).toContain("plugins/quiet runs 1 hook.");
+      expect(await lockKeys(world.project)).not.toContain("data/plugins/quiet");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "--to local asks nothing",
     async () => {
       const world = await shelfWorld();

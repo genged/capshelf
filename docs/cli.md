@@ -800,7 +800,9 @@ There are three consent points:
    and its prompt shows the new entries.
 3. **Project scope.** `add plugins/<name>` in project scope, `move --to
    project`, and `share --adopt --to project` ask, because the project commit
-   gives the plugin to every teammate:
+   gives the plugin to every teammate. `move --to project` reads both the
+   pinned tree and the installed folder. It asks for an entry that only the
+   installed folder holds, such as an unpinned `hooks/hooks.json`:
 
 ```text
   plugins/gh-cli runs 1 hook.

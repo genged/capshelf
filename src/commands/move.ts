@@ -9,7 +9,11 @@ import {
   saveLock,
 } from "../lock";
 import type { Lock } from "../lock";
-import { ensureInstallAliases, parseLockKey } from "../installed";
+import {
+  ensureInstallAliases,
+  installedPath,
+  parseLockKey,
+} from "../installed";
 import { NotFoundError, PreconditionError } from "../errors";
 import { isSystemItemName } from "../bundled";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
@@ -30,7 +34,11 @@ import { assertSkillTargetFree } from "../skill-target";
 import { gitTreeSource } from "../item-source";
 import { itemTreeEntriesAtCommit } from "../pin";
 import { confirmPluginConsent } from "../plugin-consent";
-import { itemPluginRunsAtCommit } from "../plugin-runs";
+import {
+  itemPluginRunsAtCommit,
+  itemPluginRunsOnDisk,
+  unionRuns,
+} from "../plugin-runs";
 
 interface MoveOptions {
   to?: string;
@@ -127,16 +135,19 @@ export function registerMove(program: Command): void {
         },
       );
 
-      // D7 point 3, after `moveScope` refused drift and before any save: the
-      // pinned tree is then what the installed folder holds, and what every
-      // teammate gets from the committed lock. A skill that holds a plugin
-      // manifest is a plugin to Claude Code (R1) and asks too.
+      // D7 point 3, before any save. Two trees reach teammates: the pinned
+      // tree, through the committed lock, and the installed folder, which
+      // the project commits once its excludes go. `moveScope` refuses drift
+      // only on pinned paths, so an extra file such as an unpinned
+      // `hooks/hooks.json` passes it. The point asks for the union of both.
+      // A skill that holds a plugin manifest in either tree is a plugin to
+      // Claude Code (R1) and asks too.
       if (
         !result.alreadyCurrent &&
         result.to === "project" &&
         installsAtSkillTarget(result.kind)
       ) {
-        const runs = await itemPluginRunsAtCommit(
+        const pinned = await itemPluginRunsAtCommit(
           dataRepo,
           result.kind,
           await itemTreeEntriesAtCommit(
@@ -149,6 +160,21 @@ export function registerMove(program: Command): void {
             result.kind,
           ),
         );
+        const installed = await itemPluginRunsOnDisk(
+          result.kind,
+          installedPath(
+            project,
+            result.kind,
+            result.name,
+            manifest.installMode,
+          ),
+        );
+        const runs =
+          pinned === null
+            ? installed
+            : installed === null
+              ? pinned
+              : unionRuns(pinned, installed);
         const approved =
           runs === null ||
           (await confirmPluginConsent(

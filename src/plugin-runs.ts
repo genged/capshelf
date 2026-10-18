@@ -450,6 +450,29 @@ export function newRunsEntries(
   };
 }
 
+/**
+ * Every entry of either set, once: a hook or a server both sets hold by
+ * identity appears once, and every unknown entry appears once. A consent
+ * point that covers two trees asks with this.
+ */
+export function unionRuns(left: PluginRuns, right: PluginRuns): PluginRuns {
+  const hooks = new Set(left.hooks.map(hookIdentity));
+  const servers = new Set(left.mcpServers.map(serverIdentity));
+  return {
+    hooks: [
+      ...left.hooks,
+      ...right.hooks.filter((hook) => !hooks.has(hookIdentity(hook))),
+    ],
+    mcpServers: [
+      ...left.mcpServers,
+      ...right.mcpServers.filter(
+        (server) => !servers.has(serverIdentity(server)),
+      ),
+    ],
+    unknown: [...new Set([...left.unknown, ...right.unknown])],
+  };
+}
+
 // ------------------------------------------------------------------ readers
 
 const DEFAULT_CANDIDATE_RELS = [
