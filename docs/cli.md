@@ -723,6 +723,14 @@ case or in Unicode form count as one folder. Every owner counts: the project
 lock, the local lock, a remote row, a skills.sh row, and a folder that no
 tool manages. `add`, `update`, `apply`, `move`, `revert`, and `share`
 run the check before they write. `share` runs it with or without `--adopt`.
+`apply` and `update` run it for a remote row too. A named row refuses with
+exit 3, and a sweep reports the row as an error.
+
+`rm` does not refuse when another owner claims the folder. It removes its
+own record and keeps the folder and its alias. The text output prints `kept
+<folder>: it is installed by <owner>`, and `--json` adds `keptBy`. This
+applies to a shelf entry and to a remote row. The exclude lines for the
+folder stay while a local-scope entry or a remote row still uses them.
 
 A first `add` can take an unmanaged folder at the exact install path when
 its content matches the pin. An unmanaged folder whose name only folds to

@@ -336,6 +336,8 @@ export function registerUpdate(program: Command): void {
             targets: remoteTargets,
             externalSkillByName,
             remotes,
+            projectLock,
+            localLock,
             merge: true,
             dryRun: opts.dryRun === true,
             json: opts.json === true,
@@ -444,6 +446,8 @@ export function registerUpdate(program: Command): void {
             targets: remoteTargets,
             externalSkillByName,
             remotes,
+            projectLock,
+            localLock,
             merge: false,
             dryRun: true,
             json: opts.json === true,
@@ -631,6 +635,8 @@ export function registerUpdate(program: Command): void {
           targets: remoteTargets,
           externalSkillByName,
           remotes,
+          projectLock,
+          localLock,
           merge: false,
           // The dry-run path returned above, so this pass always writes.
           dryRun: false,
@@ -714,6 +720,9 @@ async function runRemoteUpdates(input: {
   targets: RemoteTarget[];
   externalSkillByName: Map<string, ExternalSkill>;
   remotes: RemotesLock;
+  /** D2 guard 5: the shelf owners `assertSkillTargetFree` scans. */
+  projectLock: Lock;
+  localLock: Lock;
   merge: boolean;
   dryRun: boolean;
   json: boolean;
@@ -742,6 +751,33 @@ async function runRemoteUpdates(input: {
         name: target.name,
         action: "skipped-external",
         error: message,
+      });
+      continue;
+    }
+    // D2 guard 5, as the shelf pass applies it: another owner of the folder
+    // refuses a named request with exit 3, and a sweep records an error.
+    try {
+      await assertSkillTargetFree(
+        input.project,
+        target.kind,
+        target.name,
+        {
+          project: input.projectLock,
+          local: input.localLock,
+          remotes: input.remotes,
+        },
+        { key: target.key },
+      );
+    } catch (err) {
+      if (target.named) throw err;
+      results.push({
+        key: target.key,
+        scope: "local",
+        source: "remote",
+        kind: target.kind,
+        name: target.name,
+        action: "error",
+        error: err instanceof Error ? err.message : String(err),
       });
       continue;
     }

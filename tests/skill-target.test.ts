@@ -15,6 +15,7 @@ import {
   tempDir,
   tempRepo,
 } from "./cli-fixtures";
+import { initRemoteProject, upstreamWith } from "./remote-fixtures";
 
 const entry = {
   source: "system",
@@ -631,5 +632,114 @@ describe("skill-target ownership at each write (D2 guard 5)", () => {
     const after = await readFile(excludePath, "utf-8");
     expect(after).toContain(".agents/skills/rr/");
     expect(after).toContain(".claude/skills/rr");
+  });
+});
+
+/**
+ * A remote `skills/pdf` row and a project-lock `data/plugins/pdf` entry: two
+ * owners of `.agents/skills/pdf`. A clone reaches this when a teammate
+ * commits the plugin entry while this clone holds the remote row.
+ */
+async function remoteAndShelfOwners(scope: "project" | "local" = "project") {
+  const upstream = await upstreamWith([["skills/pdf", "Extract text"]]);
+  const world = await initRemoteProject();
+  const run = runInProcess(world.project);
+  expect((await run(["add", upstream.url, "--yes"], world.env)).exitCode).toBe(
+    0,
+  );
+  await writePlugin(world.dataRepo, "pdf", "pdf");
+  await commitAll(world.dataRepo, "plugin pdf");
+  if (scope === "local" && !existsSync(localLockPath(world.project))) {
+    // An empty lock at the project lock's version.
+    const projectLock = JSON.parse(
+      await readFile(lockPath(world.project), "utf-8"),
+    );
+    await writeFile(
+      localLockPath(world.project),
+      JSON.stringify({ ...projectLock, items: {} }),
+    );
+  }
+  await injectConflictingEntry(
+    world.project,
+    world.dataRepo,
+    "plugins",
+    "pdf",
+    scope,
+  );
+  return { world, run: (args: string[]) => run(args, world.env) };
+}
+
+describe("remote rows and folder ownership (D2 guard 5)", () => {
+  test("rm of the remote row keeps the folder another owner claims", async () => {
+    const { world, run } = await remoteAndShelfOwners();
+    const folder = join(world.project, ".agents", "skills", "pdf");
+    const rm = await run(["rm", "skills/pdf"]);
+    expect(rm.exitCode).toBe(0);
+    expect(rm.stdout.toString()).toContain(
+      "kept .agents/skills/pdf: it is installed by data/plugins/pdf (project scope)",
+    );
+    expect(existsSync(join(folder, "SKILL.md"))).toBe(true);
+    const remotes = JSON.parse(
+      await readFile(
+        join(world.project, ".capshelf", "remotes.lock.json"),
+        "utf-8",
+      ),
+    );
+    expect(remotes.items["remote/skills/pdf"]).toBeUndefined();
+    const lock = JSON.parse(await readFile(lockPath(world.project), "utf-8"));
+    expect(lock.items["data/plugins/pdf"]).toBeDefined();
+  });
+
+  test("rm --json of the remote row reports keptBy, and a local owner keeps the excludes", async () => {
+    const { world, run } = await remoteAndShelfOwners("local");
+    const excludePath = join(world.project, ".git", "info", "exclude");
+    expect(await readFile(excludePath, "utf-8")).toContain(
+      ".agents/skills/pdf",
+    );
+    const rm = await run(["rm", "skills/pdf", "--json"]);
+    expect(rm.exitCode).toBe(0);
+    const parsed = JSON.parse(rm.stdout.toString());
+    expect(parsed.removedFiles).toBe(false);
+    expect(parsed.keptBy).toBe("data/plugins/pdf (local scope)");
+    expect(existsSync(join(world.project, ".agents", "skills", "pdf"))).toBe(
+      true,
+    );
+    expect(await readFile(excludePath, "utf-8")).toContain(
+      ".agents/skills/pdf",
+    );
+  });
+
+  test("apply of the remote row refuses with exit 3, and a sweep records an error", async () => {
+    const { run } = await remoteAndShelfOwners();
+    const named = await run(["apply", "skills/pdf", "--yes"]);
+    expect(named.exitCode).toBe(3);
+    expect(named.stderr.toString()).toContain(
+      "is already installed by data/plugins/pdf",
+    );
+
+    const sweep = await run(["apply", "--yes", "--json"]);
+    expect(sweep.exitCode).toBe(1);
+    const items: Array<{ key: string; action: string; error?: string }> =
+      JSON.parse(sweep.stdout.toString()).items;
+    const row = items.find((item) => item.key === "remote/skills/pdf");
+    expect(row?.action).toBe("error");
+    expect(row?.error).toContain("is already installed by data/plugins/pdf");
+  });
+
+  test("update of the remote row refuses with exit 3, and a sweep records an error", async () => {
+    const { run } = await remoteAndShelfOwners();
+    const named = await run(["update", "skills/pdf"]);
+    expect(named.exitCode).toBe(3);
+    expect(named.stderr.toString()).toContain(
+      "is already installed by data/plugins/pdf",
+    );
+
+    const sweep = await run(["update", "--json"]);
+    expect(sweep.exitCode).toBe(1);
+    const items: Array<{ key: string; action: string; error?: string }> =
+      JSON.parse(sweep.stdout.toString()).items;
+    const row = items.find((item) => item.key === "remote/skills/pdf");
+    expect(row?.action).toBe("error");
+    expect(row?.error).toContain("is already installed by data/plugins/pdf");
   });
 });

@@ -511,6 +511,29 @@ export function registerApply(program: Command): void {
             });
             continue;
           }
+          // D2 guard 5, as the shelf loop applies it: an explicit ref refuses
+          // with exit 3, and a sweep records the row as failed.
+          try {
+            await assertSkillTargetFree(
+              project,
+              target.kind,
+              target.name,
+              { project: projectLock, local: localLock, remotes },
+              { key: target.key },
+            );
+          } catch (err) {
+            if (itemRef) throw err;
+            results.push({
+              scope: "local",
+              key: target.key,
+              source: "remote",
+              kind: target.kind,
+              name: target.name,
+              action: "error",
+              error: err instanceof Error ? err.message : String(err),
+            });
+            continue;
+          }
           try {
             results.push(
               remoteApplyRow(
@@ -882,6 +905,20 @@ async function planApplyPreflight(
   for (const target of input.remoteTargets) {
     const entry = input.remotes.items[target.key]!;
     try {
+      // D2 guard 5 before the plan: another owner's content must not enter
+      // this row's destructive plan, and an explicit ref refuses before any
+      // prompt.
+      await assertSkillTargetFree(
+        input.project,
+        target.kind,
+        target.name,
+        {
+          project: input.projectLock,
+          local: input.localLock,
+          remotes: input.remotes,
+        },
+        { key: target.key },
+      );
       const source = remoteApplySource(target.kind, target.name, entry);
       results.push(
         remoteApplyRow(

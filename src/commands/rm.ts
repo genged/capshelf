@@ -75,6 +75,7 @@ import {
 import type { RemotesLock } from "../remotes-lock";
 import { assertRefNotSplitAcrossPopulations } from "../targets";
 import type { Manifest } from "../manifest";
+import type { Lock } from "../lock";
 import { skillTargetOwnerLabel, skillTargetOwners } from "../skill-target";
 import type { SkillTargetOwner } from "../skill-target";
 
@@ -174,6 +175,8 @@ export function registerRm(program: Command): void {
           manifest,
           key: remoteKeys[0]!,
           remotes,
+          projectLock: await loadLock(project),
+          localLock: await loadLocalLock(project),
           json: opts.json === true,
           yes: opts.yes === true,
         });
@@ -236,6 +239,7 @@ export function registerRm(program: Command): void {
       // edits, demanding `--yes` for drift this item did not create — and
       // must never be deleted.
       let keptBy: SkillTargetOwner | null = null;
+      let excludesNeeded = false;
       if (isCopyDirectoryItemKind(kind) && installsAtSkillTarget(kind)) {
         const otherOwners = (
           await skillTargetOwners(project, name, {
@@ -251,6 +255,9 @@ export function registerRm(program: Command): void {
             ),
         );
         keptBy = otherOwners[0] ?? null;
+        excludesNeeded = otherOwners.some(
+          (owner) => owner.owner === "local" || owner.owner === "remote",
+        );
       }
 
       // Resolved lazily: fragment and subagent removal read the data repo to
@@ -483,11 +490,11 @@ export function registerRm(program: Command): void {
       );
       if (opts.local) {
         if (!nextLocalConfig) throw new Error("expected local manifest");
-        // Kept: the exclude lines name the shared folder
-        // (`.agents/skills/<n>`, `.claude/skills/<n>`), identical for
-        // `skills/<n>` and `plugins/<n>` — removing them here would strip
-        // the lines the other owner still needs.
-        if (!keptBy) await removeLocalExcludes(project, kind, name);
+        // The exclude lines name the shared folder (`.agents/skills/<n>`,
+        // `.claude/skills/<n>`), identical for `skills/<n>` and
+        // `plugins/<n>`. They stay while a local-scope entry or a remote row
+        // still needs them. A project-scope owner needs none.
+        if (!excludesNeeded) await removeLocalExcludes(project, kind, name);
         await saveLocalConfig(project, nextLocalConfig);
         await saveLocalLock(project, writableNextLock);
       } else {
@@ -532,6 +539,12 @@ export function registerRm(program: Command): void {
  * Remove a remote skill or plugin: the install, its compatibility alias, its
  * exclude lines, and its row.
  *
+ * D2 guard 5, as the shelf path applies it: when another owner claims the
+ * folder, `rm` keeps the folder and its alias, leaves them out of the
+ * destructive plan, and deletes only the row. The exclude lines name the
+ * shared folder, so they stay when a local-scope entry or another remote row
+ * still needs them. A project-scope owner needs no exclude lines.
+ *
  * A cold cache must not stop this. The locked file set is only used to label a
  * path as reproducible managed content rather than unique local state, so when
  * the cache is gone every installed path degrades to `extra_local_path`, is
@@ -543,6 +556,8 @@ async function removeRemoteItem(input: {
   manifest: Manifest;
   key: string;
   remotes: RemotesLock;
+  projectLock: Lock;
+  localLock: Lock;
   json: boolean;
   yes: boolean;
 }): Promise<void> {
@@ -551,9 +566,29 @@ async function removeRemoteItem(input: {
   const entry = remotes.items[key]!;
   const cache = remoteCacheState(entry.upstream);
   const reviewCommand = `${PRODUCT_NAME} status ${kind}/${name} --diff-view installed`;
+  const otherOwners = (
+    await skillTargetOwners(project, name, {
+      project: input.projectLock,
+      local: input.localLock,
+      remotes,
+    })
+  ).filter((owner) => !(owner.owner === "remote" && owner.key === key));
+  const keptBy = otherOwners[0] ?? null;
+  const excludesNeeded = otherOwners.some(
+    (owner) => owner.owner === "local" || owner.owner === "remote",
+  );
   const planRemoval = async (): Promise<
     ReturnType<typeof createDestructiveChangePlan>
   > => {
+    if (keptBy) {
+      return createDestructiveChangePlan(
+        [],
+        [
+          `kept-by:${JSON.stringify(keptBy)}`,
+          `remote-entry:${JSON.stringify(entry)}`,
+        ],
+      );
+    }
     const planned = await planCopyDirectoryRemoval({
       project,
       currentSource: cache.present
@@ -587,26 +622,29 @@ async function removeRemoteItem(input: {
   assertDestructivePlanUnchanged(accepted, await planRemoval());
 
   const path = installedPath(project, kind, name, input.manifest.installMode);
-  let removed = await removeInstallAliases(
-    project,
-    kind,
-    name,
-    path,
-    input.manifest.installMode,
-  );
-  if (existsSync(path)) {
-    try {
-      await rmTreeWithRetries(path);
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      throw new CliError(`could not delete ${path} (${detail})`, {
-        hint: "another process may be writing to that directory — stop it and retry",
-        cause: err,
-      });
+  let removed = false;
+  if (!keptBy) {
+    removed = await removeInstallAliases(
+      project,
+      kind,
+      name,
+      path,
+      input.manifest.installMode,
+    );
+    if (existsSync(path)) {
+      try {
+        await rmTreeWithRetries(path);
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new CliError(`could not delete ${path} (${detail})`, {
+          hint: "another process may be writing to that directory — stop it and retry",
+          cause: err,
+        });
+      }
+      removed = true;
     }
-    removed = true;
   }
-  await removeLocalExcludes(project, kind, name);
+  if (!excludesNeeded) await removeLocalExcludes(project, kind, name);
   delete remotes.items[key];
   await saveRemotesLock(project, remotes);
 
@@ -621,6 +659,7 @@ async function removeRemoteItem(input: {
           upstream: entry.upstream,
           path,
           removedFiles: removed,
+          ...(keptBy && { keptBy: skillTargetOwnerLabel(keptBy) }),
         },
         null,
         2,
@@ -629,5 +668,11 @@ async function removeRemoteItem(input: {
     return;
   }
   console.log(`✓ removed ${key}`);
-  if (removed) console.log(`  deleted ${path}`);
+  if (keptBy) {
+    console.log(
+      `  kept ${relative(project, path)}: it is installed by ${skillTargetOwnerLabel(keptBy)}`,
+    );
+  } else if (removed) {
+    console.log(`  deleted ${path}`);
+  }
 }
