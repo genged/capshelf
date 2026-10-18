@@ -143,8 +143,7 @@ export async function skillTargetOwners(
   }
 
   if (owners.length === 0) {
-    const unmanaged = await unmanagedSkillTargetOwner(project, name);
-    if (unmanaged) owners.push(unmanaged);
+    owners.push(...(await unmanagedSkillTargetOwners(project, name)));
   }
 
   return owners;
@@ -155,13 +154,14 @@ export async function skillTargetOwners(
  * folder for `kind`/`name` while another owner holds it (spec D2 guard 5).
  *
  * `self === null` means no lock key tracks this item yet — the first install
- * of it, which is exactly `add`'s call. There, an `unmanaged` owner is not
- * this guard's conflict to report: the install path already has its own
- * recovery rule for a path that exists but is not yet tracked
- * (`matchesPinnedInstall`, `src/commands/add.ts`), which adopts it only when
- * its content exactly matches the pin and refuses otherwise. Guard 5 exists
- * for a *second* owner — a lock, remote, or skills.sh row — not for that
- * already-guarded first-install path.
+ * of it, which is exactly `add`'s call. There, an `unmanaged` owner at the
+ * item's own destination is not this guard's conflict to report: the install
+ * path already has its own recovery rule for a path that exists but is not
+ * yet tracked (`matchesPinnedInstall`, `src/commands/add.ts`), which adopts
+ * it only when its content exactly matches the pin and refuses otherwise.
+ * That rule checks only the exact path. An unmanaged entry that only folds
+ * to the name, such as `.agents/skills/RR` for `rr`, stays an owner, because
+ * the two folders collide on a volume that folds case.
  */
 export async function assertSkillTargetFree(
   project: string,
@@ -171,6 +171,10 @@ export async function assertSkillTargetFree(
   self: SkillTargetSelf | null,
   options: SkillTargetOptions = {},
 ): Promise<void> {
+  const ownDestinations = new Set([
+    codexSkillPath(project, name),
+    claudeSkillPath(project, name),
+  ]);
   const owners = (await skillTargetOwners(project, name, locks)).filter(
     (owner) => {
       if (
@@ -181,7 +185,13 @@ export async function assertSkillTargetFree(
       ) {
         return false;
       }
-      if (self === null && owner.owner === "unmanaged") return false;
+      if (
+        self === null &&
+        owner.owner === "unmanaged" &&
+        ownDestinations.has(owner.path)
+      ) {
+        return false;
+      }
       if (options.ignoreSkillsSh === true && owner.owner === "skills.sh") {
         return false;
       }
@@ -287,49 +297,47 @@ function skillTargetRefFromKey(key: string): SkillTargetRef {
 }
 
 /**
- * An existing directory entry at the codex or Claude skills directory that
- * folds to `name`, when nothing else explains it. Matched by `readdir` plus
- * `destinationKey`, not by `lstat`-ing the literal name: a committed
- * `.agents/skills/RR` must be found for a write of `rr` on every machine,
- * including one whose filesystem does not fold case or Unicode itself (spec
- * D2 guard 5).
+ * Each existing directory entry at the codex or Claude skills directory that
+ * folds to `name`, for when nothing else explains the folder. Matched by
+ * `readdir` plus `destinationKey`, not by `lstat`-ing the literal name: a
+ * committed `.agents/skills/RR` must be found for a write of `rr` on every
+ * machine, including one whose filesystem does not fold case or Unicode
+ * itself (spec D2 guard 5). Every match is returned, so an exact entry cannot
+ * hide a folded one beside it.
  *
- * A Claude-side symlink that resolves to the matching codex entry is the
- * compatibility alias of a managed install, not a second owner — and since a
- * managed install's codex entry is matched and returned first, that case
- * never reaches the Claude-side scan at all.
+ * The codex entries come first. A Claude-side symlink to the matching codex
+ * entry is the compatibility alias of an install. For a managed install a
+ * lock owner already explains the folder, so this scan does not run.
  */
-async function unmanagedSkillTargetOwner(
+async function unmanagedSkillTargetOwners(
   project: string,
   name: string,
-): Promise<SkillTargetOwner | null> {
+): Promise<SkillTargetOwner[]> {
   const wanted = destinationKey(name, ALL_FOLDING);
-
-  const codexSkillsDir = dirname(codexSkillPath(project, name));
-  const codexEntry = await foldedDirEntry(codexSkillsDir, wanted);
-  if (codexEntry) {
-    return { owner: "unmanaged", path: join(codexSkillsDir, codexEntry) };
+  const owners: SkillTargetOwner[] = [];
+  for (const skillsDir of [
+    dirname(codexSkillPath(project, name)),
+    dirname(claudeSkillPath(project, name)),
+  ]) {
+    for (const entry of await foldedDirEntries(skillsDir, wanted)) {
+      owners.push({ owner: "unmanaged", path: join(skillsDir, entry) });
+    }
   }
-
-  const claudeSkillsDir = dirname(claudeSkillPath(project, name));
-  const claudeEntry = await foldedDirEntry(claudeSkillsDir, wanted);
-  if (!claudeEntry) return null;
-  return { owner: "unmanaged", path: join(claudeSkillsDir, claudeEntry) };
+  return owners;
 }
 
-/** The first entry of `dir` that folds to `wanted`, or null. Never throws. */
-async function foldedDirEntry(
+/** The entries of `dir` that fold to `wanted`. Never throws. */
+async function foldedDirEntries(
   dir: string,
   wanted: string,
-): Promise<string | null> {
+): Promise<string[]> {
   let entries: string[];
   try {
     entries = await readdir(dir);
   } catch {
-    return null;
+    return [];
   }
-  return (
-    entries.find((entry) => destinationKey(entry, ALL_FOLDING) === wanted) ??
-    null
+  return entries.filter(
+    (entry) => destinationKey(entry, ALL_FOLDING) === wanted,
   );
 }

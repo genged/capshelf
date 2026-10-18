@@ -161,6 +161,53 @@ describe("skill-target owners", () => {
     });
   });
 
+  test("a first install still refuses a folded unmanaged folder", async () => {
+    // The self-null exemption covers only the item's own destination. On a
+    // case-sensitive volume `.agents/skills/RR` is a different folder, and
+    // installing `rr` beside it gives a project that collides on a
+    // teammate's case-insensitive volume.
+    const project = await tempDir("capshelf-target-");
+    await mkdir(join(project, ".agents", "skills", "RR"), { recursive: true });
+    const locks = {
+      project: emptyLock(),
+      local: emptyLock(),
+      remotes: emptyRemotesLock(),
+    };
+    await expect(
+      assertSkillTargetFree(project, "plugins", "rr", locks, null),
+    ).rejects.toThrow(/\.agents\/skills\/rr is already in use at .*\/RR/);
+  });
+
+  test("a first install refuses a folded entry beside the exact one", async () => {
+    const project = await tempDir("capshelf-target-");
+    await mkdir(join(project, ".agents", "skills", "rr"), { recursive: true });
+    await mkdir(join(project, ".claude", "skills", "RR"), { recursive: true });
+    const locks = {
+      project: emptyLock(),
+      local: emptyLock(),
+      remotes: emptyRemotesLock(),
+    };
+    await expect(
+      assertSkillTargetFree(project, "plugins", "rr", locks, null),
+    ).rejects.toThrow(/already in use at .*\.claude\/skills\/RR/);
+  });
+
+  test("add plugins/rr refuses while an unmanaged .agents/skills/RR exists", async () => {
+    const project = await tempRepo("capshelf-target-add-folded-project-");
+    const dataRepo = await tempRepo("capshelf-target-add-folded-data-");
+    await writePlugin(dataRepo, "rr", "rr");
+    await commitAll(dataRepo, "baseline");
+    const run = runInProcess(project);
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    await mkdir(join(project, ".agents", "skills", "RR"), { recursive: true });
+    await writeFile(join(project, ".agents", "skills", "RR", "x.md"), "x\n");
+
+    const add = await run(["add", "plugins/rr", "--yes"]);
+    expect(add.exitCode).toBe(3);
+    expect(add.stderr.toString()).toContain("is already in use at");
+    expect(existsSync(join(project, ".agents", "skills", "rr"))).toBe(false);
+  });
+
   test("a remote/plugins/<n> row is an owner of the folder", async () => {
     // D4: a remote row can hold either kind, and `skillTargetOwners` must see
     // a plugins row the same way it already sees a remote skills row.

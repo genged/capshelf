@@ -724,6 +724,10 @@ lock, the local lock, a remote row, a skills.sh row, and a folder that no
 tool manages. `add`, `update`, `apply`, `move`, `revert`, and
 `share --adopt` run the check before they write.
 
+A first `add` can take an unmanaged folder at the exact install path when
+its content matches the pin. An unmanaged folder whose name only folds to
+the item name, such as `.agents/skills/RR` for `rr`, always refuses.
+
 Capshelf sees one project at a time. It cannot know when the last project
 has switched from the skill to the plugin. It therefore never removes
 `skills/<name>` from the shelf. A person removes it from the data repo.
