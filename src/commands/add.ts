@@ -1081,9 +1081,11 @@ async function addBundle(
   // D7 points 1 and 3 reach a bundle member too, or a plugin with hooks would
   // install unasked through the bundle that holds it. A skill member whose
   // tree holds a plugin manifest is a plugin to Claude Code (R1), so it asks
-  // the same way. One prompt covers every such member, and each member
-  // installs the pin its runs were read from.
-  const pluginPins = new Map<string, PinnedSource>();
+  // the same way. One prompt covers every such member. Every inspected
+  // skill-target member installs the pin it was inspected at, also one that
+  // asked nothing: a commit during the prompt can add a manifest and hooks
+  // to it, and a re-resolved pin would install them unasked.
+  const inspectedPins = new Map<string, PinnedSource>();
   const pluginPoints: PluginConsentPoint[] = [];
   for (const member of plan.members) {
     if (member.status !== "install") continue;
@@ -1091,9 +1093,9 @@ async function addBundle(
     const pin = await pinCurrentSource(ctx.dataRepo, member.kind, member.name, {
       memo: ctx.memo,
     });
+    inspectedPins.set(member.ref, pin);
     const runs = await addPluginRuns(ctx, member.kind, member.name, pin);
     if (runs === null) continue;
-    pluginPins.set(member.ref, pin);
     pluginPoints.push(...shelfPluginAddPoints(member.ref, runs, ctx.local));
   }
   if (
@@ -1152,10 +1154,10 @@ async function addBundle(
       if (!item) throw new Error(`expected master item for ${member.ref}`);
       // A bundle's write window is the longest one there is — every member
       // installs after one shared revalidation — so each fragment member
-      // installs the exact tree its own preflight approved, and each plugin
-      // member the tree its consent covered.
+      // installs the exact tree its own preflight approved, and each skill or
+      // plugin member the tree its consent check read.
       const approved =
-        revalidated.pins.get(member.ref) ?? pluginPins.get(member.ref);
+        revalidated.pins.get(member.ref) ?? inspectedPins.get(member.ref);
       return installDataItem(ctx, item, {
         enforceRelations: false,
         memo: ctx.memo,

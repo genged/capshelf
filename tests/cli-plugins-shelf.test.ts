@@ -416,6 +416,79 @@ describe("shelf add plugins/<n> (D7 points 1 and 3)", () => {
   );
 });
 
+describe("bundle consent pins (D7 point 1)", () => {
+  test(
+    "a skill member installs the tree read before the prompt, not a newer one",
+    async () => {
+      const world = await shelfWorld();
+      await writeUnder(
+        world.dataRepo,
+        "skills/plain/SKILL.md",
+        "---\nname: plain\ndescription: d\n---\nbody\n",
+      );
+      await writeUnder(
+        world.dataRepo,
+        "bundles/pair.yml",
+        "includes:\n  skills: [plain]\n  plugins: [gh-cli]\n",
+      );
+      await commitAll(world.dataRepo, "bundle");
+
+      // While the gh-cli prompt is open, a commit turns plain into a plugin
+      // with a hook. The prompt never listed that hook.
+      const { result } = await runWithTerminalDuring(
+        world,
+        ["add", "bundles/pair"],
+        async () => {
+          await writeUnder(
+            world.dataRepo,
+            "skills/plain/.claude-plugin/plugin.json",
+            JSON.stringify({ name: "plain" }),
+          );
+          await writeUnder(
+            world.dataRepo,
+            "skills/plain/hooks/hooks.json",
+            JSON.stringify(SETUP_HOOK),
+          );
+          await commitAll(world.dataRepo, "plain becomes a plugin");
+        },
+      );
+      const plainFolder = pluginFolder(world.project, "plain");
+      expect(existsSync(join(plainFolder, "hooks", "hooks.json"))).toBe(false);
+      expect(
+        existsSync(join(plainFolder, ".claude-plugin", "plugin.json")),
+      ).toBe(false);
+      if (result.exitCode === 0) {
+        expect(existsSync(join(plainFolder, "SKILL.md"))).toBe(true);
+      }
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+});
+
+/** Run with a terminal whose first prompt runs `during`, then answers yes. */
+async function runWithTerminalDuring(
+  world: ShelfWorld,
+  args: string[],
+  during: () => Promise<void>,
+): Promise<{ result: CliResult; prompts: string[] }> {
+  const prompts: string[] = [];
+  const outer = setDestructiveConfirmationContext({
+    stdinIsTTY: true,
+    stderrIsTTY: true,
+    prompt: async (message) => {
+      prompts.push(message);
+      if (prompts.length === 1) await during();
+      return "y";
+    },
+    stderr: { write: () => {} },
+  });
+  try {
+    return { result: await world.run(args), prompts };
+  } finally {
+    setDestructiveConfirmationContext(outer);
+  }
+}
+
 describe("move plugins/<n> --to project (D7 point 3)", () => {
   test(
     "refuses with no terminal, asks the spec's question, and --yes moves",
