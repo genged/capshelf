@@ -852,6 +852,12 @@ merge adds an entry, run it in a terminal and answer the prompt. To take the
 new tree without your local edits, run `capshelf update plugins/<name> --yes`
 with no `--merge` (with `--local` for a local-scope plugin).
 
+`update --merge` reads the merged files for point 2, not the upstream tree
+alone. A merge can run a command that neither side runs alone. For example,
+the local copy adds a manifest and the upstream adds `hooks/hooks.json`. The
+merged files then run the hook, and the update asks. The same rule applies
+to a skill.
+
 A new tree whose `plugin.json` gives a different name refuses before any
 write. This applies to `update`, `update --merge`, `promote`, and
 `share --adopt`. A rename needs a new item: `rm` the old one, then `add` the

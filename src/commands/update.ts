@@ -117,6 +117,7 @@ import {
   sidecarFromInstalledSnapshot,
 } from "../item-snapshot";
 import { mergeNamedTrees, namedFilesEqual } from "../merge-tree";
+import type { NamedFile } from "../merge-tree";
 import { beginInstalledReconciliation } from "../promote-transaction";
 import { remoteCacheState } from "../remote-cache";
 import { candidateAtSubpath, remoteTreeSource } from "../remote-discovery";
@@ -145,8 +146,17 @@ import { factsWarnOnInstall, renderPluginFacts } from "../remote-list-render";
 import { assertSkillTargetFree } from "../skill-target";
 import { sanitizeDisplayText } from "../pick-core";
 import { confirmPluginConsent, newPluginRunsField } from "../plugin-consent";
-import type { PluginConsentPoint } from "../plugin-consent";
-import { itemPluginNewRuns, runsHaveEntries } from "../plugin-runs";
+import type {
+  PluginConsentOptions,
+  PluginConsentPoint,
+} from "../plugin-consent";
+import {
+  itemPluginNewRuns,
+  itemPluginRunsAtCommit,
+  itemPluginRunsFromFiles,
+  newRunsEntries,
+  runsHaveEntries,
+} from "../plugin-runs";
 import type { PluginRuns } from "../plugin-runs";
 
 interface UpdateOptions {
@@ -344,8 +354,10 @@ export function registerUpdate(program: Command): void {
         if (opts.merge) {
           if (!dataRepo) throw new PreconditionError("data repo is required");
           const target = targets[0]!;
-          // D3 and D7 point 2 take the merge's new tree too, before
-          // `updateMergeTarget` writes anything.
+          // D3 reads the new upstream tree before `updateMergeTarget` writes
+          // anything, and its pin is the one the merge takes. D7 point 2 asks
+          // inside `updateMergeTarget`, over the merged files: a merge can run
+          // something that neither the local copy nor the upstream runs alone.
           const mergeItem = parseLockKey(target.key);
           const mergeEntry = (
             target.scope === "local" ? writableLocalLock : writableProjectLock
@@ -362,29 +374,7 @@ export function registerUpdate(program: Command): void {
                   new GitReadMemo(),
                 )
               : null;
-          const mergeRuns = mergeMove?.newRuns ?? null;
-          const mergePoints: PluginConsentPoint[] =
-            mergeRuns === null
-              ? []
-              : [
-                  {
-                    kind: "pin-move",
-                    ref: `${mergeItem.kind}/${mergeItem.name}`,
-                    runs: mergeRuns,
-                  },
-                ];
-          if (
-            !(await confirmPluginConsent(mergePoints, {
-              json: opts.json === true,
-              yes: opts.yes === true,
-              dryRun: opts.dryRun === true,
-              // `update` refuses `--merge --yes` for a shelf item.
-              advice: `review it first. --merge does not take --yes: run it in a terminal to answer the prompt, or take the new tree without your local edits with ${PRODUCT_NAME} update ${mergeItem.kind}/${mergeItem.name}${target.scope === "local" ? " --local" : ""} --yes`,
-            }))
-          ) {
-            return;
-          }
-          const merged = await updateMergeTarget({
+          const result = await updateMergeTarget({
             project,
             manifest,
             dataRepo,
@@ -394,13 +384,15 @@ export function registerUpdate(program: Command): void {
             localLock: writableLocalLock,
             remotes,
             dryRun: opts.dryRun === true,
+            consent: {
+              json: opts.json === true,
+              yes: opts.yes === true,
+              dryRun: opts.dryRun === true,
+              // `update` refuses `--merge --yes` for a shelf item.
+              advice: `review it first. --merge does not take --yes: run it in a terminal to answer the prompt, or take the new tree without your local edits with ${PRODUCT_NAME} update ${mergeItem.kind}/${mergeItem.name}${target.scope === "local" ? " --local" : ""} --yes`,
+            },
           });
-          const result =
-            opts.dryRun === true &&
-            mergeRuns !== null &&
-            runsHaveEntries(mergeRuns)
-              ? { ...merged, newRuns: mergeRuns }
-              : merged;
+          if (result === null) return;
           printUpdateOutput({
             project,
             dataRepo,
@@ -1103,12 +1095,14 @@ async function updateMergeTarget(input: {
   remotes: RemotesLock;
   dryRun: boolean;
   /**
-   * The pin a consent prompt approved. The merge pins it instead of a fresh
-   * one, and `revalidateUpdateMergeInputs` refuses when the data repo moved
-   * past it while the prompt was open.
+   * The upstream pin read before the merge. The merge pins it instead of a
+   * fresh one, and `revalidateUpdateMergeInputs` refuses when the data repo
+   * moved past it while the consent prompt was open.
    */
   upstreamPin?: PinnedSource;
-}): Promise<UpdateResult> {
+  /** D7 point 2 options for the question over the merged files. */
+  consent: PluginConsentOptions;
+}): Promise<UpdateResult | null> {
   const { project, dataRepo, target, dryRun } = input;
   const lock = target.scope === "local" ? input.localLock : input.projectLock;
   const entry = lock.items[target.key];
@@ -1304,6 +1298,31 @@ async function updateMergeTarget(input: {
     });
   }
 
+  // D7 point 2 over the merged files, the exact tree the write below puts in
+  // the folder. An entry is new when the old pin did not run it. An unknown
+  // entry always asks. `revalidateUpdateMergeInputs` then refuses if the
+  // inputs moved while the prompt was open, so the approved files are the
+  // written files.
+  const newRuns =
+    (lockChanged || filesChanged) && installsAtSkillTarget(kind)
+      ? await mergedPluginNewRuns(
+          dataRepo,
+          kind,
+          parsed.name,
+          entry,
+          resultFiles,
+        )
+      : null;
+  if (
+    newRuns !== null &&
+    !(await confirmPluginConsent(
+      [{ kind: "pin-move", ref: `${kind}/${parsed.name}`, runs: newRuns }],
+      input.consent,
+    ))
+  ) {
+    return null;
+  }
+
   if (!dryRun && (lockChanged || filesChanged)) {
     // D2 guard 5: before the copy-directory write below.
     if (installsAtSkillTarget(kind)) {
@@ -1370,7 +1389,34 @@ async function updateMergeTarget(input: {
       mergedUpstreamCommit: plannedHead,
     }),
     runtimeWarnings: runtimeWarningsForItem(project, parsed.kind, parsed.name),
+    ...(dryRun && newRuns !== null && runsHaveEntries(newRuns) && { newRuns }),
   };
+}
+
+/**
+ * The runs entries an `update --merge` result adds over the old pin, or null
+ * when the merged files are not a plugin to Claude Code. PIN-8: an unreadable
+ * old pin counts as a tree that runs nothing, so every entry is new.
+ */
+async function mergedPluginNewRuns(
+  dataRepo: string,
+  kind: SkillTargetKind,
+  name: string,
+  entry: DataLockEntryV4,
+  files: readonly NamedFile[],
+): Promise<PluginRuns | null> {
+  const merged = await itemPluginRunsFromFiles(kind, files);
+  if (merged === null) return null;
+  const previousEntries = await itemTreeEntriesAtCommit(
+    gitTreeSource({ repo: dataRepo, kind, name, commit: entry.sourceCommit }),
+    kind,
+  ).catch(() => []);
+  const previous = (await itemPluginRunsAtCommit(
+    dataRepo,
+    kind,
+    previousEntries,
+  )) ?? { hooks: [], mcpServers: [], unknown: [] };
+  return newRunsEntries(previous, merged);
 }
 
 async function revalidateUpdateMergeInputs(input: {

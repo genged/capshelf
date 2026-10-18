@@ -717,6 +717,32 @@ export async function pluginRunsOnDisk(dir: string): Promise<PluginRuns> {
   return runs;
 }
 
+/** One file of an in-memory tree, plugin-relative and POSIX-separated. */
+export interface PluginTreeFile {
+  path: string;
+  content: Buffer;
+}
+
+/**
+ * Read a plugin's runs from files held in memory, such as an `update
+ * --merge` result before it is written. Every file here is a regular file,
+ * so the unsafe-default rule has nothing to add.
+ */
+export async function pluginRunsFromFiles(
+  files: readonly PluginTreeFile[],
+): Promise<PluginRuns> {
+  const byPath = new Map(files.map((file) => [file.path, file.content]));
+  const reader: PluginFileReader = async (relPath) =>
+    byPath.get(relPath) ?? null;
+  const runs = await readPluginRuns(reader);
+  addCaseVariantUnknowns(
+    runs,
+    declarationPaths(byPath.get(PLUGIN_MANIFEST_REL) ?? null),
+    files.map((file) => file.path),
+  );
+  return runs;
+}
+
 /**
  * Whether an item is a plugin to Claude Code, and so needs plugin consent
  * (D7). A `plugins` item always is. A `skills` item is one when its tree
@@ -762,6 +788,18 @@ export async function itemPluginRunsOnDisk(
       (await foldedMatchesOnDisk(dir, PLUGIN_MANIFEST_REL)).length > 0,
   );
   return isPlugin ? await pluginRunsOnDisk(dir) : null;
+}
+
+/** `itemPluginRunsAtCommit` for files held in memory. */
+export async function itemPluginRunsFromFiles(
+  kind: ItemKind,
+  files: readonly PluginTreeFile[],
+): Promise<PluginRuns | null> {
+  const manifestKey = foldedPath(PLUGIN_MANIFEST_REL);
+  const isPlugin = await carriesPluginManifest(kind, async () =>
+    files.some((file) => foldedPath(file.path) === manifestKey),
+  );
+  return isPlugin ? await pluginRunsFromFiles(files) : null;
 }
 
 /**

@@ -191,6 +191,53 @@ describe("a shelf skill that holds a plugin manifest", () => {
   );
 
   test(
+    "update --merge asks for what the merged tree runs",
+    async () => {
+      // Neither side is a plugin with hooks alone: the local copy gains an
+      // inert manifest and the upstream gains a hook with no manifest. The
+      // merge result holds both, so it runs the hook.
+      const w = await world();
+      await writeUnder(
+        w.dataRepo,
+        "skills/plain/SKILL.md",
+        skillText("plain", "d"),
+      );
+      await commitAll(w.dataRepo, "plain skill");
+      expect((await w.run(["add", "skills/plain"])).exitCode).toBe(0);
+      const installed = join(w.project, ".agents", "skills", "plain");
+      await writeUnder(
+        installed,
+        ".claude-plugin/plugin.json",
+        JSON.stringify({ name: "plain" }),
+      );
+      await writeUnder(
+        w.dataRepo,
+        "skills/plain/hooks/hooks.json",
+        hooksJson("bash hooks/merged.sh"),
+      );
+      await commitAll(w.dataRepo, "add a hook");
+
+      const dry = await w.run([
+        "update",
+        "skills/plain",
+        "--merge",
+        "--dry-run",
+        "--json",
+      ]);
+      expect(dry.exitCode).toBe(0);
+      expect(dry.stdout.toString()).toContain("bash hooks/merged.sh");
+
+      const r = await w.run(["update", "skills/plain", "--merge"]);
+      expect(r.exitCode).toBe(3);
+      const err = r.stderr.toString();
+      expect(err).toContain("not updating skills/plain without consent");
+      expect(err).toContain("bash hooks/merged.sh");
+      expect(existsSync(join(installed, "hooks", "hooks.json"))).toBe(false);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "share --to project of a local copy asks (point 3)",
     async () => {
       const w = await world();
