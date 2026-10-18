@@ -15,6 +15,7 @@ import { setDestructiveConfirmationContext } from "../src/destructive-change";
 import { GitReadMemo } from "../src/git-read-memo";
 import { assertWritableLock, loadLocalLock, loadLock } from "../src/lock";
 import { loadManifest } from "../src/manifest";
+import { captureCommittedItemNeeds } from "../src/metadata";
 import { pinCurrentSource } from "../src/pin";
 import { emptyRemotesLock } from "../src/remotes-lock";
 import {
@@ -734,15 +735,84 @@ describe("shelf update installs the pin the user approved", () => {
           projectLock,
           localLock: await loadLocalLock(w.project),
           remotes: emptyRemotesLock(),
-          approvedPins: new Map([[`project:${key}`, approved]]),
+          approvedPins: new Map([
+            [
+              `project:${key}`,
+              {
+                pin: approved,
+                needs: await captureCommittedItemNeeds(w.dataRepo, {
+                  kind: "skills",
+                  name: "inert",
+                }),
+              },
+            ],
+          ]),
         },
         { scope: "project", key },
         projectLock.items[key]!,
       );
-      expect(outcome.pin?.sourceCommit).toBe(approved.sourceCommit);
+      expect(outcome.approved?.pin.sourceCommit).toBe(approved.sourceCommit);
       const installed = join(w.project, ".agents", "skills", "inert");
       expect(existsSync(join(installed, "notes.md"))).toBe(true);
       expect(existsSync(join(installed, "hooks", "hooks.json"))).toBe(false);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "the write pass records the needs read with the approved pin, not a later commit's",
+    async () => {
+      const w = await world();
+      expect((await w.run(["add", "skills/inert"])).exitCode).toBe(0);
+      await writeUnder(
+        w.dataRepo,
+        "skills/inert/.capshelf.yml",
+        "needs:\n  network: [a.example.com]\n",
+      );
+      await writeUnder(w.dataRepo, "skills/inert/notes.md", "notes\n");
+      await commitAll(w.dataRepo, "commit A: notes and needs a");
+      const commitA = (
+        await $`git -C ${w.dataRepo} rev-parse HEAD`.quiet().text()
+      ).trim();
+      const approvedPin = await pinCurrentSource(w.dataRepo, "skills", "inert");
+      const approvedNeeds = await captureCommittedItemNeeds(w.dataRepo, {
+        kind: "skills",
+        name: "inert",
+      });
+      // Commit B changes only the needs, after the approval.
+      await writeUnder(
+        w.dataRepo,
+        "skills/inert/.capshelf.yml",
+        "needs:\n  network: [b.example.com]\n",
+      );
+      await commitAll(w.dataRepo, "commit B: needs b");
+
+      const projectLock = assertWritableLock(await loadLock(w.project), "test");
+      const key = "data/skills/inert";
+      const outcome = await updateOneTarget(
+        {
+          memo: new GitReadMemo(),
+          project: w.project,
+          manifest: await loadManifest(w.project),
+          dataRepo: w.dataRepo,
+          dryRun: false,
+          explicit: true,
+          externalSkillByName: new Map(),
+          projectLock,
+          localLock: await loadLocalLock(w.project),
+          remotes: emptyRemotesLock(),
+          approvedPins: new Map([
+            [`project:${key}`, { pin: approvedPin, needs: approvedNeeds }],
+          ]),
+        },
+        { scope: "project", key },
+        projectLock.items[key]!,
+      );
+      const written = outcome.newEntry;
+      if (written?.source !== "data") throw new Error("expected a data entry");
+      expect(written.needsSourceCommit).toBe(commitA);
+      expect(written.needs?.network).toEqual(["a.example.com"]);
+      expect(written.sourceCommit).toBe(approvedPin.sourceCommit);
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );

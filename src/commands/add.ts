@@ -345,6 +345,7 @@ async function addOne(
   const result = await installDataItem(ctx, item, {
     memo: ctx.memo,
     ...(consent.pin && { pin: consent.pin }),
+    ...(consent.needs && { needs: consent.needs }),
   });
 
   if (opts.json) {
@@ -691,7 +692,14 @@ export interface InstallDataItemOptions {
    * the window between revalidation and the write.
    */
   pin?: PinnedSource;
+  /**
+   * The needs snapshot read with `pin`. The lock entry then pairs the files
+   * and the needs from one read, not needs from a later data-repo HEAD.
+   */
+  needs?: NeedsSnapshot;
 }
+
+type NeedsSnapshot = Awaited<ReturnType<typeof captureCommittedItemNeeds>>;
 
 /**
  * The load/check/copy/lock core shared by standalone `add` and the bundle
@@ -873,7 +881,8 @@ export async function installDataItem(
       pin.entries.map((entry) => entry.path),
     );
   }
-  const snapshot = await captureCommittedItemNeeds(dataRepo, item);
+  const snapshot =
+    opts.needs ?? (await captureCommittedItemNeeds(dataRepo, item));
   let adoptMatchingInstall = false;
   if (!alreadyInLock && conflict) {
     if (isCopyDirectoryItemKind(item.kind)) {
@@ -1085,7 +1094,10 @@ async function addBundle(
   // skill-target member installs the pin it was inspected at, also one that
   // asked nothing: a commit during the prompt can add a manifest and hooks
   // to it, and a re-resolved pin would install them unasked.
-  const inspectedPins = new Map<string, PinnedSource>();
+  const inspectedPins = new Map<
+    string,
+    { pin: PinnedSource; needs: NeedsSnapshot }
+  >();
   const pluginPoints: PluginConsentPoint[] = [];
   for (const member of plan.members) {
     if (member.status !== "install") continue;
@@ -1093,7 +1105,10 @@ async function addBundle(
     const pin = await pinCurrentSource(ctx.dataRepo, member.kind, member.name, {
       memo: ctx.memo,
     });
-    inspectedPins.set(member.ref, pin);
+    inspectedPins.set(member.ref, {
+      pin,
+      needs: await captureCommittedItemNeeds(ctx.dataRepo, member),
+    });
     const runs = await addPluginRuns(ctx, member.kind, member.name, pin);
     if (runs === null) continue;
     pluginPoints.push(...shelfPluginAddPoints(member.ref, runs, ctx.local));
@@ -1156,12 +1171,13 @@ async function addBundle(
       // installs after one shared revalidation — so each fragment member
       // installs the exact tree its own preflight approved, and each skill or
       // plugin member the tree its consent check read.
-      const approved =
-        revalidated.pins.get(member.ref) ?? inspectedPins.get(member.ref);
+      const inspected = inspectedPins.get(member.ref);
+      const approved = revalidated.pins.get(member.ref) ?? inspected?.pin;
       return installDataItem(ctx, item, {
         enforceRelations: false,
         memo: ctx.memo,
         ...(approved && { pin: approved }),
+        ...(inspected && { needs: inspected.needs }),
       });
     },
   });
@@ -1339,6 +1355,7 @@ export async function runInteractiveAdd(request: {
       const result = await installDataItem(ctx, item, {
         memo: ctx.memo,
         ...(consent.pin && { pin: consent.pin }),
+        ...(consent.needs && { needs: consent.needs }),
       });
       added.push(itemRef);
       console.log(`+ ${itemRef.padEnd(33)} @ ${shortIdentity(result.sha)}`);
@@ -1447,19 +1464,24 @@ async function approveAddPin(
   ctx: Awaited<ReturnType<typeof loadAddContext>>,
   item: MasterItem,
   opts: { json: boolean; yes: boolean },
-): Promise<{ proceed: boolean; pin: PinnedSource | null }> {
+): Promise<{
+  proceed: boolean;
+  pin: PinnedSource | null;
+  needs?: NeedsSnapshot;
+}> {
   if (item.kind === "plugins" || item.kind === "skills") {
     const pin = await pinCurrentSource(ctx.dataRepo, item.kind, item.name, {
       memo: ctx.memo,
     });
+    const needs = await captureCommittedItemNeeds(ctx.dataRepo, item);
     const runs = await addPluginRuns(ctx, item.kind, item.name, pin);
-    if (runs === null) return { proceed: true, pin };
+    if (runs === null) return { proceed: true, pin, needs };
     const points = shelfPluginAddPoints(
       `${item.kind}/${item.name}`,
       runs,
       ctx.local,
     );
-    return { proceed: await confirmPluginConsent(points, opts), pin };
+    return { proceed: await confirmPluginConsent(points, opts), pin, needs };
   }
   if (!isFragmentItemKind(item.kind)) return { proceed: true, pin: null };
   const preflight = await planStandaloneFragmentAdd(ctx, item);

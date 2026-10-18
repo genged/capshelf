@@ -432,6 +432,9 @@ describe("bundle consent pins (D7 point 1)", () => {
         "includes:\n  skills: [plain]\n  plugins: [gh-cli]\n",
       );
       await commitAll(world.dataRepo, "bundle");
+      const inspectedHead = (
+        await $`git -C ${world.dataRepo} rev-parse HEAD`.quiet().text()
+      ).trim();
 
       // While the gh-cli prompt is open, a commit turns plain into a plugin
       // with a hook. The prompt never listed that hook.
@@ -459,6 +462,15 @@ describe("bundle consent pins (D7 point 1)", () => {
       ).toBe(false);
       if (result.exitCode === 0) {
         expect(existsSync(join(plainFolder, "SKILL.md"))).toBe(true);
+        // The needs were read with the inspected pin, not at the later HEAD.
+        const lock = await readJsonObject(
+          join(world.project, ".capshelf", "capshelf.lock.json"),
+        );
+        const entry = objectField(
+          objectField(lock, "items"),
+          "data/skills/plain",
+        );
+        expect(stringField(entry, "needsSourceCommit")).toBe(inspectedHead);
       }
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,

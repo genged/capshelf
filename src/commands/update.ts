@@ -1625,18 +1625,30 @@ export interface UpdateContext {
   localLock: Lock;
   remotes: RemotesLock;
   /**
-   * The pins the preflight read, keyed by `pinKey`. The write pass installs
-   * exactly these, so a data-repo commit after the consent prompt or after
-   * the re-plan check cannot reach the folder unasked.
+   * The pins and needs the preflight read, keyed by `pinKey`. The write pass
+   * records exactly these, so a data-repo commit after the consent prompt or
+   * after the re-plan check cannot reach the folder unasked, and the lock
+   * entry pairs files and needs from one read.
    */
-  approvedPins?: ReadonlyMap<string, PinnedSource>;
+  approvedPins?: ReadonlyMap<string, ApprovedSource>;
 }
 
 interface UpdatePreflight {
   results: UpdateResult[];
   destructivePlan: DestructiveChangePlan;
-  /** The pin each data target was planned at, keyed by `pinKey`. */
-  pins: Map<string, PinnedSource>;
+  /** The pin and needs each data target was planned at, keyed by `pinKey`. */
+  pins: Map<string, ApprovedSource>;
+}
+
+/**
+ * One read of a data target: its pin and the needs snapshot taken with it.
+ * The needs come from data-repo HEAD, not from `pin.sourceCommit`: the pin
+ * commit is the last commit that touched the content and excludes sidecar
+ * commits, so a needs-only change would never be seen there.
+ */
+interface ApprovedSource {
+  pin: PinnedSource;
+  needs: Awaited<ReturnType<typeof captureCommittedItemNeeds>>;
 }
 
 function pinKey(scope: "project" | "local", key: string): string {
@@ -1657,13 +1669,15 @@ async function planUpdatePreflight(
   const fragmentTargets = new Set<FragmentTarget>();
   const fragmentItems = new Map<FragmentTarget, Set<string>>();
 
-  const pins = new Map<string, PinnedSource>();
+  const pins = new Map<string, ApprovedSource>();
   for (const target of targets) {
     const lock = target.scope === "local" ? localLock : projectLock;
     const currentEntry = lock.items[target.key]!;
     const outcome = await updateOneTarget(dryContext, target, currentEntry);
     results.push(outcome.result);
-    if (outcome.pin) pins.set(pinKey(target.scope, target.key), outcome.pin);
+    if (outcome.approved) {
+      pins.set(pinKey(target.scope, target.key), outcome.approved);
+    }
     snapshotParts.push(
       `update-result:${target.scope}:${target.key}:${JSON.stringify(outcome.result)}`,
     );
@@ -1906,14 +1920,15 @@ export interface TargetOutcome {
   changed?: boolean;
   /** Fragment items defer their lock write and reconcile after the loop. */
   fragment?: FragmentContribution;
-  /** The pin a data target was planned or written at. */
-  pin?: PinnedSource;
+  /** The pin and needs a data target was planned or written at. */
+  approved?: ApprovedSource;
 }
 
 /**
  * Plan or write one target. The preflight and the write pass both call it.
  * Exported for tests, which check that the write pass installs the pin in
- * `ctx.approvedPins` and not a fresh read of the data repo.
+ * `ctx.approvedPins`, and the needs read with it, not a fresh read of the
+ * data repo.
  */
 export async function updateOneTarget(
   ctx: UpdateContext,
@@ -1988,11 +2003,12 @@ export async function updateOneTarget(
   // One pin for the consent read and for the write: the approved pin in the
   // write pass, else the current committed tree. Null here means the pin
   // cannot be built; `updateDataTarget` then reports that failure itself.
+  const approved = ctx.approvedPins?.get(pinKey(scope, key)) ?? null;
   const pin =
     entry.source === "data" &&
     entry.local !== true &&
     ctx.dataRepo !== undefined
-      ? (ctx.approvedPins?.get(pinKey(scope, key)) ??
+      ? (approved?.pin ??
         (await pinCurrentSource(ctx.dataRepo, parsed.kind, parsed.name, {
           memo: ctx.memo,
         }).catch(() => null)))
@@ -2023,7 +2039,15 @@ export async function updateOneTarget(
   try {
     const outcome =
       entry.source === "data"
-        ? await updateDataTarget(ctx, scope, key, parsed, entry, pin)
+        ? await updateDataTarget(
+            ctx,
+            scope,
+            key,
+            parsed,
+            entry,
+            pin,
+            approved?.needs ?? null,
+          )
         : await updateSystemTarget(ctx, scope, key, parsed, entry);
     // A dry pass carries what the real run asks about. The preflight is a
     // dry pass, so the command reads the consent points from these rows.
@@ -2175,6 +2199,8 @@ async function updateDataTarget(
   entry: DataLockEntryV4,
   /** The pin `updateOneTarget` read for consent, or null to resolve here. */
   givenPin: PinnedSource | null,
+  /** The approved needs snapshot that goes with `givenPin`, or null. */
+  givenNeeds: ApprovedSource["needs"] | null,
 ): Promise<TargetOutcome> {
   if (scope === "local") {
     assertLocalScopeSupported(parsed.kind, parsed.name, "update --local");
@@ -2238,7 +2264,8 @@ async function updateDataTarget(
       pin.entries.map((treeEntry) => treeEntry.path),
     );
   }
-  const currentSnapshot = await captureCommittedItemNeeds(ctx.dataRepo, item);
+  const currentSnapshot =
+    givenNeeds ?? (await captureCommittedItemNeeds(ctx.dataRepo, item));
   const lockedNeeds = entry.needs ?? null;
   const needsWouldChange =
     lockedNeeds === null || !needsEqual(lockedNeeds, currentSnapshot.needs);
@@ -2314,7 +2341,7 @@ async function updateDataTarget(
         ...(ctx.dryRun && { dryRun: true as const }),
       },
       fragment: { key, entry: newEntry, targets, lockChanged: lockWouldChange },
-      pin,
+      approved: { pin, needs: currentSnapshot },
     };
   }
 
@@ -2420,7 +2447,7 @@ async function updateDataTarget(
     },
     newEntry,
     changed: lockWouldChange,
-    pin,
+    approved: { pin, needs: currentSnapshot },
   };
 }
 
