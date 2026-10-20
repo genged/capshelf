@@ -2019,19 +2019,45 @@ capshelf add https://github.com/acme/agent-plugins --list
   install one:   capshelf add https://github.com/acme/agent-plugins --path plugins/plain/skills/plain
   install some:  capshelf add https://github.com/acme/agent-plugins
   details:       capshelf add https://github.com/acme/agent-plugins --list --json
-  install a whole plugin:  capshelf add https://github.com/acme/agent-plugins --path plugins/plain
   Codex sees the skills only.
 ```
+
+In this example no plugin holds `.claude-plugin/plugin.json`, so the picker
+offers skills and the `found` line counts skills. It counts only the plugins
+that hold a skill.
 
 `--list` prints each plugin with its skills first. The skills that no plugin
 holds follow. A plugin that holds `.claude-plugin/plugin.json` installs
 whole. Its header line then adds `plugin <name>` and the manifest
-description. The `install a whole plugin` line names the first such plugin.
-When no plugin installs whole, it names the first plugin in the listing.
+description. Such a plugin gets its header even when it holds no skill. The
+`found` line then counts the unit of the picker. An `install a whole plugin`
+line names the first such plugin. A listing with no such plugin has no
+`install a whole plugin` line:
 
-The `found` line counts only the plugins that hold a skill. A plugin with no
-skill, such as a plugin with only commands, goes on a `no skills` line. A
-catalog entry can name a source outside this repository, such as a GitHub
+```text
+  repo      https://github.com/acme/tools
+  ref       main
+  commit    4d319a53b593bd41a74ffd8c099482fff93d46ca
+  found     2 plugins and 1 skill  (.claude-plugin/marketplace.json)
+
+  plugins/gh-cli   plugin gh-cli: GitHub CLI helpers   also ships: agents, hooks
+    gh-cli      Use gh
+
+  plugins/review   plugin review: Code review
+    diff        Read a diff
+    style       Check style
+
+    skills/pdf   Extract text
+
+  install one:   capshelf add https://github.com/acme/tools --path plugins/gh-cli/skills/gh-cli
+  install some:  capshelf add https://github.com/acme/tools
+  details:       capshelf add https://github.com/acme/tools --list --json
+  install a whole plugin:  capshelf add https://github.com/acme/tools --path plugins/gh-cli
+  Codex sees the skills only.
+```
+
+A plugin with no skill and no `.claude-plugin/plugin.json`, such as a
+plugin with only commands, goes on a `no skills` line. A catalog entry can name a source outside this repository, such as a GitHub
 repository. Capshelf does not read that source. `--list` names each such
 entry on one `elsewhere` line.
 

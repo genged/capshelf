@@ -579,3 +579,172 @@ test(
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
+
+test(
+  "a listing with no plugin that installs whole prints no whole-plugin footer",
+  async () => {
+    const { url } = await pluginUpstream(
+      [
+        {
+          dir: "plugins/cx",
+          skills: [
+            { name: "one", description: "One" },
+            { name: "two", description: "Two" },
+          ],
+          files: { ".codex-plugin/plugin.json": '{"name":"cx"}' },
+        },
+      ],
+      { codex: codexCatalog([{ name: "cx", path: "./plugins/cx" }]) },
+    );
+    const { project, env } = await initRemoteProject();
+    const run = runInProcess(project);
+    const listed = await run(["add", url, "--list"], env);
+    expect(listed.exitCode).toBe(0);
+    expect(listed.stdout.toString()).not.toContain("install a whole plugin");
+    expect(listed.stdout.toString()).toContain("  Codex sees the skills only.");
+
+    const scoped = await run(
+      ["add", url, "--list", "--path", "plugins/cx"],
+      env,
+    );
+    expect(scoped.exitCode).toBe(0);
+    expect(scoped.stdout.toString()).not.toContain("install a whole plugin");
+    expect(scoped.stdout.toString()).toContain("  Codex sees the skills only.");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "a whole plugin with no skill gets a tree header, and the found line counts the picker unit",
+  async () => {
+    const hooky: PluginSpec = {
+      dir: "plugins/hooky",
+      manifestName: "hooky",
+      manifestDescription: "Hooks only",
+      skills: [],
+      files: { "commands/c.md": "# c\n" },
+    };
+    const reviewOne: PluginSpec = {
+      dir: "plugins/review",
+      manifestName: "review",
+      skills: [{ name: "diff", description: "Read a diff" }],
+    };
+    const { url } = await pluginUpstream([hooky, reviewOne], {
+      claude: claudeCatalog([
+        { name: "hooky", source: "./plugins/hooky" },
+        { name: "review", source: "./plugins/review" },
+      ]),
+    });
+    const { project, env } = await initRemoteProject();
+    const run = runInProcess(project);
+    const listed = await run(["add", url, "--list"], env);
+    expect(listed.exitCode).toBe(0);
+    const lines = listed.stdout.toString().split("\n");
+    expect(lines).toContain(
+      "  plugins/hooky   plugin hooky: Hooks only   also ships: commands",
+    );
+    expect(lines).toContain("  plugins/review   plugin review");
+    expect(lines.some((line) => line.startsWith("  no skills"))).toBe(false);
+    expect(lines).toContain(
+      "  found     2 plugins  (.claude-plugin/marketplace.json)",
+    );
+
+    const refused = await run(["add", url], env);
+    expect(refused.exitCode).toBe(3);
+    expect(refused.stderr.toString()).toContain("2 plugins found in ");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "a whole plugin alone, with no skill, still lists its header",
+  async () => {
+    const { url } = await pluginUpstream(
+      [
+        {
+          dir: "plugins/hooky",
+          manifestName: "hooky",
+          skills: [],
+          files: { "commands/c.md": "# c\n" },
+        },
+      ],
+      { claude: claudeCatalog([{ name: "hooky", source: "./plugins/hooky" }]) },
+    );
+    const { project, env } = await initRemoteProject();
+    const listed = await runInProcess(project)(["add", url, "--list"], env);
+    expect(listed.exitCode).toBe(0);
+    const stdout = listed.stdout.toString();
+    expect(stdout).toContain("  found     1 plugin  (");
+    expect(stdout).toContain("  plugins/hooky   plugin hooky");
+    expect(stdout).toContain(
+      `  install a whole plugin:  capshelf add ${url} --path plugins/hooky`,
+    );
+    expect(stdout).not.toContain("install one:");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "plugin rows carry no terminal escape from a manifest name",
+  async () => {
+    const { url } = await pluginUpstream(
+      [{ ...docs, manifestName: "do\u001b[2Jcs" }, review],
+      {
+        claude: claudeCatalog([
+          { name: "docs", source: "./plugins/docs" },
+          { name: "review", source: "./plugins/review" },
+        ]),
+      },
+    );
+    const { project, env } = await initRemoteProject();
+    const { requests } = await runWithPicker(
+      project,
+      env,
+      ["add", url, "--yes"],
+      () => false,
+    );
+    const row = requests[0]!.rows.find((r) => r.ref.includes("[2Jcs"))!;
+    expect(row).toBeDefined();
+    expect(row.name).not.toContain("\u001b");
+    expect(row.ref).not.toContain("\u001b");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "--as with several picked rows names one item",
+  async () => {
+    const { url } = await mixedUpstream();
+    const { project, env } = await initRemoteProject();
+    const { result } = await runWithPicker(
+      project,
+      env,
+      ["add", url, "--yes", "--as", "x"],
+      (row) => row.name === "review" || row.name === "pdf",
+    );
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr.toString()).toContain(
+      "add --as names one item, and 2 were selected",
+    );
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "a repository with exactly one whole plugin goes straight to the plugin consent",
+  async () => {
+    const { url } = await pluginUpstream([ghCli], {
+      claude: claudeCatalog([{ name: "gh-cli", source: "./plugins/gh-cli" }]),
+    });
+    const { project, env } = await initRemoteProject();
+    const result = await runInProcess(project)(["add", url], env);
+    expect(result.exitCode).toBe(3);
+    expect(result.stderr.toString()).toContain(
+      "not installing plugins/gh-cli without consent",
+    );
+    expect(existsSync(join(project, ".agents", "skills", "gh-cli"))).toBe(
+      false,
+    );
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);

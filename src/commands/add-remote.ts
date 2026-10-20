@@ -352,7 +352,7 @@ export async function addRemoteSkill(
   if (chosen.length === 0) return;
   if (chosen.length > 1 && opts.as !== undefined) {
     throw new PreconditionError(
-      `add --as names one skill, and ${chosen.length} were selected`,
+      `add --as names one item, and ${chosen.length} were selected`,
       { hint: "install them one at a time with --path <subpath> --as <name>" },
     );
   }
@@ -1127,11 +1127,15 @@ function pluginRowId(source: string): string {
 function unitRow(unit: Unit): PickRow {
   if (unit.kind === "plugins") {
     const { plugin, whole } = unit.offered;
+    // The name comes from repository text and is not checked until install
+    // (D3), so it is sanitized here. The picker sanitizes only the detail
+    // and the description.
+    const name = safe(plugin.name);
     return {
-      ref: `plugins/${plugin.name}`,
+      ref: `plugins/${name}`,
       id: pluginRowId(plugin.source),
       kind: "plugins",
-      name: plugin.name,
+      name,
       ...(whole.description !== null && { description: whole.description }),
       tags: [],
       installed: false,
