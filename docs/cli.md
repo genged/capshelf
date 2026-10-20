@@ -1060,6 +1060,8 @@ Bundle exit codes:
 shelf: every data item and every bundle. `capshelf init` opens the same list
 once, after it finishes. `capshelf share` and `capshelf promote` with no item
 open the same picker over their own rows. See *share and promote* below.
+`capshelf add <url>` opens it over what a repository offers. See Remote
+skills.
 
 | key | action |
 |---|---|
@@ -1870,7 +1872,7 @@ record. The same command installs a whole plugin. See Whole plugins below.
 |---|---|
 | `capshelf add <url> [--as <name>] [--ref <ref>] [--path <subpath>]` | resolve, print the facts, ask once, install, record |
 | `capshelf add <url> --path <plugin>` | the same for a whole plugin directory. `--as` refuses |
-| `capshelf add <url> --list` | print the repository's skills and exit 0. Install nothing and leave the project unchanged. The clone cache is created or fetched |
+| `capshelf add <url> --list` | print the repository's plugins and skills and exit 0. Install nothing and leave the project unchanged. The clone cache is created or fetched |
 | `capshelf update skills/<name>` or `plugins/<name>` | move the pin to what the cache already holds, then apply. No network |
 | `capshelf status --check-upstream` | fetch every tracked repository and report which pins moved |
 | `capshelf share skills/<name> --adopt` or `plugins/<name>` | transfer ownership into the shelf and release the previous owner |
@@ -1909,13 +1911,36 @@ Discovery reads at the resolved commit through `ls-tree`, never from a
 checkout. A repository holding a root `SKILL.md` **and** subdirectory skills is
 ambiguous: capshelf never prefers one, it offers both.
 
-One candidate installs. Several open the picker. Without a terminal the
-command refuses and names the two flags that answer the question:
+One candidate installs. Several open the picker. The picker shows what the
+author published. Its unit comes from the shape of the repository:
+
+| repository shape | the picker shows |
+|---|---|
+| a catalog of plugins, each with `.claude-plugin/plugin.json` | plugins |
+| no catalog: skill folders, or `SKILL.md` at the root | skills |
+| a catalog whose entries list skills (a `skills` array, or source `./`) | skills |
+| catalog plugins with no `.claude-plugin/plugin.json` (Codex only) | the skills of those plugins |
+| plugins and skills that no plugin holds | two sections, plugins first |
+| a capshelf shelf | skills |
+
+A plugin row shows the plugin name, the manifest description, and a short
+summary such as `plugin: 1 skill, 1 agent · also ships: hooks`. A skill
+inside such a plugin gets no row of its own. A picked plugin installs whole,
+the same as `--path <plugin>`. It gets the plugin prompt with its `runs`
+block. Several picked rows install one at a time, in order. Capshelf records
+each install before the next one starts.
+
+Without a terminal the command refuses and names the two flags that answer
+the question:
 
 ```text
 ✗ 2 skills found in https://github.com/acme/pdf-skills; name one with --path
   list them: capshelf add https://github.com/acme/pdf-skills --list
 ```
+
+The count names the unit of the picker. A catalog of plugins gives `3
+plugins found`. A repository with two sections gives `2 plugins and 3 skills
+found`.
 
 #### Plugins in the repository
 
@@ -1928,6 +1953,12 @@ Capshelf's own catalog entries set `source: "./"` with an explicit `skills`
 array. Discovery reads that shape as plain layout, not as a plugin, and
 attaches no plugin facts to it. A capshelf-published shelf therefore lists
 with no plugin grouping at all, the same in a terminal and in a pipe.
+
+One exception applies. An entry with a `skills` array can name a plugin
+directory that holds a regular `.claude-plugin/plugin.json`. Claude Code
+loads that directory as a plugin, so capshelf counts it as a plugin too. Its
+`skills` paths are read relative to the plugin directory. The repository root
+never counts as a plugin.
 
 A catalog entry that names a bare directory, with no leading `./`, resolves
 only against that catalog document's own `metadata.pluginRoot`. With no
@@ -1988,9 +2019,15 @@ capshelf add https://github.com/acme/agent-plugins --list
   install one:   capshelf add https://github.com/acme/agent-plugins --path plugins/plain/skills/plain
   install some:  capshelf add https://github.com/acme/agent-plugins
   details:       capshelf add https://github.com/acme/agent-plugins --list --json
-  install a whole plugin:  capshelf add <url> --path plugins/<plugin>
+  install a whole plugin:  capshelf add https://github.com/acme/agent-plugins --path plugins/plain
   Codex sees the skills only.
 ```
+
+`--list` prints each plugin with its skills first. The skills that no plugin
+holds follow. A plugin that holds `.claude-plugin/plugin.json` installs
+whole. Its header line then adds `plugin <name>` and the manifest
+description. The `install a whole plugin` line names the first such plugin.
+When no plugin installs whole, it names the first plugin in the listing.
 
 The `found` line counts only the plugins that hold a skill. A plugin with no
 skill, such as a plugin with only commands, goes on a `no skills` line. A
@@ -2017,9 +2054,11 @@ Enter or `y` shows the full list. `n` prints a shorter next command instead.
 In a listing of one plugin (`--list --path <plugin>`), `n` prints only the
 JSON command for that plugin. Closed input, such as Ctrl-D or Ctrl-C at the
 question, counts as `n`. A pipe, `--json`, and `--yes` skip the question and
-print everything, so a script never waits on it. The question counts only a
-plugin that holds a skill. A commands-only or workflows-only plugin never
-triggers it.
+print everything, so a script never waits on it. The question appears only
+when the listing holds a plugin skill or a plugin that installs whole. A
+commands-only or workflows-only plugin with no `.claude-plugin/plugin.json`
+never triggers it. The question counts the unit of the picker, for example
+`Show all 2 plugins and 3 skills (24 lines)?`.
 
 `--path <subpath>` naming a plugin directory installs the whole plugin when
 the directory holds `.claude-plugin/plugin.json`. The item name is the
@@ -2038,8 +2077,10 @@ directory with no `.claude-plugin/plugin.json` refuses:
 The repository root is never read as a plugin this way. `--path .` keeps
 its plain behavior even when the root itself carries a plugin manifest.
 
-Two skills chosen in one `add` that would install under the same name also
-refuse, before any project write:
+Two rows chosen in one `add` that would install under the same name also
+refuse, before any project write. A plugin installs to the same folder as a
+skill with its name, so a plugin row counts too. The message then says
+`items` in place of `skills`:
 
 ```text
 ✗ 2 selected skills would install as "x": plugins/a/skills/x, plugins/b/skills/x
@@ -2058,7 +2099,12 @@ some files were not checked. It does not mean the skill uses nothing.
 
 Three more top-level arrays sit beside `skills`, always, even when empty.
 `plugins` has one row per plugin directory, with its `name`, `source`,
-`catalogs`, `ships`, and a `skills` count. `skipped` has one row per catalog
+`catalogs`, `ships`, and a `skills` count. Each row also has `installable`,
+`description`, and `skillSubpaths`. `installable` is true when the directory
+holds a regular `.claude-plugin/plugin.json`, so `--path <source>` installs
+the whole plugin. `description` is the description in that manifest, or
+null. `skillSubpaths` lists the subpaths of the skill rows that the plugin
+holds. `skipped` has one row per catalog
 entry discovery could not read, with a `reason`. `warnings` has one row per
 problem discovery found. A catalog or a manifest can fail to parse. Either
 one can be a symlink or a submodule instead of a file. A manifest `skills`

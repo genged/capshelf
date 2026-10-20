@@ -464,7 +464,10 @@ repository root and under `skills/`, `.claude/skills/`, and `.agents/skills/`.
 A repository that holds a root `SKILL.md` **and** subdirectory skills is
 ambiguous. Capshelf prefers neither. It offers both. Without a terminal the
 command refuses and names `--list` and `--path`. Answer it with `--path
-<subpath>`, not with a guess.
+<subpath>`, not with a guess. A catalog of plugins that each hold
+`.claude-plugin/plugin.json` offers whole plugins, so the refusal counts
+plugins, for example `3 plugins found`. Name a plugin directory with
+`--path` to install that plugin.
 
 A plugin repository groups skills under a plugin directory. `add <url>
 --list --json` reports `usesPluginParts` for each plugin skill: the parts
