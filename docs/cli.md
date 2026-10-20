@@ -2403,20 +2403,25 @@ The item name is the manifest `name`, so `--as` refuses:
   agents are called as rust-review:<agent>, whatever the directory name is
 ```
 
-The prompt groups the files by top-level directory, with a count and a size.
-It adds the `runs` block (see What a plugin runs) and a `codex` line:
+The prompt groups the files by top-level directory, with a count and a size;
+a group row names no files. A `skills` block follows, naming the plugin's
+skills as Claude Code calls them (`<plugin>:<skill>`), with the bare names
+below it in columns; an `agents` block does the same when the plugin has
+agents. Then the `runs` block (see What a plugin runs) and a `codex` line:
 
 ```text
   repo      https://github.com/acme/agent-plugins
   ref       main
   commit    bda04843d5e643a1f1926849e6705bea19250b9c
   path      plugins/gh-cli
-  plugin    gh-cli 1.6.2  (.claude-plugin/plugin.json)
+  plugin    gh-cli 1.6.2
   install   .agents/skills/gh-cli  (local scope, gitignored)
   files     4 files, 183 B
-              skills/           1 skill   47 B    gh-cli:gh-cli
-              .claude-plugin/   1 file    36 B
-              hooks/            2 files   100 B
+              skills/          1 file    47 B
+              .claude-plugin/  1 file    36 B
+              hooks/           2 files  100 B
+  skills    1, called as gh-cli:<skill>
+            gh-cli
   runs      1 hook, with no request from the agent
               SessionStart   bash hooks/setup.sh
             These hooks run in every Claude Code session in this project.
@@ -2426,6 +2431,12 @@ It adds the `runs` block (see What a plugin runs) and a `codex` line:
   capshelf does not review this content. Your agent runs it with your permissions.
 Install it? [y/N]
 ```
+
+A plugin's license line uses "not recognized" and "outside the plugin"
+where the skill prompt's license line says "unrecognized" and "outside the
+item"; the rest of the license wording is shared. A column count over 20
+names shows the first 20 and a final "… and N more" line. The column count
+itself, and how many names fit per row, depends on the terminal width.
 
 Every remote install asks once, also for a plugin that runs nothing. Without
 a terminal, `--yes` is the only answer, the same as for a remote skill. The

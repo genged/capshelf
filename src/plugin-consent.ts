@@ -10,7 +10,6 @@
 import { confirmationContext } from "./destructive-change";
 import { PreconditionError } from "./errors";
 import { PRODUCT_NAME } from "./identity";
-import { PLUGIN_MANIFEST_REL } from "./master";
 import { runsHaveEntries, serverCommandLine } from "./plugin-runs";
 import type { PluginRunHook, PluginRuns, PluginRunServer } from "./plugin-runs";
 import { formatBytes, plural, safe } from "./remote-list-render";
@@ -43,18 +42,26 @@ export interface PluginConsentInput {
 const HOOKS_WARNING =
   "These hooks run in every Claude Code session in this project.";
 
-/** Names shown beside a `skills/` or `agents/` group before the `…`. */
-const MAX_GROUP_NAMES = 3;
+/** Names shown in a `skills`/`agents` block before "… and N more". */
+const MAX_NAMES_SHOWN = 20;
 
 /** The column where a multi-line field's later lines start. */
 const CONTINUATION = "            ";
 
 /**
  * The consent block, in the order D6 gives: repo, ref, commit, path,
- * plugin, install, files by top-level directory, runs, codex, license, the
- * description, and the closing line. The caller adds the question.
+ * plugin, install, files by top-level directory, the named-item blocks
+ * (`skills`, `agents`, …), runs, codex, license, the description, and the
+ * closing line. The caller adds the question.
+ *
+ * `width` is the column count of the terminal the block prints under (80
+ * when that stream is not a terminal). It is threaded in rather than read
+ * from `process` here, so the layout stays testable at a chosen width.
  */
-export function renderPluginConsent(input: PluginConsentInput): string[] {
+export function renderPluginConsent(
+  input: PluginConsentInput,
+  width: number,
+): string[] {
   const version = input.version === null ? "" : ` ${safe(input.version)}`;
   const totalBytes = input.files.reduce((sum, file) => sum + file.bytes, 0);
   return [
@@ -62,10 +69,11 @@ export function renderPluginConsent(input: PluginConsentInput): string[] {
     `  ref       ${safe(input.ref)}`,
     `  commit    ${safe(input.commit)}`,
     `  path      ${safe(input.path)}`,
-    `  plugin    ${safe(input.name)}${version}  (${PLUGIN_MANIFEST_REL})`,
+    `  plugin    ${safe(input.name)}${version}`,
     `  install   ${safe(input.install)}`,
     `  files     ${input.files.length} ${plural(input.files.length, "file")}, ${formatBytes(totalBytes)}`,
-    ...fileGroupLines(input.name, input.files),
+    ...fileGroupLines(input.files),
+    ...namedGroupBlocks(input.name, input.files, width),
     ...pluginRunsField(input.runs),
     // D13: capshelf writes nothing for Codex, so the prompt does not claim
     // that Codex runs the agents or the hooks.
@@ -74,7 +82,7 @@ export function renderPluginConsent(input: PluginConsentInput): string[] {
     "",
     ...(input.description === null
       ? []
-      : [`  ${safe(input.name)}: ${safe(input.description)}`, ""]),
+      : [...wrapDescription(input.description, width), ""]),
     "  capshelf does not review this content. Your agent runs it with your permissions.",
   ];
 }
@@ -397,42 +405,40 @@ function columns(rows: readonly string[][]): string[] {
   );
 }
 
-interface FileGroup {
+interface FileGroupRow {
   label: string;
-  files: PluginConsentFile[];
+  count: number;
+  bytes: number;
 }
 
 /**
- * One line per top-level directory, with a count and a size. `skills/` and
- * `agents/` count their items and name them as Claude Code calls them,
- * `<plugin>:<item>` (spec R5). Files at the plugin root form the `./` group.
+ * One line per top-level directory, with a file count and a size — never
+ * item names; those move to `namedGroupBlocks`. Files at the plugin root
+ * form the `./` group: one file shows its own name as the label, several
+ * show `(plugin root)` instead of listing them.
  */
-function fileGroupLines(
-  pluginName: string,
-  files: readonly PluginConsentFile[],
-): string[] {
-  const groups = new Map<string, FileGroup>();
+function fileGroupLines(files: readonly PluginConsentFile[]): string[] {
+  const groups = new Map<string, PluginConsentFile[]>();
   for (const file of files) {
     const slash = file.path.indexOf("/");
-    const label = slash === -1 ? "./" : `${file.path.slice(0, slash)}/`;
-    const group = groups.get(label);
-    if (group === undefined) groups.set(label, { label, files: [file] });
-    else group.files.push(file);
+    const key = slash === -1 ? "./" : `${file.path.slice(0, slash)}/`;
+    const group = groups.get(key);
+    if (group === undefined) groups.set(key, [file]);
+    else group.push(file);
   }
-  const rows = [...groups.values()]
-    .sort((a, b) => groupRank(a.label) - groupRank(b.label) || compare(a, b))
-    .map((group) => {
-      const items = namedItems(group);
-      const count =
-        items === null
-          ? `${group.files.length} ${plural(group.files.length, "file")}`
-          : `${items.names.length} ${plural(items.names.length, items.noun)}`;
-      const bytes = group.files.reduce((sum, file) => sum + file.bytes, 0);
-      const names =
-        items === null ? "" : namespacedList(pluginName, items.names);
-      return [group.label, count, formatBytes(bytes), names];
-    });
-  return columns(rows).map((line) => `${CONTINUATION}${line}`);
+  const rows: FileGroupRow[] = [...groups.entries()]
+    .sort(([a], [b]) => groupRank(a) - groupRank(b) || compare(a, b))
+    .map(([key, groupFiles]) => ({
+      label:
+        key === "./"
+          ? groupFiles.length === 1
+            ? safe(groupFiles[0]!.path)
+            : "(plugin root)"
+          : safe(key),
+      count: groupFiles.length,
+      bytes: groupFiles.reduce((sum, file) => sum + file.bytes, 0),
+    }));
+  return formatFileGroupRows(rows).map((line) => `${CONTINUATION}${line}`);
 }
 
 function groupRank(label: string): number {
@@ -442,8 +448,31 @@ function groupRank(label: string): number {
   return 2;
 }
 
-function compare(a: FileGroup, b: FileGroup): number {
-  return a.label < b.label ? -1 : a.label > b.label ? 1 : 0;
+function compare(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * The file-group table: label (left-aligned), count (the digits
+ * right-aligned, the "file"/"files" word left as-is), size (the whole
+ * formatted value right-aligned in one shared column — spec rule: "sizes
+ * right-aligned in one column, counts aligned"). Two-space gaps throughout,
+ * the same gap the `skills`/`agents` name columns use.
+ */
+function formatFileGroupRows(rows: readonly FileGroupRow[]): string[] {
+  if (rows.length === 0) return [];
+  const labelWidth = Math.max(...rows.map((row) => row.label.length));
+  const digitWidth = Math.max(...rows.map((row) => String(row.count).length));
+  const counts = rows.map(
+    (row) =>
+      `${String(row.count).padStart(digitWidth)} ${plural(row.count, "file")}`,
+  );
+  const countWidth = Math.max(...counts.map((count) => count.length));
+  const sizes = rows.map((row) => formatBytes(row.bytes));
+  const sizeWidth = Math.max(...sizes.map((size) => size.length));
+  return rows.map((row, index) =>
+    `  ${row.label.padEnd(labelWidth)}  ${counts[index]!.padEnd(countWidth)}  ${sizes[index]!.padStart(sizeWidth)}`.trimEnd(),
+  );
 }
 
 const NAMED_GROUPS: ReadonlyMap<string, { noun: string; pattern: RegExp }> =
@@ -453,28 +482,114 @@ const NAMED_GROUPS: ReadonlyMap<string, { noun: string; pattern: RegExp }> =
   ]);
 
 /**
- * The skills (`skills/<x>/SKILL.md`) or agents (`agents/<x>.md`) a group
- * holds. Null for any other group, and for one of these two that holds no
- * such item, so its line counts files instead.
+ * The `skills` block, and the `agents` block when the plugin has agents, in
+ * that order: how Claude Code calls each item (`<plugin>:<name>`), then the
+ * bare names in columns. A group with no match prints nothing, so a
+ * commands-only plugin shows neither block.
  */
-function namedItems(
-  group: FileGroup,
-): { noun: string; names: string[] } | null {
-  const named = NAMED_GROUPS.get(group.label);
-  if (named === undefined) return null;
-  const names = group.files.flatMap((file) => {
-    const match = named.pattern.exec(file.path);
-    return match?.[1] === undefined ? [] : [match[1]];
-  });
-  return names.length === 0 ? null : { noun: named.noun, names };
+function namedGroupBlocks(
+  pluginName: string,
+  files: readonly PluginConsentFile[],
+  width: number,
+): string[] {
+  const lines: string[] = [];
+  for (const { noun, pattern } of NAMED_GROUPS.values()) {
+    const names = files.flatMap((file) => {
+      const match = pattern.exec(file.path);
+      return match?.[1] === undefined ? [] : [match[1]];
+    });
+    if (names.length === 0) continue;
+    lines.push(...namedGroupBlock(noun, names, pluginName, width));
+  }
+  return lines;
 }
 
-function namespacedList(pluginName: string, names: readonly string[]): string {
-  const shown = [...names]
-    .sort()
-    .slice(0, MAX_GROUP_NAMES)
-    .map((name) => `${pluginName}:${name}`);
-  return names.length > MAX_GROUP_NAMES
-    ? `${shown.join(", ")}, …`
-    : shown.join(", ");
+/**
+ * One named-item block. Sorts and counts the raw names first (as the old
+ * group row did), then sanitizes only the ones it shows — sanitizing cannot
+ * change a name's sort position, since it only ever swaps one character for
+ * a space of the same width.
+ */
+function namedGroupBlock(
+  noun: string,
+  names: readonly string[],
+  pluginName: string,
+  width: number,
+): string[] {
+  const sorted = [...names].sort();
+  const shown = sorted.slice(0, MAX_NAMES_SHOWN).map(safe);
+  const more = sorted.length - shown.length;
+  const heading = `${sorted.length}, called as ${safe(pluginName)}:<${noun}>`;
+  return labelledLines(`${noun}s`, [
+    heading,
+    ...nameColumns(shown, width),
+    ...(more > 0 ? [`… and ${more} more`] : []),
+  ]);
+}
+
+/**
+ * `shown`, padded to the widest name and laid out row-major in as many
+ * columns as fit `width` minus the continuation indent, two spaces between
+ * columns.
+ */
+function nameColumns(shown: readonly string[], width: number): string[] {
+  if (shown.length === 0) return [];
+  const available = Math.max(width - CONTINUATION.length, 1);
+  const nameWidth = Math.max(...shown.map((name) => name.length));
+  const perColumn = nameWidth + 2;
+  const perRow = Math.max(1, Math.floor((available + 2) / perColumn));
+  const rows: string[] = [];
+  for (let index = 0; index < shown.length; index += perRow) {
+    rows.push(
+      shown
+        .slice(index, index + perRow)
+        .map((name) => name.padEnd(nameWidth))
+        .join("  ")
+        .trimEnd(),
+    );
+  }
+  return rows;
+}
+
+/**
+ * Greedy word-wrap: as many words as fit on a line, one word alone on its
+ * own line when even that word does not fit.
+ */
+function wrapWords(text: string, width: number): string[] {
+  const words = text.split(/\s+/).filter((word) => word.length > 0);
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const candidate = current === "" ? word : `${current} ${word}`;
+    if (candidate.length > width && current !== "") {
+      lines.push(current);
+      current = word;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current !== "") lines.push(current);
+  return lines;
+}
+
+/**
+ * The description, split into paragraphs on its own blank lines *before*
+ * sanitizing — `safe` turns every control character, a bare `\n` included,
+ * into a space, so finding the paragraph breaks has to happen first or
+ * there would be none left to find. Each paragraph is then sanitized,
+ * reflowed, and word-wrapped at `width` minus the 2-space indent every line
+ * carries; a blank line separates wrapped paragraphs.
+ */
+function wrapDescription(description: string, width: number): string[] {
+  const innerWidth = Math.max(width - 2, 1);
+  const paragraphs = description
+    .split(/\n\s*\n/)
+    .map((paragraph) => safe(paragraph.replace(/\s+/g, " ").trim()))
+    .filter((paragraph) => paragraph.length > 0);
+  const blocks = paragraphs.map((paragraph) =>
+    wrapWords(paragraph, innerWidth).map((line) => `  ${line}`),
+  );
+  return blocks.flatMap((block, index) =>
+    index === 0 ? block : ["", ...block],
+  );
 }

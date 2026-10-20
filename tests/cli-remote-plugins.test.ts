@@ -983,7 +983,7 @@ test(
     );
     expect(result.exitCode).toBe(0);
     expect(prompts).toHaveLength(1);
-    expect(prompts[0]).toContain("  plugin    x  (.claude-plugin/plugin.json)");
+    expect(prompts[0]).toContain("  plugin    x");
     expect(prompts[0]).toContain("  runs      no hooks, no MCP servers");
     expect(existsSync(join(project, ".agents/skills/x/SKILL.md"))).toBe(true);
     expect(

@@ -616,21 +616,24 @@ async function installWholePlugin(input: {
     name,
     runs,
     opts,
-    block: renderPluginConsent({
-      repo: upstream,
-      ref,
-      commit,
-      path: subpath,
-      name,
-      version: isConfigString(manifest.version) ? manifest.version : null,
-      install: `${relative(project, installedPath(project, kind, name))}  (local scope, gitignored)`,
-      files: summary.files,
-      runs,
-      license: describeLicense(license),
-      description: isConfigString(manifest.description)
-        ? manifest.description
-        : null,
-    }),
+    block: renderPluginConsent(
+      {
+        repo: upstream,
+        ref,
+        commit,
+        path: subpath,
+        name,
+        version: isConfigString(manifest.version) ? manifest.version : null,
+        install: `${relative(project, installedPath(project, kind, name))}  (local scope, gitignored)`,
+        files: summary.files,
+        runs,
+        license: describeLicense(license, "plugin"),
+        description: isConfigString(manifest.description)
+          ? manifest.description
+          : null,
+      },
+      consentWidth(),
+    ),
   });
   if (!approved) return null;
 
@@ -725,6 +728,15 @@ async function pinPlugin(
       cause: error,
     });
   }
+}
+
+/**
+ * The consent block's column width: the terminal width of the stream it
+ * prints under (`confirmPluginInstall`'s prompt draws on stderr), or 80 when
+ * that stream is not a terminal.
+ */
+function consentWidth(): number {
+  return process.stderr.isTTY === true ? (process.stderr.columns ?? 80) : 80;
 }
 
 /**
@@ -1317,13 +1329,28 @@ function pluginLine(facts: SkillPluginFacts): string {
   return `  plugin    ${safe(facts.plugin.name)}${noParts ? "  (no parts outside the skill)" : ""}`;
 }
 
-function describeLicense(license: LicenseFinding): string {
+/**
+ * `subject` names what the license sits outside of: "item" for the skill
+ * prompt (`renderConsent`, unchanged — existing tests pin its wording byte
+ * for byte), "plugin" for the whole-plugin consent block. Only the
+ * "outside the item"/"not recognized" wording the plugin brief named
+ * changes; the "inside" and "none found" phrasing stays as it was for both,
+ * since nothing asked for that to move.
+ */
+function describeLicense(
+  license: LicenseFinding,
+  subject: "item" | "plugin" = "item",
+): string {
   if (license.path === null)
     return "none found in the item or at the repo root";
   const where = license.insideItem
     ? "inside the item, copied with it"
-    : "at the repo root, outside the item, not copied";
-  return `${license.label ?? "unrecognized"}  (${safe(license.path)}, ${where})`;
+    : `at the repo root, outside the ${subject}, not copied`;
+  const label =
+    subject === "plugin"
+      ? (license.label ?? "not recognized")
+      : (license.label ?? "unrecognized");
+  return `${label}  (${safe(license.path)}, ${where})`;
 }
 
 /**

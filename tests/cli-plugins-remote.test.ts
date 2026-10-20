@@ -29,6 +29,10 @@ import type { RemoteProject, Upstream } from "./remote-fixtures";
 import { setDestructiveConfirmationContext } from "../src/destructive-change";
 import { lstatOrNull } from "../src/fs-utils";
 import { pluginRunsLines, renderPluginConsent } from "../src/plugin-consent";
+import type {
+  PluginConsentFile,
+  PluginConsentInput,
+} from "../src/plugin-consent";
 
 const gh: PluginSpec = {
   dir: "plugins/gh-cli",
@@ -167,15 +171,18 @@ describe("add <url> --path <plugin root>", () => {
       expect(prompts).toHaveLength(1);
       const block = prompts[0]!;
       expect(block).toContain("  path      plugins/gh-cli");
-      expect(block).toContain(
-        "  plugin    gh-cli  (.claude-plugin/plugin.json)",
-      );
+      expect(block).toContain("  plugin    gh-cli");
       expect(block).toContain(
         "  install   .agents/skills/gh-cli  (local scope, gitignored)",
       );
       expect(block).toMatch(/ {2}files {5}5 files, /);
-      expect(block).toMatch(/skills\/\s+1 skill\s.*gh-cli:gh-cli/);
-      expect(block).toMatch(/agents\/\s+1 agent\s.*gh-cli:worker/);
+      // A group row counts raw files only; it names no items.
+      expect(block).toMatch(/skills\/\s+1 file\s/);
+      expect(block).toMatch(/agents\/\s+1 file\s/);
+      expect(block).toContain("  skills    1, called as gh-cli:<skill>");
+      expect(block).toContain("            gh-cli");
+      expect(block).toContain("  agents    1, called as gh-cli:<agent>");
+      expect(block).toContain("            worker");
       expect(block).toContain(
         "  runs      1 hook, with no request from the agent",
       );
@@ -1045,34 +1052,184 @@ describe("plugin consent text", () => {
 
   test("renderPluginConsent sanitizes every repository-controlled string", () => {
     const esc = "\u001b[2J";
-    const lines = renderPluginConsent({
-      repo: `https://x.test/r${esc}`,
-      ref: `main${esc}`,
-      commit: `abc${esc}`,
-      path: `plugins/p${esc}`,
-      name: "p",
-      version: `1.0${esc}`,
-      install: ".agents/skills/p",
-      files: [
-        { path: `skills/p${esc}/SKILL.md`, bytes: 10 },
-        { path: `agents/a${esc}.md`, bytes: 5 },
-      ],
-      runs: {
-        hooks: [
-          {
-            event: `Start${esc}`,
-            matcher: null,
-            type: "command",
-            command: `run${esc}`,
-            source: "hooks/hooks.json",
-          },
+    const lines = renderPluginConsent(
+      {
+        repo: `https://x.test/r${esc}`,
+        ref: `main${esc}`,
+        commit: `abc${esc}`,
+        path: `plugins/p${esc}`,
+        name: "p",
+        version: `1.0${esc}`,
+        install: ".agents/skills/p",
+        files: [
+          { path: `skills/p${esc}/SKILL.md`, bytes: 10 },
+          { path: `agents/a${esc}.md`, bytes: 5 },
         ],
-        mcpServers: [],
-        unknown: [],
+        runs: {
+          hooks: [
+            {
+              event: `Start${esc}`,
+              matcher: null,
+              type: "command",
+              command: `run${esc}`,
+              source: "hooks/hooks.json",
+            },
+          ],
+          mcpServers: [],
+          unknown: [],
+        },
+        license: `MIT${esc}`,
+        description: `desc${esc}`,
       },
-      license: `MIT${esc}`,
-      description: `desc${esc}`,
-    });
+      80,
+    );
     expect(lines.join("\n")).not.toContain("\u001b");
+  });
+
+  describe("renderPluginConsent layout", () => {
+    function input(overrides: Partial<PluginConsentInput>): PluginConsentInput {
+      return {
+        repo: "https://x.test/r",
+        ref: "main",
+        commit: "abc123",
+        path: "plugins/p",
+        name: "p",
+        version: "1.0",
+        install: ".agents/skills/p",
+        files: [{ path: ".claude-plugin/plugin.json", bytes: 100 }],
+        runs: { hooks: [], mcpServers: [], unknown: [] },
+        license: "MIT",
+        description: null,
+        ...overrides,
+      };
+    }
+
+    function skillFiles(names: readonly string[]): PluginConsentFile[] {
+      return names.map((name) => ({
+        path: `skills/${name}/SKILL.md`,
+        bytes: 10,
+      }));
+    }
+
+    test("11 skills lay out in fewer columns at width 80 than at width 120", () => {
+      const names = Array.from(
+        { length: 11 },
+        (_, i) => `skill-${String(i + 1).padStart(2, "0")}`,
+      );
+      const block = input({ files: skillFiles(names) });
+      const at80 = renderPluginConsent(block, 80).join("\n");
+      const at120 = renderPluginConsent(block, 120).join("\n");
+      expect(at80).toContain("  skills    11, called as p:<skill>");
+      expect(at120).toContain("  skills    11, called as p:<skill>");
+      // width 80: 68 usable columns, each name 8 wide + a 2-space gap fits 7
+      // per row, so 11 names take two rows.
+      expect(at80).toContain(
+        "            skill-01  skill-02  skill-03  skill-04  skill-05  skill-06  skill-07",
+      );
+      expect(at80).toContain(
+        "            skill-08  skill-09  skill-10  skill-11",
+      );
+      // width 120: 108 usable columns fit all 11 in one row.
+      expect(at120).toContain(
+        "            skill-01  skill-02  skill-03  skill-04  skill-05  skill-06  skill-07  skill-08  skill-09  skill-10  skill-11",
+      );
+      // Names carry no plugin prefix in the grid itself.
+      expect(at80).not.toContain("p:skill-01");
+    });
+
+    test("more than 20 names show 20 and an '… and N more' line", () => {
+      const names = Array.from(
+        { length: 23 },
+        (_, i) => `skill-${String(i + 1).padStart(2, "0")}`,
+      );
+      const lines = renderPluginConsent(
+        input({ files: skillFiles(names) }),
+        80,
+      );
+      const block = lines.join("\n");
+      expect(block).toContain("  skills    23, called as p:<skill>");
+      expect(block).toContain("… and 3 more");
+      expect(block).not.toContain("skill-21");
+      expect(block).toContain("skill-20");
+    });
+
+    test("the agents block prints only when the plugin has agents", () => {
+      const withAgent = renderPluginConsent(
+        input({
+          files: [
+            ...skillFiles(["gh-cli"]),
+            { path: "agents/worker.md", bytes: 5 },
+          ],
+        }),
+        80,
+      ).join("\n");
+      expect(withAgent).toContain("  agents    1, called as p:<agent>");
+      expect(withAgent).toContain("            worker");
+
+      const withoutAgent = renderPluginConsent(
+        input({ files: skillFiles(["gh-cli"]) }),
+        80,
+      ).join("\n");
+      // The install path always names ".agents/", so check for the field
+      // label itself rather than the bare substring "agents".
+      expect(withoutAgent).not.toMatch(/\n {2}agents {4}/);
+    });
+
+    test("the root group names its one file, or says '(plugin root)' for several", () => {
+      const oneRootFile = renderPluginConsent(
+        input({
+          files: [
+            { path: ".claude-plugin/plugin.json", bytes: 50 },
+            { path: "README.md", bytes: 200 },
+          ],
+        }),
+        80,
+      ).join("\n");
+      expect(oneRootFile).toMatch(/README\.md\s+1 file\s/);
+      expect(oneRootFile).not.toContain("(plugin root)");
+
+      const severalRootFiles = renderPluginConsent(
+        input({
+          files: [
+            { path: ".claude-plugin/plugin.json", bytes: 50 },
+            { path: "README.md", bytes: 200 },
+            { path: "NOTES.txt", bytes: 20 },
+          ],
+        }),
+        80,
+      ).join("\n");
+      expect(severalRootFiles).toMatch(/\(plugin root\)\s+2 files\s/);
+    });
+
+    test("a version-less plugin shows the name alone on the plugin line", () => {
+      const block = renderPluginConsent(input({ version: null }), 80).join(
+        "\n",
+      );
+      expect(block).toContain("  plugin    p\n");
+    });
+
+    test("a long description word-wraps and keeps its paragraph break", () => {
+      const description = `${"word ".repeat(30).trim()}\n\nSecond paragraph here.`;
+      const lines = renderPluginConsent(input({ description }), 80);
+      const descLines = lines.filter((line) => line.startsWith("  word"));
+      expect(descLines.length).toBeGreaterThan(1);
+      for (const line of descLines) expect(line.length).toBeLessThanOrEqual(80);
+      const blankIndex = lines.findIndex(
+        (line, i) => line === "" && lines[i + 1] === "  Second paragraph here.",
+      );
+      expect(blankIndex).toBeGreaterThan(-1);
+    });
+
+    test("an ESC byte in a skill name and in the description is removed", () => {
+      const esc = "\u001b[2J";
+      const block = renderPluginConsent(
+        input({
+          files: skillFiles([`bad${esc}`]),
+          description: `desc${esc} with text`,
+        }),
+        80,
+      ).join("\n");
+      expect(block).not.toContain("\u001b");
+    });
   });
 });
