@@ -505,6 +505,14 @@ function namedGroupBlocks(
 }
 
 /**
+ * The gutter a name row and the "… and N more" line carry in addition to
+ * `CONTINUATION`, so they start at the same column as a file-group row
+ * (`formatFileGroupRows` adds this same two-space gutter before
+ * `fileGroupLines` applies `CONTINUATION`).
+ */
+const NAME_ROW_GUTTER = "  ";
+
+/**
  * One named-item block. Sorts and counts the raw names first (as the old
  * group row did), then sanitizes only the ones it shows — sanitizing cannot
  * change a name's sort position, since it only ever swaps one character for
@@ -522,19 +530,22 @@ function namedGroupBlock(
   const heading = `${sorted.length}, called as ${safe(pluginName)}:<${noun}>`;
   return labelledLines(`${noun}s`, [
     heading,
-    ...nameColumns(shown, width),
-    ...(more > 0 ? [`… and ${more} more`] : []),
+    ...nameColumns(shown, width).map((row) => `${NAME_ROW_GUTTER}${row}`),
+    ...(more > 0 ? [`${NAME_ROW_GUTTER}… and ${more} more`] : []),
   ]);
 }
 
 /**
  * `shown`, padded to the widest name and laid out row-major in as many
- * columns as fit `width` minus the continuation indent, two spaces between
- * columns.
+ * columns as fit `width` minus the continuation indent and the row's own
+ * gutter, two spaces between columns.
  */
 function nameColumns(shown: readonly string[], width: number): string[] {
   if (shown.length === 0) return [];
-  const available = Math.max(width - CONTINUATION.length, 1);
+  const available = Math.max(
+    width - CONTINUATION.length - NAME_ROW_GUTTER.length,
+    1,
+  );
   const nameWidth = Math.max(...shown.map((name) => name.length));
   const perColumn = nameWidth + 2;
   const perRow = Math.max(1, Math.floor((available + 2) / perColumn));

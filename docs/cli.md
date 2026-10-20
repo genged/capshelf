@@ -2421,7 +2421,7 @@ agents. Then the `runs` block (see What a plugin runs) and a `codex` line:
               .claude-plugin/  1 file    36 B
               hooks/           2 files  100 B
   skills    1, called as gh-cli:<skill>
-            gh-cli
+              gh-cli
   runs      1 hook, with no request from the agent
               SessionStart   bash hooks/setup.sh
             These hooks run in every Claude Code session in this project.

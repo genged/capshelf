@@ -180,9 +180,10 @@ describe("add <url> --path <plugin root>", () => {
       expect(block).toMatch(/skills\/\s+1 file\s/);
       expect(block).toMatch(/agents\/\s+1 file\s/);
       expect(block).toContain("  skills    1, called as gh-cli:<skill>");
-      expect(block).toContain("            gh-cli");
+      // The name row shares the file-group rows' 14-space indent.
+      expect(block).toContain("              gh-cli");
       expect(block).toContain("  agents    1, called as gh-cli:<agent>");
-      expect(block).toContain("            worker");
+      expect(block).toContain("              worker");
       expect(block).toContain(
         "  runs      1 hook, with no request from the agent",
       );
@@ -1121,18 +1122,22 @@ describe("plugin consent text", () => {
       const at120 = renderPluginConsent(block, 120).join("\n");
       expect(at80).toContain("  skills    11, called as p:<skill>");
       expect(at120).toContain("  skills    11, called as p:<skill>");
-      // width 80: 68 usable columns, each name 8 wide + a 2-space gap fits 7
+      // Name rows share the file-group rows' 14-space indent (12-space
+      // continuation + the 2-space gutter `formatFileGroupRows` also adds).
+      // width 80: 64 usable columns, each name 8 wide + a 2-space gap fits 6
       // per row, so 11 names take two rows.
       expect(at80).toContain(
-        "            skill-01  skill-02  skill-03  skill-04  skill-05  skill-06  skill-07",
+        "              skill-01  skill-02  skill-03  skill-04  skill-05  skill-06",
       );
       expect(at80).toContain(
-        "            skill-08  skill-09  skill-10  skill-11",
+        "              skill-07  skill-08  skill-09  skill-10  skill-11",
       );
-      // width 120: 108 usable columns fit all 11 in one row.
+      // width 120: 104 usable columns fit 10 per row, so 11 names still take
+      // two rows, one more than at width 80 fits per row.
       expect(at120).toContain(
-        "            skill-01  skill-02  skill-03  skill-04  skill-05  skill-06  skill-07  skill-08  skill-09  skill-10  skill-11",
+        "              skill-01  skill-02  skill-03  skill-04  skill-05  skill-06  skill-07  skill-08  skill-09  skill-10",
       );
+      expect(at120).toContain("              skill-11");
       // Names carry no plugin prefix in the grid itself.
       expect(at80).not.toContain("p:skill-01");
     });
@@ -1164,7 +1169,7 @@ describe("plugin consent text", () => {
         80,
       ).join("\n");
       expect(withAgent).toContain("  agents    1, called as p:<agent>");
-      expect(withAgent).toContain("            worker");
+      expect(withAgent).toContain("              worker");
 
       const withoutAgent = renderPluginConsent(
         input({ files: skillFiles(["gh-cli"]) }),
