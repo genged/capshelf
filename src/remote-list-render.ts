@@ -19,7 +19,12 @@ import type {
   PluginPart,
 } from "./plugin-discovery";
 import type { PluginFactReason, SkillPluginFacts } from "./plugin-facts";
-import type { RemoteDiscovery, RemoteSkillCandidate } from "./remote-discovery";
+import { pickerOffer } from "./remote-discovery";
+import type {
+  PickerOffer,
+  RemoteDiscovery,
+  RemoteSkillCandidate,
+} from "./remote-discovery";
 import { shellCommand } from "./shell-quote";
 
 /**
@@ -135,6 +140,35 @@ export function renderPluginFacts(facts: SkillPluginFacts): string[] {
     );
   }
   return lines;
+}
+
+/**
+ * The picker's unit count: "3 plugins", "2 plugins and 3 skills", or
+ * "4 skills" when the offer holds no plugin. The no-terminal refusal and the
+ * D9 question both use it.
+ */
+export function unitCount(offer: PickerOffer): string {
+  const skills = `${offer.skills.length} ${plural(offer.skills.length, "skill")}`;
+  if (offer.plugins.length === 0) return skills;
+  const plugins = `${offer.plugins.length} ${plural(offer.plugins.length, "plugin")}`;
+  return offer.skills.length === 0 ? plugins : `${plugins} and ${skills}`;
+}
+
+/**
+ * The picker row's `detail` for a whole plugin: its skill and agent counts,
+ * then the other parts it ships. Capshelf reads the hooks only at consent,
+ * on the pinned tree, so this row names the `hooks/` part and no count.
+ */
+export function pluginPickDetail(
+  plugin: DiscoveredPlugin,
+  agents: number,
+): string {
+  const skills = plugin.skillDirs.length;
+  const counts = `plugin: ${skills} ${plural(skills, "skill")}, ${agents} ${plural(agents, "agent")}`;
+  const others = plugin.ships.filter((part) => part !== "agents");
+  return others.length === 0
+    ? counts
+    : `${counts} · also ships: ${others.join(", ")}`;
 }
 
 /**
@@ -269,24 +303,25 @@ function renderRepositoryList(
   }
   if (elsewhere !== null) lines.push(elsewhere);
   lines.push("");
+  const footer = [
+    wholePluginLine(url, firstPluginInListing(discovery)),
+    CODEX_SKILLS_ONLY_LINE,
+  ];
   if (candidates.length === 0) {
-    lines.push(WHOLE_PLUGIN_LINE, CODEX_SKILLS_ONLY_LINE);
+    lines.push(...footer);
     return { lines, summaryLength: lines.length };
   }
   const summaryLength = lines.length;
 
-  const layout = candidates.filter((c) => c.plugin === undefined);
-  const renderOrder: RemoteSkillCandidate[] = [...layout];
-  if (layout.length > 0) {
-    const width = Math.max(...layout.map((c) => c.subpath.length));
-    for (const candidate of layout) {
-      lines.push(
-        `    ${safe(candidate.subpath).padEnd(width)}   ${safe(candidate.description ?? "")}`.trimEnd(),
-      );
-    }
-    lines.push("");
-  }
-
+  // Plugin D5, 2026-10-20: the tree prints each plugin with its skills
+  // first, then the skills that no plugin holds.
+  const renderOrder: RemoteSkillCandidate[] = [];
+  const whole = new Map(
+    pickerOffer(discovery).plugins.map((offered) => [
+      offered.plugin.source,
+      offered.whole,
+    ]),
+  );
   const pluginRows = candidates.filter((c) => c.plugin !== undefined);
   const nameWidth =
     pluginRows.length > 0
@@ -305,11 +340,30 @@ function renderRepositoryList(
       plugin.ships.length > 0
         ? `   also ships: ${plugin.ships.join(", ")}`
         : "";
-    lines.push(`  ${safe(plugin.source)}${shipsSuffix}`);
+    // A plugin that installs whole names itself and its manifest
+    // description, so the tree shows what the picker offers.
+    const offered = whole.get(plugin.source);
+    const wholeLabel =
+      offered === undefined
+        ? ""
+        : `   plugin ${safe(plugin.name)}${offered.description === null ? "" : `: ${safe(offered.description)}`}`;
+    lines.push(`  ${safe(plugin.source)}${wholeLabel}${shipsSuffix}`);
     for (const candidate of rows) {
       renderOrder.push(candidate);
       lines.push(
         `    ${safe(lastSegment(candidate.subpath)).padEnd(nameWidth)}   ${usesLabel(candidate.plugin).padEnd(usesWidth)}   ${safe(candidate.description ?? "")}`.trimEnd(),
+      );
+    }
+    lines.push("");
+  }
+
+  const layout = candidates.filter((c) => c.plugin === undefined);
+  if (layout.length > 0) {
+    const width = Math.max(...layout.map((c) => c.subpath.length));
+    for (const candidate of layout) {
+      renderOrder.push(candidate);
+      lines.push(
+        `    ${safe(candidate.subpath).padEnd(width)}   ${safe(candidate.description ?? "")}`.trimEnd(),
       );
     }
     lines.push("");
@@ -335,16 +389,29 @@ function renderRepositoryList(
   lines.push(
     `  details:       ${safe(shellCommand([PRODUCT_NAME, "add", url, "--list", "--json"]))}`,
   );
-  lines.push(WHOLE_PLUGIN_LINE, CODEX_SKILLS_ONLY_LINE);
+  lines.push(...footer);
   return { lines, summaryLength };
 }
 
 /**
- * Plugin D5: one footer line when the listing holds a plugin. The listing
- * does not read each plugin's manifest, so the line names the command shape,
- * not one plugin.
+ * Plugin D5: one footer line when the listing holds a plugin. It names the
+ * URL the user typed and a real plugin path, quoted like the other footer
+ * lines.
  */
-const WHOLE_PLUGIN_LINE = `  install a whole plugin:  ${PRODUCT_NAME} add <url> --path plugins/<plugin>`;
+function wholePluginLine(url: string, plugin: DiscoveredPlugin): string {
+  return `  install a whole plugin:  ${safe(shellCommand([PRODUCT_NAME, "add", url, "--path", plugin.source]))}`;
+}
+
+/**
+ * The plugin the footer names: the first one in the listing that installs
+ * whole, or the first plugin in the listing when none does. The caller
+ * prints the footer only for a listing that holds a plugin.
+ */
+function firstPluginInListing(discovery: RemoteDiscovery): DiscoveredPlugin {
+  // SAFETY: `renderRepositoryList` reaches its footer only after it returned
+  // early for `discovery.plugins.length === 0`.
+  return pickerOffer(discovery).plugins[0]?.plugin ?? discovery.plugins[0]!;
+}
 
 /**
  * Plugin D13: capshelf writes nothing for Codex, so a listing that offers a
@@ -384,9 +451,9 @@ function renderPluginList(
     `  found     ${candidates.length} ${plural(candidates.length, "skill")} in ${safe(plugin.source)}${shipsSuffix}`,
   );
   lines.push("");
-  const wholePluginLine = `  install a whole plugin:  ${safe(shellCommand([PRODUCT_NAME, "add", url, "--path", plugin.source]))}`;
+  const wholeLine = wholePluginLine(url, plugin);
   if (candidates.length === 0) {
-    lines.push(wholePluginLine, CODEX_SKILLS_ONLY_LINE);
+    lines.push(wholeLine, CODEX_SKILLS_ONLY_LINE);
     return { lines, summaryLength: lines.length };
   }
   const summaryLength = lines.length;
@@ -407,7 +474,7 @@ function renderPluginList(
   lines.push(
     `  install one:   ${safe(shellCommand([PRODUCT_NAME, "add", url, "--path", firstSubpath]))}`,
   );
-  lines.push(wholePluginLine, CODEX_SKILLS_ONLY_LINE);
+  lines.push(wholeLine, CODEX_SKILLS_ONLY_LINE);
   return { lines, summaryLength };
 }
 

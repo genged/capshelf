@@ -350,15 +350,14 @@ describe("add <url> --path <plugin root>", () => {
   );
 
   test(
-    "the --list footer names the whole-plugin install line",
+    "the --list footer names the whole-plugin install line with the real URL and path",
     async () => {
-      const line =
-        "install a whole plugin:  capshelf add <url> --path plugins/<plugin>";
       const world = await initRemoteProject();
       // A plugin with no catalog entry is not listed, so the catalog names it.
       const up = await pluginUpstream([gh], {
         claude: claudeCatalog([{ name: "gh-cli", source: "./plugins/gh-cli" }]),
       });
+      const line = `install a whole plugin:  capshelf add ${up.url} --path plugins/gh-cli`;
       const listed = await runInProcess(world.project)(
         ["add", up.url, "--list"],
         world.env,
