@@ -427,8 +427,8 @@ function fileGroupLines(files: readonly PluginConsentFile[]): string[] {
     else group.push(file);
   }
   const rows: FileGroupRow[] = [...groups.entries()]
-    .sort(([a], [b]) => groupRank(a) - groupRank(b) || compare(a, b))
     .map(([key, groupFiles]) => ({
+      rank: groupRank(key),
       label:
         key === "./"
           ? groupFiles.length === 1
@@ -437,7 +437,8 @@ function fileGroupLines(files: readonly PluginConsentFile[]): string[] {
           : safe(key),
       count: groupFiles.length,
       bytes: groupFiles.reduce((sum, file) => sum + file.bytes, 0),
-    }));
+    }))
+    .sort((a, b) => a.rank - b.rank || compare(a.label, b.label));
   return formatFileGroupRows(rows).map((line) => `${CONTINUATION}${line}`);
 }
 
@@ -513,10 +514,10 @@ function namedGroupBlocks(
 const NAME_ROW_GUTTER = "  ";
 
 /**
- * One named-item block. Sorts and counts the raw names first (as the old
- * group row did), then sanitizes only the ones it shows — sanitizing cannot
- * change a name's sort position, since it only ever swaps one character for
- * a space of the same width.
+ * One named-item block. Sanitizes every name first, then sorts and counts
+ * the sanitized text. Sanitizing turns two different control characters
+ * into the same space. A sort of the raw text could order two names one
+ * way, then show them sanitized in the other order.
  */
 function namedGroupBlock(
   noun: string,
@@ -524,8 +525,8 @@ function namedGroupBlock(
   pluginName: string,
   width: number,
 ): string[] {
-  const sorted = [...names].sort();
-  const shown = sorted.slice(0, MAX_NAMES_SHOWN).map(safe);
+  const sorted = names.map(safe).sort();
+  const shown = sorted.slice(0, MAX_NAMES_SHOWN);
   const more = sorted.length - shown.length;
   const heading = `${sorted.length}, called as ${safe(pluginName)}:<${noun}>`;
   return labelledLines(`${noun}s`, [

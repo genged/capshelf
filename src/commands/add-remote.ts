@@ -1331,11 +1331,12 @@ function pluginLine(facts: SkillPluginFacts): string {
 
 /**
  * `subject` names what the license sits outside of: "item" for the skill
- * prompt (`renderConsent`, unchanged — existing tests pin its wording byte
- * for byte), "plugin" for the whole-plugin consent block. Only the
- * "outside the item"/"not recognized" wording the plugin brief named
- * changes; the "inside" and "none found" phrasing stays as it was for both,
- * since nothing asked for that to move.
+ * prompt (`renderConsent`, unchanged — `tests/cli-remote-plugins.test.ts`'s
+ * "consent for a plain skill names a repo-root unrecognized license as
+ * outside the item" pins its wording byte for byte), "plugin" for the
+ * whole-plugin consent block. Only the "outside the item"/"not recognized"
+ * wording the plugin brief named changes. The "inside" and "none found"
+ * phrasing stays as it was for both, since nothing asked for that to move.
  */
 function describeLicense(
   license: LicenseFinding,

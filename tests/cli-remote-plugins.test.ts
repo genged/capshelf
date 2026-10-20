@@ -27,6 +27,7 @@ import type { PluginSpec } from "./plugin-fixtures";
 import {
   initRemoteProject,
   pluginUpstream,
+  pushPluginChange,
   skillText,
   upstreamWith,
 } from "./remote-fixtures";
@@ -1279,6 +1280,38 @@ test(
     expect(prompt).toContain("plugin    plain  (no parts outside the skill)");
     expect(prompt).toContain("1 file,");
     expect(prompt).not.toContain("uses parts of the plain plugin");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+/**
+ * `describeLicense`'s comment (`src/commands/add-remote.ts`) claims this
+ * wording is unchanged for a skill (non-plugin) install, and pinned by a
+ * test. This is that test: a repo-root license the label heuristic does not
+ * recognize, for a plain skill with no plugin manifest at all.
+ */
+test(
+  "consent for a plain skill names a repo-root unrecognized license as outside the item",
+  async () => {
+    const up = await upstreamWith([["skills/x", "A skill"]]);
+    await pushPluginChange(
+      up,
+      "LICENSE",
+      "Custom License\n\nAll rights are handled some other way.\n",
+    );
+    const { project, env } = await initProject();
+    const { context, prompts } = consentContext();
+    const result = await runWithConfirmation(
+      project,
+      env,
+      ["add", up.url, "--path", "skills/x"],
+      context,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain(
+      "  license   unrecognized  (LICENSE, at the repo root, outside the item, not copied)",
+    );
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );

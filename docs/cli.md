@@ -2403,10 +2403,10 @@ The item name is the manifest `name`, so `--as` refuses:
   agents are called as rust-review:<agent>, whatever the directory name is
 ```
 
-The prompt groups the files by top-level directory, with a count and a size;
-a group row names no files. A `skills` block follows, naming the plugin's
+The prompt groups the files by top-level directory, with a count and a size.
+A group row names no files. A `skills` block follows, naming the plugin's
 skills as Claude Code calls them (`<plugin>:<skill>`), with the bare names
-below it in columns; an `agents` block does the same when the plugin has
+below it in columns. An `agents` block does the same when the plugin has
 agents. Then the `runs` block (see What a plugin runs) and a `codex` line:
 
 ```text
@@ -2434,7 +2434,7 @@ Install it? [y/N]
 
 A plugin's license line uses "not recognized" and "outside the plugin"
 where the skill prompt's license line says "unrecognized" and "outside the
-item"; the rest of the license wording is shared. A column count over 20
+item". The rest of the license wording is shared. A column count over 20
 names shows the first 20 and a final "… and N more" line. The column count
 itself, and how many names fit per row, depends on the terminal width.
 
