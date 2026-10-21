@@ -133,7 +133,8 @@ ctrl_c_at() {
   local cmd="$1" text="$2" out="$3" fifo="$TMP/pty-in" pid waited=0
   rm -f "$fifo"
   mkfifo "$fifo"
-  timeout 30 script -qec "$cmd" /dev/null < "$fifo" > "$out" 2>&1 &
+  pty_argv "$cmd"
+  timeout 30 "${PTY_ARGV[@]}" < "$fifo" > "$out" 2>&1 &
   pid=$!
   # Hold the write end open, so `script` does not read end of input.
   exec 3>"$fifo"
@@ -160,14 +161,35 @@ ctrl_c_at() {
   fi
 }
 
+# util-linux `script` takes the command as `-c` text. BSD `script`, on macOS,
+# has no `-c` and takes the command as arguments after the log file. Probe
+# each form once. If neither runs, skip the PTY cases.
+PTY_STYLE=""
 if command -v script >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+  if timeout 5 script -qec true /dev/null </dev/null >/dev/null 2>&1; then
+    PTY_STYLE=util-linux
+  elif timeout 5 script -qe /dev/null true </dev/null >/dev/null 2>&1; then
+    PTY_STYLE=bsd
+  fi
+fi
+# Set PTY_ARGV to the argv that runs the shell text "$1" in a pty.
+pty_argv() {
+  if [ "$PTY_STYLE" = util-linux ]; then
+    PTY_ARGV=(script -qec "$1" /dev/null)
+  else
+    PTY_ARGV=(script -qe /dev/null bash -c "$1")
+  fi
+}
+
+if [ -n "$PTY_STYLE" ]; then
   CLI_STR="$(printf '%q ' "${CLI[@]}")"
   D9_CMD="cd '$P' && $CLI_STR add '$PLUGIN_URL' --list"
 
   # --- D9 PTY: a listing taller than a 3-row terminal asks before it shows
   #     the rest. `script` opens a real pty, so the terminal-rows gate
   #     actually fires, which a piped non-tty run never would. ---
-  echo n | timeout 15 script -qec "stty rows 3; $D9_CMD" /dev/null > "$TMP/d9.txt"
+  pty_argv "stty rows 3; $D9_CMD"
+  echo n | timeout 15 "${PTY_ARGV[@]}" > "$TMP/d9.txt"
   assert_fixed_contains 'Show all 2 skills' "$TMP/d9.txt"
   assert_fixed_contains 'one plugin:   capshelf add' "$TMP/d9.txt"
   assert_fixed_contains 'everything:   capshelf add' "$TMP/d9.txt"
@@ -202,7 +224,7 @@ if command -v script >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
   cmp -s "$TMP/remotes-before-ctrlc.json" "$P/.capshelf/remotes.lock.json"
   test ! -e "$P/.agents/skills/plain"
 else
-  echo "skip: PTY cases need 'script' and 'timeout' on PATH; neither is installed here"
+  echo "skip: PTY cases need 'timeout' and a 'script' that runs a command in a pty"
 fi
 
 (cd "$P" && "${CLI[@]}" rm skills/worker --yes --json >/dev/null)
