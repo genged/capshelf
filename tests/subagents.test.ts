@@ -10,7 +10,7 @@ import {
   shaOfCurrentSubagent,
   validateSubagentSource,
 } from "../src/subagents";
-import { assertLockV4, createDataLockEntry, loadLock } from "../src/lock";
+import { assertWritableLock, createDataLockEntry, loadLock } from "../src/lock";
 import { gitTreeSource } from "../src/item-source";
 import { pinItemAtCommit } from "../src/pin";
 import type { PinnedSource } from "../src/pin";
@@ -678,7 +678,7 @@ describe("subagent CLI lifecycle", () => {
     await commitAll(dataRepo, "break Codex reviewer upstream");
 
     const lockPath = join(project, ".capshelf", "capshelf.lock.json");
-    const lock = assertLockV4(await loadLock(project), "test");
+    const lock = assertWritableLock(await loadLock(project), "test");
     const lockBefore = await file(lockPath).text();
     const claudeBefore = await file(canonicalClaude).text();
     const codexBefore = await file(canonicalCodex).text();

@@ -17,7 +17,7 @@ import {
 } from "../destructive-preflight";
 import type { Manifest } from "../manifest";
 import {
-  assertLockV4,
+  assertWritableLock,
   entryIdentity,
   loadLocalLock,
   loadLock,
@@ -35,11 +35,13 @@ import {
   itemTreeEntriesAtCommit,
   sourcePinDigest,
 } from "../pin";
+import type { PinnedSource } from "../pin";
 import type {
   DataLockEntryV4,
+  Lock,
   LockEntry,
   LockEntryV4,
-  LockV4,
+  WritableLock,
   SystemLockEntry,
 } from "../lock";
 import { installedPath, parseLockKey, shaOfInstalled } from "../installed";
@@ -49,11 +51,17 @@ import {
   gitTreeSource,
 } from "../item-source";
 import {
+  COPY_DIRECTORY_ITEM_KINDS,
+  installsAtSkillTarget,
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
   isFragmentItemKind,
   isFragmentKindName,
   itemRepoRelPath,
+  PLUGIN_MANIFEST_REL,
+  type CopyDirectoryItemKind,
+  type ItemKind,
+  type SkillTargetKind,
 } from "../master";
 import {
   assertRepoClean,
@@ -77,6 +85,7 @@ import {
   assertNoPreservedPathCollisions,
   copyDirectoryReconciliationFiles,
   materializeLockEntry,
+  installedPreservedEntries,
 } from "../materialize";
 import {
   findSkillsShSkill,
@@ -109,26 +118,55 @@ import {
   sidecarFromInstalledSnapshot,
 } from "../item-snapshot";
 import { mergeNamedTrees, namedFilesEqual } from "../merge-tree";
-import { beginInstalledReconciliation } from "../promote-transaction";
+import type { NamedFile } from "../merge-tree";
+import {
+  beginInstalledReconciliation,
+  keptByInstalledReconciliation,
+} from "../promote-transaction";
+import type { KeptInstalledEntry } from "../promote-transaction";
 import { remoteCacheState } from "../remote-cache";
 import { candidateAtSubpath, remoteTreeSource } from "../remote-discovery";
 import {
+  assertMergedPluginName,
+  pluginChange,
   previewRemoteUpdate,
   remoteEntryAsDataEntry,
+  remoteMergeNewRuns,
   updateMergeRemoteTarget,
-  updateRemoteSkill,
+  updateRemoteItem,
 } from "../remote-item";
-import type { RemoteUpdateResult } from "../remote-item";
+import type { RemotePluginChange, RemoteUpdateResult } from "../remote-item";
 import {
-  REMOTE_ITEM_KIND,
   loadRemotesLock,
   parseRemoteKey,
   remoteKey,
+  remoteKeysForNamedRef,
   remoteKeysForRef,
   saveRemotesLock,
 } from "../remotes-lock";
-import type { RemoteLockEntry, RemotesLock } from "../remotes-lock";
+import type {
+  RemoteItemKind,
+  RemoteLockEntry,
+  RemotesLock,
+} from "../remotes-lock";
 import { factsWarnOnInstall, renderPluginFacts } from "../remote-list-render";
+import { assertSkillTargetFree } from "../skill-target";
+import { assertNoScopeCollisions } from "../status-core";
+import { sanitizeDisplayText } from "../pick-core";
+import { confirmPluginConsent, newPluginRunsField } from "../plugin-consent";
+import type {
+  PluginConsentOptions,
+  PluginConsentPoint,
+} from "../plugin-consent";
+import {
+  itemPluginNewRuns,
+  itemPluginRunsAtCommit,
+  itemPluginRunsFromFiles,
+  newRunsEntries,
+  pluginExtraFile,
+  runsHaveEntries,
+} from "../plugin-runs";
+import type { PluginRuns } from "../plugin-runs";
 
 interface UpdateOptions {
   json?: boolean;
@@ -172,6 +210,8 @@ interface UpdateResult {
   mergeResultSha?: string;
   mergeBase?: string;
   mergedUpstreamCommit?: string;
+  /** A plugin dry run: the runs entries the real run would ask about. */
+  newRuns?: PluginRuns;
 }
 
 export function registerUpdate(program: Command): void {
@@ -211,6 +251,9 @@ export function registerUpdate(program: Command): void {
         }
         const { project, manifest, projectLock, localLock } =
           await loadProjectContext({ cmd });
+        // As `apply` and `status` do: one key in both locks is two owners of
+        // one install, and a sweep would write it twice from two pins.
+        assertNoScopeCollisions(projectLock, localLock, "updating");
         // A remote row is in neither capshelf lock by A3, so it is resolved
         // here rather than by `resolveTrackedTarget`: widening that resolver
         // would change the return type for `apply` and `status` at once.
@@ -226,11 +269,11 @@ export function registerUpdate(program: Command): void {
             { local: opts.local },
           );
         }
-        // By resolved key, not by bare name. `remoteKeysForRef` matches the
-        // `skills` kind only, so `update skills/pdf mcp/pdf` would otherwise
-        // see `pdf` among the remote names and drop the mcp item from the
-        // shelf pass — neither updated nor reported, and the command still
-        // exits 0.
+        // By resolved key, not by bare name. `remoteKeysForRef` matches only
+        // the two remote kinds, `skills` and `plugins`, so `update skills/pdf
+        // mcp/pdf` (or `plugins/pdf mcp/pdf`) would otherwise see `pdf` among
+        // the remote names and drop the mcp item from the shelf pass —
+        // neither updated nor reported, and the command still exits 0.
         const shelfRefs = refs.filter(
           (itemRef) =>
             remoteKeysForRef(remotes, parseItemRef(itemRef)).length === 0,
@@ -246,11 +289,14 @@ export function registerUpdate(program: Command): void {
         // PIN-12: no ordinary lock write migrates. `update` reads either
         // version but writes only version 4, so it refuses here with the
         // migration command rather than rewriting entries as a side effect.
-        const writableProjectLock = assertLockV4(
+        const writableProjectLock = assertWritableLock(
           projectLock,
           "capshelf update",
         );
-        const writableLocalLock = assertLockV4(localLock, "capshelf update");
+        const writableLocalLock = assertWritableLock(
+          localLock,
+          "capshelf update",
+        );
         const explicit = refs.length > 0;
 
         const targets: ScopedTarget[] = [];
@@ -301,6 +347,8 @@ export function registerUpdate(program: Command): void {
             targets: remoteTargets,
             externalSkillByName,
             remotes,
+            projectLock,
+            localLock,
             merge: true,
             dryRun: opts.dryRun === true,
             json: opts.json === true,
@@ -319,15 +367,46 @@ export function registerUpdate(program: Command): void {
         }
         if (opts.merge) {
           if (!dataRepo) throw new PreconditionError("data repo is required");
+          const target = targets[0]!;
+          // D3 reads the new upstream tree before `updateMergeTarget` writes
+          // anything, and its pin is the one the merge takes. D7 point 2 asks
+          // inside `updateMergeTarget`, over the merged files: a merge can run
+          // something that neither the local copy nor the upstream runs alone.
+          const mergeItem = parseLockKey(target.key);
+          const mergeEntry = (
+            target.scope === "local" ? writableLocalLock : writableProjectLock
+          ).items[target.key];
+          const mergeMove =
+            installsAtSkillTarget(mergeItem.kind) &&
+            mergeEntry?.source === "data" &&
+            mergeEntry.local !== true
+              ? await shelfPluginPinMove(
+                  dataRepo,
+                  mergeItem.kind,
+                  mergeItem.name,
+                  mergeEntry,
+                  new GitReadMemo(),
+                )
+              : null;
           const result = await updateMergeTarget({
             project,
             manifest,
             dataRepo,
-            target: targets[0]!,
+            target,
+            ...(mergeMove !== null && { upstreamPin: mergeMove.pin }),
             projectLock: writableProjectLock,
             localLock: writableLocalLock,
+            remotes,
             dryRun: opts.dryRun === true,
+            consent: {
+              json: opts.json === true,
+              yes: opts.yes === true,
+              dryRun: opts.dryRun === true,
+              // `update` refuses `--merge --yes` for a shelf item.
+              advice: `review it first. --merge does not take --yes: run it in a terminal to answer the prompt, or take the new tree without your local edits with ${PRODUCT_NAME} update ${mergeItem.kind}/${mergeItem.name}${target.scope === "local" ? " --local" : ""} --yes`,
+            },
           });
+          if (result === null) return;
           printUpdateOutput({
             project,
             dataRepo,
@@ -356,6 +435,9 @@ export function registerUpdate(program: Command): void {
           dryRun: opts.dryRun === true,
           explicit,
           externalSkillByName,
+          projectLock: writableProjectLock,
+          localLock: writableLocalLock,
+          remotes,
         };
 
         const preflight = await planUpdatePreflight(
@@ -375,6 +457,8 @@ export function registerUpdate(program: Command): void {
             targets: remoteTargets,
             externalSkillByName,
             remotes,
+            projectLock,
+            localLock,
             merge: false,
             dryRun: true,
             json: opts.json === true,
@@ -420,6 +504,16 @@ export function registerUpdate(program: Command): void {
           }
           throw new ResultExitError(1);
         }
+        // D7 point 2 before the loss prompt. Both answers are needed before
+        // any write, and `--yes` answers both.
+        if (
+          !(await confirmPluginConsent(
+            preflight.results.flatMap(pinMovePoints),
+            { json: opts.json === true, yes: opts.yes === true },
+          ))
+        ) {
+          return;
+        }
         if (
           !(await confirmDestructiveChanges(preflight.destructivePlan, {
             operation: "Update",
@@ -450,7 +544,12 @@ export function registerUpdate(program: Command): void {
           const lock =
             scope === "local" ? writableLocalLock : writableProjectLock;
           const entry = lock.items[key]!;
-          const outcome = await updateOneTarget(ctx, target, entry);
+          // The pins the user approved, not a fresh read of the data repo.
+          const outcome = await updateOneTarget(
+            { ...ctx, approvedPins: preflight.pins },
+            target,
+            entry,
+          );
           results.push(outcome.result);
           if (outcome.fragment) {
             const contribution = outcome.fragment;
@@ -552,6 +651,8 @@ export function registerUpdate(program: Command): void {
           targets: remoteTargets,
           externalSkillByName,
           remotes,
+          projectLock,
+          localLock,
           merge: false,
           // The dry-run path returned above, so this pass always writes.
           dryRun: false,
@@ -580,6 +681,7 @@ export function registerUpdate(program: Command): void {
 }
 
 interface RemoteTarget {
+  kind: RemoteItemKind;
   name: string;
   key: string;
   /**
@@ -596,18 +698,16 @@ function resolveRemoteTargets(
 ): RemoteTarget[] {
   if (refs.length > 0) {
     return refs.flatMap((itemRef) =>
-      remoteKeysForRef(remotes, parseItemRef(itemRef)).map((key) => ({
-        key,
-        name: parseRemoteKey(key).name,
-        named: true,
-      })),
+      remoteKeysForNamedRef(remotes, parseItemRef(itemRef)).map((key) => {
+        const parsed = parseRemoteKey(key);
+        return { key, kind: parsed.kind, name: parsed.name, named: true };
+      }),
     );
   }
-  return Object.keys(remotes.items).map((key) => ({
-    key,
-    name: parseRemoteKey(key).name,
-    named: false,
-  }));
+  return Object.keys(remotes.items).map((key) => {
+    const parsed = parseRemoteKey(key);
+    return { key, kind: parsed.kind, name: parsed.name, named: false };
+  });
 }
 
 interface RemoteUpdateOutcome {
@@ -625,7 +725,7 @@ interface RemoteMergeFacts {
 /**
  * The remote half of `update`.
  *
- * Consent lives here rather than in `updateRemoteSkill`: that function sees no
+ * Consent lives here rather than in `updateRemoteItem`: that function sees no
  * `--yes`, no `--json`, and no terminal state, so it cannot decide anything.
  * Keeping the prompt in the command is also what lets a bare sweep return
  * `skipped` without ever entering the write path.
@@ -636,6 +736,9 @@ async function runRemoteUpdates(input: {
   targets: RemoteTarget[];
   externalSkillByName: Map<string, ExternalSkill>;
   remotes: RemotesLock;
+  /** D2 guard 5: the shelf owners `assertSkillTargetFree` scans. */
+  projectLock: Lock;
+  localLock: Lock;
   merge: boolean;
   dryRun: boolean;
   json: boolean;
@@ -653,17 +756,44 @@ async function runRemoteUpdates(input: {
       const message = skillsShConflictMessage(external);
       if (target.named) {
         throw new PreconditionError(
-          `not updating ${remoteKey(target.name)} — ${message}`,
+          `not updating ${remoteKey(target.kind, target.name)} — ${message}`,
         );
       }
       results.push({
         key: target.key,
         scope: "local",
         source: "remote",
-        kind: REMOTE_ITEM_KIND,
+        kind: target.kind,
         name: target.name,
         action: "skipped-external",
         error: message,
+      });
+      continue;
+    }
+    // D2 guard 5, as the shelf pass applies it: another owner of the folder
+    // refuses a named request with exit 3, and a sweep records an error.
+    try {
+      await assertSkillTargetFree(
+        input.project,
+        target.kind,
+        target.name,
+        {
+          project: input.projectLock,
+          local: input.localLock,
+          remotes: input.remotes,
+        },
+        { key: target.key },
+      );
+    } catch (err) {
+      if (target.named) throw err;
+      results.push({
+        key: target.key,
+        scope: "local",
+        source: "remote",
+        kind: target.kind,
+        name: target.name,
+        action: "error",
+        error: err instanceof Error ? err.message : String(err),
       });
       continue;
     }
@@ -673,11 +803,28 @@ async function runRemoteUpdates(input: {
       results.push(remoteResult(target, "skipped", entry, entry.sourceCommit));
       continue;
     }
-    const preview = await previewRemoteUpdate({
+    const upstreamPreview = await previewRemoteUpdate({
       project: input.project,
+      kind: target.kind,
       name: target.name,
       entry,
     });
+    // D7 point 2 for `--merge` reads the merged files, not the upstream tree
+    // alone, and the merge writes only the files the prompt showed.
+    const mergePlan =
+      input.merge && !upstreamPreview.current
+        ? await remoteMergeNewRuns({
+            project: input.project,
+            kind: target.kind,
+            name: target.name,
+            entry,
+            preview: upstreamPreview,
+          })
+        : null;
+    const preview =
+      mergePlan === null
+        ? upstreamPreview
+        : { ...upstreamPreview, newRuns: mergePlan.newRuns };
     if (preview.current) {
       results.push(
         remoteResult(target, "already-current", entry, preview.to, entry),
@@ -687,6 +834,7 @@ async function runRemoteUpdates(input: {
     const consent = await confirmRemotePinMove({
       project: input.project,
       manifest: input.manifest,
+      kind: target.kind,
       name: target.name,
       entry,
       preview,
@@ -705,6 +853,7 @@ async function runRemoteUpdates(input: {
         await planRemotePinMove({
           project: input.project,
           manifest: input.manifest,
+          kind: target.kind,
           name: target.name,
           entry,
           preview,
@@ -714,16 +863,20 @@ async function runRemoteUpdates(input: {
     const mergeOutcome = input.merge
       ? await updateMergeRemoteTarget({
           project: input.project,
+          kind: target.kind,
           name: target.name,
           entry,
           preview,
           dryRun: input.dryRun,
+          ...(mergePlan !== null &&
+            mergePlan.files !== null && { approvedFiles: mergePlan.files }),
         })
       : null;
     const moved: RemoteUpdateResult =
       mergeOutcome ??
-      (await updateRemoteSkill({
+      (await updateRemoteItem({
         project: input.project,
+        kind: target.kind,
         name: target.name,
         entry,
         preview,
@@ -743,6 +896,14 @@ async function runRemoteUpdates(input: {
             mergeResultSha: mergeOutcome.mergeResultDigest,
           }
         : null;
+    // A dry run asks nothing, so its row carries what the real run would
+    // ask about: the runs entries the move adds.
+    const wouldAsk =
+      input.dryRun &&
+      preview.newRuns !== null &&
+      runsHaveEntries(preview.newRuns)
+        ? preview.newRuns
+        : null;
     results.push({
       ...remoteResult(
         target,
@@ -756,10 +917,11 @@ async function runRemoteUpdates(input: {
         mergedUpstreamCommit: mergeFacts.mergedUpstreamCommit,
         mergeResultSha: mergeFacts.mergeResultSha,
       }),
+      ...(wouldAsk !== null && { newRuns: wouldAsk }),
     });
     if (!input.dryRun && moved.action === "updated") {
       input.remotes.items[target.key] = moved.entry;
-      // Before the next row can refuse the command. `reconcileRemoteSkill`
+      // Before the next row can refuse the command. `reconcileRemoteItem`
       // already rewrote this row's files, so a save deferred to the end of the
       // run would leave them holding content the pin does not name — reported
       // as drift the user never introduced.
@@ -787,6 +949,7 @@ interface RemoteConsent {
 async function confirmRemotePinMove(input: {
   project: string;
   manifest: Manifest;
+  kind: RemoteItemKind;
   name: string;
   entry: RemoteLockEntry;
   preview: Awaited<ReturnType<typeof previewRemoteUpdate>>;
@@ -794,16 +957,35 @@ async function confirmRemotePinMove(input: {
   json: boolean;
   yes: boolean;
 }): Promise<RemoteConsent> {
-  if (input.dryRun || input.yes) return { approved: true, plan: null };
+  if (input.dryRun) return { approved: true, plan: null };
+  const plugin = input.preview.plugin;
+  const newRuns = input.preview.newRuns;
+  const runsLines =
+    newRuns !== null && runsHaveEntries(newRuns)
+      ? newPluginRunsField("runs", newRuns)
+      : [];
+  if (input.yes) {
+    // `--yes` skips the prompt, so what the move adds goes to stderr, the
+    // same as a `--yes` plugin install.
+    for (const line of runsLines) console.error(line);
+    return { approved: true, plan: null };
+  }
   const destruction = await planRemotePinMove(input);
-  const factsLines = await remotePinMoveFactsLines(
-    input.entry,
-    input.preview.to,
-  );
+  // A plugin row reports its own facts: the version and the new runs
+  // entries. `remotePinMoveFactsLines` reads one skill's plugin facts and
+  // needs a SKILL.md at the subpath, which a plugin root does not hold.
+  const factsLines =
+    plugin === null
+      ? await remotePinMoveFactsLines(input.entry, input.preview.to)
+      : [];
   const block = [
     `  pinned    ${input.preview.from.slice(0, 7)}  ->  ${input.preview.to.slice(0, 7)}   (from the local cache, no network)`,
+    ...(plugin === null ? [] : pluginVersionLines(plugin)),
     `  files     ${input.preview.changed.length} changed`,
-    ...input.preview.changed.map((path) => `              ${path}`),
+    ...input.preview.changed.map(
+      (path) => `              ${sanitizeDisplayText(path)}`,
+    ),
+    ...runsLines,
     ...(destruction.changes.length > 0
       ? ["", renderDestructiveChanges("Update", destruction.changes)]
       : []),
@@ -813,10 +995,19 @@ async function confirmRemotePinMove(input: {
   ].join("\n");
   const context = confirmationContext();
   if (input.json || !context.stdinIsTTY || !context.stderrIsTTY) {
+    const review = `review it, then authorize with --yes: ${PRODUCT_NAME} update ${input.kind}/${input.name} --yes`;
+    // The boundary indents the first hint line itself, and no later line.
+    const hint = [
+      ...(plugin === null ? [] : pluginVersionLines(plugin)),
+      ...runsLines,
+    ];
     throw new PreconditionError(
-      `not moving ${remoteKey(input.name)} to ${input.preview.to.slice(0, 7)} without consent — it is content from a repository outside your shelf`,
+      `not moving ${remoteKey(input.kind, input.name)} to ${input.preview.to.slice(0, 7)} without consent — it is content from a repository outside your shelf`,
       {
-        hint: `review it, then authorize with --yes: ${PRODUCT_NAME} update ${REMOTE_ITEM_KIND}/${input.name} --yes`,
+        hint:
+          hint.length === 0
+            ? review
+            : [...hint, `  ${review}`].join("\n").replace(/^ {2}/, ""),
       },
     );
   }
@@ -826,6 +1017,14 @@ async function confirmRemotePinMove(input: {
   }
   context.stderr.write("Update cancelled; no changes were written.\n");
   return { approved: false, plan: null };
+}
+
+/** The manifest version line of a plugin pin move, when either pin has one. */
+function pluginVersionLines(plugin: RemotePluginChange): string[] {
+  if (plugin.versionFrom === null && plugin.versionTo === null) return [];
+  const from = sanitizeDisplayText(plugin.versionFrom ?? "(none)");
+  const to = sanitizeDisplayText(plugin.versionTo ?? "(none)");
+  return [`  version   ${from}  ->  ${to}  (${PLUGIN_MANIFEST_REL})`];
 }
 
 /**
@@ -861,6 +1060,7 @@ async function remotePinMoveFactsLines(
 async function planRemotePinMove(input: {
   project: string;
   manifest: Manifest;
+  kind: RemoteItemKind;
   name: string;
   entry: RemoteLockEntry;
   preview: Awaited<ReturnType<typeof previewRemoteUpdate>>;
@@ -890,13 +1090,13 @@ async function planRemotePinMove(input: {
     currentSource: current,
     selectedSource: selected,
     manifest: input.manifest,
-    kind: REMOTE_ITEM_KIND,
+    kind: input.kind,
     name: input.name,
-    key: remoteKey(input.name),
+    key: remoteKey(input.kind, input.name),
     scope: "local",
     currentEntry: remoteEntryAsDataEntry(input.entry),
     selectedEntry: remoteEntryAsDataEntry(next),
-    reviewCommand: `${PRODUCT_NAME} status ${REMOTE_ITEM_KIND}/${input.name} --diff-view installed`,
+    reviewCommand: `${PRODUCT_NAME} status ${input.kind}/${input.name} --diff-view installed`,
     repairUnresolvableCurrent: true,
   });
   return createDestructiveChangePlan(planned.changes, planned.snapshotParts);
@@ -913,7 +1113,7 @@ function remoteResult(
     key: target.key,
     scope: "local",
     source: "remote",
-    kind: REMOTE_ITEM_KIND,
+    kind: target.kind,
     name: target.name,
     action,
     sha: next?.sourcePinDigest ?? entry.sourcePinDigest,
@@ -929,7 +1129,7 @@ function printRemoteAdoptGuidance(results: UpdateResult[]): void {
     if (result.source !== "remote") continue;
     if (result.action !== "updated" && result.action !== "merged") continue;
     console.log(
-      `  promote is not available for a remote skill. to keep it permanently: ${PRODUCT_NAME} share ${result.kind}/${result.name} --adopt`,
+      `  promote is not available for a remote ${result.kind === "plugins" ? "plugin" : "skill"}. to keep it permanently: ${PRODUCT_NAME} share ${result.kind}/${result.name} --adopt`,
     );
   }
 }
@@ -940,8 +1140,13 @@ function printRemoteSkipHint(results: UpdateResult[]): void {
     (result) => result.source === "remote" && result.action === "skipped",
   );
   if (skipped.length === 0) return;
+  const noun = skipped.every((result) => result.kind === "skills")
+    ? "skill"
+    : skipped.every((result) => result.kind === "plugins")
+      ? "plugin"
+      : "item";
   console.log(
-    `  ${skipped.length} remote ${skipped.length === 1 ? "skill was" : "skills were"} left alone; a sweep never accepts new third-party content`,
+    `  ${skipped.length} remote ${skipped.length === 1 ? `${noun} was` : `${noun}s were`} left alone; a sweep never accepts new third-party content`,
   );
   console.log(
     `  move one: ${PRODUCT_NAME} update ${skipped[0]!.kind}/${skipped[0]!.name}`,
@@ -956,10 +1161,19 @@ async function updateMergeTarget(input: {
   manifest: Manifest;
   dataRepo: string;
   target: ScopedTarget;
-  projectLock: LockV4;
-  localLock: LockV4;
+  projectLock: WritableLock;
+  localLock: WritableLock;
+  remotes: RemotesLock;
   dryRun: boolean;
-}): Promise<UpdateResult> {
+  /**
+   * The upstream pin read before the merge. The merge pins it instead of a
+   * fresh one, and `revalidateUpdateMergeInputs` refuses when the data repo
+   * moved past it while the consent prompt was open.
+   */
+  upstreamPin?: PinnedSource;
+  /** D7 point 2 options for the question over the merged files. */
+  consent: PluginConsentOptions;
+}): Promise<UpdateResult | null> {
   const { project, dataRepo, target, dryRun } = input;
   const lock = target.scope === "local" ? input.localLock : input.projectLock;
   const entry = lock.items[target.key];
@@ -979,7 +1193,7 @@ async function updateMergeTarget(input: {
   }
   if (!isCopyDirectoryItemKind(parsed.kind)) {
     throw new PreconditionError(
-      `update --merge supports only skills and pi-extensions; ${parsed.kind}/${parsed.name} is not supported`,
+      `update --merge supports only ${COPY_DIRECTORY_ITEM_KINDS.join(", ")}; ${parsed.kind}/${parsed.name} is not supported`,
     );
   }
   const kind = parsed.kind;
@@ -994,11 +1208,9 @@ async function updateMergeTarget(input: {
   await assertRepoClean(dataRepo);
   const repoRelPath = itemRepoRelPath(parsed.kind, parsed.name);
   const plannedHead = await headSha(dataRepo);
-  const upstreamPin = await pinCurrentSource(
-    dataRepo,
-    parsed.kind,
-    parsed.name,
-  );
+  const upstreamPin =
+    input.upstreamPin ??
+    (await pinCurrentSource(dataRepo, parsed.kind, parsed.name));
   const item = await findMasterItemByRef(dataRepo, {
     kind: parsed.kind,
     name: parsed.name,
@@ -1101,6 +1313,15 @@ async function updateMergeTarget(input: {
   } else if (localChanged && !upstreamChanged) {
     resultFiles = localFiles;
   }
+  // D3 over the files the write puts in the folder, before any write.
+  // The installed entries the merge writer keeps beside the merged files,
+  // from the writer's own rule. D3 and D7 point 2 both read them.
+  const kept = await keptByInstalledReconciliation(
+    snapshot.localPath,
+    localFiles,
+    resultFiles,
+  );
+  assertMergedPluginName(kind, parsed.name, resultFiles, kept);
 
   const newEntry = refreshDataLockEntry(entry, {
     pin: upstreamPin,
@@ -1157,7 +1378,47 @@ async function updateMergeTarget(input: {
     });
   }
 
+  // D7 point 2 over the merged files, the exact tree the write below puts in
+  // the folder. An entry is new when the old pin did not run it. An unknown
+  // entry always asks. `revalidateUpdateMergeInputs` then refuses if the
+  // inputs moved while the prompt was open, so the approved files are the
+  // written files.
+  const newRuns =
+    (lockChanged || filesChanged) && installsAtSkillTarget(kind)
+      ? await mergedPluginNewRuns({
+          dataRepo,
+          kind,
+          name: parsed.name,
+          entry,
+          files: resultFiles,
+          kept,
+        })
+      : null;
+  if (
+    newRuns !== null &&
+    !(await confirmPluginConsent(
+      [{ kind: "pin-move", ref: `${kind}/${parsed.name}`, runs: newRuns }],
+      input.consent,
+    ))
+  ) {
+    return null;
+  }
+
   if (!dryRun && (lockChanged || filesChanged)) {
+    // D2 guard 5: before the copy-directory write below.
+    if (installsAtSkillTarget(kind)) {
+      await assertSkillTargetFree(
+        project,
+        kind,
+        parsed.name,
+        {
+          project: input.projectLock,
+          local: input.localLock,
+          remotes: input.remotes,
+        },
+        { key: target.key },
+      );
+    }
     await revalidateUpdateMergeInputs({
       ...input,
       entry,
@@ -1209,18 +1470,53 @@ async function updateMergeTarget(input: {
       mergedUpstreamCommit: plannedHead,
     }),
     runtimeWarnings: runtimeWarningsForItem(project, parsed.kind, parsed.name),
+    ...(dryRun && newRuns !== null && runsHaveEntries(newRuns) && { newRuns }),
   };
+}
+
+/**
+ * The runs entries an `update --merge` result adds over the old pin, or null
+ * when the merged files are not a plugin to Claude Code. PIN-8: an unreadable
+ * old pin counts as a tree that runs nothing, so every entry is new.
+ */
+async function mergedPluginNewRuns(input: {
+  dataRepo: string;
+  kind: SkillTargetKind;
+  name: string;
+  entry: DataLockEntryV4;
+  files: readonly NamedFile[];
+  /** The installed entries the merge writer keeps beside `files`. */
+  kept: readonly KeptInstalledEntry[];
+}): Promise<PluginRuns | null> {
+  const { dataRepo, kind, name, entry } = input;
+  const previousEntries = await itemTreeEntriesAtCommit(
+    gitTreeSource({ repo: dataRepo, kind, name, commit: entry.sourceCommit }),
+    kind,
+  ).catch(() => []);
+  // Every installed entry the writer keeps sits beside the merged files, so
+  // the runs reader reads those too, on both sides.
+  const extras = input.kept;
+  const merged = await itemPluginRunsFromFiles(kind, input.files, extras);
+  if (merged === null) return null;
+  const previous = (await itemPluginRunsAtCommit(
+    dataRepo,
+    kind,
+    previousEntries,
+    extras,
+  )) ?? { hooks: [], mcpServers: [], unknown: [] };
+  return newRunsEntries(previous, merged);
 }
 
 async function revalidateUpdateMergeInputs(input: {
   project: string;
   dataRepo: string;
   target: ScopedTarget;
-  projectLock: LockV4;
-  localLock: LockV4;
+  projectLock: WritableLock;
+  localLock: WritableLock;
+  remotes: RemotesLock;
   entry: DataLockEntryV4;
   parsed: ReturnType<typeof parseLockKey> & {
-    kind: "skills" | "pi-extensions";
+    kind: CopyDirectoryItemKind;
   };
   plannedHead: string;
   upstreamPin: Awaited<ReturnType<typeof pinCurrentSource>>;
@@ -1281,14 +1577,14 @@ async function revalidateUpdateMergeInputs(input: {
 
 async function assertUpdateMergeNotSkillsShOwned(
   project: string,
-  kind: string,
+  kind: ItemKind,
   name: string,
 ): Promise<void> {
-  if (kind !== "skills") return;
+  if (!installsAtSkillTarget(kind)) return;
   const external = await findSkillsShSkill(project, name);
   if (!external) return;
   throw new PreconditionError(
-    `not updating skills/${name} — ${skillsShConflictMessage(external)}`,
+    `not updating ${kind}/${name} — ${skillsShConflictMessage(external)}`,
   );
 }
 
@@ -1320,7 +1616,7 @@ function mergeUpdateProvenanceError(
   );
 }
 
-interface UpdateContext {
+export interface UpdateContext {
   memo: GitReadMemo;
   project: string;
   manifest: Manifest;
@@ -1328,18 +1624,46 @@ interface UpdateContext {
   dryRun: boolean;
   explicit: boolean;
   externalSkillByName: Map<string, ExternalSkill>;
+  /** D2 guard 5: the populations `assertSkillTargetFree` scans. */
+  projectLock: Lock;
+  localLock: Lock;
+  remotes: RemotesLock;
+  /**
+   * The pins and needs the preflight read, keyed by `pinKey`. The write pass
+   * records exactly these, so a data-repo commit after the consent prompt or
+   * after the re-plan check cannot reach the folder unasked, and the lock
+   * entry pairs files and needs from one read.
+   */
+  approvedPins?: ReadonlyMap<string, ApprovedSource>;
 }
 
 interface UpdatePreflight {
   results: UpdateResult[];
   destructivePlan: DestructiveChangePlan;
+  /** The pin and needs each data target was planned at, keyed by `pinKey`. */
+  pins: Map<string, ApprovedSource>;
+}
+
+/**
+ * One read of a data target: its pin and the needs snapshot taken with it.
+ * The needs come from data-repo HEAD, not from `pin.sourceCommit`: the pin
+ * commit is the last commit that touched the content and excludes sidecar
+ * commits, so a needs-only change would never be seen there.
+ */
+interface ApprovedSource {
+  pin: PinnedSource;
+  needs: Awaited<ReturnType<typeof captureCommittedItemNeeds>>;
+}
+
+function pinKey(scope: "project" | "local", key: string): string {
+  return `${scope}:${key}`;
 }
 
 async function planUpdatePreflight(
   ctx: UpdateContext,
   targets: ScopedTarget[],
-  projectLock: LockV4,
-  localLock: LockV4,
+  projectLock: WritableLock,
+  localLock: WritableLock,
 ): Promise<UpdatePreflight> {
   const dryContext = { ...ctx, dryRun: true };
   const results: UpdateResult[] = [];
@@ -1349,11 +1673,15 @@ async function planUpdatePreflight(
   const fragmentTargets = new Set<FragmentTarget>();
   const fragmentItems = new Map<FragmentTarget, Set<string>>();
 
+  const pins = new Map<string, ApprovedSource>();
   for (const target of targets) {
     const lock = target.scope === "local" ? localLock : projectLock;
     const currentEntry = lock.items[target.key]!;
     const outcome = await updateOneTarget(dryContext, target, currentEntry);
     results.push(outcome.result);
+    if (outcome.approved) {
+      pins.set(pinKey(target.scope, target.key), outcome.approved);
+    }
     snapshotParts.push(
       `update-result:${target.scope}:${target.key}:${JSON.stringify(outcome.result)}`,
     );
@@ -1527,6 +1855,7 @@ async function planUpdatePreflight(
   return {
     results,
     destructivePlan: createDestructiveChangePlan(changes, snapshotParts),
+    pins,
   };
 }
 
@@ -1587,7 +1916,7 @@ interface FragmentContribution {
   lockChanged: boolean;
 }
 
-interface TargetOutcome {
+export interface TargetOutcome {
   result: UpdateResult;
   /** Lock entry to write into the target's scope when this is not a dry run. */
   newEntry?: LockEntryV4;
@@ -1595,16 +1924,38 @@ interface TargetOutcome {
   changed?: boolean;
   /** Fragment items defer their lock write and reconcile after the loop. */
   fragment?: FragmentContribution;
+  /** The pin and needs a data target was planned or written at. */
+  approved?: ApprovedSource;
 }
 
-async function updateOneTarget(
+/**
+ * Plan or write one target. The preflight and the write pass both call it.
+ * Exported for tests, which check that the write pass installs the pin in
+ * `ctx.approvedPins`, and the needs read with it, not a fresh read of the
+ * data repo.
+ */
+export async function updateOneTarget(
   ctx: UpdateContext,
   target: ScopedTarget,
   entry: LockEntryV4,
 ): Promise<TargetOutcome> {
   const { scope, key } = target;
   const parsed = parseLockKey(key);
-  if (parsed.kind === "skills" && ctx.externalSkillByName.has(parsed.name)) {
+  const failed = (cause: unknown): TargetOutcome => ({
+    result: {
+      key,
+      scope,
+      source: parsed.source,
+      kind: parsed.kind,
+      name: parsed.name,
+      action: "error",
+      error: cause instanceof Error ? cause.message : String(cause),
+    },
+  });
+  if (
+    installsAtSkillTarget(parsed.kind) &&
+    ctx.externalSkillByName.has(parsed.name)
+  ) {
     const message = skillsShConflictMessage(
       ctx.externalSkillByName.get(parsed.name)!,
     );
@@ -1612,7 +1963,7 @@ async function updateOneTarget(
     // implicit sweep records the skip and continues.
     if (ctx.explicit) {
       throw new PreconditionError(
-        `not updating skills/${parsed.name} — ${message}`,
+        `not updating ${parsed.kind}/${parsed.name} — ${message}`,
       );
     }
     return {
@@ -1626,23 +1977,222 @@ async function updateOneTarget(
       },
     };
   }
-  try {
-    return entry.source === "data"
-      ? await updateDataTarget(ctx, scope, key, parsed, entry)
-      : await updateSystemTarget(ctx, scope, key, parsed, entry);
-  } catch (err) {
-    return {
-      result: {
-        key,
-        scope,
-        source: parsed.source,
-        kind: parsed.kind,
-        name: parsed.name,
-        action: "error",
-        error: err instanceof Error ? err.message : String(err),
-      },
-    };
+  // D2 guard 5: before the copy-directory write, dry run included —
+  // `updateDataTarget` is the one function both passes call. Outside the
+  // per-item `try` below, mirroring the skills.sh check above: an explicit
+  // `update <ref>` refuses (exit 3 through `PreconditionError`); a bare
+  // sweep records the item as failed and converges the rest.
+  if (installsAtSkillTarget(parsed.kind)) {
+    try {
+      await assertSkillTargetFree(
+        ctx.project,
+        parsed.kind,
+        parsed.name,
+        {
+          project: ctx.projectLock,
+          local: ctx.localLock,
+          remotes: ctx.remotes,
+        },
+        { key },
+      );
+    } catch (err) {
+      if (ctx.explicit) throw err;
+      return failed(err);
+    }
   }
+  // D3 and D7 point 2, outside the per-item `try` for the reason the check
+  // above gives: an explicit `update plugins/<n>` whose new tree renames the
+  // plugin refuses with exit 3, before any write. A skill whose new tree
+  // holds a plugin manifest asks the same way (R1).
+  // One pin for the consent read and for the write: the approved pin in the
+  // write pass, else the current committed tree. Null here means the pin
+  // cannot be built; `updateDataTarget` then reports that failure itself.
+  const approved = ctx.approvedPins?.get(pinKey(scope, key)) ?? null;
+  const pin =
+    entry.source === "data" &&
+    entry.local !== true &&
+    ctx.dataRepo !== undefined
+      ? (approved?.pin ??
+        (await pinCurrentSource(ctx.dataRepo, parsed.kind, parsed.name, {
+          memo: ctx.memo,
+        }).catch(() => null)))
+      : null;
+  let newRuns: PluginRuns | null = null;
+  if (
+    installsAtSkillTarget(parsed.kind) &&
+    entry.source === "data" &&
+    entry.local !== true &&
+    ctx.dataRepo !== undefined &&
+    pin !== null
+  ) {
+    try {
+      newRuns = await shelfPluginNewRuns(
+        ctx.dataRepo,
+        parsed.kind,
+        parsed.name,
+        entry,
+        ctx.memo,
+        { project: ctx.project, scope },
+        pin,
+      );
+    } catch (err) {
+      if (ctx.explicit) throw err;
+      return failed(err);
+    }
+  }
+  try {
+    const outcome =
+      entry.source === "data"
+        ? await updateDataTarget(
+            ctx,
+            scope,
+            key,
+            parsed,
+            entry,
+            pin,
+            approved?.needs ?? null,
+          )
+        : await updateSystemTarget(ctx, scope, key, parsed, entry);
+    // A dry pass carries what the real run asks about. The preflight is a
+    // dry pass, so the command reads the consent points from these rows.
+    if (ctx.dryRun && newRuns !== null && runsHaveEntries(newRuns)) {
+      outcome.result.newRuns = newRuns;
+    }
+    return outcome;
+  } catch (err) {
+    return failed(err);
+  }
+}
+
+/**
+ * The runs entries a shelf plugin's pin move adds (D7 point 2). Null when
+ * the pin would not move, when the new pin cannot be built
+ * (`updateDataTarget` reports that failure itself), or for a skill whose new
+ * tree holds no plugin manifest. Throws the D3 refusal when a plugin's new
+ * tree names another plugin. A skill is never renamed, so a skill that holds
+ * a manifest only reports its new runs.
+ *
+ * Only an added entry asks. A script that changes behind an unchanged hook
+ * line is not a new entry (D7 limit, M2).
+ */
+async function shelfPluginNewRuns(
+  dataRepo: string,
+  kind: SkillTargetKind,
+  name: string,
+  entry: DataLockEntryV4,
+  memo: GitReadMemo,
+  installed: InstalledItem,
+  next: PinnedSource,
+): Promise<PluginRuns | null> {
+  return (
+    (
+      await shelfPluginPinMove(
+        dataRepo,
+        kind,
+        name,
+        entry,
+        memo,
+        installed,
+        next,
+      )
+    )?.newRuns ?? null
+  );
+}
+
+/** Where a shelf item is installed, for the local files its update keeps. */
+interface InstalledItem {
+  project: string;
+  scope: "project" | "local";
+}
+
+/**
+ * `shelfPluginNewRuns` with the new pin it read. The `--merge` path passes
+ * that pin to `updateMergeTarget`, so the tree the user approved is the tree
+ * the merge pins.
+ */
+async function shelfPluginPinMove(
+  dataRepo: string,
+  kind: SkillTargetKind,
+  name: string,
+  entry: DataLockEntryV4,
+  memo: GitReadMemo,
+  installed?: InstalledItem,
+  /** The pin to read; the current committed tree when absent. */
+  given?: PinnedSource,
+): Promise<{ pin: PinnedSource; newRuns: PluginRuns } | null> {
+  const next =
+    given ??
+    (await pinCurrentSource(dataRepo, kind, name, {
+      memo,
+    }).catch(() => null));
+  if (next === null) return null;
+  if (
+    next.sourcePinDigest === entryIdentity(entry) &&
+    next.sourceCommit === entry.sourceCommit
+  ) {
+    return null;
+  }
+  // PIN-8: an unreadable old pin compares against a tree with no files, so
+  // the new tree's entries count as new and the update asks.
+  const previous = await itemTreeEntriesAtCommit(
+    gitTreeSource({
+      repo: dataRepo,
+      kind,
+      name,
+      commit: entry.sourceCommit,
+    }),
+    kind,
+    memo,
+  ).catch(() => []);
+  // The update keeps ignored local files beside the new pinned files, so
+  // the runs reader reads both (row 4). A kept local manifest can arm a hook
+  // the new tree adds.
+  const extras =
+    installed === undefined
+      ? []
+      : (
+          await installedPreservedEntries({
+            project: installed.project,
+            kind,
+            name,
+            scope: installed.scope,
+            managedPaths: new Set([
+              ...previous.map((item) => item.path),
+              ...next.entries.map((item) => item.path),
+            ]),
+          })
+        ).map(pluginExtraFile);
+  if (kind === "plugins") {
+    const change = await pluginChange(
+      dataRepo,
+      name,
+      previous,
+      next.entries,
+      extras,
+    );
+    return { pin: next, newRuns: change.newRuns };
+  }
+  const newRuns = await itemPluginNewRuns(
+    dataRepo,
+    kind,
+    previous,
+    next.entries,
+    extras,
+  );
+  return newRuns === null ? null : { pin: next, newRuns };
+}
+
+/** A shelf row's new runs as a D7 point 2 consent point. */
+function pinMovePoints(result: UpdateResult): PluginConsentPoint[] {
+  return result.source === "data" && result.newRuns !== undefined
+    ? [
+        {
+          kind: "pin-move",
+          ref: `${result.kind}/${result.name}`,
+          runs: result.newRuns,
+        },
+      ]
+    : [];
 }
 
 async function updateDataTarget(
@@ -1651,6 +2201,10 @@ async function updateDataTarget(
   key: string,
   parsed: ReturnType<typeof parseLockKey>,
   entry: DataLockEntryV4,
+  /** The pin `updateOneTarget` read for consent, or null to resolve here. */
+  givenPin: PinnedSource | null,
+  /** The approved needs snapshot that goes with `givenPin`, or null. */
+  givenNeeds: ApprovedSource["needs"] | null,
 ): Promise<TargetOutcome> {
   if (scope === "local") {
     assertLocalScopeSupported(parsed.kind, parsed.name, "update --local");
@@ -1698,19 +2252,24 @@ async function updateDataTarget(
   // version 4 there is no second identity to keep in step: the working tree is
   // not consulted, so a checkout filter or an index bit cannot move the value
   // this records.
-  const pin = await pinCurrentSource(ctx.dataRepo, parsed.kind, parsed.name, {
-    memo: ctx.memo,
-  });
+  const pin =
+    givenPin ??
+    (await pinCurrentSource(ctx.dataRepo, parsed.kind, parsed.name, {
+      memo: ctx.memo,
+    }));
   const sha = pin.sourcePinDigest;
   const sourceCommit = pin.sourceCommit;
   if (isCopyDirectoryItemKind(parsed.kind)) {
+    // D2 guard 5 already ran in `updateOneTarget`, the caller both the dry
+    // and the real pass share, before this function was reached at all.
     await assertNoDestinationCollisions(
       `${parsed.kind}/${parsed.name}`,
       installedPath(ctx.project, parsed.kind, parsed.name),
       pin.entries.map((treeEntry) => treeEntry.path),
     );
   }
-  const currentSnapshot = await captureCommittedItemNeeds(ctx.dataRepo, item);
+  const currentSnapshot =
+    givenNeeds ?? (await captureCommittedItemNeeds(ctx.dataRepo, item));
   const lockedNeeds = entry.needs ?? null;
   const needsWouldChange =
     lockedNeeds === null || !needsEqual(lockedNeeds, currentSnapshot.needs);
@@ -1786,6 +2345,7 @@ async function updateDataTarget(
         ...(ctx.dryRun && { dryRun: true as const }),
       },
       fragment: { key, entry: newEntry, targets, lockChanged: lockWouldChange },
+      approved: { pin, needs: currentSnapshot },
     };
   }
 
@@ -1891,6 +2451,7 @@ async function updateDataTarget(
     },
     newEntry,
     changed: lockWouldChange,
+    approved: { pin, needs: currentSnapshot },
   };
 }
 
@@ -2062,6 +2623,11 @@ function printUpdateDetails(r: UpdateResult): void {
   if (r.plannedSha) console.log(`  planned: ${shortIdentity(r.plannedSha)}`);
   if (r.sourceCommit) console.log(`  source commit: ${r.sourceCommit}`);
   if (r.cliVersion) console.log(`  cli version: ${r.cliVersion}`);
+  if (r.newRuns !== undefined) {
+    for (const line of newPluginRunsField("would ask", r.newRuns)) {
+      console.log(line);
+    }
+  }
   printRuntimeWarnings(r.runtimeWarnings);
 }
 

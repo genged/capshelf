@@ -2,13 +2,19 @@ import type { ItemKind } from "./master";
 import type { Manifest } from "./manifest";
 import { addManifestName, removeManifestName } from "./manifest";
 import { entryIdentity } from "./lock";
-import type { DataLockEntry, DataLockEntryV4, Lock, LockV4 } from "./lock";
+import type {
+  DataLockEntry,
+  DataLockEntryV4,
+  Lock,
+  WritableLock,
+} from "./lock";
 import type { LocalConfig } from "./local-config";
 import type { RuntimeWarning } from "./runtime-warnings";
 import type { PinnedSource } from "./pin";
 import type { ItemRef } from "./item-ref";
 import type { PreviousOwnerKind } from "./previous-owner";
 import type { SidecarProvenance } from "./metadata";
+import type { NamedFile } from "./merge-tree";
 import { claudeSkillPath, codexSkillPath, installedPath } from "./installed";
 
 export type Scope = "project" | "local";
@@ -56,6 +62,21 @@ export interface AdoptOptions {
    * identity.
    */
   provenance?: SidecarProvenance;
+  /**
+   * Called with the adoption candidate, the exact files the adopt commits,
+   * before any data-repo write. A check that throws stops the adopt. The
+   * commit proof then refuses any commit whose tree differs from these files,
+   * so a check over them binds the commit.
+   */
+  checkCandidate?: (candidate: AdoptionCandidate) => Promise<void>;
+}
+
+/** The files an adopt commits, read once from the installed folder. */
+export interface AdoptionCandidate {
+  files: NamedFile[];
+  snapshot: ItemSnapshot;
+  /** The installed folder the snapshot was read from. */
+  path: string;
 }
 
 export interface MoveScopeState {
@@ -119,12 +140,12 @@ export function dataEntryOrThrow(
 
 /**
  * The same narrowing for a writer, which by definition runs against a lock
- * `assertLockV4` has already accepted. Keeping it explicit means a promote
+ * `assertWritableLock` has already accepted. Keeping it explicit means a promote
  * path can read `entry.sourcePinDigest` as a `string` rather than defending
  * against a legacy shape it can never see.
  */
 export function dataEntryV4OrThrow(
-  entry: LockV4["items"][string] | undefined,
+  entry: WritableLock["items"][string] | undefined,
   key: string,
 ): DataLockEntryV4 {
   if (entry?.source !== "data") {

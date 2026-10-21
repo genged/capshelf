@@ -231,7 +231,7 @@ cmp -s "$TMP/remotes-before.json" "$P/.capshelf/remotes.lock.json"
 
 # --- status: the remote group, offline, never checked ---
 (cd "$P" && "${CLI[@]}" status > "$TMP/status.txt")
-assert_fixed_contains 'remote/  (skills pinned to repos outside your shelf)' "$TMP/status.txt"
+assert_fixed_contains 'remote/  (items pinned to repos outside your shelf)' "$TMP/status.txt"
 assert_fixed_contains 'never checked' "$TMP/status.txt"
 (cd "$P" && "${CLI[@]}" status --strict --json >/dev/null)
 

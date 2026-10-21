@@ -23,6 +23,8 @@ export interface PluginSpec {
   manifestName?: string;
   /** The manifest's `skills` field, when set. */
   manifestSkills?: string | string[];
+  /** The manifest's `description` field, when set. */
+  manifestDescription?: string;
   skills: Array<{
     name: string;
     description: string;
@@ -58,6 +60,9 @@ export async function writePlugins(
       const manifest: ConfigObject = { name: plugin.manifestName };
       if (plugin.manifestSkills !== undefined) {
         manifest.skills = plugin.manifestSkills;
+      }
+      if (plugin.manifestDescription !== undefined) {
+        manifest.description = plugin.manifestDescription;
       }
       await writeFile(
         join(manifestDir, "plugin.json"),

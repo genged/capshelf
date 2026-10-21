@@ -220,6 +220,11 @@ export async function scanUntrackedShareItems(opts: {
         opts.projectLock.items[key] !== undefined ||
         opts.localLock.items[key] !== undefined,
     );
+  // A plugin installs at the same folder as a skill (spec D2), so a folder
+  // under `.agents/skills/` that either lock tracks as `plugins/<n>` is the
+  // plugin's install, not an untracked skill.
+  const trackedAtSkillTarget = (name: string): boolean =>
+    (["skills", "plugins"] as const).some((kind) => tracked(kind, name));
 
   const skillDirs =
     opts.manifest.installMode === "claude-only"
@@ -248,7 +253,11 @@ export async function scanUntrackedShareItems(opts: {
       }
     }
     for (const name of [...names].sort()) {
-      if (tracked(kind, name)) continue;
+      if (
+        kind === "skills" ? trackedAtSkillTarget(name) : tracked(kind, name)
+      ) {
+        continue;
+      }
       pending.push(copyItemCandidate(opts, kind, name));
     }
   }

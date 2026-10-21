@@ -160,9 +160,21 @@ export const LockV4Schema = withNeedsPairing(
   }),
 );
 
-export const LockSchema = LockV4Schema;
+/**
+ * Version 5 is version 4 plus the `plugins` item kind (M10). The entry shape
+ * does not change. Every writer requires version 5, as every writer required
+ * version 4 before it.
+ */
+export const LockV5Schema = withNeedsPairing(
+  z.object({
+    version: z.literal(5),
+    items: z.record(z.string(), LockEntryV4Schema).default({}),
+  }),
+);
 
-export const LOCK_VERSION = 4 as const;
+export const LockSchema = LockV5Schema;
+
+export const LOCK_VERSION = 5 as const;
 
 type PersistedDataLockEntryV3 = z.infer<typeof DataLockEntryV3Schema>;
 type PersistedDataLockEntryV4 = z.infer<typeof DataLockEntryV4Schema>;
@@ -204,23 +216,35 @@ export interface LockV3 {
   items: Record<string, LockEntry>;
 }
 
+/**
+ * A lock written by version 4. Readable, never writable: version 5 is the
+ * only writable shape now.
+ */
 export interface LockV4 {
   version: 4;
   items: Record<string, LockEntryV4>;
 }
 
-/**
- * The runtime lock. Read-only and non-lock-writing commands accept either
- * version; every writer narrows to `LockV4` through `assertLockV4` first, so
- * an ordinary command can never silently upgrade a project.
- */
-export type Lock = LockV3 | LockV4;
+export interface LockV5 {
+  version: 5;
+  items: Record<string, LockEntryV4>;
+}
 
-export function emptyLock(): LockV4 {
+/**
+ * The runtime lock. Read-only and non-lock-writing commands accept any
+ * version; every writer narrows to `WritableLock` through `assertWritableLock`
+ * first, so an ordinary command can never silently upgrade a project.
+ */
+export type Lock = LockV3 | LockV4 | LockV5;
+
+/** The one shape a writer may save. */
+export type WritableLock = LockV5;
+
+export function emptyLock(): WritableLock {
   return { version: LOCK_VERSION, items: {} };
 }
 
-export function isLockV4(lock: Lock): lock is LockV4 {
+export function isWritableLock(lock: Lock): lock is WritableLock {
   return lock.version === LOCK_VERSION;
 }
 
@@ -231,8 +255,8 @@ export function isLockV4(lock: Lock): lock is LockV4 {
  * entry in the file as a side effect of updating one item, and would surface an
  * unrelated blocker as an `add`, `move`, or `keep-local` failure.
  */
-export function assertLockV4(lock: Lock, verb: string): LockV4 {
-  if (isLockV4(lock)) return lock;
+export function assertWritableLock(lock: Lock, verb: string): WritableLock {
+  if (isWritableLock(lock)) return lock;
   throw new PreconditionError(
     `this project's lock is version ${lock.version}; ${verb} writes lock version ${LOCK_VERSION}`,
     {
@@ -260,7 +284,10 @@ export async function loadLock(project: string): Promise<Lock> {
   return parseLock(document);
 }
 
-export async function saveLock(project: string, lock: LockV4): Promise<void> {
+export async function saveLock(
+  project: string,
+  lock: WritableLock,
+): Promise<void> {
   const p = lockPath(project);
   await mkdir(dirname(p), { recursive: true });
   await atomicWriteFile(p, serializeLock(lock));
@@ -281,7 +308,7 @@ export async function loadLocalLock(project: string): Promise<Lock> {
 
 export async function saveLocalLock(
   project: string,
-  lock: LockV4,
+  lock: WritableLock,
 ): Promise<void> {
   const p = localLockPath(project);
   await mkdir(dirname(p), { recursive: true });
@@ -289,12 +316,12 @@ export async function saveLocalLock(
 }
 
 /**
- * Serialize a complete v4 candidate and strict-parse it back. `lock migrate`
+ * Serialize a complete v5 candidate and strict-parse it back. `lock migrate`
  * relies on this being the only writer: a serializer that dropped a digest has
  * to fail here, before any file is published, rather than after.
  */
-export function serializeLock(lock: LockV4): string {
-  const parsed = LockV4Schema.parse({ ...lock, version: LOCK_VERSION });
+export function serializeLock(lock: WritableLock): string {
+  const parsed = LockV5Schema.parse({ ...lock, version: LOCK_VERSION });
   return `${JSON.stringify(parsed, null, 2)}\n`;
 }
 
@@ -309,9 +336,34 @@ export function parseLock(value: ConfigValue): Lock {
       `lock version ${version} is newer than this ${PRODUCT_NAME} supports — upgrade ${PRODUCT_NAME}`,
     );
   }
-  if (version === LOCK_VERSION) return LockV4Schema.parse(value);
-  if (version === 2) return normalizeV2(LockV2Schema.parse(value));
-  return LockV3Schema.parse(value);
+  const lock: Lock =
+    version === LOCK_VERSION
+      ? LockV5Schema.parse(value)
+      : version === 4
+        ? LockV4Schema.parse(value)
+        : version === 2
+          ? normalizeV2(LockV2Schema.parse(value))
+          : LockV3Schema.parse(value);
+  refusePluginKeysBefore5(lock);
+  return lock;
+}
+
+/**
+ * D12: an older binary strips an unknown manifest array with no error, so a
+ * plugin item is only safe once the lock version also gates it loudly. A
+ * lock below version 5 refuses to hold a `plugins` key, which an older
+ * `lock migrate` run could otherwise carry across unnoticed.
+ */
+function refusePluginKeysBefore5(lock: Lock): void {
+  if (lock.version === LOCK_VERSION) return;
+  const key = Object.keys(lock.items).find(
+    (k) => k.split("/")[1] === "plugins",
+  );
+  if (key === undefined) return;
+  throw new PreconditionError(
+    `lock version ${lock.version} holds ${key}; plugin items need lock version ${LOCK_VERSION}`,
+    { hint: `${PRODUCT_NAME} lock migrate` },
+  );
 }
 
 /**

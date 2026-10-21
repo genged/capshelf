@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
+import { relative } from "node:path";
 import {
   assertDestructivePlanUnchanged,
   confirmDestructiveChanges,
@@ -21,7 +22,7 @@ import {
   removeManifestName,
 } from "../manifest";
 import {
-  assertLockV4,
+  assertWritableLock,
   loadLocalLock,
   loadLock,
   saveLocalLock,
@@ -30,6 +31,7 @@ import {
 } from "../lock";
 import { CliError, NotFoundError, PreconditionError } from "../errors";
 import {
+  installsAtSkillTarget,
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
   isFragmentItemKind,
@@ -65,15 +67,17 @@ import { removeSubagentOutputs } from "../subagents";
 import { remoteCacheState } from "../remote-cache";
 import { remoteTreeSource } from "../remote-discovery";
 import {
-  REMOTE_ITEM_KIND,
   loadRemotesLock,
   parseRemoteKey,
-  remoteKeysForRef,
+  remoteKeysForNamedRef,
   saveRemotesLock,
 } from "../remotes-lock";
 import type { RemotesLock } from "../remotes-lock";
 import { assertRefNotSplitAcrossPopulations } from "../targets";
 import type { Manifest } from "../manifest";
+import type { Lock } from "../lock";
+import { skillTargetOwnerLabel, skillTargetOwners } from "../skill-target";
+import type { SkillTargetOwner } from "../skill-target";
 
 interface RmOptions {
   json?: boolean;
@@ -107,7 +111,7 @@ export function registerRm(program: Command): void {
       // PIN-12: the gate goes before any deletion. `rm --yes` would otherwise
       // delete the installed files and only then discover it cannot write the
       // lock, leaving the project inconsistent.
-      assertLockV4(lock, `${PRODUCT_NAME} rm`);
+      assertWritableLock(lock, `${PRODUCT_NAME} rm`);
       const localConfig = opts.local ? await loadLocalConfig(project) : null;
       const oldManifest = structuredClone(manifest);
       const oldLock = structuredClone(lock);
@@ -117,17 +121,29 @@ export function registerRm(program: Command): void {
         return parsed.source === "data";
       });
 
-      if (ref.kind === undefined || ref.kind === "skills") {
+      // Before the skills.sh check. A tracked plugin row beside a skills.sh
+      // row is removed with the folder kept (D2 guard 5): skills.sh never
+      // installs a plugin, so the folder is the other tool's. A skill keeps
+      // the refusal, because skills.sh owns that skill.
+      const remotes = await loadRemotesLock(project);
+      const remoteKeys = remoteKeysForNamedRef(remotes, ref);
+      if (ref.kind === undefined || installsAtSkillTarget(ref.kind)) {
         const external = await findSkillsShSkill(project, ref.name);
-        const hasLockedSkill = dataKeys.some(
-          (key) => parseLockKey(key).kind === "skills",
+        const hasLockedSkillTarget = dataKeys.some((key) =>
+          installsAtSkillTarget(parseLockKey(key).kind),
         );
+        const tracksPlugin =
+          remoteKeys.some((key) => parseRemoteKey(key).kind === "plugins") ||
+          dataKeys.some((key) => parseLockKey(key).kind === "plugins");
         if (
           external &&
-          (ref.kind === "skills" || hasLockedSkill || dataKeys.length === 0)
+          !tracksPlugin &&
+          (ref.kind !== undefined ||
+            hasLockedSkillTarget ||
+            dataKeys.length === 0)
         ) {
           throw new PreconditionError(
-            `not removing skills/${ref.name} — ${skillsShConflictMessage(external)}`,
+            `not removing ${ref.kind ?? "skills"}/${ref.name} — ${skillsShConflictMessage(external)}`,
           );
         }
       }
@@ -145,8 +161,6 @@ export function registerRm(program: Command): void {
 
       // Before the not-tracked error: a remote row is in neither capshelf lock
       // by A3, so `lockKeysForRef` above found nothing for one.
-      const remotes = await loadRemotesLock(project);
-      const remoteKeys = remoteKeysForRef(remotes, ref);
       // Two populations count as much as two kinds, and `rm` is exactly the
       // verb a user reaches for in the two-owner state. Whichever side won,
       // the other was left orphaned: the shelf path deleted the install and
@@ -164,11 +178,13 @@ export function registerRm(program: Command): void {
         remoteKeys,
       );
       if (dataKeys.length === 0 && remoteKeys.length > 0) {
-        await removeRemoteSkill({
+        await removeRemoteItem({
           project,
           manifest,
           key: remoteKeys[0]!,
           remotes,
+          projectLock: await loadLock(project),
+          localLock: await loadLocalLock(project),
           json: opts.json === true,
           yes: opts.yes === true,
         });
@@ -224,6 +240,39 @@ export function registerRm(program: Command): void {
       if (entry?.source !== "data") {
         throw new Error(`expected data lock entry for data/${kind}/${name}`);
       }
+
+      // D2 guard 5: computed before any plan or consent. A folder this item
+      // does not own must never enter the destructive-change preflight below
+      // — the other owner's content would be reported as this item's local
+      // edits, demanding `--yes` for drift this item did not create — and
+      // must never be deleted.
+      let keptBy: SkillTargetOwner | null = null;
+      let excludesNeeded = false;
+      if (isCopyDirectoryItemKind(kind) && installsAtSkillTarget(kind)) {
+        const otherOwners = (
+          await skillTargetOwners(project, name, {
+            project: opts.local ? await loadLock(project) : lock,
+            local: opts.local ? lock : await loadLocalLock(project),
+            remotes,
+          })
+        ).filter(
+          (owner) =>
+            // An unmanaged folded sibling is another folder: it does not
+            // keep this item's own folder.
+            owner.owner !== "unmanaged" &&
+            // Only the selected scope's entry is this item. The same key in
+            // the other scope (an interrupted `move`) still owns the folder.
+            !(
+              owner.owner === (opts.local ? "local" : "project") &&
+              owner.key === dataKey(kind, name)
+            ),
+        );
+        keptBy = otherOwners[0] ?? null;
+        excludesNeeded = otherOwners.some(
+          (owner) => owner.owner === "local" || owner.owner === "remote",
+        );
+      }
+
       // Resolved lazily: fragment and subagent removal read the data repo to
       // rebuild their outputs, but a copy directory is deleted from the
       // project alone. Requiring it unconditionally made `rm` impossible in
@@ -319,23 +368,31 @@ export function registerRm(program: Command): void {
           changes.push(...planned.changes);
           snapshotParts.push(...planned.snapshotParts);
         } else if (isCopyDirectoryItemKind(kind)) {
-          const planned = await planCopyDirectoryRemoval({
-            project,
-            currentSource: contentSourceOrNull({
-              entry,
+          // Kept: the folder belongs to another owner, so it is never part
+          // of this item's destructive-change plan. Planning it anyway would
+          // report that owner's content as this item's local edits and
+          // demand `--yes` for drift this item did not create.
+          if (keptBy) {
+            snapshotParts.push(`kept-by:${JSON.stringify(keptBy)}`);
+          } else {
+            const planned = await planCopyDirectoryRemoval({
+              project,
+              currentSource: contentSourceOrNull({
+                entry,
+                kind,
+                name,
+                repo: await optionalDataRepo(),
+              }),
+              manifest: oldManifest,
               kind,
               name,
-              repo: await optionalDataRepo(),
-            }),
-            manifest: oldManifest,
-            kind,
-            name,
-            key: dataKey(kind, name),
-            scope,
-            reviewCommand,
-          });
-          changes.push(...planned.changes);
-          snapshotParts.push(...planned.snapshotParts);
+              key: dataKey(kind, name),
+              scope,
+              reviewCommand,
+            });
+            changes.push(...planned.changes);
+            snapshotParts.push(...planned.snapshotParts);
+          }
         } else if (isCopyTargetFileItemKind(kind)) {
           const planned = await planSubagentDestruction({
             project,
@@ -400,26 +457,32 @@ export function registerRm(program: Command): void {
         }
       } else if (isCopyDirectoryItemKind(kind)) {
         path = installedPath(project, kind, name, oldManifest.installMode);
-        removed = await removeInstallAliases(
-          project,
-          kind,
-          name,
-          path,
-          oldManifest.installMode,
-        );
-        if (existsSync(path)) {
-          try {
-            await rmTreeWithRetries(path);
-          } catch (err) {
-            const detail = err instanceof Error ? err.message : String(err);
-            throw new CliError(`could not delete ${path} (${detail})`, {
-              hint:
-                "another process may be writing to that directory (an agent runtime watching it?) — stop it and retry,\n" +
-                "  or delete the directory manually and re-run this command to finish untracking",
-              cause: err,
-            });
+        // D2 guard 5: `keptBy` is computed above, before any plan or
+        // consent. When another owner still claims this folder, untrack
+        // this item but leave the folder — and its compatibility alias —
+        // alone; they are not this item's to delete.
+        if (!keptBy) {
+          removed = await removeInstallAliases(
+            project,
+            kind,
+            name,
+            path,
+            oldManifest.installMode,
+          );
+          if (existsSync(path)) {
+            try {
+              await rmTreeWithRetries(path);
+            } catch (err) {
+              const detail = err instanceof Error ? err.message : String(err);
+              throw new CliError(`could not delete ${path} (${detail})`, {
+                hint:
+                  "another process may be writing to that directory (an agent runtime watching it?) — stop it and retry,\n" +
+                  "  or delete the directory manually and re-run this command to finish untracking",
+                cause: err,
+              });
+            }
+            removed = true;
           }
-          removed = true;
         }
       } else if (isCopyTargetFileItemKind(kind)) {
         const paths = await removeSubagentOutputs(
@@ -434,10 +497,17 @@ export function registerRm(program: Command): void {
         throw new Error(`no removal strategy for ${kind}/${name}`);
       }
 
-      const writableNextLock = assertLockV4(nextLock, `${PRODUCT_NAME} rm`);
+      const writableNextLock = assertWritableLock(
+        nextLock,
+        `${PRODUCT_NAME} rm`,
+      );
       if (opts.local) {
         if (!nextLocalConfig) throw new Error("expected local manifest");
-        await removeLocalExcludes(project, kind, name);
+        // The exclude lines name the shared folder (`.agents/skills/<n>`,
+        // `.claude/skills/<n>`), identical for `skills/<n>` and
+        // `plugins/<n>`. They stay while a local-scope entry or a remote row
+        // still needs them. A project-scope owner needs none.
+        if (!excludesNeeded) await removeLocalExcludes(project, kind, name);
         await saveLocalConfig(project, nextLocalConfig);
         await saveLocalLock(project, writableNextLock);
       } else {
@@ -455,6 +525,7 @@ export function registerRm(program: Command): void {
               name,
               path,
               removedFiles: removed,
+              ...(keptBy && { keptBy: skillTargetOwnerLabel(keptBy) }),
             },
             null,
             2,
@@ -465,7 +536,11 @@ export function registerRm(program: Command): void {
       console.log(
         `✓ removed ${opts.local ? "local/" : ""}data/${kind}/${name}`,
       );
-      if (removed) {
+      if (keptBy) {
+        console.log(
+          `  kept ${relative(project, path)}: it is installed by ${skillTargetOwnerLabel(keptBy)}`,
+        );
+      } else if (removed) {
         console.log(
           `  ${isFragmentItemKind(kind) ? "updated" : "deleted"} ${path}`,
         );
@@ -474,8 +549,14 @@ export function registerRm(program: Command): void {
 }
 
 /**
- * Remove a remote skill: the install, its compatibility alias, its exclude
- * lines, and its row.
+ * Remove a remote skill or plugin: the install, its compatibility alias, its
+ * exclude lines, and its row.
+ *
+ * D2 guard 5, as the shelf path applies it: when another owner claims the
+ * folder, `rm` keeps the folder and its alias, leaves them out of the
+ * destructive plan, and deletes only the row. The exclude lines name the
+ * shared folder, so they stay when a local-scope entry or another remote row
+ * still needs them. A project-scope owner needs no exclude lines.
  *
  * A cold cache must not stop this. The locked file set is only used to label a
  * path as reproducible managed content rather than unique local state, so when
@@ -483,29 +564,55 @@ export function registerRm(program: Command): void {
  * named in the prompt, and is deleted only with consent. Failing instead would
  * strand the item in exactly the state `rm` exists for.
  */
-async function removeRemoteSkill(input: {
+async function removeRemoteItem(input: {
   project: string;
   manifest: Manifest;
   key: string;
   remotes: RemotesLock;
+  projectLock: Lock;
+  localLock: Lock;
   json: boolean;
   yes: boolean;
 }): Promise<void> {
   const { project, key, remotes } = input;
-  const { name } = parseRemoteKey(key);
+  const { kind, name } = parseRemoteKey(key);
   const entry = remotes.items[key]!;
   const cache = remoteCacheState(entry.upstream);
-  const reviewCommand = `${PRODUCT_NAME} status ${REMOTE_ITEM_KIND}/${name} --diff-view installed`;
+  const reviewCommand = `${PRODUCT_NAME} status ${kind}/${name} --diff-view installed`;
+  const otherOwners = (
+    await skillTargetOwners(project, name, {
+      project: input.projectLock,
+      local: input.localLock,
+      remotes,
+    })
+  ).filter(
+    (owner) =>
+      owner.owner !== "unmanaged" &&
+      !(owner.owner === "remote" && owner.key === key),
+  );
+  const keptBy = otherOwners[0] ?? null;
+  const excludesNeeded = otherOwners.some(
+    (owner) => owner.owner === "local" || owner.owner === "remote",
+  );
   const planRemoval = async (): Promise<
     ReturnType<typeof createDestructiveChangePlan>
   > => {
+    if (keptBy) {
+      return createDestructiveChangePlan(
+        [],
+        [
+          `kept-by:${JSON.stringify(keptBy)}`,
+          `remote-entry:${JSON.stringify(entry)}`,
+        ],
+      );
+    }
     const planned = await planCopyDirectoryRemoval({
       project,
       currentSource: cache.present
         ? remoteTreeSource(cache.path, entry.sourceCommit, entry.subpath)
         : null,
       manifest: input.manifest,
-      kind: REMOTE_ITEM_KIND,
+      kind,
       name,
       key,
       scope: "local",
@@ -524,39 +631,37 @@ async function removeRemoteSkill(input: {
       json: input.json,
       yes: input.yes,
       dryRun: false,
-      rerunCommand: `${PRODUCT_NAME} rm ${REMOTE_ITEM_KIND}/${name} --yes`,
+      rerunCommand: `${PRODUCT_NAME} rm ${kind}/${name} --yes`,
     }))
   ) {
     return;
   }
   assertDestructivePlanUnchanged(accepted, await planRemoval());
 
-  const path = installedPath(
-    project,
-    REMOTE_ITEM_KIND,
-    name,
-    input.manifest.installMode,
-  );
-  let removed = await removeInstallAliases(
-    project,
-    REMOTE_ITEM_KIND,
-    name,
-    path,
-    input.manifest.installMode,
-  );
-  if (existsSync(path)) {
-    try {
-      await rmTreeWithRetries(path);
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      throw new CliError(`could not delete ${path} (${detail})`, {
-        hint: "another process may be writing to that directory — stop it and retry",
-        cause: err,
-      });
+  const path = installedPath(project, kind, name, input.manifest.installMode);
+  let removed = false;
+  if (!keptBy) {
+    removed = await removeInstallAliases(
+      project,
+      kind,
+      name,
+      path,
+      input.manifest.installMode,
+    );
+    if (existsSync(path)) {
+      try {
+        await rmTreeWithRetries(path);
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new CliError(`could not delete ${path} (${detail})`, {
+          hint: "another process may be writing to that directory — stop it and retry",
+          cause: err,
+        });
+      }
+      removed = true;
     }
-    removed = true;
   }
-  await removeLocalExcludes(project, REMOTE_ITEM_KIND, name);
+  if (!excludesNeeded) await removeLocalExcludes(project, kind, name);
   delete remotes.items[key];
   await saveRemotesLock(project, remotes);
 
@@ -566,11 +671,12 @@ async function removeRemoteSkill(input: {
         {
           source: "remote",
           scope: "local",
-          kind: REMOTE_ITEM_KIND,
+          kind,
           name,
           upstream: entry.upstream,
           path,
           removedFiles: removed,
+          ...(keptBy && { keptBy: skillTargetOwnerLabel(keptBy) }),
         },
         null,
         2,
@@ -579,5 +685,11 @@ async function removeRemoteSkill(input: {
     return;
   }
   console.log(`✓ removed ${key}`);
-  if (removed) console.log(`  deleted ${path}`);
+  if (keptBy) {
+    console.log(
+      `  kept ${relative(project, path)}: it is installed by ${skillTargetOwnerLabel(keptBy)}`,
+    );
+  } else if (removed) {
+    console.log(`  deleted ${path}`);
+  }
 }

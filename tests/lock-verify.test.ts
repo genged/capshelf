@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { verifyDataLockEntries } from "../src/lock-verify";
-import { dataKey, type LockV4 } from "../src/lock";
+import { dataKey, type WritableLock } from "../src/lock";
 import { currentPin } from "./pin-fixtures";
 import { ManifestSchema, type Manifest } from "../src/manifest";
 import { captureCommittedItemNeeds } from "../src/metadata";
@@ -28,10 +28,13 @@ function manifestWith(name: string): Manifest {
 // The pin `add` records comes from the committed tree; set-data re-derives it
 // at the same commit through `verifyDataLockEntries`. The two must agree,
 // including file ordering and sidecar exclusion.
-async function lockFromAdd(dataRepo: string, name: string): Promise<LockV4> {
+async function lockFromAdd(
+  dataRepo: string,
+  name: string,
+): Promise<WritableLock> {
   const _repoRelPath = `skills/${name}`;
   return {
-    version: 4,
+    version: 5,
     items: {
       [dataKey("skills", name)]: {
         source: "data",

@@ -1,8 +1,8 @@
 # capshelf — command reference
 
-`capshelf` keeps reusable coding-agent configuration — skills, subagents, Pi
-extensions, and settings/MCP fragments — in a Git-backed **data repo**, and
-materializes selected items into individual projects. The data repo is a
+`capshelf` keeps reusable coding-agent configuration in a Git-backed **data
+repo**: skills, Claude Code plugins, subagents, Pi extensions, and settings/MCP
+fragments. It materializes selected items into individual projects. The data repo is a
 separate repository from the projects that read it, and usually serves many of
 them. Each project pins what it installed, so an edit in one project never
 disturbs another until that project asks for it.
@@ -42,7 +42,7 @@ The release-script and source install paths are in the
 4. **Read-only by default for foreign projects.** `update` in project A cannot affect project B. `share` and `promote` write only the bound data repo and the calling project; B only changes when it runs `update` or `add`.
 5. **No silent writes.** Mutating commands show what they touched; use `--json` where scripts need structured output.
 
-Claude custom commands are modeled as skills. capshelf does not manage `.claude/commands/`; create `skills/<name>/SKILL.md` for a reusable `/<name>` entry. Project-local Pi extensions are modeled as `pi-extensions/<name>` copy items. Claude and Codex custom agents are one project-scoped `subagents/<name>` item.
+Claude custom commands are modeled as skills. capshelf does not manage `.claude/commands/`; create `skills/<name>/SKILL.md` for a reusable `/<name>` entry. Project-local Pi extensions are modeled as `pi-extensions/<name>` copy items. Claude and Codex custom agents are one project-scoped `subagents/<name>` item. A whole Claude Code plugin directory is one `plugins/<name>` copy item. See Plugins below.
 
 Capshelf metadata lives under `.capshelf/` at the project root. `.capshelf/capshelf.json` and `.capshelf/capshelf.lock.json` are committed; `.capshelf/local.json` and `.capshelf/local.lock.json` are gitignored by `.capshelf/.gitignore` and store the per-machine data repo path plus local-only item intent and pins. By default, skills are installed as real directories under `.agents/skills/<name>` and exposed to Claude through per-skill symlinks at `.claude/skills/<name>`. Use `capshelf init --claude-only` only when a project should install directly under `.claude/` without `.agents` symlinks.
 
@@ -57,13 +57,14 @@ they also run outside any project when a data repo is given via `--data` or
 `$CAPSHELF_HOME`, so a shelf can be evaluated before it is adopted. Inside a
 project they use its binding and show install/tracking status as usual.
 
-Personal Claude skills, skills.sh-managed skills, and Claude plugins are
-external state that capshelf reports without taking ownership — see
-Coexisting with other tools below.
+Personal Claude skills, skills.sh-managed skills, and Claude marketplace
+plugins are external state. Capshelf reports them and does not take ownership.
+See Coexisting with other tools below. A plugin that capshelf installs as a
+`plugins/<name>` item is not external state. Its record is a capshelf lock.
 
 Most item arguments accept either a bare unique name (`hello`) or an explicit kind/name ref (`skills/hello`). Lock keys such as `data/skills/hello` are internal and are not accepted as normal item refs.
 
-Mutating commands only touch item files that are tracked in `.capshelf/capshelf.lock.json` or `.capshelf/local.lock.json`. `add` refuses to overwrite an existing untracked target, `init` refuses to overwrite an existing untracked system target, and `rm` deletes only locked data items. Copy-directory items—skills and Pi extensions—can use either committed project scope or clone-local scope. Use `share <item> --to local|project` to choose when adopting an unmanaged copy.
+Mutating commands only touch item files that are tracked in `.capshelf/capshelf.lock.json` or `.capshelf/local.lock.json`. `add` refuses to overwrite an existing untracked target, `init` refuses to overwrite an existing untracked system target, and `rm` deletes only locked data items. Copy-directory items (skills, plugins, and Pi extensions) can use either committed project scope or clone-local scope. Use `share <item> --to local|project` to choose when adopting an unmanaged copy.
 
 Item names of every kind reject control characters (C0, DEL, and C1),
 backslashes, a leading `/` or `-`, and `.` or `..` path segments. Copy-item
@@ -227,18 +228,18 @@ registered.
 | `ls` | list items in master plus user-level runtime skills by default, in this project (`--here`), or user-level runtime skills only (`--user`); master/project listings show descriptions and `#tags` from item metadata; `--tag` filters master/project listings; appends a `bundles/` section for data-repo bundles | implemented |
 | `show <item>` | print metadata + content for one item, including relations and current/locked declared needs, plus runtime target coverage for MCP and subagents; `--target` narrows to one runtime | implemented |
 | `search <query...>` | search available items (data repo + system) and bundles by name, tags, description, and content; supports `--kind` and `--json`; zero matches exit 0 | implemented |
-| `status [<item>]` | drift / update report plus orthogonal `needsState` freshness and locked needs; subagent JSON includes deterministic per-target state; a sub-line names any runtime target an MCP or subagent item does not cover; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` shows locked-to-installed and locked-to-upstream comparisons; `--diff-view installed\|upstream\|all` selects a comparison; `--check-upstream` fetches every tracked remote repository and reports which remote skills moved | implemented |
-| `add [item]` | install a new item from the bound data repo, materializing exactly what the pin contains; with no item, opens the interactive picker (see The picker); MCP and subagent installs report per-runtime target coverage; an already-installed standalone item is a byte- and lock-stable no-op; `--local` installs a clone-local copy item; `--yes` authorizes collateral fragment-output loss for a new fragment, standalone or expanded from a bundle; a ref whose first segment is not an item kind is refused with exit 3 and the supported kinds, because `owner/repo` shorthand is shaped exactly like `kind/name`; a repository URL instead of a ref installs a skill from outside the shelf, with `--as`, `--ref`, `--path`, and `--list` | implemented |
+| `status [<item>]` | drift / update report plus orthogonal `needsState` freshness and locked needs; subagent JSON includes deterministic per-target state; a sub-line names any runtime target an MCP or subagent item does not cover; a plugin row counts the hooks and MCP servers the plugin runs; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` shows locked-to-installed and locked-to-upstream comparisons; `--diff-view installed\|upstream\|all` selects a comparison; `--check-upstream` fetches every tracked remote repository and reports which remote items moved | implemented |
+| `add [item]` | install a new item from the bound data repo, materializing exactly what the pin contains; with no item, opens the interactive picker (see The picker); MCP and subagent installs report per-runtime target coverage; an already-installed standalone item is a byte- and lock-stable no-op; `--local` installs a clone-local copy item; `--yes` authorizes collateral fragment-output loss for a new fragment, standalone or expanded from a bundle; a ref whose first segment is not an item kind is refused with exit 3 and the supported kinds, because `owner/repo` shorthand is shaped exactly like `kind/name`; a repository URL instead of a ref installs a skill or a whole plugin from outside the shelf, with `--as`, `--ref`, `--path`, and `--list`. A plugin that runs a hook or an MCP server, or has an `unknown` entry, asks for consent, and `--yes` gives it | implemented |
 | `rm <item>` | remove a locked data item and report every output it reconciled; clean reproducible content is prompt-free, while local edits, modes, extra paths, subagent drift, and fragment comment loss require consent or `--yes` | implemented |
 | `get-path <item>` | print the editable path; subagents and MCP support `--target`, while `--output` returns the corresponding runtime output | implemented |
 | `apply [<item>]` | reconcile project and local files with lockfiles after a full-set destructive preflight; a failing fragment target aborts every write, while an unresolvable copy or subagent item is reported and the rest still converge (exit 1); supports `--local`, `--dry-run`, and `--yes` | implemented |
-| `update [<item>...]` | bump content and declared-needs pins; needs-only changes do not reinstall unchanged content; `--merge` reconciles one explicit skill or Pi extension and pins upstream without publishing; `--local` selects clone-local scope; supports `--dry-run` and explicit drift overwrite consent with `--yes` | implemented |
-| `share [item]` | adopt a not-yet-shared on-disk item into the data repo and report the new item's runtime target coverage; subagents scan both runtime outputs by default and require `--target` with `--from`; with no item, opens the interactive picker over unmanaged config values and untracked skills, Pi extensions, and subagents (see The picker); pick-based fragment shares print and report the equivalent non-interactive command; `--adopt` takes ownership of a skill installed from a repository URL or by skills.sh | implemented |
-| `move <item> --to <scope>` | move an already-tracked data item between local and project scope without changing data-repo content | implemented |
+| `update [<item>...]` | bump content and declared-needs pins; needs-only changes do not reinstall unchanged content; `--merge` reconciles one explicit skill, plugin, or Pi extension and pins upstream without publishing; `--local` selects clone-local scope; supports `--dry-run` and explicit drift overwrite consent with `--yes` | implemented |
+| `share [item]` | adopt a not-yet-shared on-disk item into the data repo and report the new item's runtime target coverage; subagents scan both runtime outputs by default and require `--target` with `--from`; with no item, opens the interactive picker over unmanaged config values and untracked skills, Pi extensions, and subagents (see The picker); pick-based fragment shares print and report the equivalent non-interactive command; `--adopt` takes ownership of a skill installed from a repository URL or by skills.sh, or of a plugin installed from a repository URL. `--yes` gives consent for a plugin that `--to project` commits | implemented |
+| `move <item> --to <scope>` | move an already-tracked data item between local and project scope without changing data-repo content. `--yes` gives consent for a plugin that `--to project` commits | implemented |
 | `promote [item]` | Push edits for a tracked data item to the data repo. Fragments promote canonical source files. `--local` selects clone-local copy items. `--stale-ok` permits an intentional overwrite. With no item, the command opens the tracked-item picker. See The picker. | implemented |
 | `keep-local <item>` | mark drifted copy-item content as intentional divergence; supports project and clone-local skills/Pi extensions, and rejects fragments; `--unset` is the only thing that clears the marker, and `promote` refuses a marked item | implemented |
 | `revert <item>` | restore one locked version; the lock is never rewritten, so a keep-local marker survives; discarding local state requires consent or `--yes`; supports `--local` | implemented |
-| `lock migrate` | convert this project's lock files to version 4 in one transaction; supports `--dry-run`, `--repin`, `--remove-item`, `--yes`, and `--json` | implemented |
+| `lock migrate` | convert this project's lock files to version 5 in one transaction; supports `--dry-run`, `--repin`, `--remove-item`, `--yes`, and `--json` | implemented |
 | `self-update` | check for and install a Homebrew update for the capshelf binary; supports `--check` and `--yes` | implemented |
 | `ui` | serve a read-only status dashboard for every registered project on localhost; `--port`, `--no-open`, and `--json` | implemented |
 | `marketplace ...` | author, validate, sync, rename/retire, and package independent Claude/Cowork and Codex plugin catalogs in the data repo | implemented |
@@ -255,17 +256,18 @@ there is no separate `bundle` verb family. See Bundles below.
 - `--data <path>` — global override for the data repo (otherwise resolved from `.capshelf/local.json`, then `$CAPSHELF_HOME`, then fail)
 - `--json` — per-command structured output where supported
 - `--dry-run` — supported by `apply`, `update`, and `marketplace sync`; previews planned writes and destructive-change records without changing state
-- `--yes` — supported by `add`, `apply`, `update`, `rm`, `revert`,
-  `marketplace sync`, and `self-update`. It authorizes only destructive changes
-  enumerated by preflight; it never bypasses path safety, source cleanliness,
-  fragment collisions, stale promotion, or transaction checks.
+- `--yes`: supported by `add`, `apply`, `update`, `rm`, `revert`, `move`,
+  `share`, `marketplace sync`, and `self-update`. It authorizes only the
+  destructive changes that preflight lists, and the plugin consent points. It
+  never bypasses path safety, source cleanliness, fragment collisions, stale
+  promotion, or transaction checks.
 - `--as`, `--ref`, `--path`, `--list` — supported by `add`, and only when its
   argument is a repository URL. Each one is refused with exit 3 on a shelf item
   ref, because it would otherwise read as accepted and be ignored.
 - `--check-upstream`: supported by `status`. It is one of the five network
   operations. The full list is in [`docs/security.md`](security.md).
-- `--adopt` — supported by `share`; takes ownership of one installed skill from
-  its previous owner
+- `--adopt`: supported by `share`. It takes ownership of one installed skill
+  or plugin from its previous owner.
 - `--user` — supported by `ls` and `status`; narrows output to user-level
   runtime skills only, without requiring a capshelf project or data repo
 - `--diff` — supported by `status`; shows local drift against the locked
@@ -641,6 +643,331 @@ A non-empty `package.json.dependencies` produces the advisory
 `status --strict` fail. After materialization, run `/reload` in Pi or restart
 Pi; capshelf does not signal running Pi processes.
 
+### Plugins
+
+A `plugins/<name>` item is a whole Claude Code plugin directory. A plugin is
+more than its skills. It can hold agents, hooks, MCP servers, scripts, and
+prompts, and its skills can read those files through `${CLAUDE_PLUGIN_ROOT}`.
+A copy of one skill alone can break that skill. A plugin item copies the
+whole directory.
+
+```text
+plugins/<name>/
+  .claude-plugin/plugin.json   required. Its "name" is the item name
+  .capshelf.yml                optional catalog metadata, never installed
+  skills/  agents/  hooks/  scripts/  …
+```
+
+A directory under `plugins/` is an item only when it holds
+`.claude-plugin/plugin.json` as a regular file. The item name is the `name`
+in that manifest, because Claude Code names the plugin from that field. `ls`
+does not list a directory whose manifest gives a different name. It prints a
+warning that names both values. Capshelf never edits `plugin.json`, and it
+never changes the `name` or the `version` in it.
+
+A plugin installs where a skill installs. In the default layout that is
+`.agents/skills/<name>/` with the `.claude/skills/<name>` symlink. In a
+`--claude-only` project it is `.claude/skills/<name>/`. Claude Code loads
+that directory as `<name>@skills-dir` in a trusted workspace. It then calls
+the plugin's skills `<name>:<skill>` and its agents `<name>:<agent>`. Every
+`add` of a plugin, from the shelf or from a URL, prints that name:
+
+```text
+✓ added project/data/plugins/gh-cli @ d86663c945b8
+  source commit: 7410c7e8e3ba6aa84a6838fee305969915d5f142
+  /home/mg/code/my-app/.agents/skills/gh-cli
+  Claude Code loads it as gh-cli@skills-dir in a trusted workspace
+```
+
+Codex sees the skills only. Capshelf writes no Claude or Codex setting, cache, or
+catalog to make a plugin load.
+
+Plugins have the same lifecycle as skills, in project scope or local scope:
+`add`, `share`, `move`, `apply`, `update`, `update --merge`, `promote`,
+`keep-local`, `revert`, and `rm`. The manifest field is `plugins`, and the
+lock key is `data/plugins/<name>`. `promote` requires
+`.claude-plugin/plugin.json` in the installed copy, where a skill requires
+`SKILL.md`. A bundle can include `plugins` members.
+
+#### One folder for two kinds
+
+The shelf can hold `skills/<name>` and `plugins/<name>` with the same name.
+Many plugins hold a skill with the plugin's name. A shelf can hold that skill
+first, and other projects can pin it before anyone adopts the plugin. If the
+shelf refused the pair, the adopt would remove the skill those projects pin.
+
+A project can install only one of the two, because both use the same folder.
+`ls` marks the pair:
+
+```text
+data/  (from ~/code/agent-config)
+  skills/rust-review                48b1e3147a66
+  plugins/rust-review                0f31b250463f
+    ^ skills/rust-review and plugins/rust-review both install to .agents/skills/rust-review. A project uses one of them.
+```
+
+A bare name that matches both kinds is ambiguous. Write `skills/<name>` or
+`plugins/<name>`. A write that would give the folder a second owner refuses
+with exit 3 and prints the switch:
+
+```text
+✗ .agents/skills/rust-review is already installed by data/plugins/rust-review (project scope)
+  a project uses one of plugins/rust-review and skills/rust-review. To switch:
+    capshelf rm plugins/rust-review
+    capshelf add skills/rust-review
+  after the switch, Claude Code calls the skill /rust-review (was rust-review:<skill>)
+```
+
+The check compares install folders, not lock keys. Names that differ only in
+case or in Unicode form count as one folder. Every owner counts: the project
+lock, the local lock, a remote row, a skills.sh row, and a folder that no
+tool manages. `add`, `update`, `apply`, `move`, `revert`, and `share`
+run the check before they write. `share` runs it with or without `--adopt`.
+`add bundles/<name>` runs it for every member before it installs any
+member. Two members that install to one folder, such as `skills/foo` and
+`plugins/foo`, refuse the whole bundle. `apply` and `update` run it for a
+remote row too. A named row refuses with
+exit 3, and a sweep reports the row as an error.
+
+`rm` does not refuse when another owner claims the folder. For a plugin
+this includes skills.sh: `rm` of a tracked plugin row beside a skills.sh
+row keeps the folder. `rm` of a skill that skills.sh claims still refuses. It removes its
+own record and keeps the folder and its alias. The text output prints `kept
+<folder>: it is installed by <owner>`, and `--json` adds `keptBy`. This
+applies to a shelf entry and to a remote row. The exclude lines for the
+folder stay while a local-scope entry or a remote row still uses them.
+An interrupted `move` can leave one key in both locks. `rm` of one scope
+then keeps the folder for the other scope. `status`, `apply`, and `update`
+refuse that state until one owner is removed.
+
+A first `add` can take an unmanaged folder at the exact install path when
+its content matches the pin. The add keeps the ignored local files in that
+folder, so its install consent reads them with the pinned tree. An unmanaged folder whose name only folds to
+the item name, such as `.agents/skills/RR` for `rr`, always refuses. This
+is also true when a lock entry or a remote row tracks `rr`, for example an
+`apply` that would create the missing `rr` folder beside `RR`. `rm` of `rr`
+still deletes its own folder and keeps `RR`.
+
+Capshelf sees one project at a time. It cannot know when the last project
+has switched from the skill to the plugin. It therefore never removes
+`skills/<name>` from the shelf. A person removes it from the data repo.
+
+#### What a plugin runs
+
+A plugin can run commands with no request from the agent. A hook runs on a
+Claude Code event, and an MCP server starts with the session. Capshelf reads
+both from the pinned tree:
+
+| entry | read from |
+|---|---|
+| hooks | `hooks/hooks.json`, and the file that the manifest `hooks` field names |
+| MCP servers | `.mcp.json`, and the manifest `mcpServers` object |
+
+The manifest `hooks` file adds to `hooks/hooks.json`. It does not replace it.
+The `runs` block shows each hook with its event, its command, and its
+matcher, and each MCP server with its name and its command. Capshelf
+quotes each argument of an MCP command for a POSIX shell, so the argument
+boundaries show:
+
+```text
+  runs      1 hook, with no request from the agent
+              SessionStart   bash hooks/setup.sh
+            These hooks run in every Claude Code session in this project.
+```
+
+A plugin that runs nothing shows `runs      no hooks, no MCP servers`.
+Capshelf does not guess. Some declarations cannot be read: a file that does
+not parse, a manifest path outside the plugin, or a symlinked default file.
+Each one shows as `unknown: <path> could not be read`. An unknown entry
+never reads as "no hooks". Capshelf never follows a symlink. A symlink at a
+declaration path, or at a directory above one such as `hooks/` or
+`.claude-plugin/`, is one unknown entry for that path. The match folds case
+and Unicode form, so a `HOOKS` symlink counts for `hooks/hooks.json`.
+
+A volume that folds case or Unicode normalization can load a file whose
+name differs from the declaration path, for example `HOOKS/hooks.json`.
+Capshelf reads only the exact path. Each such file shows as `unknown: <path>
+differs only in case from <declaration>; capshelf does not read it`.
+
+Hooks and MCP servers are not the only commands that a plugin can run.
+Capshelf does not list the other ones. It reports each of them as an
+`unknown` entry:
+
+| source | entry |
+|---|---|
+| `monitors/monitors.json` | `declares background monitors; capshelf does not list them` |
+| manifest `monitors` or `experimental.monitors` | `declares monitors; capshelf does not list them` |
+| `.lsp.json` | `declares LSP servers; capshelf does not list them` |
+| manifest `lspServers` | `declares lspServers; capshelf does not list them` |
+| a different manifest key | `declares "<key>"; capshelf does not know what it runs` |
+
+These manifest keys give no entry: `$schema`, `name`, `version`,
+`description`, `author`, `homepage`, `repository`, `license`, `keywords`,
+`skills`, `agents`, `commands`, `outputStyles`, `themes`, `workflows`,
+`evals`, `hooks`, and `mcpServers`. Capshelf does not evaluate a command, and
+it does not claim that the list is complete. It shows what it read.
+
+#### Consent for a plugin
+
+A write asks before it puts a plugin's commands where Claude Code runs them.
+There are three consent points:
+
+1. **Install.** `add plugins/<name>` from the shelf asks when the plugin
+   runs a hook or an MCP server, or has an `unknown` entry. `add <url>` asks for every install, and its
+   prompt shows the same `runs` block.
+2. **Pin move.** A shelf `update` asks when the new tree runs an entry that
+   the old tree did not. An entry is one hook (event, matcher, and command)
+   or one MCP server (name, command, and each argument). A changed
+   command is a new entry. A
+   removed entry asks nothing. A remote `update` asks for every pin move,
+   and its prompt shows the new entries.
+3. **Project scope.** `add plugins/<name>` in project scope, `move --to
+   project`, and `share --adopt --to project` ask, because the project commit
+   gives the plugin to every teammate. `move --to project` reads both the
+   pinned tree and the installed folder. It asks for an entry that only the
+   installed folder holds, such as an unpinned `hooks/hooks.json`.
+   `share --to project` reads the exact files that it commits, before any
+   data-repo write. A change to the folder while the prompt is open makes
+   the commit check refuse. A shared plugin must carry
+   `.claude-plugin/plugin.json` in those files. When an ignore rule keeps
+   the manifest out, the share refuses and names the rule:
+
+```text
+  plugins/gh-cli runs 1 hook.
+  project scope commits it. The hooks then run in every teammate's
+  Claude Code session after they trust this workspace.
+Commit it to the project? [y/N]
+```
+
+A shelf write asks only when the plugin has an entry. An `unknown` entry
+always counts as an entry, at all three points. One command asks once, for all of its points.
+
+A skill whose folder holds `.claude-plugin/plugin.json` is a plugin to
+Claude Code. Claude Code loads it as `<name>@skills-dir` and runs its hooks.
+Capshelf gives that skill the same consent points as a plugin, with the same
+`runs` block. The remote `add <url>` and `update` prompts for that skill also
+show the `runs` block. The skill keeps its name and its install folder.
+A manifest path that differs only in case, such as
+`.Claude-Plugin/plugin.json`, also makes the skill a plugin.
+
+With no terminal, or with `--json`, each point refuses with exit 3 unless
+`--yes` is given. The refusal names the entries:
+
+```text
+✗ not installing plugins/gh-cli without consent — it runs 1 hook in every Claude Code session in this project
+  plugin    plugins/gh-cli
+  runs      1 hook, with no request from the agent
+              SessionStart   bash hooks/setup.sh
+            These hooks run in every Claude Code session in this project.
+
+  capshelf does not review this content. Your agent runs it with your permissions.
+  review it first, then authorize with --yes. See what it runs: capshelf show plugins/gh-cli
+```
+
+`--yes` prints the same block to stderr, so `--json` output on stdout stays
+clean. `add bundles/<name>` asks once for every plugin member that has an
+entry.
+
+Point 2 has a limit for shelf plugins. A script can change while its hook
+line stays the same: `bash hooks/setup.sh` stays, and `hooks/setup.sh` gets
+new content. That is not a new entry, so a shelf `update` does not ask.
+Review the diff with `capshelf status plugins/<name> --diff-view upstream`
+before the update. A remote `update` asks for every pin move, so the limit
+does not apply to it.
+
+`update --merge` of a shelf plugin cannot take `--yes` for point 2. If the
+merge adds an entry, run it in a terminal and answer the prompt. To take the
+new tree without your local edits, run `capshelf update plugins/<name> --yes`
+with no `--merge` (with `--local` for a local-scope plugin).
+
+The update installs exactly the tree that the prompt showed. A commit to
+the data repo after the prompt does not reach the folder.
+
+Point 2 also reads the ignored local files that the update keeps in the
+installed folder. Both the old and the new tree get these files. An
+unchanged local file therefore asks nothing alone. A kept local manifest
+beside a new upstream hook makes that hook run, so the update asks.
+
+`update --merge` reads the merged files for point 2, not the upstream tree
+alone. A merge can run a command that neither side runs alone. For example,
+the local copy adds a manifest and the upstream adds `hooks/hooks.json`. The
+merged files then run the hook, and the update asks. The same rule applies
+to a skill, and to a remote `update --merge`, whose prompt lists the entries
+of the merged files.
+
+A new tree whose `plugin.json` gives a different name refuses before any
+write. This applies to `update`, `update --merge`, `promote`, and
+`share --adopt`. A rename needs a new item: `rm` the old one, then `add` the
+new one. For `update --merge`, shelf or remote, the check also reads the
+merged files and the installed files that the merge keeps, such as an
+ignored manifest. A local edit that renames the plugin therefore refuses
+too.
+
+#### Plugins in status
+
+`status` reports what a plugin runs at the end of its row. A count of zero
+prints nothing:
+
+```text
+project/
+  ✓   data/plugins/gh-cli                     d86663c945b8  up-to-date   hooks: 1
+```
+
+A row can end with `hooks: <n>`, `MCP: <n>`, and `runs: unknown`. The counts
+come from the installed copy. For a clean row that is the pinned tree. For a
+drifted row it is what Claude Code loads.
+
+Claude Code loads a skills-dir plugin only in a trusted workspace. `status`
+looks up trust the way Claude Code does. It reads
+`projects["<path>"].hasTrustDialogAccepted` from `~/.claude.json` for these
+paths, in this order:
+
+1. The project path and its real path.
+2. The Git root of the project, if there is one.
+3. Each parent directory, up to the Git root. With no Git root, the walk
+   goes up to the filesystem root.
+
+One `true` value makes the workspace trusted. When `CLAUDE_CODE_SANDBOXED`
+is set, the workspace is trusted, as in Claude Code. `status` never writes
+`~/.claude.json`. In an untrusted workspace, one hint follows the first
+plugin row:
+
+```text
+      Claude Code does not load plugins in an untrusted workspace. Open the project in Claude Code and trust it.
+```
+
+In `status --json`, a plugin row has two more fields. No other kind gets
+them:
+
+- `runs`: `{ "hooks": <n>, "mcpServers": <n>, "unknown": [<entry>, …] }`.
+- `claudeTrust`: `"trusted"`, `"untrusted"`, or `"unknown"`. It is
+  `"unknown"` when `~/.claude.json` is missing or cannot be read.
+
+#### The shelves fence
+
+Capshelf 0.13 drops every manifest field it does not know when it saves the
+manifest. It would delete the `plugins` array with no error. One 0.13
+command, `data upstream`, saves the manifest without a read of the lock, so
+lock version 5 alone cannot stop it.
+
+0.13 does refuse every manifest that holds a `shelves` key. That key is
+reserved for multi-shelf federation. A manifest with a plugin therefore also
+holds this fence:
+
+```json
+"shelves": "plugin items: this project needs a capshelf release that supports plugins"
+```
+
+0.13 then refuses with a federation message:
+`declares "shelves": this project uses multi-shelf federation ... upgrade capshelf`.
+The advice is correct. The real reason is in the value.
+
+`.capshelf/local.json` gets the same fence when its `plugins` array is not
+empty. The fence and the array are in one file, and capshelf writes that
+file in one atomic step. When the last plugin leaves the file, the fence goes
+too. Do not edit the fence by hand. This capshelf accepts the exact fence
+string only, and it refuses any other `shelves` value.
+
 ### Bundles
 
 A bundle is a named set of items defined as a single YAML file at the data
@@ -709,6 +1036,10 @@ bundle is added with `--local`.
 Bundles can also include `subagents` members. Subagents are project-scope only,
 so a bundle containing one is rejected as a unit when added with `--local`.
 
+Bundles can include `plugins` members. The expansion asks once for every
+plugin member that runs a hook or an MCP server, or has an `unknown` entry.
+See Consent for a plugin.
+
 Bundle exit codes:
 
 | situation | code |
@@ -729,6 +1060,8 @@ Bundle exit codes:
 shelf: every data item and every bundle. `capshelf init` opens the same list
 once, after it finishes. `capshelf share` and `capshelf promote` with no item
 open the same picker over their own rows. See *share and promote* below.
+`capshelf add <url>` opens it over what a repository offers. See Remote
+skills.
 
 | key | action |
 |---|---|
@@ -944,6 +1277,12 @@ install state (`installed` means present in either `capshelf.lock.json` or
 `tags`, `requires`, `conflictsWith`, and `needs` (possibly empty) so consumers
 can rely on the keys; `description` is included when present.
 
+The text output replaces each terminal control character with a space. This
+covers file names, file content, the description, the tags, and the label.
+Line breaks and tabs stay. An ESC sequence in a repository file therefore
+cannot clear or forge the output that you review. `--json` keeps the exact
+text.
+
 The sidecar is catalog data, not item content: it is never hashed or
 materialized into projects. Tags, descriptions, and relations remain live
 catalog data and need no project update. Declared needs are pinned separately
@@ -1041,6 +1380,10 @@ the same run stays shared. JSON and other non-TTY runs refuse with exit 3
 unless `--yes` explicitly authorizes the listed loss. Capshelf revalidates
 the accepted snapshot immediately before writing.
 
+A plugin can also ask for consent before it puts commands in reach of Claude
+Code. Those questions follow the same terminal, `--json`, and `--yes` rules.
+See Consent for a plugin.
+
 `share` resolves the data repo after its ref refusals, not before. In a project
 with no data-repo binding, a `share` that also hits an earlier refusal reports
 that refusal and exits 3. It exits 6 only when no earlier refusal applies. One
@@ -1132,8 +1475,8 @@ the upstream advance, and the safe choices: reconcile the installed and
 upstream branches with `capshelf update <item> --merge`, take upstream with a
 plain `capshelf update <item>`, or overwrite on purpose with `capshelf promote
 <item> --stale-ok`. The suggested commands preserve `--local` when the refusal came
-from a local-scope promote. The `--merge` choice is printed only for skills
-and Pi extensions. For fragments and subagents the refusal offers plain
+from a local-scope promote. The `--merge` choice is printed only for skills,
+plugins, and Pi extensions. For fragments and subagents the refusal offers plain
 `update` or `--stale-ok` only. `update` warns and asks before replacing a drifted
 installed copy; preserve the edit before consenting. Local-scope copy items
 are excluded from the project's Git repository and cannot be recovered from
@@ -1142,7 +1485,7 @@ its diff.
 `update --merge` performs a standard Git three-way content merge from the locked
 `sourceCommit`: base = locked content, local = the installed managed snapshot,
 and upstream = the item at current data-repo HEAD. It is supported for
-project- and local-scope skills and Pi extensions. Fragments, system items,
+project- and local-scope skills, plugins, and Pi extensions. Fragments, system items,
 subagents, missing or non-ancestral base history,
 and a base tree that does not reproduce the lock are refused. A conflict lists
 sorted item-relative paths and changes no data-repo, installed, manifest, or
@@ -1170,7 +1513,7 @@ Two related behaviors:
 `staleOverride: true` only when `--stale-ok` bypasses a stale check. The field
 is absent when the flag is not necessary.
 
-## Source pins and lock version 4
+## Source pins and the lock version
 
 A data lock entry records a content identity and a source commit, and every
 command depends on one claim: the identity is what that commit holds.
@@ -1202,6 +1545,39 @@ What version 4 changes for a user:
   from the pinned commit (`git check-attr --source`) rather than from the
   machine.
 
+### Lock version 5
+
+The current lock version is 5, for every project. Version 5 is version 4 with
+one more item kind, `plugins`. It changes no entry. Every project moves to
+version 5 once, with or without a plugin. After that, capshelf 0.13 refuses
+the lock of that project. See The shelves fence.
+
+A version 4 project keeps working for the commands that only read. Every
+command that writes a lock refuses with exit 3 and names the migration:
+
+```text
+✗ this project's lock is version 4; capshelf add writes lock version 5
+  Convert the project and local locks first: capshelf lock migrate (preview it with --dry-run).
+```
+
+The step from version 4 to version 5 changes the version number in the
+project lock and in the local lock, in one transaction. It copies every entry
+unchanged. It reads nothing from the data repo, needs no data repo binding,
+changes no installed file, and asks nothing:
+
+```text
+$ capshelf lock migrate
+✓ migrated project and local locks to version 5
+  converted                  1
+  repaired legacy identity   0
+  blocked                    0
+
+$ capshelf lock migrate
+✓ already version 5
+```
+
+Commit the project lock after the migration. The local lock is gitignored.
+
 ### lock migrate
 
 ```text
@@ -1209,10 +1585,12 @@ capshelf lock migrate [--dry-run] [--repin <ref>...] [--remove-item <ref>...] \
   [--yes] [--json]
 ```
 
-`lock migrate` is the only path from version 2 or 3 to version 4. It converts
-the project lock and the local lock as **one transaction**: version applies to
-a whole file, so a partial conversion would leave two identity models alive in
-the same project.
+`lock migrate` is the only path to version 5. From version 4 it changes the
+version number only, as Lock version 5 describes. From version 2 or 3 it
+builds a new pin for each entry, as below, and writes version 5. Either way it
+converts the project lock and the local lock as **one transaction**. A
+version applies to a whole file, and a partial conversion would leave two
+models alive in the same project.
 
 The default migration selects no new content. For each data entry it resolves
 the recorded commit, reads the item's committed tree, checks committed filter
@@ -1228,6 +1606,12 @@ pass and nothing is written. Three explicit choices resolve one:
 - `--repin <ref>` re-pins a copy item or subagent to its current committed
   source, through the ordinary consent boundary;
 - `--remove-item <ref>` drops the entry.
+
+A re-pin moves a pin to new content, so it asks plugin consent the way
+`update` does (point 2). It compares the installed folder with the new tree
+and the ignored local files that the write keeps. With no terminal or with
+`--json`, it refuses with exit 3 unless `--yes` is given. `--dry-run`
+reports the entries under `would ask`, and `--json` adds `wouldAsk`.
 
 A fragment cannot be re-pinned: its installed state lives inside a merged
 output file, so once its commit is gone capshelf cannot tell its former
@@ -1251,10 +1635,11 @@ Recommended team rollout:
 5. commit the project lock as a lock-only change
 ```
 
-The upgrade is one-way. An older binary refuses a version-4 lock outright
-(`lock version 4 is newer than this capshelf supports`) rather than parsing it
-through a strict schema that would strip every pin it touched — so upgrade
-every writer before committing the migrated lock.
+The upgrade is one-way. An older binary refuses a newer lock outright. For
+example, capshelf 0.13 prints `lock version 5 is newer than this capshelf
+supports — upgrade capshelf`. It does not parse the lock through a schema
+that would strip what it does not know. Upgrade every writer before you
+commit the migrated lock.
 
 ### Repairing an unprovable pin
 
@@ -1481,16 +1866,17 @@ If a project has `skills-lock.json`, capshelf treats those skills as managed by 
 `capshelf add <url>` installs a skill from any Git repository, not only from
 your shelf. The skill is tracked in `.capshelf/remotes.lock.json`, which is
 gitignored, so a teammate who clones the project gets neither the files nor the
-record.
+record. The same command installs a whole plugin. See Whole plugins below.
 
 | command | effect |
 |---|---|
 | `capshelf add <url> [--as <name>] [--ref <ref>] [--path <subpath>]` | resolve, print the facts, ask once, install, record |
-| `capshelf add <url> --list` | print the repository's skills and exit 0. Install nothing and leave the project unchanged. The clone cache is created or fetched |
-| `capshelf update skills/<name>` | move the pin to what the cache already holds, then apply. No network |
+| `capshelf add <url> --path <plugin>` | the same for a whole plugin directory. `--as` refuses |
+| `capshelf add <url> --list` | print the repository's plugins and skills and exit 0. Install nothing and leave the project unchanged. The clone cache is created or fetched |
+| `capshelf update skills/<name>` or `plugins/<name>` | move the pin to what the cache already holds, then apply. No network |
 | `capshelf status --check-upstream` | fetch every tracked repository and report which pins moved |
-| `capshelf share skills/<name> --adopt` | transfer ownership into the shelf and release the previous owner |
-| `capshelf rm skills/<name>` | remove the install and the record |
+| `capshelf share skills/<name> --adopt` or `plugins/<name>` | transfer ownership into the shelf and release the previous owner |
+| `capshelf rm skills/<name>` or `plugins/<name>` | remove the install and the record |
 
 Of the remote-skill commands, three reach the network: `add <url>`, `add
 <url> --list`, and `status --check-upstream`. A URL on the command line is the
@@ -1525,13 +1911,36 @@ Discovery reads at the resolved commit through `ls-tree`, never from a
 checkout. A repository holding a root `SKILL.md` **and** subdirectory skills is
 ambiguous: capshelf never prefers one, it offers both.
 
-One candidate installs. Several open the picker. Without a terminal the
-command refuses and names the two flags that answer the question:
+One candidate installs. Several open the picker. The picker shows what the
+author published. Its unit comes from the shape of the repository:
+
+| repository shape | the picker shows |
+|---|---|
+| a catalog of plugins, each with `.claude-plugin/plugin.json` | plugins |
+| no catalog: skill folders, or `SKILL.md` at the root | skills |
+| a catalog whose entries list skills (a `skills` array, or source `./`) | skills |
+| catalog plugins with no `.claude-plugin/plugin.json` (Codex only) | the skills of those plugins |
+| plugins and skills that no plugin holds | two sections, plugins first |
+| a capshelf shelf | skills |
+
+A plugin row shows the plugin name, the manifest description, and a short
+summary such as `plugin: 1 skill, 1 agent · also ships: hooks`. A skill
+inside such a plugin gets no row of its own. A picked plugin installs whole,
+the same as `--path <plugin>`. It gets the plugin prompt with its `runs`
+block. Several picked rows install one at a time, in order. Capshelf records
+each install before the next one starts.
+
+Without a terminal the command refuses and names the two flags that answer
+the question:
 
 ```text
 ✗ 2 skills found in https://github.com/acme/pdf-skills; name one with --path
   list them: capshelf add https://github.com/acme/pdf-skills --list
 ```
+
+The count names the unit of the picker. A catalog of plugins gives `3
+plugins found`. A repository with two sections gives `2 plugins and 3 skills
+found`.
 
 #### Plugins in the repository
 
@@ -1544,6 +1953,12 @@ Capshelf's own catalog entries set `source: "./"` with an explicit `skills`
 array. Discovery reads that shape as plain layout, not as a plugin, and
 attaches no plugin facts to it. A capshelf-published shelf therefore lists
 with no plugin grouping at all, the same in a terminal and in a pipe.
+
+One exception applies. An entry with a `skills` array can name a plugin
+directory that holds a regular `.claude-plugin/plugin.json`. Claude Code
+loads that directory as a plugin, so capshelf counts it as a plugin too. Its
+`skills` paths are read relative to the plugin directory. The repository root
+never counts as a plugin.
 
 A catalog entry that names a bare directory, with no leading `./`, resolves
 only against that catalog document's own `metadata.pluginRoot`. With no
@@ -1604,11 +2019,45 @@ capshelf add https://github.com/acme/agent-plugins --list
   install one:   capshelf add https://github.com/acme/agent-plugins --path plugins/plain/skills/plain
   install some:  capshelf add https://github.com/acme/agent-plugins
   details:       capshelf add https://github.com/acme/agent-plugins --list --json
+  Codex sees the skills only.
 ```
 
-The `found` line counts only the plugins that hold a skill. A plugin with no
-skill, such as a plugin with only commands, goes on a `no skills` line. A
-catalog entry can name a source outside this repository, such as a GitHub
+In this example no plugin holds `.claude-plugin/plugin.json`, so the picker
+offers skills and the `found` line counts skills. It counts only the plugins
+that hold a skill.
+
+`--list` prints each plugin with its skills first. The skills that no plugin
+holds follow. A plugin that holds `.claude-plugin/plugin.json` installs
+whole. Its header line then adds `plugin <name>` and the manifest
+description. Such a plugin gets its header even when it holds no skill. The
+`found` line then counts the unit of the picker. An `install a whole plugin`
+line names the first such plugin. A listing with no such plugin has no
+`install a whole plugin` line:
+
+```text
+  repo      https://github.com/acme/tools
+  ref       main
+  commit    4d319a53b593bd41a74ffd8c099482fff93d46ca
+  found     2 plugins and 1 skill  (.claude-plugin/marketplace.json)
+
+  plugins/gh-cli   plugin gh-cli: GitHub CLI helpers   also ships: agents, hooks
+    gh-cli      Use gh
+
+  plugins/review   plugin review: Code review
+    diff        Read a diff
+    style       Check style
+
+    skills/pdf   Extract text
+
+  install one:   capshelf add https://github.com/acme/tools --path plugins/gh-cli/skills/gh-cli
+  install some:  capshelf add https://github.com/acme/tools
+  details:       capshelf add https://github.com/acme/tools --list --json
+  install a whole plugin:  capshelf add https://github.com/acme/tools --path plugins/gh-cli
+  Codex sees the skills only.
+```
+
+A plugin with no skill and no `.claude-plugin/plugin.json`, such as a
+plugin with only commands, goes on a `no skills` line. A catalog entry can name a source outside this repository, such as a GitHub
 repository. Capshelf does not read that source. `--list` names each such
 entry on one `elsewhere` line.
 
@@ -1631,24 +2080,33 @@ Enter or `y` shows the full list. `n` prints a shorter next command instead.
 In a listing of one plugin (`--list --path <plugin>`), `n` prints only the
 JSON command for that plugin. Closed input, such as Ctrl-D or Ctrl-C at the
 question, counts as `n`. A pipe, `--json`, and `--yes` skip the question and
-print everything, so a script never waits on it. The question counts only a
-plugin that holds a skill. A commands-only or workflows-only plugin never
-triggers it.
+print everything, so a script never waits on it. The question appears only
+when the listing holds a plugin skill or a plugin that installs whole. A
+commands-only or workflows-only plugin with no `.claude-plugin/plugin.json`
+never triggers it. The question counts the unit of the picker, for example
+`Show all 2 plugins and 3 skills (24 lines)?`.
 
-`--path <subpath>` naming a plugin directory, not a skill, refuses:
+`--path <subpath>` naming a plugin directory installs the whole plugin when
+the directory holds `.claude-plugin/plugin.json`. The item name is the
+manifest `name`, so `--as` refuses. The prompt shows the hooks and MCP
+servers the plugin runs. With `--json` or no terminal, the install refuses
+without `--yes`, and the refusal names those hooks and servers. A plugin
+directory with no `.claude-plugin/plugin.json` refuses:
 
 ```text
 ✗ plugins/heavy is a plugin, not a skill. It holds 1 skill:
     plugins/heavy/skills/worker   uses plugin root, agents
   install the skill: capshelf add https://github.com/acme/agent-plugins --path plugins/heavy/skills/worker
-  capshelf cannot install a whole plugin
+  capshelf installs a whole plugin only when it holds .claude-plugin/plugin.json
 ```
 
 The repository root is never read as a plugin this way. `--path .` keeps
 its plain behavior even when the root itself carries a plugin manifest.
 
-Two skills chosen in one `add` that would install under the same name also
-refuse, before any project write:
+Two rows chosen in one `add` that would install under the same name also
+refuse, before any project write. A plugin installs to the same folder as a
+skill with its name, so a plugin row counts too. The message then says
+`items` in place of `skills`:
 
 ```text
 ✗ 2 selected skills would install as "x": plugins/a/skills/x, plugins/b/skills/x
@@ -1667,7 +2125,12 @@ some files were not checked. It does not mean the skill uses nothing.
 
 Three more top-level arrays sit beside `skills`, always, even when empty.
 `plugins` has one row per plugin directory, with its `name`, `source`,
-`catalogs`, `ships`, and a `skills` count. `skipped` has one row per catalog
+`catalogs`, `ships`, and a `skills` count. Each row also has `installable`,
+`description`, and `skillSubpaths`. `installable` is true when the directory
+holds a regular `.claude-plugin/plugin.json`, so `--path <source>` installs
+the whole plugin. `description` is the description in that manifest, or
+null. `skillSubpaths` lists the subpaths of the skill rows that the plugin
+holds. `skipped` has one row per catalog
 entry discovery could not read, with a `reason`. `warnings` has one row per
 problem discovery found. A catalog or a manifest can fail to parse. Either
 one can be a symlink or a submodule instead of a file. A manifest `skills`
@@ -1729,7 +2192,8 @@ installs from `feature/login` when that branch exists.
 
 #### What the project records
 
-The record is `.capshelf/remotes.lock.json`, schema version 1:
+The record is `.capshelf/remotes.lock.json`. A file with skill rows only is
+schema version 1:
 
 ```json
 {
@@ -1762,7 +2226,9 @@ remotes.lock.json
 .claude/skills/pdf
 ```
 
-The project lock is untouched and stays at version 4. `status` reports these
+A file with a `remote/plugins/<name>` row is written as version 2, and
+capshelf 0.13 refuses it. When the last plugin row goes, the file is written
+as version 1 again. The project lock is untouched. `status` reports these
 rows in their own group:
 
 ```text
@@ -1771,7 +2237,7 @@ rows in their own group:
 project/
   ✓   system/skills/capshelf                  57e5655fc9a5  up-to-date
 
-remote/  (skills pinned to repos outside your shelf)
+remote/  (items pinned to repos outside your shelf)
   ✓   skills/pdf                              b265cade3978  up-to-date
       acme/pdf-skills main @ cd91e33, never checked
       check for newer upstreams: capshelf status --check-upstream
@@ -1792,7 +2258,7 @@ capshelf status --check-upstream
 ```text
   fetching  https://github.com/acme/pdf-skills ... 1 new commit
 
-remote/  (skills pinned to repos outside your shelf)
+remote/  (items pinned to repos outside your shelf)
   ⚠   skills/pdf                              b265cade3978  update available → cd91e33a2bddb...
       acme/pdf-skills main @ cd91e33, checked 2026-09-17
 ```
@@ -1853,7 +2319,7 @@ A machine with no cache still has the files. It cannot compare them to the
 pin:
 
 ```text
-remote/  (skills pinned to repos outside your shelf)
+remote/  (items pinned to repos outside your shelf)
   !   skills/pdf                              b265cade3978  no clone cache on this machine — run: capshelf status --check-upstream
       acme/pdf-skills main @ cd91e33, never checked
       no clone cache on this machine, so the installed files cannot be
@@ -1899,6 +2365,8 @@ committed to local data repo:
   /home/mg/code/agent-config
 ```
 
+A remote plugin follows the same rules. See Whole plugins below.
+
 The same flag adopts a skills.sh-managed skill, releasing that row instead.
 After the adopt the item is an ordinary data item, and `status` shows it in
 the shelf group.
@@ -1908,9 +2376,128 @@ The adopt lands in local scope, like every other skill share without `--to`.
 install path from `.git/info/exclude` that `add <url>` wrote: a project-scope
 item Git is told to ignore is never committed with the project.
 
+After an adopt, capshelf does not follow the upstream. This is true for a
+skill and for a plugin. The adopted item is an ordinary shelf item.
+`promote` and `update` read the shelf, and `status --check-upstream` checks
+remote rows only, so it does not list the adopted item. The `upstream`
+fields in `.capshelf.yml` are a record. No command reads them. To take a
+newer upstream version, copy it into the installed item by hand, then
+`promote` it.
+
 Capshelf does not review a remote skill. There is no registry, no signing, and
 no scanning. The consent prompt prints the facts and asks once. That is the
 whole control.
+
+#### Whole plugins
+
+`--path` that names a plugin directory installs the whole plugin, when the
+directory holds `.claude-plugin/plugin.json`. A `/tree/<ref>/<path>` URL to
+that directory does the same. A `--path` to a skill inside a plugin still
+installs that skill only. The picker with no `--path` still offers skills
+only.
+
+The item name is the manifest `name`, so `--as` refuses:
+
+```text
+✗ cannot rename a plugin: Claude Code names it from plugin.json ("rust-review")
+  agents are called as rust-review:<agent>, whatever the directory name is
+```
+
+The prompt groups the files by top-level directory, with a count and a size.
+A group row names no files. A `skills` block follows, naming the plugin's
+skills as Claude Code calls them (`<plugin>:<skill>`), with the bare names
+below it in columns. An `agents` block does the same when the plugin has
+agents. Then the `runs` block (see What a plugin runs) and a `codex` line:
+
+```text
+  repo      https://github.com/acme/agent-plugins
+  ref       main
+  commit    bda04843d5e643a1f1926849e6705bea19250b9c
+  path      plugins/gh-cli
+  plugin    gh-cli 1.6.2
+  install   .agents/skills/gh-cli  (local scope, gitignored)
+  files     4 files, 183 B
+              skills/          1 file    47 B
+              .claude-plugin/  1 file    36 B
+              hooks/           2 files  100 B
+  skills    1, called as gh-cli:<skill>
+              gh-cli
+  runs      1 hook, with no request from the agent
+              SessionStart   bash hooks/setup.sh
+            These hooks run in every Claude Code session in this project.
+  codex     sees the skills only
+  license   none found in the item or at the repo root
+
+  capshelf does not review this content. Your agent runs it with your permissions.
+Install it? [y/N]
+```
+
+A plugin's license line uses "not recognized" and "outside the plugin"
+where the skill prompt's license line says "unrecognized" and "outside the
+item". The rest of the license wording is shared. A column count over 20
+names shows the first 20 and a final "… and N more" line. The column count
+itself, and how many names fit per row, depends on the terminal width.
+
+Every remote install asks once, also for a plugin that runs nothing. Without
+a terminal, `--yes` is the only answer, the same as for a remote skill. The
+refusal shows the `runs` entries. An accepted install says how Claude Code
+loads it:
+
+```text
+✓ added local/remote/plugins/gh-cli @ d86663c945b8
+  source commit: bda04843d5e643a1f1926849e6705bea19250b9c
+  /home/mg/code/my-app/.agents/skills/gh-cli
+  Claude Code loads it as gh-cli@skills-dir in a trusted workspace
+  not committed, so your teammates do not get it
+  to give it to the team: capshelf share plugins/gh-cli --adopt
+```
+
+The record key is `remote/plugins/<name>`. In `status --json` the row
+carries `"kind": "plugins"`, the `remote` block, `runs`, and `claudeTrust`.
+
+A named `update plugins/<name>` asks for every pin move, the same as for a
+remote skill. The prompt adds the `version` line from `plugin.json` and the
+`runs` entries that the new tree adds:
+
+```text
+  pinned    bda0484  ->  4fb71ee   (from the local cache, no network)
+  version   1.6.2  ->  1.7.0  (.claude-plugin/plugin.json)
+  files     3 changed
+              .claude-plugin/plugin.json
+              hooks/format.sh
+              hooks/hooks.json
+  runs      + 1 hook, with no request from the agent
+              PostToolUse   bash hooks/format.sh
+            These hooks run in every Claude Code session in this project.
+```
+
+`update --dry-run --json` asks nothing. A plugin row in its output carries
+`newRuns`, with the entries the real run would ask about. A new tree whose
+`plugin.json` gives a different name refuses:
+
+```text
+✗ plugins/rust-review: the new tree names the plugin "rust-reviewer" in .claude-plugin/plugin.json
+  the item name is "rust-review". capshelf does not rename an item.
+  to take the renamed plugin: capshelf rm plugins/rust-review, then add it again
+```
+
+`share plugins/<name> --adopt` moves a pulled plugin onto the shelf at
+`plugins/<name>/`. It lands in local scope unless `--to project` is given,
+and `--to project` is consent point 3. The provenance goes into
+`plugins/<name>/.capshelf.yml`, which is never installed. The previous owner
+is the remote row only. A skills.sh row with the plugin's name owns the same
+folder, so the adopt refuses and changes neither row.
+
+In many plugin repositories the license is at the root, outside the plugin.
+The adopt copies the plugin directory only, so it warns:
+
+```text
+⚠ the license is at the https://github.com/acme/agent-plugins root (MIT), not in the plugin
+  you are copying someone else's work into your shelf. Check the terms yourself.
+```
+
+A plugin that holds a Git symlink cannot be installed. The refusal comes
+before the prompt and before any project write.
 
 ### Claude plugins
 
@@ -1920,6 +2507,17 @@ Capshelf reads Claude Code `enabledPlugins` entries from managed settings,
 `external/  (Claude plugins)` with scope and enabled/disabled state. These are
 read-only external items: capshelf does not edit Claude plugin settings or
 mutate `~/.claude/plugins/cache`.
+
+Each row prints as `claude-plugins/<id>`, so it does not look like a
+`plugins/<name>` item:
+
+```text
+external/  (Claude plugins)
+  •   claude-plugins/github@official     enabled user ~/.claude/settings.json
+```
+
+A plugin that capshelf installs as a `plugins/<name>` item is a different
+thing. It is in a capshelf lock, and it needs no `enabledPlugins` row.
 
 ### Personal Claude skills
 
@@ -1972,7 +2570,7 @@ metadata and never adopts the user skill.
 | 0 | success |
 | 1 | generic error (missing args, bad config, I/O) |
 | 2 | item or bundle not found in data repo |
-| 3 | conflict or refused precondition (project is already initialized, a destructive `add`/`apply`/`update`/`rm`/`revert`/marketplace sync lacks consent, promote would clobber, a system or externally managed item was selected, an untracked target would be overwritten, a bundle failed preflight, an interactive `add`, `share`, or `promote` had a selection fail or had no usable terminal, `add` was given `<something>/<name>` where the something is not an item kind, or data sync cannot run safely) |
+| 3 | conflict or refused precondition (project is already initialized, a destructive `add`/`apply`/`update`/`rm`/`revert`/marketplace sync lacks consent, a plugin consent point lacks consent, a project lock is an older version than this capshelf writes, a second item would install into one skill folder, promote would clobber, a system or externally managed item was selected, an untracked target would be overwritten, a bundle failed preflight, an interactive `add`, `share`, or `promote` had a selection fail or had no usable terminal, `add` was given `<something>/<name>` where the something is not an item kind, or data sync cannot run safely) |
 | 4 | drift detected (for `status --strict`), upstream verification failed, or `data sync` needs human action (diverged history, or upstream commits blocked by a dirty worktree) |
 | 5 | reserved for future unmet-requires checks (`add` with unmet `requires` warns and exits 0) |
 | 6 | no data repo configured for this project (pass `--data`, set `.capshelf/local.json`, or `$CAPSHELF_HOME`) |

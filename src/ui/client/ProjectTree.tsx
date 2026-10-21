@@ -109,7 +109,7 @@ export function ProjectTree({
               : [];
             const plugins = data
               ? data.externalClaudePlugins.filter((plugin) =>
-                  matches(`plugins/${plugin.id}`),
+                  matches(`claude-plugins/${plugin.id}`),
                 )
               : [];
             // One row stands for the user-level skills; the page lists them.
@@ -229,7 +229,7 @@ export function ProjectTree({
                             externalRow(
                               `plugin/${plugin.scope}/${plugin.id}`,
                               plugin.name,
-                              `plugins/${plugin.id} · ${plugin.enabled ? "enabled" : "disabled"} · ${plugin.scope}`,
+                              `claude-plugins/${plugin.id} · ${plugin.enabled ? "enabled" : "disabled"} · ${plugin.scope}`,
                               plugin.scope === "project" ? null : plugin.scope,
                             ),
                           )}

@@ -25,7 +25,7 @@ import type { FragmentContributionState, FragmentTarget } from "./fragments";
 import { firstErrorLine } from "./errors";
 import { commitExists, indexEntryFlags, statusPorcelainRecords } from "./git";
 import { entryIdentity } from "./lock";
-import type { DataLockEntryV4, LockV4 } from "./lock";
+import type { DataLockEntryV4, WritableLock } from "./lock";
 import { describeInstallation } from "./install-identity";
 import { installedPath, itemOutputTargets, parseLockKey } from "./installed";
 import type { Manifest } from "./manifest";
@@ -111,7 +111,7 @@ export interface LoadPromoteCatalogOptions {
   project: string;
   dataRepo: string;
   manifest: Manifest;
-  lock: LockV4;
+  lock: WritableLock;
   scope: "project" | "local";
 }
 

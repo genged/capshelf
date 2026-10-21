@@ -1,5 +1,5 @@
 /**
- * Pin, install, and reconcile one remote skill.
+ * Pin, install, and reconcile one remote skill or plugin.
  *
  * A remote row reuses the copy-directory machinery rather than growing a second
  * reconciler. `materializeLockEntry` and `copyDirectoryReconciliationFiles`
@@ -15,24 +15,43 @@
  * the remote row's digest. That value is never serialized: no writer puts it in
  * a `Lock`.
  */
+import { isConfigObject, isConfigString } from "./config-values";
+import type { ConfigObject, ConfigValue } from "./config-values";
 import { PreconditionError } from "./errors";
+import { catFileBlobs } from "./git";
 import { METADATA_DIR, PRODUCT_NAME, REMOTES_LOCK_FILE } from "./identity";
 import { installedPath } from "./installed";
 import { dataKey } from "./lock";
 import type { DataLockEntryV4 } from "./lock";
-import { materializeLockEntry } from "./materialize";
+import { installedPreservedEntries, materializeLockEntry } from "./materialize";
 import type { MaterializeResult } from "./materialize";
 import {
   installedSnapshot,
   namedFilesFromInstalledSnapshot,
 } from "./item-snapshot";
+import { PLUGIN_MANIFEST_REL } from "./master";
+import type { ItemKind } from "./master";
 import { mergeNamedTrees, namedFilesEqual } from "./merge-tree";
 import type { NamedFile } from "./merge-tree";
-import { beginInstalledReconciliation } from "./promote-transaction";
+import { sanitizeDisplayText } from "./pick-core";
+import {
+  itemPluginNewRuns,
+  itemPluginRunsAtCommit,
+  itemPluginRunsFromFiles,
+  newRunsEntries,
+  pluginExtraFile,
+  pluginRunsAtCommit,
+} from "./plugin-runs";
+import type { PluginExtraFile, PluginRuns } from "./plugin-runs";
+import {
+  beginInstalledReconciliation,
+  keptByInstalledReconciliation,
+} from "./promote-transaction";
+import type { KeptInstalledEntry } from "./promote-transaction";
 import { remoteCacheState, resolveCachedRef } from "./remote-cache";
 import { remoteTreeSource } from "./remote-discovery";
-import { REMOTE_ITEM_KIND, remoteKey } from "./remotes-lock";
-import type { RemoteLockEntry } from "./remotes-lock";
+import { remoteKey } from "./remotes-lock";
+import type { RemoteItemKind, RemoteLockEntry } from "./remotes-lock";
 import {
   assertNoDestinationCollisions,
   hashWidthOf,
@@ -48,6 +67,7 @@ export interface RemoteInstallRequest {
   project: string;
   /** The cache clone the pin was read from. */
   cachePath: string;
+  kind: RemoteItemKind;
   name: string;
   upstream: string;
   ref: string;
@@ -68,7 +88,7 @@ export interface RemoteInstallResult {
 }
 
 /** Write the item and return the row. Never saves the lock: the caller does. */
-export async function installRemoteSkill(
+export async function installRemoteItem(
   request: RemoteInstallRequest,
 ): Promise<RemoteInstallResult> {
   const entry: RemoteLockEntry = {
@@ -86,12 +106,12 @@ export async function installRemoteSkill(
       request.pin.sourceCommit,
       request.subpath,
     ),
-    kind: REMOTE_ITEM_KIND,
+    kind: request.kind,
     name: request.name,
     // The writer's key is internal and never printed by this path: the result
     // row's `source` is an `ItemSource`, and the row a user sees is built by
     // `status` with `source: "remote"`.
-    key: dataKey(REMOTE_ITEM_KIND, request.name),
+    key: dataKey(request.kind, request.name),
     entry: remoteEntryAsDataEntry(entry),
     scope: "local",
   });
@@ -104,8 +124,9 @@ export async function installRemoteSkill(
 }
 
 /** Reconcile an installed remote row against its recorded pin. Offline. */
-export async function reconcileRemoteSkill(opts: {
+export async function reconcileRemoteItem(opts: {
   project: string;
+  kind: RemoteItemKind;
   name: string;
   entry: RemoteLockEntry;
   /**
@@ -126,7 +147,7 @@ export async function reconcileRemoteSkill(opts: {
   // that reconciles offline needs it, and one that only built the path reported
   // whatever git printed about a directory that is not a repository.
   const cache = remoteCacheState(opts.entry.upstream, opts.env);
-  if (!cache.present) throw coldCacheRefusal(opts.name, opts.entry);
+  if (!cache.present) throw coldCacheRefusal(opts.kind, opts.name, opts.entry);
   return await materializeLockEntry({
     project: opts.project,
     source: remoteTreeSource(
@@ -134,9 +155,9 @@ export async function reconcileRemoteSkill(opts: {
       opts.entry.sourceCommit,
       opts.entry.subpath,
     ),
-    kind: REMOTE_ITEM_KIND,
+    kind: opts.kind,
     name: opts.name,
-    key: dataKey(REMOTE_ITEM_KIND, opts.name),
+    key: dataKey(opts.kind, opts.name),
     entry: remoteEntryAsDataEntry(opts.entry),
     scope: "local",
     ...(opts.previous !== undefined && {
@@ -179,6 +200,7 @@ export function remoteEntryAsDataEntry(
  * network commands, which is the property D15 exists to protect.
  */
 export function coldCacheRefusal(
+  kind: RemoteItemKind,
   name: string,
   entry: RemoteLockEntry,
   detail = "has no local cache",
@@ -188,7 +210,7 @@ export function coldCacheRefusal(
   // hint-only instruction would never reach the one caller that cannot rerun
   // the command to see it.
   return new PreconditionError(
-    `${remoteKey(name)} ${detail} for ${entry.upstream}; fetch it with ${PRODUCT_NAME} status --check-upstream`,
+    `${remoteKey(kind, name)} ${detail} for ${entry.upstream}; fetch it with ${PRODUCT_NAME} status --check-upstream`,
     {
       hint: `${PRODUCT_NAME} never creates a cache offline, because that would make this a network command`,
     },
@@ -205,11 +227,12 @@ export function coldCacheRefusal(
  */
 export function remoteVerbRefusal(
   verb: string,
+  kind: RemoteItemKind,
   name: string,
 ): PreconditionError {
-  const ref = `${REMOTE_ITEM_KIND}/${name}`;
+  const ref = `${kind}/${name}`;
   return new PreconditionError(
-    `not ${verb} ${ref} — it is a remote skill, tracked in ${METADATA_DIR}/${REMOTES_LOCK_FILE} rather than in your shelf`,
+    `not ${verb} ${ref} — it is a remote item, tracked in ${METADATA_DIR}/${REMOTES_LOCK_FILE} rather than in your shelf`,
     {
       hint:
         `take ownership of it first: ${PRODUCT_NAME} share ${ref} --adopt\n` +
@@ -227,20 +250,41 @@ export interface RemoteUpdatePreview {
   current: boolean;
   /** The pin at the cached ref. Null when nothing would move. */
   pin: PinnedSource | null;
+  /** A plugin row's pin move. Null for a skill row and when nothing moves. */
+  plugin: RemotePluginChange | null;
+  /**
+   * The runs entries the new pin adds (D7 point 2): for a plugin row, and
+   * for a skill row whose new tree holds a plugin manifest, because Claude
+   * Code loads that skill as a plugin (R1). Null for any other row and when
+   * nothing moves.
+   */
+  newRuns: PluginRuns | null;
+}
+
+/** What a plugin pin move changes in what the consent prompt reports. */
+export interface RemotePluginChange {
+  /** The manifest `version` at the old pin, or null when it has none. */
+  versionFrom: string | null;
+  /** The manifest `version` at the new pin, or null when it has none. */
+  versionTo: string | null;
+  /** The runs entries the new pin has and the old pin did not (D7 point 2). */
+  newRuns: PluginRuns;
 }
 
 /** Read the pending change without moving anything. Offline. */
 export async function previewRemoteUpdate(opts: {
   project: string;
+  kind: RemoteItemKind;
   name: string;
   entry: RemoteLockEntry;
 }): Promise<RemoteUpdatePreview> {
-  const { entry, name } = opts;
+  const { entry, kind, name } = opts;
   const cache = remoteCacheState(entry.upstream);
-  if (!cache.present) throw coldCacheRefusal(name, entry);
+  if (!cache.present) throw coldCacheRefusal(kind, name, entry);
   const head = await resolveCachedRef(cache.path, entry.ref);
   if (head === null) {
     throw coldCacheRefusal(
+      kind,
       name,
       entry,
       `has no cached ref ${entry.ref} in the cache`,
@@ -252,12 +296,14 @@ export async function previewRemoteUpdate(opts: {
     changed: [],
     current: true,
     pin: null,
+    plugin: null,
+    newRuns: null,
   };
   if (head === entry.sourceCommit) return unchanged;
 
   const pin = await pinItemAtCommit(
     remoteTreeSource(cache.path, head, entry.subpath),
-    REMOTE_ITEM_KIND,
+    kind,
     name,
   );
   // Content decides, not the commit. Two skills installed from one repository
@@ -267,7 +313,7 @@ export async function previewRemoteUpdate(opts: {
 
   const before = await itemTreeEntriesAtCommit(
     remoteTreeSource(cache.path, entry.sourceCommit, entry.subpath),
-    REMOTE_ITEM_KIND,
+    kind,
   ).catch(() => []);
   const previous = new Map(
     before.map((item) => [item.path, `${item.mode}:${item.blobId}`]),
@@ -278,7 +324,161 @@ export async function previewRemoteUpdate(opts: {
   const changed = [...new Set([...previous.keys(), ...next.keys()])]
     .filter((path) => previous.get(path) !== next.get(path))
     .sort();
-  return { from: entry.sourceCommit, to: head, changed, current: false, pin };
+  // The move keeps ignored local files beside the new pinned files (row 4),
+  // so the runs reader reads both. A kept local manifest can arm a hook the
+  // new tree adds.
+  const extras = (
+    await installedPreservedEntries({
+      project: opts.project,
+      kind,
+      name,
+      scope: "local",
+      managedPaths: new Set([
+        ...before.map((item) => item.path),
+        ...pin.entries.map((item) => item.path),
+      ]),
+    })
+  ).map(pluginExtraFile);
+  const plugin =
+    kind === "plugins"
+      ? await pluginChange(cache.path, name, before, pin.entries, extras)
+      : null;
+  const newRuns =
+    plugin !== null
+      ? plugin.newRuns
+      : await itemPluginNewRuns(cache.path, kind, before, pin.entries, extras);
+  return {
+    from: entry.sourceCommit,
+    to: head,
+    changed,
+    current: false,
+    pin,
+    plugin,
+    newRuns,
+  };
+}
+
+/**
+ * D3 and D7 point 2 for a plugin pin move. The new tree must keep the item
+ * name in its manifest, or the move refuses before any write: Claude Code
+ * names the plugin from the manifest, so a renamed tree installed under the
+ * old folder would load under a name that no capshelf row holds.
+ *
+ * `previewRemoteUpdate` is the one producer of the pin that `updateRemoteItem`
+ * and `updateMergeRemoteTarget` write, and the dry run reads the same
+ * preview, so this one check covers every remote update path. The shelf
+ * `update` calls it with the data repo for a `data/plugins/<n>` pin move.
+ */
+export async function pluginChange(
+  repo: string,
+  name: string,
+  before: readonly PinTreeEntry[],
+  after: readonly PinTreeEntry[],
+  extras: readonly PluginExtraFile[] = [],
+): Promise<RemotePluginChange> {
+  const [manifestBefore, manifestAfter] = await Promise.all([
+    pluginManifestAt(repo, before),
+    pluginManifestAt(repo, after),
+  ]);
+  const renamedTo = manifestString(manifestAfter, "name");
+  if (renamedTo !== name) {
+    throw pluginRenameRefusal(name, renamedTo);
+  }
+  const [runsBefore, runsAfter] = await Promise.all([
+    pluginRunsAtCommit(repo, before, extras),
+    pluginRunsAtCommit(repo, after, extras),
+  ]);
+  return {
+    versionFrom: manifestString(manifestBefore, "version"),
+    versionTo: manifestString(manifestAfter, "version"),
+    newRuns: newRunsEntries(runsBefore, runsAfter),
+  };
+}
+
+/** The refusal for a new tree whose manifest names another plugin (D3). */
+function pluginRenameRefusal(
+  name: string,
+  manifestName: string | null,
+): PreconditionError {
+  const ref = `plugins/${name}`;
+  const found =
+    manifestName === null
+      ? `has no plugin name in ${PLUGIN_MANIFEST_REL}`
+      : `names the plugin "${sanitizeDisplayText(manifestName)}" in ${PLUGIN_MANIFEST_REL}`;
+  return new PreconditionError(`${ref}: the new tree ${found}`, {
+    hint:
+      `the item name is "${name}". ${PRODUCT_NAME} does not rename an item.\n` +
+      `  to take the renamed plugin: ${PRODUCT_NAME} rm ${ref}, then add it again`,
+  });
+}
+
+/**
+ * The manifest in a pinned plugin tree, parsed. Null when the tree holds no
+ * regular manifest blob, or when the blob is not a JSON object.
+ */
+async function pluginManifestAt(
+  repo: string,
+  entries: readonly PinTreeEntry[],
+): Promise<ConfigObject | null> {
+  const entry = entries.find(
+    (candidate) =>
+      candidate.path === PLUGIN_MANIFEST_REL &&
+      (candidate.mode === "100644" || candidate.mode === "100755"),
+  );
+  if (entry === undefined) return null;
+  const bytes = (await catFileBlobs(repo, [entry.blobId])).get(entry.blobId);
+  if (bytes === undefined) return null;
+  let parsed: ConfigValue;
+  try {
+    parsed = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    return null;
+  }
+  return isConfigObject(parsed) ? parsed : null;
+}
+
+/**
+ * D3 for a merge result: the files a merge writes keep the item name in
+ * their manifest. A local edit can rename the plugin while the upstream
+ * changes another file, so the upstream check alone does not cover it. A
+ * merged tree with no manifest is not checked here.
+ */
+export function assertMergedPluginName(
+  kind: ItemKind,
+  name: string,
+  files: readonly NamedFile[],
+  kept: readonly KeptInstalledEntry[],
+): void {
+  if (kind !== "plugins") return;
+  // The effective tree: the merged files, then the installed entries the
+  // writer keeps. An ignored installed manifest is not in `files`, but it
+  // stays in the folder and Claude Code loads it.
+  const file =
+    files.find((candidate) => candidate.path === PLUGIN_MANIFEST_REL) ??
+    kept.find((candidate) => candidate.path === PLUGIN_MANIFEST_REL);
+  if (file === undefined) return;
+  let parsed: ConfigValue = null;
+  try {
+    // A kept non-regular entry has no content and names no plugin.
+    if (file.content !== null) {
+      parsed = JSON.parse(file.content.toString("utf8"));
+    }
+  } catch {
+    // An unparseable manifest names no plugin.
+  }
+  const manifestName = manifestString(
+    isConfigObject(parsed) ? parsed : null,
+    "name",
+  );
+  if (manifestName !== name) throw pluginRenameRefusal(name, manifestName);
+}
+
+function manifestString(
+  manifest: ConfigObject | null,
+  field: string,
+): string | null {
+  const value = manifest?.[field];
+  return isConfigString(value) ? value : null;
 }
 
 /**
@@ -349,8 +549,9 @@ export interface RemoteUpdateResult {
  * prompts: the command layer owns consent, because only it can see `--yes`,
  * `--json`, and whether a terminal is attached.
  */
-export async function updateRemoteSkill(opts: {
+export async function updateRemoteItem(opts: {
   project: string;
+  kind: RemoteItemKind;
   name: string;
   entry: RemoteLockEntry;
   preview: RemoteUpdatePreview;
@@ -366,8 +567,9 @@ export async function updateRemoteSkill(opts: {
     };
   }
   const next = movedRemoteEntry(entry, preview.pin);
-  await reconcileRemoteSkill({
+  await reconcileRemoteItem({
     project: opts.project,
+    kind: opts.kind,
     name: opts.name,
     entry: next,
     previous: entry,
@@ -397,66 +599,44 @@ export interface RemoteMergeResult extends RemoteUpdateResult {
  */
 export async function updateMergeRemoteTarget(opts: {
   project: string;
+  kind: RemoteItemKind;
   name: string;
   entry: RemoteLockEntry;
   preview: RemoteUpdatePreview;
   dryRun: boolean;
+  /**
+   * The merged files a consent prompt approved. The merge refuses when its
+   * own result differs, so the approved files are the written files.
+   */
+  approvedFiles?: readonly NamedFile[];
 }): Promise<RemoteMergeResult> {
-  const { project, name, entry, preview } = opts;
-  const snapshot = await installedSnapshot(
-    project,
-    REMOTE_ITEM_KIND,
-    name,
-    "local",
-  );
-  if (snapshot === null) {
-    throw new PreconditionError(
-      `installed item is missing: ${installedPath(project, REMOTE_ITEM_KIND, name)}`,
-    );
-  }
-  const cache = remoteCacheState(entry.upstream);
-  if (!cache.present) throw coldCacheRefusal(name, entry);
-  const localFiles = await namedFilesFromInstalledSnapshot(snapshot);
-
-  if (preview.current || preview.pin === null) {
+  const { kind, name, entry } = opts;
+  const plan = await planRemoteMerge(opts);
+  if (plan.kind === "current") {
     return {
       action: "already-current",
       from: entry.sourceCommit,
-      to: preview.to,
+      to: plan.to,
       entry,
       merged: false,
       mergeBase: entry.sourceCommit,
       mergeResultDigest: entry.sourcePinDigest,
     };
   }
-
-  // The base has to reproduce the locked pin, or the merge is against content
-  // the lock never described. The same guard the shelf merge applies.
-  const baseEntries = await itemTreeEntriesAtCommit(
-    remoteTreeSource(cache.path, entry.sourceCommit, entry.subpath),
-    REMOTE_ITEM_KIND,
-  );
-  if (sourcePinDigest(baseEntries) !== entry.sourcePinDigest) {
+  const { snapshot, localFiles, files, pin } = plan;
+  if (
+    opts.approvedFiles !== undefined &&
+    !namedFilesEqual([...opts.approvedFiles], files)
+  ) {
     throw new PreconditionError(
-      `cannot merge ${remoteKey(name)}: the locked commit does not reproduce the locked item content; nothing changed`,
+      `${remoteKey(kind, name)} changed while the prompt was open; nothing was written. Rerun update --merge.`,
     );
   }
-  const [baseFiles, upstreamFiles] = await Promise.all([
-    namedFilesFromEntries(cache.path, baseEntries),
-    namedFilesFromEntries(cache.path, preview.pin.entries),
-  ]);
-
-  const merged = await mergeNamedTrees(baseFiles, localFiles, upstreamFiles);
-  if (!merged.ok) {
-    throw new PreconditionError(
-      `automatic merge conflicts in ${remoteKey(name)}; nothing changed.\n\n` +
-        `  conflicting paths:\n${merged.conflicts.map((path) => `    ${path}`).join("\n")}`,
-    );
-  }
-  const performedMerge = !namedFilesEqual(merged.files, upstreamFiles);
-  const next = movedRemoteEntry(entry, preview.pin);
+  const upstreamFiles = plan.upstreamFiles;
+  const performedMerge = !namedFilesEqual(files, upstreamFiles);
+  const next = movedRemoteEntry(entry, pin);
   const mergeResultDigest = sourcePinDigest(
-    namedFilesTreeEntries(merged.files, hashWidthOf(preview.pin.entries)),
+    namedFilesTreeEntries(files, hashWidthOf(pin.entries)),
   );
   if (opts.dryRun) {
     return {
@@ -469,16 +649,16 @@ export async function updateMergeRemoteTarget(opts: {
       mergeResultDigest,
     };
   }
-  if (!namedFilesEqual(localFiles, merged.files)) {
+  if (!namedFilesEqual(localFiles, files)) {
     await assertNoDestinationCollisions(
-      remoteKey(name),
+      remoteKey(kind, name),
       snapshot.localPath,
-      merged.files.map((file) => file.path),
+      files.map((file) => file.path),
     );
     const transaction = await beginInstalledReconciliation(
       snapshot.localPath,
       localFiles,
-      merged.files,
+      files,
     );
     try {
       await transaction.commit();
@@ -496,6 +676,118 @@ export async function updateMergeRemoteTarget(opts: {
     mergeBase: entry.sourceCommit,
     mergeResultDigest,
   };
+}
+
+type RemoteMergePlan =
+  | { kind: "current"; to: string }
+  | {
+      kind: "merge";
+      snapshot: NonNullable<Awaited<ReturnType<typeof installedSnapshot>>>;
+      localFiles: NamedFile[];
+      upstreamFiles: NamedFile[];
+      baseEntries: PinTreeEntry[];
+      cachePath: string;
+      /** The merged files the write puts in the folder. */
+      files: NamedFile[];
+      /** The installed entries the writer keeps beside `files`. */
+      kept: KeptInstalledEntry[];
+      pin: PinnedSource;
+    };
+
+/** The merge `updateMergeRemoteTarget` writes, computed and not written. */
+async function planRemoteMerge(opts: {
+  project: string;
+  kind: RemoteItemKind;
+  name: string;
+  entry: RemoteLockEntry;
+  preview: RemoteUpdatePreview;
+}): Promise<RemoteMergePlan> {
+  const { project, kind, name, entry, preview } = opts;
+  const snapshot = await installedSnapshot(project, kind, name, "local");
+  if (snapshot === null) {
+    throw new PreconditionError(
+      `installed item is missing: ${installedPath(project, kind, name)}`,
+    );
+  }
+  const cache = remoteCacheState(entry.upstream);
+  if (!cache.present) throw coldCacheRefusal(kind, name, entry);
+  const localFiles = await namedFilesFromInstalledSnapshot(snapshot);
+
+  if (preview.current || preview.pin === null) {
+    return { kind: "current", to: preview.to };
+  }
+
+  // The base has to reproduce the locked pin, or the merge is against content
+  // the lock never described. The same guard the shelf merge applies.
+  const baseEntries = await itemTreeEntriesAtCommit(
+    remoteTreeSource(cache.path, entry.sourceCommit, entry.subpath),
+    kind,
+  );
+  if (sourcePinDigest(baseEntries) !== entry.sourcePinDigest) {
+    throw new PreconditionError(
+      `cannot merge ${remoteKey(kind, name)}: the locked commit does not reproduce the locked item content; nothing changed`,
+    );
+  }
+  const [baseFiles, upstreamFiles] = await Promise.all([
+    namedFilesFromEntries(cache.path, baseEntries),
+    namedFilesFromEntries(cache.path, preview.pin.entries),
+  ]);
+
+  const merged = await mergeNamedTrees(baseFiles, localFiles, upstreamFiles);
+  if (!merged.ok) {
+    throw new PreconditionError(
+      `automatic merge conflicts in ${remoteKey(kind, name)}; nothing changed.\n\n` +
+        `  conflicting paths:\n${merged.conflicts.map((path) => `    ${path}`).join("\n")}`,
+    );
+  }
+  const kept = await keptByInstalledReconciliation(
+    snapshot.localPath,
+    localFiles,
+    merged.files,
+  );
+  assertMergedPluginName(kind, name, merged.files, kept);
+  return {
+    kind: "merge",
+    snapshot,
+    localFiles,
+    upstreamFiles,
+    baseEntries,
+    cachePath: cache.path,
+    files: merged.files,
+    kept,
+    pin: preview.pin,
+  };
+}
+
+/**
+ * D7 point 2 for a remote `update --merge`: the runs entries the merged
+ * files add over the locked pin, and those files. A merge can run a command
+ * that neither the local copy nor the upstream runs alone, so the prompt
+ * reads the merged files. Null `files` when nothing would move; `newRuns` is
+ * null when the merged files are not a plugin to Claude Code.
+ */
+export async function remoteMergeNewRuns(opts: {
+  project: string;
+  kind: RemoteItemKind;
+  name: string;
+  entry: RemoteLockEntry;
+  preview: RemoteUpdatePreview;
+}): Promise<{ newRuns: PluginRuns | null; files: NamedFile[] | null }> {
+  const plan = await planRemoteMerge(opts);
+  if (plan.kind === "current") {
+    return { newRuns: opts.preview.newRuns, files: null };
+  }
+  // Every installed entry the merge writer keeps, from the writer's rule.
+  const extras = plan.kept;
+  const merged = await itemPluginRunsFromFiles(opts.kind, plan.files, extras);
+  if (merged === null) return { newRuns: null, files: plan.files };
+  const previous = (await itemPluginRunsAtCommit(
+    plan.cachePath,
+    opts.kind,
+    plan.baseEntries,
+    extras,
+  )) ?? { hooks: [], mcpServers: [], unknown: [] };
+  return { newRuns: newRunsEntries(previous, merged), files: plan.files };
 }
 
 /** The bytes of a pinned tree, named the way the merge machinery names them. */

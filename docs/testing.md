@@ -28,6 +28,13 @@ and a script written on the assumption that the library supplies it refuses
 with exit 3 at the first one. Smoke therefore proves non-interactive behavior
 only. Terminal behavior belongs to the E2E pseudo-terminal cells.
 
+`scripts/smoke-older-binary.sh` is the one smoke script that runs a second
+capshelf. It extracts the source at tag `v0.13.0` and runs it with this
+tree's `node_modules`. This tree's CLI writes a plugin project first. Then
+each 0.13 writer must refuse and leave the manifest and both locks byte for
+byte. A local clone without the tag skips the script. In CI, a missing tag
+fails the script, and the test lane checks out the full history with tags.
+
 ## Read reuse regression coverage
 
 Read reuse is the one optimization that can silently change an answer, so

@@ -168,7 +168,9 @@ export function MachineView({
                       key={`${plugin.scope}:${plugin.id}`}
                       class="machine-row"
                     >
-                      <span class="mono machine-ref">plugins/{plugin.id}</span>
+                      <span class="mono machine-ref">
+                        claude-plugins/{plugin.id}
+                      </span>
                       <span class="chip chip-origin">{plugin.scope}</span>
                       <span class="muted">
                         {plugin.enabled ? "enabled" : "disabled"}

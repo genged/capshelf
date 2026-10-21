@@ -136,7 +136,7 @@ describe("user-level inventory CLI", () => {
       join(project, ".capshelf", "capshelf.lock.json"),
       `${JSON.stringify(
         {
-          version: 4,
+          version: 5,
           items: {
             "data/skills/alpha": {
               source: "data",
@@ -184,7 +184,7 @@ describe("user-level inventory CLI", () => {
       join(project, ".capshelf", "capshelf.lock.json"),
       `${JSON.stringify(
         {
-          version: 4,
+          version: 5,
           items: {
             "data/skills/alpha": {
               source: "data",

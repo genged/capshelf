@@ -1,7 +1,7 @@
 BIN_DIR ?= $(HOME)/.local/bin
 
 SMOKE_JOBS ?= 4
-SMOKE_TARGETS := smoke-modes smoke-skills smoke-settings smoke-mcp smoke-codex-config smoke-bootstrap smoke-metadata smoke-needs smoke-team-sync smoke-bundles smoke-pi-extensions smoke-subagents smoke-marketplace smoke-pins smoke-remote smoke-ui
+SMOKE_TARGETS := smoke-modes smoke-skills smoke-settings smoke-mcp smoke-codex-config smoke-bootstrap smoke-metadata smoke-needs smoke-team-sync smoke-bundles smoke-pi-extensions smoke-subagents smoke-marketplace smoke-pins smoke-remote smoke-plugins smoke-older-binary smoke-ui
 
 .PHONY: install dev build test typecheck lint check check-release-docs check-doc-citations smoke e2e $(SMOKE_TARGETS) clean deps
 
@@ -102,6 +102,12 @@ smoke-marketplace: deps
 
 smoke-remote: deps
 	@./scripts/smoke-remote.sh
+
+smoke-plugins: deps
+	@./scripts/smoke-plugins.sh
+
+smoke-older-binary: deps
+	@./scripts/smoke-older-binary.sh
 
 smoke-ui: deps
 	@./scripts/smoke-ui.sh

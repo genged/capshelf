@@ -18,12 +18,12 @@ import {
   upstreamWith,
 } from "./remote-fixtures";
 import {
-  assertLockV4,
+  assertWritableLock,
   dataKey,
   loadLocalLock,
   serializeLock,
 } from "../src/lock";
-import type { LockV4 } from "../src/lock";
+import type { WritableLock } from "../src/lock";
 import { gitTreeSource } from "../src/item-source";
 import { pinItemAtCommit } from "../src/pin";
 import { headSha } from "../src/git";
@@ -78,7 +78,7 @@ test(
     const { world, run } = await installOne();
     const result = await run(["status"], world.env);
     expect(result.stdout.toString()).toContain(
-      "remote/  (skills pinned to repos outside your shelf)",
+      "remote/  (items pinned to repos outside your shelf)",
     );
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
@@ -164,7 +164,7 @@ test(
       "skills",
       "pdf",
     );
-    const withShelfRow: LockV4 = assertLockV4(
+    const withShelfRow: WritableLock = assertWritableLock(
       await loadLocalLock(world.project),
       "the fixture",
     );

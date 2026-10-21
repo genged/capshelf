@@ -2,18 +2,23 @@ import type { Command } from "commander";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import { saveManifest } from "../manifest";
 import {
-  assertLockV4,
+  assertWritableLock,
   dataKey,
   entryIdentity,
   saveLocalLock,
   saveLock,
 } from "../lock";
 import type { Lock } from "../lock";
-import { ensureInstallAliases, parseLockKey } from "../installed";
+import {
+  ensureInstallAliases,
+  installedPath,
+  parseLockKey,
+} from "../installed";
 import { NotFoundError, PreconditionError } from "../errors";
 import { isSystemItemName } from "../bundled";
 import { lockKeysForRef, parseItemRef } from "../item-ref";
 import { assertNotPulledSkill } from "../remote-refusal";
+import { installsAtSkillTarget } from "../master";
 import type { ItemKind } from "../master";
 import {
   assertLocalScopeSupported,
@@ -24,10 +29,21 @@ import {
 } from "../local-config";
 import { moveScope } from "../move-scope";
 import type { MoveScopeResult, Scope } from "../promote-core";
+import { loadRemotesLock } from "../remotes-lock";
+import { assertSkillTargetFree } from "../skill-target";
+import { gitTreeSource } from "../item-source";
+import { itemTreeEntriesAtCommit } from "../pin";
+import { confirmPluginConsent } from "../plugin-consent";
+import {
+  itemPluginRunsAtCommit,
+  itemPluginRunsOnDisk,
+  unionRuns,
+} from "../plugin-runs";
 
 interface MoveOptions {
   to?: string;
   json?: boolean;
+  yes?: boolean;
 }
 
 export function registerMove(program: Command): void {
@@ -35,6 +51,10 @@ export function registerMove(program: Command): void {
     .command("move <item>")
     .description("change the scope of an already-tracked data item")
     .requiredOption("--to <scope>", "destination scope: local or project")
+    .option(
+      "--yes",
+      "authorize the commands a plugin runs in project scope without prompting",
+    )
     .option("--json", "output JSON")
     .addHelpText(
       "after",
@@ -65,8 +85,11 @@ export function registerMove(program: Command): void {
       }
       // PIN-12: before the drift comparison, so an unmigrated project gets the
       // migration guidance rather than a drift refusal it cannot act on.
-      const writableProjectLock = assertLockV4(projectLock, "capshelf move");
-      const writableLocalLock = assertLockV4(localLock, "capshelf move");
+      const writableProjectLock = assertWritableLock(
+        projectLock,
+        "capshelf move",
+      );
+      const writableLocalLock = assertWritableLock(localLock, "capshelf move");
       const alreadyCurrent = alreadyInDestinationScope(
         resolved.kind,
         resolved.name,
@@ -81,6 +104,23 @@ export function registerMove(program: Command): void {
 
       const dataRepo = await resolveProjectDataRepo(project, manifest, cmd);
 
+      // D2 guard 5: before the scope-change write. `self` is the item's
+      // current key, the same in either scope (a lock key carries no scope),
+      // so the item's own entry is never reported as its own conflict.
+      if (installsAtSkillTarget(resolved.kind)) {
+        await assertSkillTargetFree(
+          project,
+          resolved.kind,
+          resolved.name,
+          {
+            project: projectLock,
+            local: localLock,
+            remotes: await loadRemotesLock(project),
+          },
+          { key: dataKey(resolved.kind, resolved.name) },
+        );
+      }
+
       const result = await moveScope(
         project,
         dataRepo,
@@ -94,6 +134,61 @@ export function registerMove(program: Command): void {
           localConfig,
         },
       );
+
+      // D7 point 3, before any save. Two trees reach teammates: the pinned
+      // tree, through the committed lock, and the installed folder, which
+      // the project commits once its excludes go. `moveScope` refuses drift
+      // only on pinned paths, so an extra file such as an unpinned
+      // `hooks/hooks.json` passes it. The point asks for the union of both.
+      // A skill that holds a plugin manifest in either tree is a plugin to
+      // Claude Code (R1) and asks too.
+      if (
+        !result.alreadyCurrent &&
+        result.to === "project" &&
+        installsAtSkillTarget(result.kind)
+      ) {
+        const pinned = await itemPluginRunsAtCommit(
+          dataRepo,
+          result.kind,
+          await itemTreeEntriesAtCommit(
+            gitTreeSource({
+              repo: dataRepo,
+              kind: result.kind,
+              name: result.name,
+              commit: result.sourceCommit,
+            }),
+            result.kind,
+          ),
+        );
+        const installed = await itemPluginRunsOnDisk(
+          result.kind,
+          installedPath(
+            project,
+            result.kind,
+            result.name,
+            manifest.installMode,
+          ),
+        );
+        const runs =
+          pinned === null
+            ? installed
+            : installed === null
+              ? pinned
+              : unionRuns(pinned, installed);
+        const approved =
+          runs === null ||
+          (await confirmPluginConsent(
+            [
+              {
+                kind: "project-scope",
+                ref: `${result.kind}/${result.name}`,
+                runs,
+              },
+            ],
+            { json: opts.json === true, yes: opts.yes === true },
+          ));
+        if (!approved) return;
+      }
 
       if (!result.alreadyCurrent) {
         if (result.to === "project") {

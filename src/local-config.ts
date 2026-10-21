@@ -5,8 +5,8 @@ import { z } from "zod";
 import { LOCAL_CONFIG_FILE, LOCAL_LOCK_FILE, METADATA_DIR } from "./identity";
 import { expandTilde } from "./paths";
 import { atomicWriteFile } from "./fs-utils";
-import type { ConfigValue } from "./config-values";
-import { hasShelvesKey } from "./manifest";
+import { isConfigObject, type ConfigValue } from "./config-values";
+import { assertFenceOrFederation, fenceFor } from "./manifest-fence";
 import { PreconditionError } from "./errors";
 import { assertNever, isSafeItemName } from "./assert";
 import type { ItemKind } from "./master";
@@ -24,6 +24,7 @@ const localItemNames = z.array(
 const LocalConfigSchema = z.object({
   dataRepo: z.string().min(1),
   skills: localItemNames.default([]),
+  plugins: localItemNames.default([]),
   piExtensions: localItemNames.default([]),
   settings: localItemNames.default([]),
   mcp: localItemNames.default([]),
@@ -32,6 +33,7 @@ const LocalConfigSchema = z.object({
 export interface LocalConfig {
   dataRepo: string;
   skills: string[];
+  plugins: string[];
   piExtensions: string[];
   settings: string[];
   mcp: string[];
@@ -47,17 +49,16 @@ export async function loadLocalConfig(
   const path = localConfigPath(project);
   if (!existsSync(path)) return null;
   const raw: ConfigValue = JSON.parse(await readFile(path, "utf-8"));
-  // "shelves" is reserved for multi-shelf federation. Fail loudly before zod
-  // strips it and a later saveLocalConfig silently deletes it.
-  if (hasShelvesKey(raw)) {
-    throw new Error(
-      `${path} declares "shelves": this project uses multi-shelf federation, which this capshelf version does not support; upgrade capshelf`,
-    );
-  }
+  // "shelves" is reserved for multi-shelf federation, with one exception: the
+  // plugin fence (M9). Fail loudly before zod strips it and a later
+  // saveLocalConfig silently deletes the federation config, or the fence.
+  assertFenceOrFederation(path, raw);
+  if (isConfigObject(raw)) delete raw.shelves;
   const parsed = LocalConfigSchema.parse(raw);
   return {
     dataRepo: expandTilde(parsed.dataRepo),
     skills: parsed.skills,
+    plugins: parsed.plugins,
     piExtensions: parsed.piExtensions,
     settings: parsed.settings,
     mcp: parsed.mcp,
@@ -70,7 +71,8 @@ export async function saveLocalConfig(
 ): Promise<void> {
   const path = localConfigPath(project);
   await mkdir(dirname(path), { recursive: true });
-  await atomicWriteFile(path, `${JSON.stringify(cfg, null, 2)}\n`);
+  const out = { ...fenceFor(cfg.plugins.length), ...cfg };
+  await atomicWriteFile(path, `${JSON.stringify(out, null, 2)}\n`);
   await ensureGitignored(project, LOCAL_CONFIG_FILE);
   await ensureGitignored(project, LOCAL_LOCK_FILE);
 }
@@ -99,6 +101,8 @@ export function localConfigNamesForKind(
   switch (kind) {
     case "skills":
       return config.skills;
+    case "plugins":
+      return config.plugins;
     case "pi-extensions":
       return config.piExtensions;
     case "subagents":
@@ -207,6 +211,7 @@ export function assertLocalScopeSupported(
 ): void {
   switch (kind) {
     case "skills":
+    case "plugins":
     case "pi-extensions":
       return;
     case "subagents":
@@ -236,6 +241,7 @@ function localInstallPaths(
   const suffix = directorySuffix ? "/" : "";
   switch (kind) {
     case "skills":
+    case "plugins":
       return [`.agents/skills/${name}${suffix}`, `.claude/skills/${name}`];
     case "pi-extensions":
       return [`.pi/extensions/${name}${suffix}`];

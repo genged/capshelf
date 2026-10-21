@@ -9,7 +9,7 @@ import { KIND_ORDER, kindLabel } from "./kind-label";
 export type FilterTab = "all" | "attention" | "ok";
 
 /** What a kind chip can select: a kind, or one of the two external groups. */
-export type ReviewKind = ItemKind | "plugins" | "user-skills";
+export type ReviewKind = ItemKind | "claude-plugins" | "user-skills";
 
 export interface KindChip<Id extends string> {
   id: Id;

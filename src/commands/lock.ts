@@ -13,7 +13,7 @@ import { PreconditionError, ResultExitError } from "../errors";
 import { atomicWriteFile } from "../fs-utils";
 import { resolveCommit } from "../git";
 import { PRODUCT_NAME } from "../identity";
-import { parseLockKey } from "../installed";
+import { installedPath, parseLockKey } from "../installed";
 import {
   contentSourceFor,
   contentSourceOrNull,
@@ -21,7 +21,7 @@ import {
 } from "../item-source";
 import {
   LOCK_VERSION,
-  isLockV4,
+  isWritableLock,
   loadLocalLock,
   loadLock,
   serializeLock,
@@ -29,12 +29,28 @@ import {
   createDataLockEntry,
   hasNeedsSnapshot,
 } from "../lock";
-import type { DataLockEntry, LockEntryV4, Lock, LockV4 } from "../lock";
+import type { DataLockEntry, LockEntryV4, Lock, WritableLock } from "../lock";
 import { legacyShaAtCommit } from "../lock-verify";
 import { loadManifest } from "../manifest";
 import type { Manifest } from "../manifest";
-import { itemRepoRelPath } from "../master";
-import { materializeLockEntry } from "../materialize";
+import {
+  installsAtSkillTarget,
+  isCopyDirectoryItemKind,
+  itemRepoRelPath,
+} from "../master";
+import {
+  installedPreservedEntries,
+  materializeLockEntry,
+} from "../materialize";
+import { confirmPluginConsent, newPluginRunsField } from "../plugin-consent";
+import type { PluginConsentPoint } from "../plugin-consent";
+import {
+  itemPluginRunsAtCommit,
+  itemPluginRunsOnDisk,
+  newRunsEntries,
+  pluginExtraFile,
+  runsHaveEntries,
+} from "../plugin-runs";
 import { captureCommittedItemNeeds, loadCommittedItemNeeds } from "../metadata";
 import { localLockPath, lockPath, lockReadPath, projectRoot } from "../paths";
 import {
@@ -84,7 +100,7 @@ interface MigrationPlan {
   repinned: ConvertedEntry[];
   removed: Array<{ scope: MigrationScope; key: string; ref: string }>;
   blocked: Blocker[];
-  candidates: Map<MigrationScope, LockV4>;
+  candidates: Map<MigrationScope, WritableLock>;
   changes: DestructiveChange[];
 }
 
@@ -107,7 +123,10 @@ export function registerLock(program: Command): void {
       "--remove-item <ref...>",
       "remove a blocked item instead of migrating it",
     )
-    .option("--yes", "authorize the installed-state loss a repair would cause")
+    .option(
+      "--yes",
+      "authorize the installed-state loss a repair would cause, and the commands a re-pinned plugin runs",
+    )
     .option("--json", "output JSON")
     .action(
       async (
@@ -139,7 +158,7 @@ async function runMigrate(
   const manifest = await loadManifest(project);
   const snapshots = await readLockSnapshots(project);
 
-  if (snapshots.every((snapshot) => isLockV4(snapshot.lock))) {
+  if (snapshots.every((snapshot) => isWritableLock(snapshot.lock))) {
     if (opts.json) {
       console.log(
         JSON.stringify(
@@ -163,6 +182,32 @@ async function runMigrate(
     return;
   }
 
+  // M10: every project moves to lock version 5, with or without plugins.
+  // When every snapshot is already version 4 or 5, every data entry already
+  // carries a full pin (`sourcePinDigest`, a full `sourceCommit`), so the
+  // version bump copies each entry unchanged and reads nothing from the data
+  // repo. It changes no installed file and no entry, so it asks for no
+  // consent.
+  if (
+    snapshots.every(
+      (snapshot) =>
+        snapshot.lock.version === 4 || snapshot.lock.version === LOCK_VERSION,
+    )
+  ) {
+    const plan = buildVersionBumpPlan(snapshots);
+    if (opts.dryRun) {
+      printPlan(plan, { dryRun: true, json: opts.json === true });
+      return;
+    }
+    await assertLockSnapshotsUnchanged(plan.snapshots);
+    // Nothing on this path is ever repinned, so `publishMigration`'s
+    // dataRepo parameter is never read; an empty string stands in because
+    // the data repo is deliberately never resolved here.
+    await publishMigration(project, "", manifest, plan);
+    printPlan(plan, { dryRun: false, json: opts.json === true });
+    return;
+  }
+
   const dataRepo = await resolveProjectDataRepo(project, manifest, cmd);
   const selection: RepairSelection = {
     repin: new Set(opts.repin ?? []),
@@ -182,8 +227,23 @@ async function runMigrate(
     throw new ResultExitError(3);
   }
 
+  // D7 point 2: a repin moves a pin to new content, as `update` does, so it
+  // asks the same consent before any write.
+  const pluginPoints = await repinPluginPoints(project, dataRepo, plan);
   if (opts.dryRun) {
-    printPlan(plan, { dryRun: true, json: opts.json === true });
+    printPlan(plan, {
+      dryRun: true,
+      json: opts.json === true,
+      wouldAsk: pluginPoints,
+    });
+    return;
+  }
+  if (
+    !(await confirmPluginConsent(pluginPoints, {
+      json: opts.json === true,
+      yes: opts.yes === true,
+    }))
+  ) {
     return;
   }
 
@@ -206,6 +266,53 @@ async function runMigrate(
   await assertLockSnapshotsUnchanged(plan.snapshots);
   await publishMigration(project, dataRepo, manifest, plan);
   printPlan(plan, { dryRun: false, json: opts.json === true });
+}
+
+/**
+ * M10, the 4-to-5 step alone. A version 4 or 5 data entry already carries a
+ * full pin, so this copies every entry across unchanged, with the version
+ * number replaced, and builds no new pin. It never touches the data repo.
+ */
+function buildVersionBumpPlan(snapshots: LockSnapshot[]): MigrationPlan {
+  const converted: ConvertedEntry[] = [];
+  const candidates = new Map<MigrationScope, WritableLock>();
+  for (const snapshot of snapshots) {
+    const { lock } = snapshot;
+    if (lock.version !== 4 && lock.version !== LOCK_VERSION) {
+      // Unreachable: the caller only takes this path once every snapshot has
+      // already been checked to be version 4 or 5.
+      throw new Error(
+        `${snapshot.path} is version ${lock.version}, not 4 or 5`,
+      );
+    }
+    for (const [key, entry] of Object.entries(lock.items)) {
+      if (entry.source === "system") continue;
+      const parsed = parseLockKey(key);
+      converted.push({
+        scope: snapshot.scope,
+        key,
+        ref: `${parsed.kind}/${parsed.name}`,
+        outcome: "converted",
+        entry,
+      });
+    }
+    candidates.set(snapshot.scope, {
+      version: LOCK_VERSION,
+      items: lock.items,
+    });
+  }
+  // Strict-parse both complete candidates before anything is published, the
+  // same guard `planMigration` applies.
+  for (const candidate of candidates.values()) serializeLock(candidate);
+  return {
+    snapshots,
+    converted,
+    repinned: [],
+    removed: [],
+    blocked: [],
+    candidates,
+    changes: [],
+  };
 }
 
 async function readLockSnapshots(project: string): Promise<LockSnapshot[]> {
@@ -269,10 +376,10 @@ async function planMigration(input: {
   const removed: MigrationPlan["removed"] = [];
   const blocked: Blocker[] = [];
   const changes: DestructiveChange[] = [];
-  const candidates = new Map<MigrationScope, LockV4>();
+  const candidates = new Map<MigrationScope, WritableLock>();
 
   for (const snapshot of input.snapshots) {
-    const candidate: LockV4 = { version: LOCK_VERSION, items: {} };
+    const candidate: WritableLock = { version: LOCK_VERSION, items: {} };
     for (const [key, entry] of Object.entries(snapshot.lock.items)) {
       if (entry.source === "system") {
         // System identity stays the bundled `sha`: those items carry no
@@ -496,6 +603,60 @@ async function repinEntry(
   };
 }
 
+/**
+ * The plugin consent points of the repinned skill-target entries. The old
+ * side is the installed folder, which is what Claude Code runs now. The new
+ * side is the repinned tree plus the ignored local files the write keeps.
+ * A repinned tree that is not a plugin to Claude Code asks nothing.
+ */
+async function repinPluginPoints(
+  project: string,
+  dataRepo: string,
+  plan: MigrationPlan,
+): Promise<PluginConsentPoint[]> {
+  const points: PluginConsentPoint[] = [];
+  for (const repair of plan.repinned) {
+    const parsed = parseLockKey(repair.key);
+    if (!installsAtSkillTarget(parsed.kind)) continue;
+    if (repair.entry.source !== "data") continue;
+    const entries = await itemTreeEntriesAtCommit(
+      gitTreeSource({
+        repo: dataRepo,
+        kind: parsed.kind,
+        name: parsed.name,
+        commit: repair.entry.sourceCommit,
+      }),
+      parsed.kind,
+    );
+    const extras = (
+      await installedPreservedEntries({
+        project,
+        kind: parsed.kind,
+        name: parsed.name,
+        scope: repair.scope,
+        managedPaths: new Set(entries.map((entry) => entry.path)),
+      })
+    ).map(pluginExtraFile);
+    const next = await itemPluginRunsAtCommit(
+      dataRepo,
+      parsed.kind,
+      entries,
+      extras,
+    );
+    if (next === null) continue;
+    const installed = installedPath(project, parsed.kind, parsed.name);
+    const previous = (existsSync(installed)
+      ? await itemPluginRunsOnDisk(parsed.kind, installed)
+      : null) ?? { hooks: [], mcpServers: [], unknown: [] };
+    points.push({
+      kind: "pin-move",
+      ref: repair.ref,
+      runs: newRunsEntries(previous, next),
+    });
+  }
+  return points;
+}
+
 async function plannedRepairLoss(
   input: { project: string; dataRepo: string; manifest: Manifest },
   scope: MigrationScope,
@@ -504,7 +665,7 @@ async function plannedRepairLoss(
   currentEntry: DataLockEntry,
   selectedEntry: LockEntryV4,
 ): Promise<DestructiveChange[]> {
-  if (parsed.kind !== "skills" && parsed.kind !== "pi-extensions") return [];
+  if (!isCopyDirectoryItemKind(parsed.kind)) return [];
   const planned = await planCopyDirectoryDestruction({
     project: input.project,
     currentSource: contentSourceOrNull({
@@ -563,7 +724,7 @@ async function publishMigration(
   try {
     for (const repair of plan.repinned) {
       const parsed = parseLockKey(repair.key);
-      if (parsed.kind !== "skills" && parsed.kind !== "pi-extensions") continue;
+      if (!isCopyDirectoryItemKind(parsed.kind)) continue;
       await materializeLockEntry({
         project,
         source: contentSourceFor({
@@ -639,8 +800,16 @@ function printBlocked(plan: MigrationPlan, json: boolean): void {
 
 function printPlan(
   plan: MigrationPlan,
-  opts: { dryRun: boolean; json: boolean },
+  opts: {
+    dryRun: boolean;
+    json: boolean;
+    /** A dry run's consent points: what the real run would ask about. */
+    wouldAsk?: readonly PluginConsentPoint[];
+  },
 ): void {
+  const wouldAsk = (opts.wouldAsk ?? []).filter((point) =>
+    runsHaveEntries(point.runs),
+  );
   const repaired = plan.converted.filter(
     (entry) => entry.outcome === "repaired-legacy-identity",
   );
@@ -656,6 +825,12 @@ function printPlan(
           repinned: refsOf(plan.repinned),
           removed: plan.removed.map((entry) => `${entry.scope}/${entry.ref}`),
           blocked: [],
+          ...(wouldAsk.length > 0 && {
+            wouldAsk: wouldAsk.map((point) => ({
+              ref: `${plan.repinned.find((entry) => entry.ref === point.ref)?.scope ?? "project"}/${point.ref}`,
+              newRuns: point.runs,
+            })),
+          }),
         },
         null,
         2,
@@ -679,6 +854,12 @@ function printPlan(
     console.log(`  removed                    ${plan.removed.length}`);
   }
   console.log("  blocked                    0");
+  for (const point of wouldAsk) {
+    console.log(`  plugin    ${point.ref}`);
+    for (const line of newPluginRunsField("would ask", point.runs)) {
+      console.log(line);
+    }
+  }
   if (opts.dryRun) console.log("Dry run; nothing written.");
 }
 

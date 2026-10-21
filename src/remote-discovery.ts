@@ -34,6 +34,7 @@ import type {
   DiscoveredPlugin,
   DiscoveryWarning,
   SkippedEntry,
+  WholePlugin,
 } from "./plugin-discovery";
 
 const SKILL_FILE = "SKILL.md";
@@ -83,6 +84,47 @@ export interface RemoteDiscovery {
   skipped: SkippedEntry[];
   /** A10: a catalog or manifest document that is present and does not parse. */
   warnings: DiscoveryWarning[];
+  /**
+   * The plugins in `plugins` that hold a regular Claude manifest, so they
+   * install whole (plugin D5). Absent means none.
+   */
+  wholePlugins?: WholePlugin[];
+}
+
+/** One plugin that the `add <url>` picker offers as a whole (plugin D5). */
+export interface OfferedPlugin {
+  plugin: DiscoveredPlugin;
+  whole: WholePlugin;
+}
+
+/**
+ * What the `add <url>` picker offers, by the repository shape (plugin D5,
+ * the 2026-10-20 reversal). A plugin with a regular Claude manifest is one
+ * row. A skill is a row when no such plugin holds it. A repository with no
+ * such plugin gives skill rows only, as before.
+ */
+export interface PickerOffer {
+  /** Discovery order. */
+  plugins: OfferedPlugin[];
+  /** Candidate order. */
+  skills: RemoteSkillCandidate[];
+}
+
+export function pickerOffer(discovery: RemoteDiscovery): PickerOffer {
+  const wholeBySource = new Map(
+    (discovery.wholePlugins ?? []).map((whole) => [whole.source, whole]),
+  );
+  const plugins: OfferedPlugin[] = [];
+  for (const plugin of discovery.plugins) {
+    const whole = wholeBySource.get(plugin.source);
+    if (whole !== undefined) plugins.push({ plugin, whole });
+  }
+  const skills = discovery.candidates.filter(
+    (candidate) =>
+      candidate.plugin === undefined ||
+      !wholeBySource.has(candidate.plugin.plugin.source),
+  );
+  return { plugins, skills };
 }
 
 /** Every candidate at `commit`, sorted by subpath. Reads only through ls-tree. */
@@ -152,6 +194,7 @@ export async function discoverRemoteSkills(
     plugins: inventory.plugins,
     skipped: inventory.skipped,
     warnings: inventory.warnings,
+    wholePlugins: inventory.wholePlugins,
   };
 }
 
@@ -234,6 +277,8 @@ export async function pluginAtSubpath(
   plugin: DiscoveredPlugin;
   candidates: RemoteSkillCandidate[];
   warnings: DiscoveryWarning[];
+  /** Set when the plugin holds a regular Claude manifest (plugin D5). */
+  whole: WholePlugin | null;
 } | null> {
   // D2/D12: the repository root is always legacy, never a plugin — a
   // catalog source normalizing to "." routes through `legacySkillDirs`
@@ -249,6 +294,7 @@ export async function pluginAtSubpath(
   const inventory = await discoverPlugins(repo, entries);
   let plugin = inventory.plugins.find((p) => p.source === subpath);
   let manifestWarnings: DiscoveryWarning[] = [];
+  let whole = inventory.wholePlugins.find((w) => w.source === subpath) ?? null;
   if (plugin === undefined) {
     if (!hasPluginManifest(entries, subpath)) return null;
     const described = await describePluginDirectory(
@@ -260,6 +306,7 @@ export async function pluginAtSubpath(
     );
     plugin = described.plugin;
     manifestWarnings = described.warnings;
+    whole = described.whole;
   }
 
   const facts = await collectPluginFacts(repo, entries, [plugin]);
@@ -279,6 +326,7 @@ export async function pluginAtSubpath(
     plugin,
     candidates,
     warnings: [...inventory.warnings, ...manifestWarnings],
+    whole,
   };
 }
 

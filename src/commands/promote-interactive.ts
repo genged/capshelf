@@ -17,7 +17,7 @@ import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import { globalOpts } from "../global-options";
 import { PreconditionError } from "../errors";
 import { parseItemRef } from "../item-ref";
-import { assertLockV4 } from "../lock";
+import { assertWritableLock } from "../lock";
 import { reportItemFailure } from "./picker-report";
 import { capshelfCommandPrefix, shellArg } from "../paths";
 import { pickItems, pickTerminalUnavailable } from "../pick";
@@ -55,7 +55,7 @@ export async function runInteractivePromote(request: {
   const { project, manifest, projectLock, localLock } =
     await loadProjectContext({ cmd: request.cmd });
   const dataRepo = await resolveProjectDataRepo(project, manifest, request.cmd);
-  const lock = assertLockV4(
+  const lock = assertWritableLock(
     scope === "local" ? localLock : projectLock,
     "capshelf promote",
   );

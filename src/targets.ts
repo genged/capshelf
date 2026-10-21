@@ -4,7 +4,8 @@ import { findSkillsShSkill, skillsShConflictMessage } from "./external";
 import type { ItemRef } from "./item-ref";
 import { lockKeysForRef, parseItemRef } from "./item-ref";
 import type { Lock } from "./lock";
-import { REMOTE_ITEM_KIND } from "./remotes-lock";
+import { installsAtSkillTarget } from "./master";
+import { parseRemoteKey } from "./remotes-lock";
 
 export interface ScopedTarget {
   scope: "project" | "local";
@@ -49,21 +50,24 @@ export function matchRefAcrossScopes(
 }
 
 /**
- * Refuse a bare ref that names a remote skill and a shelf item at once.
+ * Refuse a bare ref that names a remote row and a shelf item at once.
  *
- * `remoteKeysForRef` matches on name alone, and `add <url>` only checks
- * `skills/<name>` against the two locks, so a project can track `mcp/pdf` in
- * its shelf and pull `skills/pdf` from a URL. `apply` and `update` resolve the
- * remote row first, so without this the remote skill would win `capshelf apply
- * pdf` outright and leave the shelf item unconverged with nothing reported.
+ * For a bare ref, `remoteKeysForRef` matches on name across both remote
+ * kinds, `skills` and `plugins`. `add <url>` checks only its own
+ * `<kind>/<name>` against the two locks, so a project can track `mcp/pdf` in
+ * its shelf and pull `skills/pdf` or `plugins/pdf` from a URL. `apply` and
+ * `update` resolve the remote row first, so without this the remote row would
+ * win `capshelf apply pdf` outright and leave the shelf item unconverged with
+ * nothing reported.
  * `resolveTrackedTarget` already refuses an ambiguous bare ref inside one
  * population; this is the same rule across two.
  *
- * Naming the kind does not settle it. Every remote row is kind `skills`, so
- * `skills/pdf` is exactly as split as a bare `pdf` when the shelf tracks that
- * name too — the D18 "an adopt did not finish" state, which `status` reports
- * and `--strict` fails on, and which is reached by an interrupted adopt. A ref
- * that matches only one population passes through, whatever its shape.
+ * Naming the kind does not settle it. A remote row is kind `skills` or
+ * `plugins`, so `skills/pdf` is exactly as split as a bare `pdf` when the
+ * shelf tracks that name too — the D18 "an adopt did not finish" state, which
+ * `status` reports and `--strict` fails on, and which is reached by an
+ * interrupted adopt. A ref that matches only one population passes through,
+ * whatever its shape.
  */
 export function assertRefNotSplitAcrossPopulations(
   projectLock: Lock,
@@ -90,15 +94,22 @@ export function assertRefNotSplitAcrossPopulations(
  * refuses this state too, so the hint would send the user back to a refusal.
  * The adopt is the one command that resolves it, and it is what `status`
  * already prints for the same rows.
+ *
+ * `owners` carries at least one remote key (`assertRefNotSplitAcrossPopulations`
+ * never calls this with none), so its kind is read from the first one for the
+ * hint — the same kind the row itself holds.
  */
 export function splitPopulationRefusal(
   name: string,
   owners: readonly string[],
 ): PreconditionError {
+  const remoteOwner = owners.find((owner) => owner.startsWith("remote/"));
+  const kind =
+    remoteOwner !== undefined ? parseRemoteKey(remoteOwner).kind : "skills";
   return new PreconditionError(
     `ambiguous item "${name}": the shelf and a remote copy both own it — ${owners.join(", ")}`,
     {
-      hint: `leave one owner: ${PRODUCT_NAME} share ${REMOTE_ITEM_KIND}/${name} --adopt`,
+      hint: `leave one owner: ${PRODUCT_NAME} share ${kind}/${name} --adopt`,
     },
   );
 }
@@ -121,11 +132,11 @@ export async function resolveTrackedTarget(
   const ref = parseItemRef(itemRef);
   const matches = matchRefAcrossScopes(projectLock, localLock, ref, opts);
   if (matches.length === 0) {
-    if (ref.kind === undefined || ref.kind === "skills") {
+    if (ref.kind === undefined || installsAtSkillTarget(ref.kind)) {
       const external = await findSkillsShSkill(project, ref.name);
       if (external) {
         throw new PreconditionError(
-          `not ${opts.verb} skills/${ref.name} — ${skillsShConflictMessage(external)}`,
+          `not ${opts.verb} ${ref.kind ?? "skills"}/${ref.name} — ${skillsShConflictMessage(external)}`,
         );
       }
     }

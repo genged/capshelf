@@ -178,7 +178,7 @@ describe("status diff helpers", () => {
         codexConfig: [],
       },
       lock: {
-        version: 4,
+        version: 5,
         items: {
           [dataKey("skills", "hello")]: {
             source: "data",
@@ -249,7 +249,7 @@ describe("status diff helpers", () => {
         codexConfig: [],
       },
       lock: {
-        version: 4,
+        version: 5,
         items: {
           [dataKey("skills", "hello")]: {
             source: "data",
@@ -305,7 +305,7 @@ describe("status diff helpers", () => {
         codexConfig: [],
       },
       lock: {
-        version: 4,
+        version: 5,
         items: {
           [dataKey("skills", "hello")]: {
             source: "data",
@@ -358,7 +358,7 @@ describe("status diff helpers", () => {
         codexConfig: [],
       },
       lock: {
-        version: 4,
+        version: 5,
         items: {
           [dataKey("skills", "hello")]: {
             source: "data",
@@ -438,7 +438,7 @@ describe("status diff helpers", () => {
       dataRepo,
       manifest,
       lock: {
-        version: 4,
+        version: 5,
         items: {
           [dataKey("skills", "hello")]: {
             source: "data",
@@ -507,7 +507,7 @@ describe("status diff helpers", () => {
         codexConfig: [],
       },
       lock: {
-        version: 4,
+        version: 5,
         items: {
           [dataKey("skills", "hello")]: {
             source: "data",
@@ -570,7 +570,7 @@ describe("status diff helpers", () => {
         codexConfig: [],
       },
       lock: {
-        version: 4,
+        version: 5,
         items: {
           [dataKey("settings", "security")]: {
             source: "data",
@@ -630,7 +630,7 @@ describe("status diff helpers", () => {
         dataRepo,
         manifest,
         projectLock: lock,
-        localLock: { version: 4 as const, items: {} },
+        localLock: { version: 5 as const, items: {} },
         remotes: emptyRemotesLock(),
         scope: { project: true },
       };
@@ -729,7 +729,7 @@ describe("status diff helpers", () => {
         mcp: [],
         codexConfig: [],
       },
-      lock: { version: 4, items: {} },
+      lock: { version: 5, items: {} },
       row: {
         source: "data",
         kind: "skills",
@@ -783,7 +783,7 @@ describe("status diff helpers", () => {
         codexConfig: [],
       },
       lock: {
-        version: 4,
+        version: 5,
         items: {
           [dataKey("mcp", "server")]: {
             source: "data",
@@ -860,7 +860,7 @@ describe("status diff helpers", () => {
       codexConfig: [],
     };
     const lock = {
-      version: 4 as const,
+      version: 5 as const,
       items: {
         [dataKey("mcp", "server")]: {
           source: "data" as const,
@@ -1033,7 +1033,7 @@ describe("status diff helpers", () => {
           codexConfig: [],
         },
         lock: {
-          version: 4,
+          version: 5,
           items: {
             [dataKey("mcp", "server")]: {
               source: "data",
@@ -1074,7 +1074,7 @@ describe("status diff helpers", () => {
         codexConfig: [],
       },
       lock: {
-        version: 4,
+        version: 5,
         items: {
           [dataKey("skills", "hello")]: {
             source: "data",

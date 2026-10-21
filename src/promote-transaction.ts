@@ -3,6 +3,7 @@ import {
   cp,
   mkdir,
   mkdtemp,
+  readFile,
   rename,
   rm,
   rmdir,
@@ -71,6 +72,43 @@ export async function beginDirectoryReplacement(
       await rmTreeWithRetries(transactionDir);
     },
   };
+}
+
+/** One installed entry the reconciliation keeps. `content` is null for a non-regular entry. */
+export interface KeptInstalledEntry {
+  path: string;
+  content: Buffer | null;
+}
+
+/**
+ * The installed entries `beginInstalledReconciliation` keeps: it copies the
+ * whole folder, deletes only `localFiles`, and writes `mergedFiles`. So every
+ * entry that is in neither list stays. A consent point reads these beside
+ * the merged files, from this rule and not from a parallel one.
+ */
+export async function keptByInstalledReconciliation(
+  installedDir: string,
+  localFiles: readonly NamedFile[],
+  mergedFiles: readonly NamedFile[],
+): Promise<KeptInstalledEntry[]> {
+  const replaced = new Set([
+    ...localFiles.map((file) => file.path),
+    ...mergedFiles.map((file) => file.path),
+  ]);
+  const inventory = await inventoryLocalTree(installedDir);
+  const kept: KeptInstalledEntry[] = [];
+  for (const path of inventory.files) {
+    if (replaced.has(path)) continue;
+    kept.push({
+      path,
+      content: await readFile(join(installedDir, ...path.split("/"))),
+    });
+  }
+  for (const object of inventory.irregular) {
+    if (replaced.has(object.path)) continue;
+    kept.push({ path: object.path, content: null });
+  }
+  return kept;
 }
 
 export async function beginInstalledReconciliation(

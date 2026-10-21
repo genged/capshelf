@@ -267,7 +267,7 @@ your shelf:
 ```bash
 capshelf add https://github.com/acme/pdf-skills --list            # look, install nothing
 capshelf add https://github.com/acme/pdf-skills --path skills/pdf
-capshelf status --check-upstream                                   # which remote skills moved
+capshelf status --check-upstream                                   # which remote items moved
 capshelf share skills/pdf --adopt -m "adopt the pdf skill"         # put it on your shelf
 ```
 
@@ -276,6 +276,22 @@ and the license finding. Then it asks once. A gitignored record,
 `.capshelf/remotes.lock.json`, tracks the skill, so your teammates do not get
 it. You cannot promote a remote skill. `share --adopt` copies it onto your
 shelf and records where it came from. See Remote skills in
+[`docs/cli.md`](docs/cli.md).
+
+The same command installs a whole Claude Code plugin. A plugin skill can read
+agents and scripts from the rest of its plugin, so a copy of the skill alone
+can break it:
+
+```bash
+capshelf add https://github.com/acme/agent-plugins --path plugins/gh-cli
+capshelf share plugins/gh-cli --adopt -m "adopt gh-cli"            # onto your shelf
+capshelf move plugins/gh-cli --to project                          # give it to the team
+```
+
+A plugin can run hooks and MCP servers with no request from the agent. The
+prompt lists each command before the install. Capshelf asks again when an
+update adds a command, and when a write commits the plugin for the team.
+After an adopt, capshelf does not follow the upstream. See Plugins in
 [`docs/cli.md`](docs/cli.md).
 
 ## Settings and MCP merge. Your local values stay.
@@ -288,13 +304,14 @@ shelf and records where it came from. See Remote skills in
   </picture>
 </p>
 
-Capshelf copies skills, Pi extensions, and subagents into the project. It
+Capshelf copies skills, plugins, Pi extensions, and subagents into the project. It
 merges settings, MCP, and Codex config fragments into the files your agents
 read, and it keeps the values that the project set locally.
 
 | Kind | Data repo path | Project output |
 |---|---|---|
 | `skills` | `skills/<name>/SKILL.md` plus assets | `.agents/skills/<name>/` and `.claude/skills/<name>` symlink |
+| `plugins` | `plugins/<name>/.claude-plugin/plugin.json` plus the whole plugin directory | the same folder as a skill of that name |
 | `pi-extensions` | `pi/extensions/<name>/index.ts` plus local modules | `.pi/extensions/<name>/` |
 | `subagents` | `subagents/<name>/claude.md`, `subagents/<name>/codex.toml` | `.claude/agents/<name>.md` and/or `.codex/agents/<name>.toml` |
 | `settings` | `settings/<name>/settings.json` | merged into `.claude/settings.json` |
@@ -319,6 +336,7 @@ bundles are in [`docs/cli.md`](docs/cli.md).
 | Item kind | Claude Code | Codex CLI | Cowork / claude.ai | Pi |
 |---|:---:|:---:|:---:|:---:|
 | Skills | ✓ `.claude/skills/` ᵇ | ✓ `.agents/skills/` | ✓ ᵃ | ✓ `.agents/skills/` ᵉ |
+| Plugins | ✓ `.claude/skills/` ᶠ | skills only | ✗ | ✗ |
 | Subagents | ✓ `.claude/agents/` | ✓ `.codex/agents/` | ✗ | ✗ |
 | Settings | ✓ `.claude/settings.json` ᵈ | ✓ `.codex/config.toml` ᵈ | ✗ | ✗ |
 | MCP fragments | ✓ `.mcp.json` | ✓ `.codex/config.toml` | ✗ | ✗ |
@@ -334,6 +352,8 @@ bundles are in [`docs/cli.md`](docs/cli.md).
 - ᵈ Merged into the file. Project-local values are preserved.
 - ᵉ Pi reads `.agents/skills/` and ranks a same-name `.pi/skills/` entry above
   it. `status` warns when that hides a managed skill.
+- ᶠ Claude Code loads the folder as `<name>@skills-dir`, with its agents,
+  hooks, and MCP servers, in a trusted workspace only.
 
 Capshelf runs on macOS and Linux, on arm64 and x64. It needs `git` 2.40 or
 newer on your `PATH`.
@@ -355,8 +375,10 @@ newer on your `PATH`.
   personal `~/.claude/skills/` entries, or Pi project skills under
   `.pi/skills/`. It lists the first three as external state.
   `share --adopt` is the one way a `skills.sh` skill changes hands.
-- It never installs, refreshes, or removes runtime plugins. It writes and
-  commits the catalog files that those runtimes read.
+- It never installs, refreshes, or removes plugins through a Claude or Codex
+  marketplace. It writes and commits the catalog files that those runtimes
+  read. A `plugins/<name>` item is a folder that capshelf copies, the same as
+  a skill.
 - It does not sandbox Pi extensions or manage their `package.json`
   dependencies, `.pi/settings.json`, or Pi reloads.
 

@@ -7,6 +7,7 @@ import {
 } from "node:fs";
 import { delimiter, join, resolve } from "node:path";
 import { z } from "zod";
+import { installsAtSkillTarget } from "./master";
 import type { ItemKind } from "./master";
 import {
   claudeDir,
@@ -51,7 +52,7 @@ export function runtimeWarningsForItem(
       opts.itemPath ?? join(project, ".pi", "extensions", name),
     );
   }
-  if (kind !== "skills") return [];
+  if (!installsAtSkillTarget(kind)) return [];
 
   const warnings: RuntimeWarning[] = [];
   const personalPath = opts.personalSkillPath ?? personalClaudeSkillPath(name);

@@ -86,6 +86,7 @@ describe("path normalization", () => {
     await saveLocalConfig(project, {
       dataRepo: "../local",
       skills: [],
+      plugins: [],
       piExtensions: [],
       settings: [],
       mcp: [],
@@ -136,6 +137,7 @@ describe("path normalization", () => {
     await saveLocalConfig(project, {
       dataRepo: gone,
       skills: [],
+      plugins: [],
       piExtensions: [],
       settings: [],
       mcp: [],
@@ -296,6 +298,7 @@ describe("legacy root layout fallback", () => {
     expect(await loadManifest(project)).toEqual({
       installMode: "claude-only",
       skills: ["hello"],
+      plugins: [],
       settings: [],
       mcp: [],
       codexConfig: [],
@@ -371,6 +374,7 @@ describe("manifest commands migration", () => {
     expect(emptyManifest()).toEqual({
       installMode: "codex-compatible",
       skills: [],
+      plugins: [],
       settings: [],
       mcp: [],
       codexConfig: [],
@@ -396,6 +400,7 @@ describe("manifest commands migration", () => {
     expect(await loadLocalConfig(project)).toEqual({
       dataRepo: join(homedir(), "capshelf-data"),
       skills: [],
+      plugins: [],
       piExtensions: [],
       settings: [],
       mcp: [],
@@ -407,6 +412,7 @@ describe("manifest commands migration", () => {
     await saveLocalConfig(project, {
       dataRepo: "/tmp/data",
       skills: [],
+      plugins: [],
       piExtensions: [],
       settings: [],
       mcp: [],
@@ -414,6 +420,7 @@ describe("manifest commands migration", () => {
     await saveLocalConfig(project, {
       dataRepo: "/tmp/data",
       skills: [],
+      plugins: [],
       piExtensions: [],
       settings: [],
       mcp: [],
@@ -422,6 +429,7 @@ describe("manifest commands migration", () => {
     expect(await loadLocalConfig(project)).toEqual({
       dataRepo: "/tmp/data",
       skills: [],
+      plugins: [],
       piExtensions: [],
       settings: [],
       mcp: [],
@@ -500,6 +508,7 @@ describe("manifest commands migration", () => {
       installMode: "claude-only",
       dataRepoUpstream: "https://github.com/mg/agent-shared",
       skills: ["hello"],
+      plugins: [],
       settings: [],
       mcp: [],
       codexConfig: [],
@@ -560,6 +569,7 @@ describe("manifest commands migration", () => {
     await saveLocalConfig(project, {
       dataRepo: "/tmp/data",
       skills: ["hello"],
+      plugins: [],
       piExtensions: ["guard"],
       settings: [],
       mcp: [],
@@ -567,6 +577,7 @@ describe("manifest commands migration", () => {
     expect(await loadLocalConfig(project)).toEqual({
       dataRepo: "/tmp/data",
       skills: ["hello"],
+      plugins: [],
       piExtensions: ["guard"],
       settings: [],
       mcp: [],

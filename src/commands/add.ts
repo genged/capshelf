@@ -17,7 +17,7 @@ import {
 } from "../manifest";
 import type { Manifest } from "../manifest";
 import {
-  assertLockV4,
+  assertWritableLock,
   createDataLockEntry,
   entryIdentity,
   dataKey,
@@ -34,10 +34,14 @@ import {
   targetsUnderRoot,
 } from "../pin";
 import type { PinnedSource } from "../pin";
-import { materializeLockEntry } from "../materialize";
+import {
+  installedPreservedEntries,
+  materializeLockEntry,
+} from "../materialize";
 import {
   ITEM_KINDS,
   allCanonicalItemRelPaths,
+  installsAtSkillTarget,
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
   isFragmentItemKind,
@@ -67,6 +71,8 @@ import { assertPathClean } from "../git";
 import { GitReadMemo } from "../git-read-memo";
 import { findMasterItemByRef, lockKeyForRef, parseItemRef } from "../item-ref";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
+import { loadRemotesLock } from "../remotes-lock";
+import { assertSkillTargetFree } from "../skill-target";
 import {
   addLocalConfigName,
   assertLocalInstallPathsUntracked,
@@ -125,6 +131,10 @@ import {
 } from "../bundle-install";
 import type { BundlePlan, MemberPlan } from "../bundle-install";
 import { formatDeclaredNeeds } from "../needs-format";
+import { confirmPluginConsent } from "../plugin-consent";
+import type { PluginConsentPoint } from "../plugin-consent";
+import { itemPluginRunsAtCommit, pluginExtraFile } from "../plugin-runs";
+import type { PluginRuns } from "../plugin-runs";
 import {
   assertSubagentOutputAvailable,
   currentSubagentSources,
@@ -326,7 +336,7 @@ async function addOne(
     );
   }
 
-  const consent = await approveFragmentPin(ctx, item, {
+  const consent = await approveAddPin(ctx, item, {
     json: opts.json === true,
     yes: opts.yes === true,
   });
@@ -335,6 +345,7 @@ async function addOne(
   const result = await installDataItem(ctx, item, {
     memo: ctx.memo,
     ...(consent.pin && { pin: consent.pin }),
+    ...(consent.needs && { needs: consent.needs }),
   });
 
   if (opts.json) {
@@ -380,6 +391,14 @@ async function addOne(
     });
   } else {
     console.log(`  ${result.dst}`);
+  }
+  if (item.kind === "plugins") {
+    // Spec D2 guard 4: a switch from `skills/<n>` changes the name Claude
+    // Code uses, and capshelf cannot see a switch across two commands, so
+    // every plugin add prints the name. The same line as `add <url>`.
+    console.log(
+      `  Claude Code loads it as ${item.name}@skills-dir in a trusted workspace`,
+    );
   }
   printDeclaredNeeds(result.needs);
   printRuntimeWarnings(result.runtimeWarnings);
@@ -567,7 +586,7 @@ async function planStandaloneFragmentAdd(
   ]);
   const nextManifest = structuredClone(ctx.manifest);
   addToManifest(nextManifest, item);
-  const nextLock = assertLockV4(
+  const nextLock = assertWritableLock(
     structuredClone(ctx.projectLock),
     "capshelf add",
   );
@@ -673,7 +692,14 @@ export interface InstallDataItemOptions {
    * the window between revalidation and the write.
    */
   pin?: PinnedSource;
+  /**
+   * The needs snapshot read with `pin`. The lock entry then pairs the files
+   * and the needs from one read, not needs from a later data-repo HEAD.
+   */
+  needs?: NeedsSnapshot;
 }
+
+type NeedsSnapshot = Awaited<ReturnType<typeof captureCommittedItemNeeds>>;
 
 /**
  * The load/check/copy/lock core shared by standalone `add` and the bundle
@@ -754,13 +780,28 @@ export async function installDataItem(
       ? await currentSubagentSources(project, dataRepo, item.name)
       : [];
 
-  if (item.kind === "skills") {
+  if (installsAtSkillTarget(item.kind)) {
     const external = await findSkillsShSkill(project, item.name);
     if (external) {
       throw new PreconditionError(
         `not installing ${item.kind}/${item.name} — ${skillsShConflictMessage(external)}`,
       );
     }
+    // D2 guard 5: the folder-level check, ahead of `findInstallConflict`
+    // below. That check only sees whether a path exists, so a `plugins/<n>`
+    // add over an installed `skills/<n>` would otherwise fall into the
+    // recovery-adopt branch and silently claim the skill's folder.
+    await assertSkillTargetFree(
+      project,
+      item.kind,
+      item.name,
+      {
+        project: projectLock,
+        local: localLock,
+        remotes: await loadRemotesLock(project),
+      },
+      null,
+    );
   }
 
   const conflict =
@@ -840,7 +881,8 @@ export async function installDataItem(
       pin.entries.map((entry) => entry.path),
     );
   }
-  const snapshot = await captureCommittedItemNeeds(dataRepo, item);
+  const snapshot =
+    opts.needs ?? (await captureCommittedItemNeeds(dataRepo, item));
   let adoptMatchingInstall = false;
   if (!alreadyInLock && conflict) {
     if (isCopyDirectoryItemKind(item.kind)) {
@@ -871,7 +913,7 @@ export async function installDataItem(
   } else {
     addToManifest(manifest, item);
   }
-  const writableLock = assertLockV4(lock, "capshelf add");
+  const writableLock = assertWritableLock(lock, "capshelf add");
   const previousEntry = writableLock.items[key];
   writableLock.items[key] = createDataLockEntry({
     pin,
@@ -1026,6 +1068,11 @@ async function addBundle(
     dataRepo: ctx.dataRepo,
     manifest: ctx.manifest,
     lock: ctx.local ? ctx.localLock : ctx.projectLock,
+    skillTargetLocks: {
+      project: ctx.projectLock,
+      local: ctx.localLock,
+      remotes: await loadRemotesLock(ctx.project),
+    },
     masterByRef,
     memo: ctx.memo,
   });
@@ -1038,6 +1085,41 @@ async function addBundle(
       printBundleRefusal(bundle, plan, failures, ctx);
     }
     throw new ResultExitError(3);
+  }
+
+  // D7 points 1 and 3 reach a bundle member too, or a plugin with hooks would
+  // install unasked through the bundle that holds it. A skill member whose
+  // tree holds a plugin manifest is a plugin to Claude Code (R1), so it asks
+  // the same way. One prompt covers every such member. Every inspected
+  // skill-target member installs the pin it was inspected at, also one that
+  // asked nothing: a commit during the prompt can add a manifest and hooks
+  // to it, and a re-resolved pin would install them unasked.
+  const inspectedPins = new Map<
+    string,
+    { pin: PinnedSource; needs: NeedsSnapshot }
+  >();
+  const pluginPoints: PluginConsentPoint[] = [];
+  for (const member of plan.members) {
+    if (member.status !== "install") continue;
+    if (member.kind !== "plugins" && member.kind !== "skills") continue;
+    const pin = await pinCurrentSource(ctx.dataRepo, member.kind, member.name, {
+      memo: ctx.memo,
+    });
+    inspectedPins.set(member.ref, {
+      pin,
+      needs: await captureCommittedItemNeeds(ctx.dataRepo, member),
+    });
+    const runs = await addPluginRuns(ctx, member.kind, member.name, pin);
+    if (runs === null) continue;
+    pluginPoints.push(...shelfPluginAddPoints(member.ref, runs, ctx.local));
+  }
+  if (
+    !(await confirmPluginConsent(pluginPoints, {
+      json: opts.json === true,
+      yes: opts.yes === true,
+    }))
+  ) {
+    return;
   }
 
   // Bundles are the recommended entry point (`capshelf init` suggests
@@ -1087,12 +1169,15 @@ async function addBundle(
       if (!item) throw new Error(`expected master item for ${member.ref}`);
       // A bundle's write window is the longest one there is — every member
       // installs after one shared revalidation — so each fragment member
-      // installs the exact tree its own preflight approved.
-      const approved = revalidated.pins.get(member.ref);
+      // installs the exact tree its own preflight approved, and each skill or
+      // plugin member the tree its consent check read.
+      const inspected = inspectedPins.get(member.ref);
+      const approved = revalidated.pins.get(member.ref) ?? inspected?.pin;
       return installDataItem(ctx, item, {
         enforceRelations: false,
         memo: ctx.memo,
         ...(approved && { pin: approved }),
+        ...(inspected && { needs: inspected.needs }),
       });
     },
   });
@@ -1258,7 +1343,7 @@ export async function runInteractiveAdd(request: {
 
       // The same consent gate a named `add` reaches. A fragment picked from
       // a list can destroy a config comment exactly as one typed by hand.
-      const consent = await approveFragmentPin(ctx, item, {
+      const consent = await approveAddPin(ctx, item, {
         json: false,
         yes: opts.yes === true,
       });
@@ -1270,6 +1355,7 @@ export async function runInteractiveAdd(request: {
       const result = await installDataItem(ctx, item, {
         memo: ctx.memo,
         ...(consent.pin && { pin: consent.pin }),
+        ...(consent.needs && { needs: consent.needs }),
       });
       added.push(itemRef);
       console.log(`+ ${itemRef.padEnd(33)} @ ${shortIdentity(result.sha)}`);
@@ -1337,17 +1423,66 @@ function systemItemAddRefusal(name: string): string {
 }
 
 /**
- * The fragment consent gate both entry points into `installDataItem` run: a
- * fragment picked from a list can destroy a config comment exactly as one
- * typed by hand. Preflight, confirm, then re-plan and prove the plan
- * unchanged — the consent was for the plan the user saw. A non-fragment item
+ * What an add puts in reach of Claude Code: the pinned tree, plus the
+ * ignored local files that materialization keeps when the add adopts an
+ * existing matching folder (the recovery path, `matchesPinnedInstall`). A
+ * kept local manifest or hook file runs as part of the plugin.
+ */
+async function addPluginRuns(
+  ctx: Awaited<ReturnType<typeof loadAddContext>>,
+  kind: "plugins" | "skills",
+  name: string,
+  pin: PinnedSource,
+): Promise<PluginRuns | null> {
+  const extras = (
+    await installedPreservedEntries({
+      project: ctx.project,
+      kind,
+      name,
+      scope: ctx.local ? "local" : "project",
+      managedPaths: new Set(pin.entries.map((entry) => entry.path)),
+    })
+  ).map(pluginExtraFile);
+  return await itemPluginRunsAtCommit(ctx.dataRepo, kind, pin.entries, extras);
+}
+
+/**
+ * The consent gates both entry points into `installDataItem` run, and the
+ * pin each gate approved.
+ *
+ * A fragment picked from a list can destroy a config comment exactly as one
+ * typed by hand: preflight, confirm, then re-plan and prove the plan
+ * unchanged — the consent was for the plan the user saw.
+ *
+ * A plugin asks before it installs commands (D7 points 1 and 3). So does a
+ * skill whose tree holds a plugin manifest, because Claude Code loads it as a
+ * plugin (R1). The pin the runs were read from travels to `installDataItem`,
+ * so the tree the user approved is the tree that gets written. Any other item
  * has no gate and proceeds with no pin.
  */
-async function approveFragmentPin(
+async function approveAddPin(
   ctx: Awaited<ReturnType<typeof loadAddContext>>,
   item: MasterItem,
   opts: { json: boolean; yes: boolean },
-): Promise<{ proceed: boolean; pin: PinnedSource | null }> {
+): Promise<{
+  proceed: boolean;
+  pin: PinnedSource | null;
+  needs?: NeedsSnapshot;
+}> {
+  if (item.kind === "plugins" || item.kind === "skills") {
+    const pin = await pinCurrentSource(ctx.dataRepo, item.kind, item.name, {
+      memo: ctx.memo,
+    });
+    const needs = await captureCommittedItemNeeds(ctx.dataRepo, item);
+    const runs = await addPluginRuns(ctx, item.kind, item.name, pin);
+    if (runs === null) return { proceed: true, pin, needs };
+    const points = shelfPluginAddPoints(
+      `${item.kind}/${item.name}`,
+      runs,
+      ctx.local,
+    );
+    return { proceed: await confirmPluginConsent(points, opts), pin, needs };
+  }
   if (!isFragmentItemKind(item.kind)) return { proceed: true, pin: null };
   const preflight = await planStandaloneFragmentAdd(ctx, item);
   if (
@@ -1364,6 +1499,23 @@ async function approveFragmentPin(
   const revalidated = await planStandaloneFragmentAdd(ctx, item);
   assertDestructivePlanUnchanged(preflight.plan, revalidated.plan);
   return { proceed: true, pin: revalidated.pin };
+}
+
+/**
+ * D7 point 1 for every shelf plugin add, and point 3 when the add writes
+ * project scope, the default for a shelf add. The two go in one prompt.
+ * `ref` is `plugins/<name>`, or `skills/<name>` for a skill that holds a
+ * plugin manifest.
+ */
+function shelfPluginAddPoints(
+  ref: string,
+  runs: PluginRuns,
+  local: boolean,
+): PluginConsentPoint[] {
+  return [
+    { kind: "install", ref, runs },
+    ...(local ? [] : [{ kind: "project-scope" as const, ref, runs }]),
+  ];
 }
 
 /**

@@ -86,9 +86,25 @@ export interface DiscoveryWarning {
   message: string;
 }
 
+/**
+ * A plugin directory that holds a regular `.claude-plugin/plugin.json`.
+ * Claude Code loads it as a plugin, so capshelf can install it whole (plugin
+ * D5). The `add <url>` picker offers it as one row.
+ */
+export interface WholePlugin {
+  /** The plugin directory, the same as `DiscoveredPlugin.source`. */
+  source: string;
+  /** The Claude manifest's `description` string, or null. */
+  description: string | null;
+  /** The count of regular `agents/*.md` files in the plugin directory. */
+  agents: number;
+}
+
 export interface PluginInventory {
   /** Catalog order: Claude entries first, then entries only the Codex catalog names. */
   plugins: DiscoveredPlugin[];
+  /** The plugins above that hold a regular Claude manifest, in the same order. */
+  wholePlugins: WholePlugin[];
   skipped: SkippedEntry[];
   warnings: DiscoveryWarning[];
   /** D2: skill directories from Claude entries with a `skills` array or source "./". */
@@ -170,6 +186,7 @@ const manifestSchema = z
   .object({
     name: ConfigValueSchema.optional(),
     skills: ConfigValueSchema.optional(),
+    description: ConfigValueSchema.optional(),
   })
   .passthrough();
 type PluginManifest = z.infer<typeof manifestSchema>;
@@ -307,6 +324,27 @@ function addLegacySkillDirs(plugin: ClaudePlugin, out: string[]): void {
       : ref;
     if (isSafeItemRoot(dir)) out.push(dir);
   }
+}
+
+/**
+ * Plugin D5 ruling, 2026-10-20: an entry that lists skill folders, for a
+ * plugin directory that holds a regular Claude manifest, counts as a plugin.
+ * Claude Code loads that directory as a plugin, so the plugin is what the
+ * author published. The repository root never counts (D2), so a capshelf
+ * shelf keeps today's rule.
+ */
+function listsSkillsOfAClaudePlugin(
+  plugin: ClaudePlugin,
+  documentMetadata: ConfigValue | undefined,
+  entries: readonly GitTreeEntry[],
+): boolean {
+  if (!Array.isArray(plugin.skills)) return false;
+  const resolution = resolveClaudeSource(plugin, documentMetadata);
+  return (
+    resolution.kind === "resolved" &&
+    resolution.path !== "." &&
+    hasRegularEntryAt(entries, pluginPath(resolution.path, CLAUDE_MANIFEST_REL))
+  );
 }
 
 type SourceResolution =
@@ -466,6 +504,8 @@ interface Candidate {
   claudeName?: string;
   codexName?: string;
   catalogs: PluginCatalog[];
+  /** The Claude entry's `skills` list, for an entry the D5 ruling keeps. */
+  catalogSkills?: ConfigValue[];
 }
 
 // ------------------------------------------------------------ nested plugins
@@ -532,25 +572,36 @@ function directSkillChildren(
   return [...found];
 }
 
-/** The plugin's own `skills/*` dirs, plus each manifest's `skills` field. */
+/**
+ * The plugin's own `skills/*` dirs, plus each manifest's `skills` field, plus
+ * the `skills` list of a catalog entry that the D5 ruling keeps as a plugin.
+ * Claude Code reads a catalog entry's paths relative to the plugin directory,
+ * the same as a manifest's.
+ */
 function computeSkillDirs(
   entries: readonly GitTreeEntry[],
   dir: string,
   manifests: ReadonlyMap<string, PluginManifest>,
+  catalogSkills: readonly ConfigValue[],
   warnings: DiscoveryWarning[],
 ): string[] {
   const skillDirs = new Set<string>();
   for (const child of directSkillChildren(entries, pluginPath(dir, "skills"))) {
     skillDirs.add(child);
   }
+  const lists: Array<{ path: string; raw: readonly ConfigValue[] }> = [];
   for (const rel of MANIFEST_RELATIVE_PATHS) {
     const manifestPath = pluginPath(dir, rel);
     const manifest = manifests.get(manifestPath);
     if (manifest === undefined || manifest.skills === undefined) continue;
-    const rawList = Array.isArray(manifest.skills)
-      ? manifest.skills
-      : [manifest.skills];
-    for (const rawSkill of rawList) {
+    lists.push({
+      path: manifestPath,
+      raw: Array.isArray(manifest.skills) ? manifest.skills : [manifest.skills],
+    });
+  }
+  lists.push({ path: CLAUDE_CATALOG_PATH, raw: catalogSkills });
+  for (const list of lists) {
+    for (const rawSkill of list.raw) {
       if (!isConfigString(rawSkill)) continue;
       // D13: `normalizeCatalogPath` refuses a `..` segment and an absolute
       // path, so a path it accepts, joined to `dir`, stays inside the plugin.
@@ -558,7 +609,7 @@ function computeSkillDirs(
       const normalized = normalizeCatalogPath(rawSkill);
       if (normalized === null) {
         warnings.push({
-          path: manifestPath,
+          path: list.path,
           message: `skills path ${rawSkill} is unsafe or leaves the plugin; skipped`,
         });
         continue;
@@ -573,6 +624,34 @@ function computeSkillDirs(
     }
   }
   return [...skillDirs].sort();
+}
+
+/**
+ * The plugin D5 facts for a directory with a regular Claude manifest, or null
+ * when it has none. A manifest that does not parse still counts: the whole
+ * plugin install reads it again and refuses with the reason.
+ */
+function wholePluginOf(
+  entries: readonly GitTreeEntry[],
+  dir: string,
+  manifests: ReadonlyMap<string, PluginManifest>,
+): WholePlugin | null {
+  const manifestPath = pluginPath(dir, CLAUDE_MANIFEST_REL);
+  if (!hasRegularEntryAt(entries, manifestPath)) return null;
+  const description = manifests.get(manifestPath)?.description;
+  const agentsPrefix = pluginPath(dir, "agents/");
+  const agents = entries.filter((entry) => {
+    if (!isRegularFile(entry) || !entry.path.startsWith(agentsPrefix)) {
+      return false;
+    }
+    const rest = entry.path.slice(agentsPrefix.length);
+    return !rest.includes("/") && rest.endsWith(".md");
+  }).length;
+  return {
+    source: dir,
+    description: isConfigString(description) ? description : null,
+    agents,
+  };
 }
 
 // --------------------------------------------------------------- plugin name
@@ -690,7 +769,13 @@ export async function describePluginDirectory(
   names: { claude?: string; codex?: string },
   catalogs: PluginCatalog[],
   manifestBlobs?: ReadonlyMap<string, Buffer>,
-): Promise<{ plugin: DiscoveredPlugin; warnings: DiscoveryWarning[] }> {
+  catalogSkills: readonly ConfigValue[] = [],
+): Promise<{
+  plugin: DiscoveredPlugin;
+  warnings: DiscoveryWarning[];
+  /** Set when the directory holds a regular Claude manifest (plugin D5). */
+  whole: WholePlugin | null;
+}> {
   const warnings: DiscoveryWarning[] = [];
   const manifests = await readManifests(
     repo,
@@ -699,7 +784,13 @@ export async function describePluginDirectory(
     manifestBlobs,
     warnings,
   );
-  const skillDirs = computeSkillDirs(entries, dir, manifests, warnings);
+  const skillDirs = computeSkillDirs(
+    entries,
+    dir,
+    manifests,
+    catalogSkills,
+    warnings,
+  );
   const name = resolveName(dir, names, manifests, warnings);
   const plugin: DiscoveredPlugin = {
     name,
@@ -708,7 +799,7 @@ export async function describePluginDirectory(
     ships: shipsOf(entries, dir),
     skillDirs,
   };
-  return { plugin, warnings };
+  return { plugin, warnings, whole: wholePluginOf(entries, dir, manifests) };
 }
 
 /**
@@ -738,10 +829,17 @@ export async function discoverPlugins(
   const byDir = new Map<string, Candidate>();
 
   for (const plugin of claudePlugins) {
-    if (isLegacyClaudePlugin(plugin)) {
+    const keptAsPlugin = listsSkillsOfAClaudePlugin(
+      plugin,
+      claudeMetadata,
+      entries,
+    );
+    if (isLegacyClaudePlugin(plugin) && !keptAsPlugin) {
       addLegacySkillDirs(plugin, legacySkillDirs);
       continue;
     }
+    const catalogSkills =
+      keptAsPlugin && Array.isArray(plugin.skills) ? plugin.skills : undefined;
     const resolution = resolveClaudeSource(plugin, claudeMetadata);
     if (resolution.kind === "skip") {
       pushSkip(skipped, plugin.name, "claude", resolution);
@@ -762,11 +860,15 @@ export async function discoverPlugins(
       if (!existing.catalogs.includes("claude"))
         existing.catalogs.push("claude");
       if (existing.claudeName === undefined) existing.claudeName = plugin.name;
+      if (existing.catalogSkills === undefined && catalogSkills !== undefined) {
+        existing.catalogSkills = catalogSkills;
+      }
     } else {
       const candidate: Candidate = {
         dir: resolution.path,
         claudeName: plugin.name,
         catalogs: ["claude"],
+        ...(catalogSkills !== undefined && { catalogSkills }),
       };
       byDir.set(resolution.path, candidate);
       order.push(candidate);
@@ -823,6 +925,7 @@ export async function discoverPlugins(
       : new Map<string, Buffer>();
 
   const plugins: DiscoveredPlugin[] = [];
+  const wholePlugins: WholePlugin[] = [];
   for (const candidate of kept) {
     const described = await describePluginDirectory(
       repo,
@@ -831,10 +934,12 @@ export async function discoverPlugins(
       { claude: candidate.claudeName, codex: candidate.codexName },
       candidate.catalogs,
       manifestBlobs,
+      candidate.catalogSkills,
     );
     plugins.push(described.plugin);
     warnings.push(...described.warnings);
+    if (described.whole !== null) wholePlugins.push(described.whole);
   }
 
-  return { plugins, skipped, warnings, legacySkillDirs };
+  return { plugins, wholePlugins, skipped, warnings, legacySkillDirs };
 }

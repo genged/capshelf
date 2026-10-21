@@ -14,11 +14,19 @@ import { describeInstallation, isTreePinned } from "./install-identity";
 import type { Manifest } from "./manifest";
 import type { ItemKind } from "./master";
 import {
+  installsAtSkillTarget,
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
   isFragmentItemKind,
 } from "./master";
-import { itemOutputTargets, parseLockKey, shaOfInstalled } from "./installed";
+import {
+  installedPath,
+  itemOutputTargets,
+  parseLockKey,
+  shaOfInstalled,
+} from "./installed";
+import { pluginRunCounts } from "./plugin-runs";
+import { claudeTrustFor } from "./claude-trust";
 import { findSystemItem, shaOfSystemItem } from "./bundled";
 import type { ItemRef } from "./item-ref";
 import {
@@ -203,7 +211,7 @@ export function filterUserSkillsForRef(
   ref: ItemRef | undefined,
 ): ExternalUserSkill[] {
   if (!ref) return skills;
-  if (ref.kind !== undefined && ref.kind !== "skills") return [];
+  if (ref.kind !== undefined && !installsAtSkillTarget(ref.kind)) return [];
   return skills.filter((skill) => skill.name === ref.name);
 }
 
@@ -213,11 +221,14 @@ export async function buildStatusReport(
   const { project, manifest, projectLock, localLock, dataRepo, ref } = input;
   const scope = input.scope ?? {};
   const targets = statusTargets(projectLock, localLock, ref, scope);
+  // M8: read once per status run. Every plugin row in this project — shelf or
+  // remote — shares the same workspace trust fact.
+  const claudeTrust = claudeTrustFor(project);
   const external = (await listSkillsShSkills(project)).filter(
     (skill) =>
       !ref ||
       (skill.name === ref.name &&
-        (ref.kind === undefined || ref.kind === "skills")),
+        (ref.kind === undefined || installsAtSkillTarget(ref.kind))),
   );
   const externalClaudePlugins = (await listClaudePlugins(project)).filter(
     (plugin) =>
@@ -247,7 +258,9 @@ export async function buildStatusReport(
     const { scope: rowScope, key } = target;
     const lock = rowScope === "local" ? localLock : projectLock;
     const { source, kind, name: itemName } = parseLockKey(key);
-    if (kind === "skills" && externalSkillNames.has(itemName)) continue;
+    if (installsAtSkillTarget(kind) && externalSkillNames.has(itemName)) {
+      continue;
+    }
 
     const entry = lock.items[key]!;
     // The one place this row decides where its bytes come from. A null content
@@ -512,10 +525,22 @@ export async function buildStatusReport(
           }))
         : undefined;
 
+    // D11. A plugin row in either shelf scope carries the counts a remote
+    // plugin row carries, read the same way.
+    const runs =
+      kind === "plugins"
+        ? await pluginRunCounts(
+            installedPath(project, kind, itemName, manifest.installMode),
+            sourceCommitPresent === false ? null : tree,
+          )
+        : null;
+
     rows.push(
       buildStatusRow({
         scope: rowScope,
         source,
+        ...(runs !== null && { runs }),
+        ...(kind === "plugins" && { claudeTrust }),
         kind,
         name: itemName,
         entry,
@@ -551,6 +576,7 @@ export async function buildStatusReport(
         remotes: input.remotes,
         projectLock,
         localLock,
+        claudeTrust,
         ...(ref !== undefined && { ref }),
       })),
     );

@@ -27,6 +27,7 @@ import type { PluginSpec } from "./plugin-fixtures";
 import {
   initRemoteProject,
   pluginUpstream,
+  pushPluginChange,
   skillText,
   upstreamWith,
 } from "./remote-fixtures";
@@ -935,7 +936,9 @@ test(
     expect(stderr).toContain(
       `install the skill: capshelf add ${url} --path plugins/heavy/skills/worker`,
     );
-    expect(stderr).toContain("capshelf cannot install a whole plugin");
+    expect(stderr).toContain(
+      "capshelf installs a whole plugin only when it holds .claude-plugin/plugin.json",
+    );
     expect(stderr).not.toContain("claude plugin");
     expect(stderr).not.toContain("codex plugin");
     const after = await projectSnapshot(project);
@@ -958,27 +961,82 @@ test(
     expect(result.exitCode).toBe(3);
     const stderr = result.stderr.toString();
     expect(stderr).toContain("plugins/empty is a plugin with no skills");
-    expect(stderr).toContain("capshelf cannot install a whole plugin");
+    expect(stderr).toContain(
+      "capshelf installs a whole plugin only when it holds .claude-plugin/plugin.json",
+    );
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
 
 test(
-  "D5: a plugin root that is also one of its own skill directories installs normally",
+  "D5: a self-skill plugin root with a Claude manifest installs the whole plugin",
   async () => {
     const { url } = await pluginUpstream(selfSkillPlugin(), {
       claude: selfSkillCatalog(),
     });
     const { project, env } = await initProject();
-    const result = await runInProcess(project)(
-      ["add", url, "--path", "plugins/x", "--yes", "--json"],
+    const { context, prompts } = d9Context(["y"]);
+    const result = await runWithConfirmation(
+      project,
       env,
+      ["add", url, "--path", "plugins/x"],
+      context,
     );
     expect(result.exitCode).toBe(0);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("  plugin    x");
+    expect(prompts[0]).toContain("  runs      no hooks, no MCP servers");
     expect(existsSync(join(project, ".agents/skills/x/SKILL.md"))).toBe(true);
-    const payload = jsonOutput(result);
-    expect(stringField(payload, "name")).toBe("x");
-    expect(stringField(objectField(payload, "plugin"), "name")).toBe("x");
+    expect(
+      existsSync(join(project, ".agents/skills/x/.claude-plugin/plugin.json")),
+    ).toBe(true);
+    const remotes = JSON.parse(
+      await readFile(join(project, ".capshelf", "remotes.lock.json"), "utf-8"),
+    );
+    expect(Object.keys(remotes.items)).toEqual(["remote/plugins/x"]);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "D5: a self-skill plugin root with hooks refuses with no terminal and names the hook",
+  async () => {
+    const [plugin] = selfSkillPlugin();
+    const { url } = await pluginUpstream(
+      [
+        {
+          ...plugin!,
+          files: {
+            ...plugin!.files,
+            "hooks/hooks.json": JSON.stringify({
+              hooks: {
+                SessionStart: [
+                  {
+                    hooks: [
+                      { type: "command", command: "bash hooks/setup.sh" },
+                    ],
+                  },
+                ],
+              },
+            }),
+          },
+        },
+      ],
+      { claude: selfSkillCatalog() },
+    );
+    const { project, env } = await initProject();
+    const result = await runInProcess(project)(
+      ["add", url, "--path", "plugins/x"],
+      env,
+    );
+    expect(result.exitCode).toBe(3);
+    const stderr = result.stderr.toString();
+    expect(stderr).toContain(
+      "not installing plugins/x without consent — it runs 1 hook in every Claude Code session in this project",
+    );
+    expect(stderr).toContain("SessionStart");
+    expect(stderr).toContain("bash hooks/setup.sh");
+    expect(existsSync(join(project, ".agents/skills/x"))).toBe(false);
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
@@ -1222,6 +1280,38 @@ test(
     expect(prompt).toContain("plugin    plain  (no parts outside the skill)");
     expect(prompt).toContain("1 file,");
     expect(prompt).not.toContain("uses parts of the plain plugin");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+/**
+ * `describeLicense`'s comment (`src/commands/add-remote.ts`) claims this
+ * wording is unchanged for a skill (non-plugin) install, and pinned by a
+ * test. This is that test: a repo-root license the label heuristic does not
+ * recognize, for a plain skill with no plugin manifest at all.
+ */
+test(
+  "consent for a plain skill names a repo-root unrecognized license as outside the item",
+  async () => {
+    const up = await upstreamWith([["skills/x", "A skill"]]);
+    await pushPluginChange(
+      up,
+      "LICENSE",
+      "Custom License\n\nAll rights are handled some other way.\n",
+    );
+    const { project, env } = await initProject();
+    const { context, prompts } = consentContext();
+    const result = await runWithConfirmation(
+      project,
+      env,
+      ["add", up.url, "--path", "skills/x"],
+      context,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain(
+      "  license   unrecognized  (LICENSE, at the repo root, outside the item, not copied)",
+    );
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );

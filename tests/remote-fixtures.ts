@@ -10,7 +10,7 @@
 import { $ } from "bun";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ConfigValue } from "../src/config-values";
 import {
   addSkill,
@@ -96,6 +96,23 @@ export async function pushChange(
     skillText(dir.split("/").pop()!, description),
   );
   await commitAll(upstream.work, `revise ${dir}`);
+  await $`git -C ${upstream.work} push -q origin main`.quiet();
+}
+
+/**
+ * Write one file under the upstream's working clone, commit it, and push it.
+ * `relPath` is repository-relative, so a test can change any file of a
+ * plugin: its manifest, its hooks, or one of its skills.
+ */
+export async function pushPluginChange(
+  upstream: Upstream,
+  relPath: string,
+  content: string,
+): Promise<void> {
+  const target = join(upstream.work, ...relPath.split("/"));
+  await mkdir(dirname(target), { recursive: true });
+  await writeFile(target, content);
+  await commitAll(upstream.work, `change ${relPath}`);
   await $`git -C ${upstream.work} push -q origin main`.quiet();
 }
 

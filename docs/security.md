@@ -22,6 +22,7 @@ per kind:
 | `codex-config` | merged into `.codex/config.toml`; same class of risk as MCP fragments for anything Codex executes from config. |
 | `pi-extensions` | copied into `.pi/extensions/<name>`; after Pi project trust, arbitrary TypeScript runs with the user's full system permissions and can register tools, intercept calls, or execute commands. |
 | `subagents` | copied into Claude/Codex agent configuration. Prompt instructions combine with runtime controls such as tools, models, permissions, MCP servers, and sandbox behavior; review them as privileged runtime policy. |
+| `plugins` | copied whole into the skill folder, where Claude Code loads it in a trusted workspace. Its hooks run shell commands on Claude Code events, and its MCP servers start with the session. Neither asks first. In project scope, they run in every teammate's session after the teammate trusts the workspace. Its skills and agents steer the agent the way a skill does. |
 | `skills` | prose, not executables — but prose that steers an agent which *does* have execution tools. A skill can instruct an agent to exfiltrate data, weaken reviews, or run commands. Subtler than a hook, not safer. |
 | plugin marketplaces | group skills into runtime install units. Claude root-source catalogs may expose repository metadata to the host, while generated Codex roots and standalone packages contain copied skill bytes. Review the selected skills and generated diff like release artifacts. |
 
@@ -104,8 +105,8 @@ that boundary:
   over the network before it answers. A successful check is cached for 24
   hours. A failed check runs again on the next command. `CI`, `--json`, and
   `CAPSHELF_NO_SELF_UPDATE=1` turn the check off.
-- **A remote skill carries no review.** `capshelf add <url>` installs code from
-  a repository nobody on your team reviewed. There is no registry, no signing,
+- **A remote skill or plugin carries no review.** `capshelf add <url>`
+  installs code from a repository nobody on your team reviewed. There is no registry, no signing,
   and no scanning. Before the install, capshelf prints the repository, the
   commit, the subpath, the install path, the file list with sizes, the
   description, and whether it found a license, and then asks once. A named
@@ -117,6 +118,17 @@ that boundary:
   inherits your credential helper, reads no token, calls no `gh`, and stores
   nothing. A URL that carries its own credential is refused rather than cloned,
   because `git clone` would write it into the cache clone's `.git/config`.
+- **A plugin's commands get a consent question, not a review.** A plugin can
+  run hooks, MCP servers, background monitors, and LSP servers with no
+  request from the agent. Capshelf lists the hooks and the MCP servers from
+  the pinned tree, with each command. It does not list monitors, LSP
+  servers, or a manifest key that it does not know. It reports each of them
+  as unknown. A declaration that capshelf cannot read is also unknown.
+  Capshelf asks before an install, before a pin move that adds an entry, and
+  before a write to project scope. An unknown entry always asks. With no
+  terminal, `--yes` is the only answer. Capshelf does not judge a command. A hook script can change
+  while its hook line stays the same, and a shelf `update` then does not ask.
+  Review the diff of a plugin update like a dependency bump.
 - **Declared needs are metadata, not enforcement.** Capshelf can pin and
   display expected network hosts, environment variables, and commands, but it
   does not inspect or change runtime policy and does not claim those
@@ -202,8 +214,8 @@ Concretely, for a team or org data repo:
 1. **Protect the default branch** of the data repo and require PR review for
    all changes. The default branch is what teammates' `update` pulls in; it
    should never be writable without review.
-2. **Treat `settings/*`, `mcp/*`, `codex/config/*`, `subagents/*`, and
-   `pi/extensions/*` changes as privileged.** They configure or contain things
+2. **Treat `settings/*`, `mcp/*`, `codex/config/*`, `subagents/*`,
+   `plugins/*`, and `pi/extensions/*` changes as privileged.** They configure or contain things
    that execute. Pi extension changes should be reviewed as application code;
    capshelf does not install their dependencies, validate TypeScript, or reload
    Pi. Inspect source before `add`/`promote`, then use `/reload` or restart Pi.

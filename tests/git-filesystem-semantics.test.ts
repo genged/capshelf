@@ -158,7 +158,7 @@ describe("Git and filesystem semantics", () => {
     await writeFile(join(installed, "SKILL.md"), "mode skill\n");
     await chmod(join(installed, "SKILL.md"), 0o755);
     const lock: Lock = {
-      version: 4,
+      version: 5,
       items: {
         [dataKey("skills", "mode")]: {
           source: "data",

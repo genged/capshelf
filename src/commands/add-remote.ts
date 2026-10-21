@@ -1,5 +1,6 @@
 /**
- * `capshelf add <url>`: install a skill from any Git repository.
+ * `capshelf add <url>`: install a skill, or a whole plugin, from any Git
+ * repository.
  *
  * One of the three surfaces that reach the network, and the only one `add` has.
  * A URL on the command line is what makes this command networked; no project
@@ -12,25 +13,51 @@
  */
 import type { Command } from "commander";
 import { relative } from "node:path";
+import type { ConfigObject, ConfigValue } from "../config-values";
+import { isConfigObject, isConfigString } from "../config-values";
 import { PreconditionError } from "../errors";
-import { fetchOrigin } from "../git";
+import {
+  UnsupportedGitEntryError,
+  catFileBlobs,
+  fetchOrigin,
+  literalPathspec,
+  lsTreeEntriesForPathspecs,
+} from "../git";
 import { confirmationContext } from "../destructive-change";
 import type { DestructiveConfirmationContext } from "../destructive-change";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import { findInstallConflict, installedPath } from "../installed";
-import { parseItemRef, lockKeyForRef } from "../item-ref";
+import {
+  isAddressableItemName,
+  parseItemRef,
+  lockKeyForRef,
+} from "../item-ref";
 import { loadLocalLock, loadLock } from "../lock";
 import { ensureLocalExcludes } from "../local-config";
 import { PRODUCT_NAME } from "../identity";
+import { PLUGIN_MANIFEST_REL } from "../master";
 import {
   assertNoDestinationCollisions,
   pinItemAtCommit,
   shortIdentity,
 } from "../pin";
+import type { PinnedSource } from "../pin";
 import { projectRoot } from "../paths";
 import { pickItems } from "../pick";
 import type { PickRow } from "../pick-core";
+import {
+  pluginConsentReason,
+  pluginRunsField,
+  renderPluginConsent,
+} from "../plugin-consent";
+import { isRegularFile, pluginPath } from "../plugin-discovery";
 import type { DiscoveredPlugin, SkippedEntry } from "../plugin-discovery";
+import {
+  itemPluginRunsAtCommit,
+  pluginRunsAtCommit,
+  runsHaveEntries,
+} from "../plugin-runs";
+import type { PluginRuns } from "../plugin-runs";
 import type { SkillPluginFacts } from "../plugin-facts";
 import {
   defaultCachedBranch,
@@ -41,38 +68,48 @@ import {
   candidateAtSubpath,
   discoverRemoteSkills,
   findLicense,
+  pickerOffer,
   pluginAtSubpath,
   remoteTreeSource,
   summarizeCandidate,
 } from "../remote-discovery";
 import type {
   LicenseFinding,
+  OfferedPlugin,
+  PickerOffer,
   RemoteDiscovery,
   RemoteSkillCandidate,
 } from "../remote-discovery";
-import { installRemoteSkill, reconcileRemoteSkill } from "../remote-item";
+import { installRemoteItem, reconcileRemoteItem } from "../remote-item";
 import {
   factsWarnOnInstall,
+  formatBytes,
   hasSkills,
   plural,
+  pluginPickDetail,
   renderCandidateList,
   renderPluginFacts,
   safe,
+  unitCount,
   usesLabel,
 } from "../remote-list-render";
 import { parseRemoteSkillUrl } from "../remote-url";
 import type { BrowserRefCandidate, RemoteSkillUrl } from "../remote-url";
 import {
-  REMOTE_ITEM_KIND,
   loadRemotesLock,
   remoteKey,
   remoteKeysForRef,
   saveRemotesLock,
 } from "../remotes-lock";
-import type { RemotesLock } from "../remotes-lock";
+import type {
+  RemoteItemKind,
+  RemoteLockEntry,
+  RemotesLock,
+} from "../remotes-lock";
 import { isSafeItemName } from "../assert";
 import { isSystemItemName } from "../bundled";
 import { shellCommand } from "../shell-quote";
+import { assertSkillTargetFree } from "../skill-target";
 
 export interface RemoteAddOptions {
   json?: boolean;
@@ -85,12 +122,28 @@ export interface RemoteAddOptions {
   list?: boolean;
 }
 
-interface Selected {
-  candidate: RemoteSkillCandidate;
-  name: string;
-}
+/** One unit the user chose, with its install name resolved. */
+type Selected =
+  | {
+      kind: "skills";
+      name: string;
+      subpath: string;
+      candidate: RemoteSkillCandidate;
+    }
+  | {
+      kind: "plugins";
+      name: string;
+      subpath: string;
+      manifest: ConfigObject;
+    };
+
+/** One picker unit (plugin D5): a whole plugin or one skill. */
+type Unit =
+  | { kind: "plugins"; offered: OfferedPlugin }
+  | { kind: "skills"; candidate: RemoteSkillCandidate };
 
 interface Installed {
+  kind: RemoteItemKind;
   name: string;
   subpath: string;
   path: string;
@@ -100,6 +153,8 @@ interface Installed {
   license: string | null;
   /** Set when the installed skill came from a plugin. */
   plugin?: SkillPluginFacts;
+  /** Set when a whole plugin was installed: what it runs (D6). */
+  runs?: PluginRuns;
 }
 
 export async function addRemoteSkill(
@@ -181,17 +236,53 @@ export async function addRemoteSkill(
       )
     : null;
   // A plugin whose manifest names its own directory as a skill (`"skills":
-  // "./"`) installs exactly as it did before this feature: `explicitSubpath`
-  // is the plugin's source *and* one of its own `skillDirs`, so it is not a
-  // plugin *root* in the D5 sense, even though `pluginAtSubpath` found it.
+  // "./"`): `explicitSubpath` is the plugin's source *and* one of its own
+  // `skillDirs`. With a Claude manifest it installs whole (below). With none,
+  // it installs as a skill, as it did before plugins were installable.
   const pluginRootIsAlsoASkill =
     hasExplicitSubpath &&
     (pluginScope?.plugin.skillDirs.includes(explicitSubpath) ?? false);
-  if (pluginScope !== null && opts.list !== true && !pluginRootIsAlsoASkill) {
+  // D3 takes the item name from `.claude-plugin/plugin.json`. Read only for
+  // an install at a plugin root, never for `--list`.
+  const claudeManifest =
+    pluginScope !== null && hasExplicitSubpath && opts.list !== true
+      ? await readClaudePluginManifest(cache.path, commit, explicitSubpath)
+      : null;
+  // A plugin root with a Claude manifest installs whole, even when the
+  // manifest also names the root as one of its own skills: the whole plugin
+  // wins, so its hooks reach the consent prompt. A self-skill root with no
+  // Claude manifest still installs as a skill, below.
+  if (
+    pluginScope !== null &&
+    hasExplicitSubpath &&
+    opts.list !== true &&
+    (claudeManifest !== null || !pluginRootIsAlsoASkill)
+  ) {
     for (const warning of pluginScope.warnings) {
       console.error(`⚠ ${safe(`${warning.path} ${warning.message}`)}`);
     }
-    throw pluginRootRefusal(input, pluginScope);
+    // A plugin with only a Codex manifest, or only a catalog entry, has no
+    // Claude manifest name, so it keeps the step 1 refusal.
+    if (claudeManifest === null) throw pluginRootRefusal(input, pluginScope);
+    const name = pluginItemName(explicitSubpath, claudeManifest);
+    refusePluginRename(name, opts);
+    const remotes = await loadRemotesLock(project);
+    const outcome = await installWholePlugin({
+      project,
+      parsed,
+      cachePath: cache.path,
+      ref,
+      commit,
+      subpath: explicitSubpath,
+      name,
+      manifest: claudeManifest,
+      remotes,
+      opts,
+    });
+    if (outcome === null) return;
+    if (outcome.action === "created") await saveRemotesLock(project, remotes);
+    printInstalled(parsed, ref, commit, [outcome], opts);
+    return;
   }
   const discovery: RemoteDiscovery =
     pluginScope !== null && (opts.list === true || !pluginRootIsAlsoASkill)
@@ -200,6 +291,7 @@ export async function addRemoteSkill(
           plugins: [pluginScope.plugin],
           skipped: [],
           warnings: pluginScope.warnings,
+          wholePlugins: pluginScope.whole === null ? [] : [pluginScope.whole],
         }
       : !hasExplicitSubpath
         ? await discoverRemoteSkills(cache.path, commit, parsed.repoName)
@@ -241,7 +333,13 @@ export async function addRemoteSkill(
     return;
   }
 
-  if (discovery.candidates.length === 0) {
+  // Plugin D5: the picker takes its unit from the repository shape. A
+  // `--path` that reaches here names one skill, and its discovery carries no
+  // whole plugin, so the offer is that skill alone.
+  const offer = pickerOffer(
+    hasExplicitSubpath ? { ...discovery, wholePlugins: [] } : discovery,
+  );
+  if (offer.plugins.length === 0 && offer.skills.length === 0) {
     throw new PreconditionError(
       `no skill found in ${parsed.upstream} at ${ref}`,
       {
@@ -250,20 +348,38 @@ export async function addRemoteSkill(
     );
   }
 
-  const chosen = await chooseCandidates(discovery.candidates, parsed);
+  const chosen = await chooseUnits(offer, parsed);
   if (chosen.length === 0) return;
   if (chosen.length > 1 && opts.as !== undefined) {
     throw new PreconditionError(
-      `add --as names one skill, and ${chosen.length} were selected`,
+      `add --as names one item, and ${chosen.length} were selected`,
       { hint: "install them one at a time with --path <subpath> --as <name>" },
     );
   }
 
-  const selected: Selected[] = chosen.map((candidate) => ({
-    candidate,
-    name: opts.as ?? candidate.defaultName,
-  }));
-  for (const { candidate, name } of selected) {
+  // Every name check runs before the first install, so a refusal leaves no
+  // trace. A plugin takes its name from its manifest (D3).
+  const selected: Selected[] = [];
+  for (const unit of chosen) {
+    if (unit.kind === "plugins") {
+      const subpath = unit.offered.plugin.source;
+      const manifest = await readClaudePluginManifest(
+        cache.path,
+        commit,
+        subpath,
+      );
+      if (manifest === null) {
+        throw new PreconditionError(
+          `${safe(pluginPath(subpath, PLUGIN_MANIFEST_REL))} is not a regular file at ${commit}`,
+        );
+      }
+      const name = pluginItemName(subpath, manifest);
+      refusePluginRename(name, opts);
+      selected.push({ kind: "plugins", name, subpath, manifest });
+      continue;
+    }
+    const { candidate } = unit;
+    const name = opts.as ?? candidate.defaultName;
     if (!isSafeItemName(name)) {
       throw new PreconditionError(
         `${candidate.subpath} would install under an unusable item name: ${name}`,
@@ -275,23 +391,44 @@ export async function addRemoteSkill(
         `"${name}" is a system item — managed by the CLI, not installable from a repository`,
       );
     }
+    selected.push({
+      kind: "skills",
+      name,
+      subpath: candidate.subpath,
+      candidate,
+    });
   }
   assertNoNameCollision(input, selected);
 
   const remotes = await loadRemotesLock(project);
   const results: Installed[] = [];
-  for (const { candidate, name } of selected) {
-    const outcome = await installOne({
-      project,
-      cachePath: cache.path,
-      commit,
-      ref,
-      upstream: parsed.upstream,
-      candidate,
-      name,
-      remotes,
-      opts,
-    });
+  for (const unit of selected) {
+    const outcome =
+      unit.kind === "plugins"
+        ? await installWholePlugin({
+            project,
+            parsed,
+            cachePath: cache.path,
+            ref,
+            commit,
+            subpath: unit.subpath,
+            name: unit.name,
+            manifest: unit.manifest,
+            remotes,
+            opts,
+          })
+        : await installOne({
+            project,
+            cachePath: cache.path,
+            kind: "skills",
+            commit,
+            ref,
+            upstream: parsed.upstream,
+            candidate: unit.candidate,
+            name: unit.name,
+            remotes,
+            opts,
+          });
     // Record each install before the next one can refuse the command. A save
     // after the loop would leave an earlier skill's files on disk with no row
     // when a later candidate is declined or refused: invisible to every other
@@ -324,12 +461,15 @@ function multilineHint(lines: readonly string[]): string {
   return [(first ?? "").replace(/^ {2}/, ""), ...rest].join("\n");
 }
 
+const WHOLE_PLUGIN_NEEDS_MANIFEST = `capshelf installs a whole plugin only when it holds ${PLUGIN_MANIFEST_REL}`;
+
 /**
- * D5: `--path`, or a browser URL subpath, naming a plugin directory refuses
- * before it is read as a single skill. D11: it names no Claude or Codex
- * command. The install command it offers names the plugin's first skill in
- * subpath order, the same order `describeCandidates` sorts every other
- * candidate list.
+ * Step 1 D5, kept for a plugin directory with no regular
+ * `.claude-plugin/plugin.json`: `--path`, or a browser URL subpath, naming
+ * that directory refuses before it is read as a single skill. D11: it names
+ * no Claude or Codex command. The install command it offers names the
+ * plugin's first skill in subpath order, the same order `describeCandidates`
+ * sorts every other candidate list.
  */
 function pluginRootRefusal(
   url: string,
@@ -341,7 +481,7 @@ function pluginRootRefusal(
   const source = safe(scope.plugin.source);
   if (scope.candidates.length === 0) {
     return new PreconditionError(`${source} is a plugin with no skills`, {
-      hint: "capshelf cannot install a whole plugin",
+      hint: WHOLE_PLUGIN_NEEDS_MANIFEST,
     });
   }
   const skillLines = scope.candidates.map((candidate) =>
@@ -362,10 +502,279 @@ function pluginRootRefusal(
       hint: multilineHint([
         ...skillLines,
         `  install the skill: ${installCommand}`,
-        "  capshelf cannot install a whole plugin",
+        `  ${WHOLE_PLUGIN_NEEDS_MANIFEST}`,
       ]),
     },
   );
+}
+
+/**
+ * The plugin's `.claude-plugin/plugin.json` at the commit, parsed. Null when
+ * the directory holds no regular blob at that path. A manifest that is not a
+ * JSON object refuses: D3 needs its `name`.
+ */
+async function readClaudePluginManifest(
+  repo: string,
+  commit: string,
+  subpath: string,
+): Promise<ConfigObject | null> {
+  const manifestPath = pluginPath(subpath, PLUGIN_MANIFEST_REL);
+  const entries = await lsTreeEntriesForPathspecs(repo, commit, [
+    literalPathspec(manifestPath),
+  ]);
+  const entry = entries.find(
+    (candidate) => candidate.path === manifestPath && isRegularFile(candidate),
+  );
+  if (entry === undefined) return null;
+  const bytes = (await catFileBlobs(repo, [entry.object])).get(entry.object);
+  let parsed: ConfigValue = null;
+  try {
+    parsed = JSON.parse(bytes?.toString("utf8") ?? "");
+  } catch {
+    // Not JSON: refused below with the object case.
+  }
+  if (!isConfigObject(parsed)) {
+    throw new PreconditionError(
+      `${safe(manifestPath)} is not a JSON object, so capshelf cannot read the plugin name`,
+    );
+  }
+  return parsed;
+}
+
+/**
+ * D5: install the whole plugin at `subpath` as a remote row, in local scope,
+ * and record it in `remotes`. The caller saves the lock and prints the
+ * result. D3 names it from its manifest. D8 refuses a symlink before
+ * consent. D7 point 1 asks before the install and shows what the plugin runs
+ * (D6). Null when the user declines.
+ */
+async function installWholePlugin(input: {
+  project: string;
+  parsed: RemoteSkillUrl;
+  cachePath: string;
+  ref: string;
+  commit: string;
+  subpath: string;
+  name: string;
+  manifest: ConfigObject;
+  remotes: RemotesLock;
+  opts: RemoteAddOptions;
+}): Promise<Installed | null> {
+  const { project, parsed, cachePath, ref, commit, subpath, name, manifest } =
+    input;
+  const { remotes, opts } = input;
+  const kind: RemoteItemKind = "plugins";
+  const upstream = parsed.upstream;
+
+  const pin = await pinPlugin(cachePath, commit, subpath, name);
+  const current = await currentRow({
+    project,
+    kind,
+    name,
+    remotes,
+    upstream,
+    ref,
+    subpath,
+    pin,
+  });
+  const runs = await pluginRunsAtCommit(cachePath, pin.entries);
+  if (current !== null) {
+    return {
+      kind,
+      name,
+      subpath,
+      path: installedPath(project, kind, name),
+      sha: current.sourcePinDigest,
+      action: "already-current",
+      files: pin.entries.length,
+      license: null,
+      runs,
+    };
+  }
+
+  await assertNameAvailable({
+    project,
+    kind,
+    name,
+    remotes,
+    upstream,
+    subpath,
+    addCommand: shellCommand([
+      PRODUCT_NAME,
+      "add",
+      upstream,
+      "--path",
+      subpath,
+    ]),
+  });
+
+  const [summary, license] = await Promise.all([
+    summarizeCandidate(cachePath, commit, subpath),
+    findLicense(cachePath, commit, subpath),
+  ]);
+  const approved = await confirmPluginInstall({
+    name,
+    runs,
+    opts,
+    block: renderPluginConsent(
+      {
+        repo: upstream,
+        ref,
+        commit,
+        path: subpath,
+        name,
+        version: isConfigString(manifest.version) ? manifest.version : null,
+        install: `${relative(project, installedPath(project, kind, name))}  (local scope, gitignored)`,
+        files: summary.files,
+        runs,
+        license: describeLicense(license, "plugin"),
+        description: isConfigString(manifest.description)
+          ? manifest.description
+          : null,
+      },
+      consentWidth(),
+    ),
+  });
+  if (!approved) return null;
+
+  const destination = installedPath(project, kind, name);
+  await assertNoDestinationCollisions(
+    `${kind}/${name}`,
+    destination,
+    pin.entries.map((entry) => entry.path),
+  );
+  const result = await installRemoteItem({
+    project,
+    cachePath,
+    kind,
+    name,
+    upstream,
+    ref,
+    subpath,
+    pin,
+  });
+  await ensureLocalExcludes(project, kind, name);
+  remotes.items[remoteKey(kind, name)] = result.entry;
+  return {
+    kind,
+    name,
+    subpath,
+    path: result.path,
+    sha: result.entry.sourcePinDigest,
+    action: result.action,
+    files: result.files,
+    license: license.label,
+    runs,
+  };
+}
+
+/** D3: Claude Code names a plugin from its manifest, so `--as` refuses. */
+function refusePluginRename(name: string, opts: RemoteAddOptions): void {
+  if (opts.as === undefined) return;
+  throw new PreconditionError(
+    `cannot rename a plugin: Claude Code names it from plugin.json ("${name}")`,
+    {
+      hint: `agents are called as ${name}:<agent>, whatever the directory name is`,
+    },
+  );
+}
+
+/**
+ * D3: the manifest `name` is the item name. It must be a string that a
+ * named command can address, and not the name of a system item, which owns
+ * the same folder.
+ */
+function pluginItemName(subpath: string, manifest: ConfigObject): string {
+  const name = manifest.name;
+  const manifestPath = safe(pluginPath(subpath, PLUGIN_MANIFEST_REL));
+  if (!isConfigString(name)) {
+    throw new PreconditionError(`${manifestPath} has no "name" string`, {
+      hint: "Claude Code names a plugin from that field, and capshelf uses the same name",
+    });
+  }
+  if (!isAddressableItemName("plugins", name)) {
+    throw new PreconditionError(
+      `${safe(subpath)} would install under an unusable item name: ${safe(name)}`,
+      {
+        hint: `the name comes from ${manifestPath}, and capshelf does not rename a plugin`,
+      },
+    );
+  }
+  if (isSystemItemName(name)) {
+    throw new PreconditionError(
+      `"${name}" is a system item — managed by the CLI, not installable from a repository`,
+    );
+  }
+  return name;
+}
+
+/** D8: a symlink or a submodule refuses, with one plugin hint line. */
+async function pinPlugin(
+  cachePath: string,
+  commit: string,
+  subpath: string,
+  name: string,
+): Promise<PinnedSource> {
+  try {
+    return await pinItemAtCommit(
+      remoteTreeSource(cachePath, commit, subpath),
+      "plugins",
+      name,
+    );
+  } catch (error) {
+    if (!(error instanceof UnsupportedGitEntryError)) throw error;
+    throw new PreconditionError(safe(error.message), {
+      hint: "this plugin cannot be installed by capshelf",
+      cause: error,
+    });
+  }
+}
+
+/**
+ * The consent block's column width: the terminal width of the stream it
+ * prints under (`confirmPluginInstall`'s prompt draws on stderr), or 80 when
+ * that stream is not a terminal.
+ */
+function consentWidth(): number {
+  return process.stderr.isTTY === true ? (process.stderr.columns ?? 80) : 80;
+}
+
+/**
+ * D7 point 1. A remote add always asks. `--yes` skips the question, so it
+ * prints what the plugin runs to stderr instead, where `--json` cannot see
+ * it. With `--json` or no terminal, the refusal names what the plugin runs.
+ */
+async function confirmPluginInstall(input: {
+  name: string;
+  runs: PluginRuns;
+  block: string[];
+  opts: RemoteAddOptions;
+}): Promise<boolean> {
+  const { name, runs, opts } = input;
+  if (opts.yes === true) {
+    if (runsHaveEntries(runs)) {
+      for (const line of pluginRunsField(runs)) console.error(line);
+    }
+    return true;
+  }
+  const context = confirmationContext();
+  if (opts.json === true || !context.stdinIsTTY || !context.stderrIsTTY) {
+    throw new PreconditionError(
+      `not installing plugins/${name} without consent — ${pluginConsentReason(runs)}`,
+      {
+        hint: multilineHint([
+          ...pluginRunsField(runs),
+          "  review it first, then authorize with --yes",
+        ]),
+      },
+    );
+  }
+  const answer = await context.prompt(
+    `${input.block.join("\n")}\nInstall it? [y/N] `,
+  );
+  if (/^(y|yes)$/i.test(answer.trim())) return true;
+  context.stderr.write("Add cancelled; nothing was installed.\n");
+  return false;
 }
 
 /**
@@ -376,6 +785,9 @@ function pluginRootRefusal(
  * one of the actual colliding values, because a group can hold more than two
  * and no single pair is "the" example; they are not shell-quoted, because
  * they are not real arguments.
+ *
+ * A picked plugin installs to the same folder as a skill of its name, so it
+ * joins the check. A group that holds a plugin says "items", not "skills".
  */
 function assertNoNameCollision(
   url: string,
@@ -393,10 +805,11 @@ function assertNoNameCollision(
   const collisionLines = [...byName.entries()]
     .filter(([, group]) => group.length >= 2)
     .map(([name, group]) => {
-      const subpaths = group
-        .map((entry) => safe(entry.candidate.subpath))
-        .join(", ");
-      return `${group.length} selected skills would install as "${safe(name)}": ${subpaths}`;
+      const subpaths = group.map((entry) => safe(entry.subpath)).join(", ");
+      const noun = group.every((entry) => entry.kind === "skills")
+        ? "skills"
+        : "items";
+      return `${group.length} selected ${noun} would install as "${safe(name)}": ${subpaths}`;
     });
   if (collisionLines.length === 0) return;
   const prefix = shellCommand([PRODUCT_NAME, "add", url]);
@@ -411,6 +824,7 @@ function assertNoNameCollision(
 async function installOne(input: {
   project: string;
   cachePath: string;
+  kind: RemoteItemKind;
   commit: string;
   ref: string;
   upstream: string;
@@ -422,6 +836,7 @@ async function installOne(input: {
   const {
     project,
     cachePath,
+    kind,
     commit,
     ref,
     upstream,
@@ -431,46 +846,34 @@ async function installOne(input: {
   } = input;
   const pin = await pinItemAtCommit(
     remoteTreeSource(cachePath, commit, candidate.subpath),
-    REMOTE_ITEM_KIND,
+    kind,
     name,
   );
+  // A skill whose tree holds a plugin manifest loads in Claude Code as a
+  // plugin and runs its hooks (R1), so the prompt shows what it runs.
+  const runs = await itemPluginRunsAtCommit(cachePath, kind, pin.entries);
 
   // The already-current check runs *before* the ownership checks, and the
   // order is required. `findInstallConflict` reports any existing output path
   // with no exemption for the row that wrote it, so running it first would
   // make a second `add <same-url>` refuse instead of reporting the no-op.
-  const existing = remotes.items[remoteKey(name)];
-  if (
-    existing !== undefined &&
-    existing.upstream === upstream &&
-    existing.ref === ref &&
-    existing.subpath === candidate.subpath &&
-    existing.sourcePinDigest === pin.sourcePinDigest
-  ) {
-    // The record matching the pin says nothing about the files. Reporting
-    // `already current` beside a path that was deleted or edited would make the
-    // obvious repair command a silent no-op, so the install is measured. The
-    // reconcile itself belongs to `apply`, which owns the destructive plan that
-    // gates a local edit; this only names it.
-    const measured = await reconcileRemoteSkill({
-      project,
-      name,
-      entry: existing,
-      dryRun: true,
-    });
-    if (measured.action !== "already-current") {
-      throw new PreconditionError(
-        `${REMOTE_ITEM_KIND}/${name} is already pulled from ${upstream} at this commit, but the installed files do not match it`,
-        {
-          hint: `restore them: ${PRODUCT_NAME} apply ${REMOTE_ITEM_KIND}/${name}`,
-        },
-      );
-    }
+  const current = await currentRow({
+    project,
+    kind,
+    name,
+    remotes,
+    upstream,
+    ref,
+    subpath: candidate.subpath,
+    pin,
+  });
+  if (current !== null) {
     return {
+      kind,
       name,
       subpath: candidate.subpath,
-      path: installedPath(project, REMOTE_ITEM_KIND, name),
-      sha: existing.sourcePinDigest,
+      path: installedPath(project, kind, name),
+      sha: current.sourcePinDigest,
       action: "already-current",
       files: pin.entries.length,
       license: null,
@@ -478,7 +881,21 @@ async function installOne(input: {
     };
   }
 
-  await assertNameAvailable(project, name, remotes, upstream);
+  await assertNameAvailable({
+    project,
+    kind,
+    name,
+    remotes,
+    upstream,
+    subpath: candidate.subpath,
+    addCommand: shellCommand([
+      PRODUCT_NAME,
+      "add",
+      upstream,
+      "--path",
+      candidate.subpath,
+    ]),
+  });
 
   const [summary, license] = await Promise.all([
     summarizeCandidate(cachePath, commit, candidate.subpath),
@@ -490,32 +907,36 @@ async function installOne(input: {
     ref,
     commit,
     candidate,
+    kind,
     name,
     summary,
     license,
+    runs,
     opts: input.opts,
   });
   if (!approved) return null;
 
-  const destination = installedPath(project, REMOTE_ITEM_KIND, name);
+  const destination = installedPath(project, kind, name);
   await assertNoDestinationCollisions(
-    `${REMOTE_ITEM_KIND}/${name}`,
+    `${kind}/${name}`,
     destination,
     pin.entries.map((entry) => entry.path),
   );
 
-  const result = await installRemoteSkill({
+  const result = await installRemoteItem({
     project,
     cachePath,
+    kind,
     name,
     upstream,
     ref,
     subpath: candidate.subpath,
     pin,
   });
-  await ensureLocalExcludes(project, REMOTE_ITEM_KIND, name);
-  remotes.items[remoteKey(name)] = result.entry;
+  await ensureLocalExcludes(project, kind, name);
+  remotes.items[remoteKey(kind, name)] = result.entry;
   return {
+    kind,
     name,
     subpath: candidate.subpath,
     path: result.path,
@@ -528,31 +949,91 @@ async function installOne(input: {
 }
 
 /**
+ * The recorded row when it already pins this exact tree from this upstream,
+ * ref, and subpath, and the installed files match it. Null when no such row
+ * exists. Refuses when the row matches but the files do not.
+ */
+async function currentRow(input: {
+  project: string;
+  kind: RemoteItemKind;
+  name: string;
+  remotes: RemotesLock;
+  upstream: string;
+  ref: string;
+  subpath: string;
+  pin: PinnedSource;
+}): Promise<RemoteLockEntry | null> {
+  const { project, kind, name, upstream } = input;
+  const existing = input.remotes.items[remoteKey(kind, name)];
+  if (
+    existing === undefined ||
+    existing.upstream !== upstream ||
+    existing.ref !== input.ref ||
+    existing.subpath !== input.subpath ||
+    existing.sourcePinDigest !== input.pin.sourcePinDigest
+  ) {
+    return null;
+  }
+  // The record matching the pin says nothing about the files. Reporting
+  // `already current` beside a path that was deleted or edited would make the
+  // obvious repair command a silent no-op, so the install is measured. The
+  // reconcile itself belongs to `apply`, which owns the destructive plan that
+  // gates a local edit; this only names it.
+  const measured = await reconcileRemoteItem({
+    project,
+    kind,
+    name,
+    entry: existing,
+    dryRun: true,
+  });
+  if (measured.action !== "already-current") {
+    throw new PreconditionError(
+      `${kind}/${name} is already pulled from ${upstream} at this commit, but the installed files do not match it`,
+      {
+        hint: `restore them: ${PRODUCT_NAME} apply ${kind}/${name}`,
+      },
+    );
+  }
+  return existing;
+}
+
+/**
  * Every owner that could already hold the name, each naming the record that
  * holds it. Runs only for a row that is new or changed.
+ *
+ * The checks for the same kind come first, because they name the exact
+ * command that frees the name. `assertSkillTargetFree` then covers the other
+ * kind that installs to the same folder (spec D2 guard 5). It exempts an
+ * unmanaged folder when `self` is null, so `findInstallConflict` stays last
+ * and still refuses a folder that capshelf does not manage.
  */
-async function assertNameAvailable(
-  project: string,
-  name: string,
-  remotes: RemotesLock,
-  upstream: string,
-): Promise<void> {
-  const ref = parseItemRef(`${REMOTE_ITEM_KIND}/${name}`);
+async function assertNameAvailable(input: {
+  project: string;
+  kind: RemoteItemKind;
+  name: string;
+  remotes: RemotesLock;
+  upstream: string;
+  subpath: string;
+  /** The command that installs this item, for the switch message. */
+  addCommand: string;
+}): Promise<void> {
+  const { project, kind, name, remotes, upstream } = input;
+  const ref = parseItemRef(`${kind}/${name}`);
   const projectLock = await loadLock(project);
   if (lockKeyForRef(projectLock, ref, "data")) {
     throw new PreconditionError(
-      `${REMOTE_ITEM_KIND}/${name} is already tracked in project scope (.capshelf/capshelf.lock.json)`,
+      `${kind}/${name} is already tracked in project scope (.capshelf/capshelf.lock.json)`,
       {
-        hint: `remove it first: ${PRODUCT_NAME} rm ${REMOTE_ITEM_KIND}/${name}`,
+        hint: `remove it first: ${PRODUCT_NAME} rm ${kind}/${name}`,
       },
     );
   }
   const localLock = await loadLocalLock(project);
   if (lockKeyForRef(localLock, ref, "data")) {
     throw new PreconditionError(
-      `${REMOTE_ITEM_KIND}/${name} is already tracked in local scope (.capshelf/local.lock.json)`,
+      `${kind}/${name} is already tracked in local scope (.capshelf/local.lock.json)`,
       {
-        hint: `remove it first: ${PRODUCT_NAME} rm ${REMOTE_ITEM_KIND}/${name} --local`,
+        hint: `remove it first: ${PRODUCT_NAME} rm ${kind}/${name} --local`,
       },
     );
   }
@@ -560,43 +1041,62 @@ async function assertNameAvailable(
   // Same repository means the row is not a name collision at all: the caller
   // reached here because the upstream moved past the pin, and the command that
   // moves a pin is `update`. Naming a "different repository" would be false,
-  // and `rm`/`--as` would answer a question nobody asked.
-  const sameUpstream = held.some((entry) => entry.upstream === upstream);
-  if (sameUpstream) {
+  // and `rm`/`--as` would answer a question nobody asked. A plugin takes its
+  // name from its manifest (D3), so two directories of one repository can
+  // name the same plugin. Only the same directory is the same row.
+  const sameRow = held.some(
+    (entry) =>
+      entry.upstream === upstream &&
+      (kind === "skills" || entry.subpath === input.subpath),
+  );
+  if (sameRow) {
     throw new PreconditionError(
-      `${REMOTE_ITEM_KIND}/${name} is already pulled from ${upstream}, at a different commit (.capshelf/remotes.lock.json)`,
+      `${kind}/${name} is already pulled from ${upstream}, at a different commit (.capshelf/remotes.lock.json)`,
       {
-        hint: `move the pin instead: ${PRODUCT_NAME} update ${REMOTE_ITEM_KIND}/${name}`,
+        hint: `move the pin instead: ${PRODUCT_NAME} update ${kind}/${name}`,
       },
     );
   }
   if (held.length > 0) {
+    // SAFETY: the condition on the line above makes `held` non-empty.
+    const other = held[0]!;
+    const where =
+      other.upstream === upstream
+        ? `from ${upstream} at ${safe(other.subpath)}`
+        : "from a different repository";
     throw new PreconditionError(
-      `${REMOTE_ITEM_KIND}/${name} is already pulled from a different repository (.capshelf/remotes.lock.json)`,
+      `${kind}/${name} is already pulled ${where} (.capshelf/remotes.lock.json)`,
       {
-        hint: `remove it first: ${PRODUCT_NAME} rm ${REMOTE_ITEM_KIND}/${name}, or install under another name with --as`,
+        hint:
+          kind === "plugins"
+            ? `remove it first: ${PRODUCT_NAME} rm ${kind}/${name}`
+            : `remove it first: ${PRODUCT_NAME} rm ${kind}/${name}, or install under another name with --as`,
       },
     );
   }
   const external = await findSkillsShSkill(project, name);
   if (external) {
     throw new PreconditionError(
-      `not installing ${REMOTE_ITEM_KIND}/${name} — ${skillsShConflictMessage(external)}`,
+      `not installing ${kind}/${name} — ${skillsShConflictMessage(external)}`,
     );
   }
-  const conflict = findInstallConflict(project, REMOTE_ITEM_KIND, name);
+  await assertSkillTargetFree(
+    project,
+    kind,
+    name,
+    { project: projectLock, local: localLock, remotes },
+    null,
+    { addCommand: safe(input.addCommand) },
+  );
+  const conflict = findInstallConflict(project, kind, name);
   if (conflict) {
     throw new PreconditionError(
-      `not installing ${REMOTE_ITEM_KIND}/${name} — the install path already exists and capshelf does not manage it`,
+      `not installing ${kind}/${name} — the install path already exists and capshelf does not manage it`,
       { hint: `existing path: ${conflict}` },
     );
   }
 }
 
-/**
- * D17: never guess. One candidate installs, several open the picker, and with
- * no terminal the command names the two flags that answer the question.
- */
 /**
  * The first browser split whose ref exists in the clone, or null.
  *
@@ -628,15 +1128,37 @@ function pickDetail(candidate: RemoteSkillCandidate): string {
   return uses === "" ? source : `${source} · ${uses}`;
 }
 
-async function chooseCandidates(
-  candidates: RemoteSkillCandidate[],
-  parsed: RemoteSkillUrl,
-): Promise<RemoteSkillCandidate[]> {
-  if (candidates.length === 1) return candidates;
-  const rows: PickRow[] = candidates.map((candidate) => ({
-    ref: `${REMOTE_ITEM_KIND}/${candidate.defaultName}`,
+/**
+ * A plugin row's id. A skill row's id is its subpath, which never starts
+ * with "/" (`isSafeItemRoot`), so the two can never be equal.
+ */
+function pluginRowId(source: string): string {
+  return `/${source}`;
+}
+
+function unitRow(unit: Unit): PickRow {
+  if (unit.kind === "plugins") {
+    const { plugin, whole } = unit.offered;
+    // The name comes from repository text and is not checked until install
+    // (D3), so it is sanitized here. The picker sanitizes only the detail
+    // and the description.
+    const name = safe(plugin.name);
+    return {
+      ref: `plugins/${name}`,
+      id: pluginRowId(plugin.source),
+      kind: "plugins",
+      name,
+      ...(whole.description !== null && { description: whole.description }),
+      tags: [],
+      installed: false,
+      detail: pluginPickDetail(plugin, whole.agents),
+    };
+  }
+  const { candidate } = unit;
+  return {
+    ref: `skills/${candidate.defaultName}`,
     id: candidate.subpath,
-    kind: REMOTE_ITEM_KIND,
+    kind: "skills",
     name: candidate.defaultName,
     ...(candidate.description !== null && {
       description: candidate.description,
@@ -644,26 +1166,55 @@ async function chooseCandidates(
     tags: [],
     installed: false,
     detail: pickDetail(candidate),
-  }));
+  };
+}
+
+/**
+ * D17: never guess. One unit installs, several open the picker, and with no
+ * terminal the command names the two flags that answer the question. The
+ * unit comes from the repository shape (plugin D5): a plugin row for each
+ * whole plugin, then a skill row for each skill that no such plugin holds.
+ */
+async function chooseUnits(
+  offer: PickerOffer,
+  parsed: RemoteSkillUrl,
+): Promise<Unit[]> {
+  const units: Unit[] = [
+    ...offer.plugins.map((offered): Unit => ({ kind: "plugins", offered })),
+    ...offer.skills.map((candidate): Unit => ({ kind: "skills", candidate })),
+  ];
+  if (units.length === 1) return units;
+  const hasPlugins = offer.plugins.length > 0;
+  const what = !hasPlugins
+    ? "skills"
+    : offer.skills.length > 0
+      ? "plugins and skills"
+      : "plugins";
   const picked = await pickItems({
-    rows,
-    message: `Select skills to install from ${parsed.upstream}`,
+    rows: units.map(unitRow),
+    message: `Select ${what} to install from ${parsed.upstream}`,
+    ...(hasPlugins && { kindOrder: ["plugins", "skills"] }),
   });
   if (picked.kind === "cancelled") return [];
   if (picked.kind === "unavailable") {
     throw new PreconditionError(
-      `${candidates.length} skills found in ${parsed.upstream}; name one with --path`,
+      `${unitCount(offer)} found in ${parsed.upstream}; name one with --path`,
       {
         hint: `list them: ${PRODUCT_NAME} add ${parsed.cloneUrl} --list`,
       },
     );
   }
-  const bySubpath = new Map(
-    candidates.map((candidate) => [candidate.subpath, candidate]),
+  const byId = new Map(
+    units.map((unit) => [
+      unit.kind === "plugins"
+        ? pluginRowId(unit.offered.plugin.source)
+        : unit.candidate.subpath,
+      unit,
+    ]),
   );
   return picked.refs.flatMap((id) => {
-    const candidate = bySubpath.get(id);
-    return candidate ? [candidate] : [];
+    const unit = byId.get(id);
+    return unit ? [unit] : [];
   });
 }
 
@@ -673,14 +1224,18 @@ async function confirmInstall(input: {
   ref: string;
   commit: string;
   candidate: RemoteSkillCandidate;
+  kind: RemoteItemKind;
   name: string;
   summary: {
     files: Array<{ path: string; bytes: number }>;
     totalBytes: number;
   };
   license: LicenseFinding;
+  /** What the skill runs as a plugin, or null when it holds no manifest. */
+  runs: PluginRuns | null;
   opts: RemoteAddOptions;
 }): Promise<boolean> {
+  const { runs } = input;
   if (input.opts.yes === true) {
     // D4/D7: `--yes` skips the prompt, so this is the only place the facts
     // block reaches a `--yes` install. It goes to stderr, never stdout, so
@@ -689,15 +1244,24 @@ async function confirmInstall(input: {
     if (factsWarnOnInstall(facts)) {
       for (const line of renderPluginFacts(facts!)) console.error(line);
     }
+    if (runs !== null && runsHaveEntries(runs)) {
+      for (const line of pluginRunsField(runs)) console.error(line);
+    }
     return true;
   }
   const context = confirmationContext();
   const block = renderConsent(input);
   if (input.opts.json === true || !context.stdinIsTTY || !context.stderrIsTTY) {
+    const review = `review it first, then authorize with --yes. See what it holds: ${PRODUCT_NAME} add <url> --list`;
     throw new PreconditionError(
-      `not installing ${REMOTE_ITEM_KIND}/${input.name} without consent — capshelf does not review this content, and your agent runs it with your permissions`,
+      runs === null
+        ? `not installing ${input.kind}/${input.name} without consent — capshelf does not review this content, and your agent runs it with your permissions`
+        : `not installing ${input.kind}/${input.name} without consent — ${pluginConsentReason(runs)}`,
       {
-        hint: `review it first, then authorize with --yes. See what it holds: ${PRODUCT_NAME} add <url> --list`,
+        hint:
+          runs === null
+            ? review
+            : multilineHint([...pluginRunsField(runs), `  ${review}`]),
       },
     );
   }
@@ -713,16 +1277,18 @@ function renderConsent(input: {
   ref: string;
   commit: string;
   candidate: RemoteSkillCandidate;
+  kind: RemoteItemKind;
   name: string;
   summary: {
     files: Array<{ path: string; bytes: number }>;
     totalBytes: number;
   };
   license: LicenseFinding;
+  runs: PluginRuns | null;
 }): string {
   const installPath = relative(
     input.project,
-    installedPath(input.project, REMOTE_ITEM_KIND, input.name),
+    installedPath(input.project, input.kind, input.name),
   );
   const width = Math.max(
     ...input.summary.files.map((file) => file.path.length),
@@ -731,9 +1297,9 @@ function renderConsent(input: {
   const facts = input.candidate.plugin;
   const filesCount = input.summary.files.length;
   return [
-    `  repo      ${input.upstream}`,
-    `  ref       ${input.ref}`,
-    `  commit    ${input.commit}`,
+    `  repo      ${safe(input.upstream)}`,
+    `  ref       ${safe(input.ref)}`,
+    `  commit    ${safe(input.commit)}`,
     `  path      ${safe(input.candidate.subpath)}${input.candidate.subpath === "." ? "  (SKILL.md at the repo root)" : ""}`,
     ...(facts === undefined ? [] : [pluginLine(facts)]),
     `  install   ${installPath}  (local scope, gitignored)`,
@@ -742,6 +1308,7 @@ function renderConsent(input: {
       (file) =>
         `              ${safe(file.path).padEnd(width)}  ${formatBytes(file.bytes)}`,
     ),
+    ...(input.runs === null ? [] : pluginRunsField(input.runs)),
     `  license   ${describeLicense(input.license)}`,
     "",
     ...(factsWarnOnInstall(facts) ? [...renderPluginFacts(facts!), ""] : []),
@@ -762,13 +1329,29 @@ function pluginLine(facts: SkillPluginFacts): string {
   return `  plugin    ${safe(facts.plugin.name)}${noParts ? "  (no parts outside the skill)" : ""}`;
 }
 
-function describeLicense(license: LicenseFinding): string {
+/**
+ * `subject` names what the license sits outside of: "item" for the skill
+ * prompt (`renderConsent`, unchanged — `tests/cli-remote-plugins.test.ts`'s
+ * "consent for a plain skill names a repo-root unrecognized license as
+ * outside the item" pins its wording byte for byte), "plugin" for the
+ * whole-plugin consent block. Only the "outside the item"/"not recognized"
+ * wording the plugin brief named changes. The "inside" and "none found"
+ * phrasing stays as it was for both, since nothing asked for that to move.
+ */
+function describeLicense(
+  license: LicenseFinding,
+  subject: "item" | "plugin" = "item",
+): string {
   if (license.path === null)
     return "none found in the item or at the repo root";
   const where = license.insideItem
     ? "inside the item, copied with it"
-    : "at the repo root, outside the item, not copied";
-  return `${license.label ?? "unrecognized"}  (${safe(license.path)}, ${where})`;
+    : `at the repo root, outside the ${subject}, not copied`;
+  const label =
+    subject === "plugin"
+      ? (license.label ?? "not recognized")
+      : (license.label ?? "unrecognized");
+  return `${label}  (${safe(license.path)}, ${where})`;
 }
 
 /**
@@ -839,6 +1422,11 @@ async function printCandidateList(
   // commands-only plugin, which must not count — which is what keeps a
   // capshelf-shaped shelf byte-identical in a terminal too (D2).
   const skillPlugins = discovery.plugins.filter(hasSkills);
+  // Plugin D5: a listing that offers a whole plugin asks too, and the
+  // question counts the picker's unit. A plugin-scoped listing (D10) lists
+  // that plugin's skills, so it counts skills.
+  const offer = scope === "repository" ? pickerOffer(discovery) : null;
+  const wholePlugins = offer?.plugins ?? [];
   const context = confirmationContext();
   const askBeforeShowingAll =
     opts.yes !== true &&
@@ -848,7 +1436,7 @@ async function printCandidateList(
     context.terminalRows !== null &&
     context.terminalRows !== undefined &&
     context.terminalRows > 0 &&
-    skillPlugins.length > 0 &&
+    (skillPlugins.length > 0 || wholePlugins.length > 0) &&
     lines.length > context.terminalRows;
   if (!askBeforeShowingAll) {
     for (const line of lines) console.log(line);
@@ -856,9 +1444,12 @@ async function printCandidateList(
   }
 
   for (const line of lines.slice(0, summaryLength)) console.log(line);
-  const showAll = await confirmShowAllSkills(
+  const skillCount = discovery.candidates.length;
+  const showAll = await confirmShowAll(
     context,
-    discovery.candidates.length,
+    offer !== null && wholePlugins.length > 0
+      ? unitCount(offer)
+      : `${skillCount} ${plural(skillCount, "skill")}`,
     lines.length,
   );
   if (showAll) {
@@ -873,8 +1464,9 @@ async function printCandidateList(
   // user has a short next step instead of the whole list.
   if (scope === "repository") {
     // SAFETY: `askBeforeShowingAll` already required `skillPlugins.length >
-    // 0` above, in this same function, with no intervening mutation.
-    const firstPlugin = skillPlugins[0]!;
+    // 0` or `wholePlugins.length > 0` above, in this same function, with no
+    // intervening mutation.
+    const firstPlugin = skillPlugins[0] ?? wholePlugins[0]!.plugin;
     console.log(
       `  one plugin:   ${safe(shellCommand([PRODUCT_NAME, "add", input, "--list", "--path", firstPlugin.source]))}`,
     );
@@ -893,16 +1485,16 @@ async function printCandidateList(
  * terminal in raw mode, reads Ctrl-C as a key, and closes, so no SIGINT is
  * sent. Both exit 0 with the "no" text, as D9 says.
  */
-async function confirmShowAllSkills(
+async function confirmShowAll(
   context: DestructiveConfirmationContext,
-  skillCount: number,
+  units: string,
   lineCount: number,
 ): Promise<boolean> {
   for (;;) {
     let answer: string;
     try {
       answer = await context.prompt(
-        `Show all ${skillCount} ${plural(skillCount, "skill")} (${lineCount} lines)? [Y/n] `,
+        `Show all ${units} (${lineCount} lines)? [Y/n] `,
       );
     } catch {
       return false;
@@ -941,13 +1533,28 @@ function printCandidateListJson(
             }),
           }),
         })),
-        plugins: discovery.plugins.map((plugin) => ({
-          name: plugin.name,
-          source: plugin.source,
-          catalogs: plugin.catalogs,
-          ships: plugin.ships,
-          skills: plugin.skillDirs.length,
-        })),
+        plugins: discovery.plugins.map((plugin) => {
+          const whole = discovery.wholePlugins?.find(
+            (candidate) => candidate.source === plugin.source,
+          );
+          return {
+            name: plugin.name,
+            source: plugin.source,
+            catalogs: plugin.catalogs,
+            ships: plugin.ships,
+            skills: plugin.skillDirs.length,
+            // Plugin D5: added fields only. `installable` says whether
+            // `--path <source>` installs the whole plugin.
+            installable: whole !== undefined,
+            description: whole?.description ?? null,
+            skillSubpaths: discovery.candidates
+              .filter(
+                (candidate) =>
+                  candidate.plugin?.plugin.source === plugin.source,
+              )
+              .map((candidate) => candidate.subpath),
+          };
+        }),
         skipped: discovery.skipped,
         warnings: discovery.warnings,
       },
@@ -973,6 +1580,15 @@ function pluginJsonFields(facts: SkillPluginFacts) {
   };
 }
 
+/** D11's JSON shape for what a plugin runs: two counts and the unknown list. */
+function runsJsonField(runs: PluginRuns) {
+  return {
+    hooks: runs.hooks.length,
+    mcpServers: runs.mcpServers.length,
+    unknown: runs.unknown,
+  };
+}
+
 function printInstalled(
   parsed: RemoteSkillUrl,
   ref: string,
@@ -989,7 +1605,7 @@ function printInstalled(
           ? {
               verb: "add",
               source: "remote",
-              kind: REMOTE_ITEM_KIND,
+              kind: first.kind,
               name: first.name,
               scope: "local",
               action: first.action,
@@ -1002,6 +1618,9 @@ function printInstalled(
               license: first.license,
               files: first.files,
               ...(first.plugin !== undefined && pluginJsonFields(first.plugin)),
+              ...(first.runs !== undefined && {
+                runs: runsJsonField(first.runs),
+              }),
             }
           : {
               verb: "add",
@@ -1011,7 +1630,7 @@ function printInstalled(
               ref,
               sourceCommit: commit,
               items: results.map((result) => ({
-                kind: REMOTE_ITEM_KIND,
+                kind: result.kind,
                 name: result.name,
                 action: result.action,
                 sha: result.sha,
@@ -1021,6 +1640,9 @@ function printInstalled(
                 files: result.files,
                 ...(result.plugin !== undefined &&
                   pluginJsonFields(result.plugin)),
+                ...(result.runs !== undefined && {
+                  runs: runsJsonField(result.runs),
+                }),
               })),
             },
         null,
@@ -1031,36 +1653,42 @@ function printInstalled(
   }
   if (results.length === 1 && first.action === "already-current") {
     console.log(
-      `= already current local/${remoteKey(first.name)} @ ${shortIdentity(first.sha)}`,
+      `= already current local/${remoteKey(first.kind, first.name)} @ ${shortIdentity(first.sha)}`,
     );
     console.log(`  ${first.path}`);
     return;
   }
   if (results.length === 1) {
     console.log(
-      `✓ added local/${remoteKey(first.name)} @ ${shortIdentity(first.sha)}`,
+      `✓ added local/${remoteKey(first.kind, first.name)} @ ${shortIdentity(first.sha)}`,
     );
     console.log(`  source commit: ${commit}`);
     console.log(`  ${first.path}`);
+    if (first.kind === "plugins") {
+      // R1, R5: Claude Code loads a plugin from a skills folder under the
+      // name `<plugin>@skills-dir`, and only after the workspace is trusted.
+      console.log(
+        `  Claude Code loads it as ${first.name}@skills-dir in a trusted workspace`,
+      );
+    }
   } else {
     for (const result of results) {
       console.log(
-        `+ ${`${REMOTE_ITEM_KIND}/${result.name}`.padEnd(33)} @ ${shortIdentity(result.sha)}`,
+        `+ ${`${result.kind}/${result.name}`.padEnd(33)} @ ${shortIdentity(result.sha)}`,
       );
     }
     console.log("");
     console.log(`✓ ${results.length} added from one clone`);
     for (const result of results) console.log(`  ${result.path}`);
+    for (const result of results) {
+      if (result.kind !== "plugins") continue;
+      console.log(
+        `  Claude Code loads plugins/${result.name} as ${result.name}@skills-dir in a trusted workspace`,
+      );
+    }
   }
   console.log("  not committed, so your teammates do not get it");
   console.log(
-    `  to give it to the team: ${PRODUCT_NAME} share ${REMOTE_ITEM_KIND}/${first.name} --adopt`,
+    `  to give it to the team: ${PRODUCT_NAME} share ${first.kind}/${first.name} --adopt`,
   );
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1000) return `${bytes} B`;
-  const kb = bytes / 1000;
-  if (kb < 1000) return `${kb.toFixed(1)} kB`;
-  return `${(kb / 1000).toFixed(1)} MB`;
 }

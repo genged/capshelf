@@ -1,7 +1,14 @@
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { findProjectRoot, projectRoot, homeRelative } from "../paths";
+import {
+  findProjectRoot,
+  projectRoot,
+  homeRelative,
+  detectInstallMode,
+  DEFAULT_INSTALL_MODE,
+} from "../paths";
 import { resolveDataRepo, resolveDataRepoOptional } from "../data-repo";
 import { PreconditionError } from "../errors";
 import {
@@ -17,8 +24,11 @@ import {
   listMasterItems,
   ITEM_KINDS,
   parseItemKind,
+  readPluginManifestName,
   shaOfGitVisibleItem,
+  PLUGIN_MANIFEST_REL,
 } from "../master";
+import { sanitizeDisplayText } from "../pick-core";
 import { shaOfCurrentSubagent } from "../subagents";
 import type { ItemKind } from "../master";
 import { entryIdentity, loadLocalLock, loadLock } from "../lock";
@@ -115,6 +125,46 @@ export function registerLs(program: Command): void {
     });
 }
 
+interface PluginNameWarning {
+  path: string;
+  message: string;
+}
+
+/**
+ * D3: a `plugins/<dir>` directory whose manifest names it something else is
+ * not a listed item (`isInstallableDataItem` in `src/master.ts`), so `ls`
+ * names the mismatch instead of silently omitting the directory. Never
+ * throws: a missing or malformed manifest is simply not a mismatch to
+ * report — `listMasterItems` already excludes that directory.
+ */
+async function pluginNameWarnings(
+  dataRepo: string,
+): Promise<PluginNameWarning[]> {
+  const dir = join(dataRepo, "plugins");
+  if (!existsSync(dir)) return [];
+  const entries = await readdir(dir, { withFileTypes: true });
+  const warnings: PluginNameWarning[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    const manifestPath = join(
+      dir,
+      entry.name,
+      ...PLUGIN_MANIFEST_REL.split("/"),
+    );
+    const manifestName = await readPluginManifestName(manifestPath);
+    if (manifestName === null || manifestName === entry.name) continue;
+    const dirName = sanitizeDisplayText(entry.name);
+    const safeManifestName = sanitizeDisplayText(manifestName);
+    warnings.push({
+      path: `plugins/${dirName}`,
+      message:
+        `is not listed: its plugin.json names it "${safeManifestName}". ` +
+        `Rename the directory to plugins/${safeManifestName}.`,
+    });
+  }
+  return warnings;
+}
+
 async function lsAvailable(
   project: string | null,
   dataRepo: string,
@@ -127,6 +177,26 @@ async function lsAvailable(
   await assertIsGitRepo(dataRepo);
   const dataItems = await listMasterItems(dataRepo, kind);
   const systemItems = SYSTEM_ITEMS.filter((s) => !kind || s.kind === kind);
+  const pluginWarnings =
+    !kind || kind === "plugins" ? await pluginNameWarnings(dataRepo) : [];
+
+  // D2 guard 2: `skills/<n>` and `plugins/<n>` can both be on the shelf, and
+  // a project uses only one. `dataItems` already holds both kinds unless
+  // `--kind` narrowed it to `plugins` alone, in which case the skill names
+  // are fetched separately so the marker still finds the pair.
+  const skillNames = new Set(
+    dataItems.filter((item) => item.kind === "skills").map((item) => item.name),
+  );
+  if (kind === "plugins") {
+    for (const item of await listMasterItems(dataRepo, "skills")) {
+      skillNames.add(item.name);
+    }
+  }
+  const mode = project ? detectInstallMode(project) : DEFAULT_INSTALL_MODE;
+  const skillTargetDir =
+    mode === "claude-only" ? ".claude/skills" : ".agents/skills";
+  const sharesTargetWith = (itemKind: ItemKind, name: string): string | null =>
+    itemKind === "plugins" && skillNames.has(name) ? `skills/${name}` : null;
 
   const systemRows = systemItems
     .map((item) => ({ item, meta: loadSystemItemMetadata(item) }))
@@ -174,14 +244,18 @@ async function lsAvailable(
       })),
     );
     const dataJsonRows = await Promise.all(
-      dataRows.map(async ({ item, meta }) => ({
-        source: "data" as const,
-        kind: item.kind,
-        name: item.name,
-        sha: await shaOfDataItem(dataRepo, item),
-        path: item.path,
-        ...metadataJsonFields(meta),
-      })),
+      dataRows.map(async ({ item, meta }) => {
+        const shared = sharesTargetWith(item.kind, item.name);
+        return {
+          source: "data" as const,
+          kind: item.kind,
+          name: item.name,
+          sha: await shaOfDataItem(dataRepo, item),
+          path: item.path,
+          ...metadataJsonFields(meta),
+          ...(shared && { sharesTargetWith: shared }),
+        };
+      }),
     );
     console.log(
       JSON.stringify(
@@ -191,6 +265,7 @@ async function lsAvailable(
           data: dataJsonRows,
           externalUserSkills,
           // Append-only: a sibling top-level key; system/data rows unchanged.
+          ...(pluginWarnings.length > 0 && { warnings: pluginWarnings }),
           ...(bundleRows.length > 0 && {
             bundles: bundleRows.map((bundle) => ({
               name: bundle.name,
@@ -239,7 +314,17 @@ async function lsAvailable(
       console.log(
         `  ${item.kind}/${item.name.padEnd(26)} ${sha}${metadataLineSuffix(meta)}`,
       );
+      const shared = sharesTargetWith(item.kind, item.name);
+      if (shared) {
+        console.log(
+          `    ^ ${shared} and ${item.kind}/${item.name} both install to ${skillTargetDir}/${item.name}. A project uses one of them.`,
+        );
+      }
     }
+  }
+
+  for (const warning of pluginWarnings) {
+    console.error(`⚠ ${warning.path} ${warning.message}`);
   }
 
   if (bundleRows.length > 0) {

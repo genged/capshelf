@@ -54,6 +54,7 @@ describe("cli integration", () => {
       {
         dataRepo,
         skills: [],
+        plugins: [],
         piExtensions: [],
         settings: [],
         mcp: [],
@@ -369,6 +370,7 @@ describe("cli integration", () => {
       {
         dataRepo: clonePath,
         skills: [],
+        plugins: [],
         piExtensions: [],
         settings: [],
         mcp: [],
@@ -428,6 +430,7 @@ describe("cli integration", () => {
       {
         dataRepo: clonePath,
         skills: [],
+        plugins: [],
         piExtensions: [],
         settings: [],
         mcp: [],
@@ -486,6 +489,7 @@ describe("cli integration", () => {
       {
         dataRepo: clonePath,
         skills: [],
+        plugins: [],
         piExtensions: [],
         settings: [],
         mcp: [],
@@ -851,6 +855,7 @@ describe("cli integration", () => {
       {
         dataRepo: otherRepo,
         skills: [],
+        plugins: [],
         piExtensions: [],
         settings: [],
         mcp: [],
@@ -918,6 +923,7 @@ describe("cli integration", () => {
       {
         dataRepo,
         skills: [],
+        plugins: [],
         piExtensions: [],
         settings: [],
         mcp: [],
@@ -943,7 +949,7 @@ describe("cli integration", () => {
     await writeFile(
       join(project, ".capshelf", "capshelf.lock.json"),
       JSON.stringify({
-        version: 4,
+        version: 5,
         items: {
           "data/skills/hello": {
             source: "data",
@@ -991,7 +997,7 @@ describe("cli integration", () => {
     await writeFile(
       join(project, ".capshelf", "capshelf.lock.json"),
       JSON.stringify({
-        version: 4,
+        version: 5,
         items: {
           "data/skills/hello": {
             source: "data",
@@ -1074,6 +1080,7 @@ describe("cli integration", () => {
       {
         dataRepo: originalRepo,
         skills: [],
+        plugins: [],
         piExtensions: [],
         settings: [],
         mcp: [],

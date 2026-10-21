@@ -12,7 +12,11 @@
  */
 import type { ItemRef } from "./item-ref";
 import { remoteVerbRefusal } from "./remote-item";
-import { loadRemotesLock, remoteKeysForRef } from "./remotes-lock";
+import {
+  loadRemotesLock,
+  parseRemoteKey,
+  remoteKeysForRef,
+} from "./remotes-lock";
 
 export async function assertNotPulledSkill(
   project: string,
@@ -20,6 +24,8 @@ export async function assertNotPulledSkill(
   verb: string,
 ): Promise<void> {
   const remotes = await loadRemotesLock(project);
-  if (remoteKeysForRef(remotes, ref).length === 0) return;
-  throw remoteVerbRefusal(verb, ref.name);
+  const keys = remoteKeysForRef(remotes, ref);
+  const first = keys[0];
+  if (first === undefined) return;
+  throw remoteVerbRefusal(verb, parseRemoteKey(first).kind, ref.name);
 }

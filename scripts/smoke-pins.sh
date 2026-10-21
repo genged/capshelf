@@ -123,7 +123,7 @@ assert_fixed_contains 'Dry run; nothing written.' "$TMP/dry.txt"
 (cd "$PROJECT" && "${CLI[@]}" lock migrate > "$TMP/migrated.txt")
 assert_fixed_contains 'repaired legacy identity   1' "$TMP/migrated.txt"
 (cd "$PROJECT" && "${CLI[@]}" lock migrate > "$TMP/again.txt")
-assert_fixed_contains 'already version 4' "$TMP/again.txt"
+assert_fixed_contains 'already version 5' "$TMP/again.txt"
 (cd "$PROJECT" && "${CLI[@]}" status --strict >/dev/null)
 
 # The same lifecycle in a project that is not a Git repository at all: PIN-5

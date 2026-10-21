@@ -12,10 +12,13 @@ import {
 import type { InstallMode } from "./paths";
 import { isConfigObject } from "./config-values";
 import type { ConfigValue } from "./config-values";
+import { assertFenceOrFederation, fenceFor } from "./manifest-fence";
 import { normalizeRemoteUrl } from "./git";
 import { isSafeItemName } from "./assert";
 import { MANIFEST_FILE, METADATA_DIR, PRODUCT_NAME } from "./identity";
 import type { ItemKind } from "./master";
+
+export { hasShelvesKey } from "./manifest-fence";
 
 // Names in a committed manifest are as untrusted as lockfile names — a cloned
 // project's manifest could carry `skills: ["../../evil"]`, which would flow to
@@ -43,6 +46,7 @@ export const ManifestSchema = z
       ),
     dataRepo: z.never().optional(),
     skills: itemNameArray,
+    plugins: itemNameArray,
     commands: z.array(z.string()).optional(),
     settings: itemNameArray,
     mcp: itemNameArray,
@@ -69,10 +73,14 @@ type ParsedManifest = z.infer<typeof ManifestSchema>;
 // New fields stay optional at the TypeScript boundary so older in-memory
 // fixtures and integrations remain source-compatible. ManifestSchema always
 // supplies them when loading persisted state, and mutation initializes them.
-export type Manifest = Omit<ParsedManifest, "piExtensions" | "subagents"> & {
+export type Manifest = Omit<
+  ParsedManifest,
+  "piExtensions" | "subagents" | "plugins"
+> & {
   installMode: InstallMode;
   piExtensions?: string[];
   subagents?: string[];
+  plugins?: string[];
 };
 
 export function emptyManifest(): Manifest {
@@ -83,14 +91,12 @@ export async function loadManifest(project: string): Promise<Manifest> {
   const p = manifestReadPath(project);
   if (!p) return emptyManifest();
   const parsed: ConfigValue = JSON.parse(await readFile(p, "utf-8"));
-  // "shelves" is reserved for multi-shelf federation. Detect it before zod
-  // parsing: the non-strict schema would silently strip it and the next
-  // saveManifest would delete the federation config with no error.
-  if (hasShelvesKey(parsed)) {
-    throw new Error(
-      `${p} declares "shelves": this project uses multi-shelf federation, which this capshelf version does not support; upgrade capshelf`,
-    );
-  }
+  // "shelves" is reserved for multi-shelf federation, with one exception: the
+  // plugin fence (M9). Detect it before zod parsing: the non-strict schema
+  // would silently strip it and the next saveManifest would delete the
+  // federation config, or the fence, with no error.
+  assertFenceOrFederation(p, parsed);
+  if (isConfigObject(parsed)) delete parsed.shelves;
   const legacyDataRepo = legacyDataRepoOf(parsed);
   if (legacyDataRepo !== null) {
     throw new Error(
@@ -115,11 +121,8 @@ export async function loadManifestForDataBinding(project: string): Promise<{
   const p = manifestReadPath(project);
   if (!p) return { manifest: emptyManifest(), legacyManifestPath: null };
   const parsed: ConfigValue = JSON.parse(await readFile(p, "utf-8"));
-  if (hasShelvesKey(parsed)) {
-    throw new Error(
-      `${p} declares "shelves": this project uses multi-shelf federation, which this capshelf version does not support; upgrade capshelf`,
-    );
-  }
+  assertFenceOrFederation(p, parsed);
+  if (isConfigObject(parsed)) delete parsed.shelves;
   if (!isConfigObject(parsed) || legacyDataRepoOf(parsed) === null) {
     return {
       manifest: ManifestSchema.parse(parsed),
@@ -140,7 +143,8 @@ export async function saveManifest(
   const p = manifestPath(project);
   await mkdir(dirname(p), { recursive: true });
   const normalized = ManifestSchema.parse(m);
-  await atomicWriteFile(p, `${JSON.stringify(normalized, null, 2)}\n`);
+  const out = { ...fenceFor(normalized.plugins?.length ?? 0), ...normalized };
+  await atomicWriteFile(p, `${JSON.stringify(out, null, 2)}\n`);
   // installMode may have changed; drop the memoized detectInstallMode value so
   // a later read in the same process sees the new manifest.
   clearInstallModeCache(project);
@@ -153,6 +157,9 @@ export function manifestNamesForKind(
   switch (kind) {
     case "skills":
       return manifest.skills;
+    case "plugins":
+      if (!manifest.plugins) manifest.plugins = [];
+      return manifest.plugins;
     case "pi-extensions":
       if (!manifest.piExtensions) manifest.piExtensions = [];
       return manifest.piExtensions;
@@ -185,15 +192,6 @@ export function removeManifestName(
   const list = manifestNamesForKind(manifest, kind);
   const index = list.indexOf(name);
   if (index !== -1) list.splice(index, 1);
-}
-
-/**
- * True when a parsed JSON document carries a `shelves` key with any value
- * (including `null`). Reserved by the federation spec; see `loadManifest`.
- * Shared with local-config.ts, which enforces the same reservation.
- */
-export function hasShelvesKey(value: ConfigValue): boolean {
-  return isConfigObject(value) && "shelves" in value;
 }
 
 /** The retired top-level `dataRepo` field, read before the schema strips it. */

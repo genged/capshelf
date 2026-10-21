@@ -34,16 +34,19 @@ import { remoteCacheState } from "../remote-cache";
 import { remoteTreeSource } from "../remote-discovery";
 import {
   coldCacheRefusal,
-  reconcileRemoteSkill,
+  reconcileRemoteItem,
   remoteEntryAsDataEntry,
 } from "../remote-item";
 import {
-  REMOTE_ITEM_KIND,
   loadRemotesLock,
   parseRemoteKey,
-  remoteKeysForRef,
+  remoteKeysForNamedRef,
 } from "../remotes-lock";
-import type { RemoteLockEntry, RemotesLock } from "../remotes-lock";
+import type {
+  RemoteItemKind,
+  RemoteLockEntry,
+  RemotesLock,
+} from "../remotes-lock";
 import type { MaterializeResult } from "../materialize";
 import {
   findSkillsShSkill,
@@ -53,10 +56,12 @@ import {
 import { printRuntimeWarnings } from "../runtime-warnings";
 import { assertLocalScopeSupported } from "../local-config";
 import {
+  installsAtSkillTarget,
   isCopyDirectoryItemKind,
   isFragmentKindName,
   isMaterializedItemKind,
 } from "../master";
+import { assertSkillTargetFree } from "../skill-target";
 import { materializeSubagent, shaOfInstalledSubagent } from "../subagents";
 import {
   applyFragmentOutputPlans,
@@ -107,7 +112,7 @@ interface ApplyRemoteResult {
   scope: "local";
   key: string;
   source: "remote";
-  kind: typeof REMOTE_ITEM_KIND;
+  kind: RemoteItemKind;
   name: string;
   action: MaterializeResult["action"];
   path: string;
@@ -138,6 +143,7 @@ interface ApplyPreflightInput {
 }
 
 interface RemoteApplyTarget {
+  kind: RemoteItemKind;
   name: string;
   key: string;
 }
@@ -176,8 +182,11 @@ export function registerApply(program: Command): void {
         const remoteTargets: RemoteApplyTarget[] = (
           itemRef === undefined
             ? Object.keys(remotes.items)
-            : remoteKeysForRef(remotes, parseItemRef(itemRef))
-        ).map((key) => ({ key, name: parseRemoteKey(key).name }));
+            : remoteKeysForNamedRef(remotes, parseItemRef(itemRef))
+        ).map((key) => {
+          const parsed = parseRemoteKey(key);
+          return { key, kind: parsed.kind, name: parsed.name };
+        });
 
         if (itemRef) {
           assertRefNotSplitAcrossPopulations(
@@ -326,14 +335,17 @@ export function registerApply(program: Command): void {
               "apply --local",
             );
           }
-          if (parsed.kind === "skills" && externalSkillNames.has(parsed.name)) {
+          if (
+            installsAtSkillTarget(parsed.kind) &&
+            externalSkillNames.has(parsed.name)
+          ) {
             const external = await findSkillsShSkill(project, parsed.name);
             const message = external
               ? skillsShConflictMessage(external)
               : "managed by skills.sh";
             if (itemRef) {
               throw new PreconditionError(
-                `not applying skills/${parsed.name} — ${message}`,
+                `not applying ${parsed.kind}/${parsed.name} — ${message}`,
               );
             }
             results.push({
@@ -381,6 +393,34 @@ export function registerApply(program: Command): void {
             throw new Error(
               `no apply strategy for ${parsed.kind}/${parsed.name}`,
             );
+          }
+          // D2 guard 5: before the write loop replaces this folder. Outside
+          // the per-item `try` below, mirroring the skills.sh check above —
+          // an explicit `apply <ref>` refuses (exit 3 through
+          // `PreconditionError`); a bare sweep records the item as failed
+          // and converges the rest.
+          if (installsAtSkillTarget(parsed.kind)) {
+            try {
+              await assertSkillTargetFree(
+                project,
+                parsed.kind,
+                parsed.name,
+                { project: projectLock, local: localLock, remotes },
+                { key },
+              );
+            } catch (err) {
+              if (itemRef) throw err;
+              results.push({
+                scope,
+                key,
+                source: parsed.source,
+                kind: parsed.kind,
+                name: parsed.name,
+                action: "error",
+                error: err instanceof Error ? err.message : String(err),
+              });
+              continue;
+            }
           }
           try {
             if (parsed.kind === "subagents") {
@@ -464,10 +504,33 @@ export function registerApply(program: Command): void {
               scope: "local",
               key: target.key,
               source: "remote",
-              kind: REMOTE_ITEM_KIND,
+              kind: target.kind,
               name: target.name,
               action: "skipped-external",
               message: skillsShConflictMessage(external),
+            });
+            continue;
+          }
+          // D2 guard 5, as the shelf loop applies it: an explicit ref refuses
+          // with exit 3, and a sweep records the row as failed.
+          try {
+            await assertSkillTargetFree(
+              project,
+              target.kind,
+              target.name,
+              { project: projectLock, local: localLock, remotes },
+              { key: target.key },
+            );
+          } catch (err) {
+            if (itemRef) throw err;
+            results.push({
+              scope: "local",
+              key: target.key,
+              source: "remote",
+              kind: target.kind,
+              name: target.name,
+              action: "error",
+              error: err instanceof Error ? err.message : String(err),
             });
             continue;
           }
@@ -476,8 +539,9 @@ export function registerApply(program: Command): void {
               remoteApplyRow(
                 target,
                 entry,
-                await reconcileRemoteSkill({
+                await reconcileRemoteItem({
                   project,
+                  kind: target.kind,
                   name: target.name,
                   entry,
                 }),
@@ -488,7 +552,7 @@ export function registerApply(program: Command): void {
               scope: "local",
               key: target.key,
               source: "remote",
-              kind: REMOTE_ITEM_KIND,
+              kind: target.kind,
               name: target.name,
               action: "error",
               error: err instanceof Error ? err.message : String(err),
@@ -619,14 +683,17 @@ async function planApplyPreflight(
     if (scope === "local") {
       assertLocalScopeSupported(parsed.kind, parsed.name, "apply --local");
     }
-    if (parsed.kind === "skills" && input.externalSkillNames.has(parsed.name)) {
+    if (
+      installsAtSkillTarget(parsed.kind) &&
+      input.externalSkillNames.has(parsed.name)
+    ) {
       const external = await findSkillsShSkill(input.project, parsed.name);
       const message = external
         ? skillsShConflictMessage(external)
         : "managed by skills.sh";
       if (input.explicit) {
         throw new PreconditionError(
-          `not applying skills/${parsed.name} — ${message}`,
+          `not applying ${parsed.kind}/${parsed.name} — ${message}`,
         );
       }
       results.push({
@@ -838,7 +905,21 @@ async function planApplyPreflight(
   for (const target of input.remoteTargets) {
     const entry = input.remotes.items[target.key]!;
     try {
-      const source = remoteApplySource(target.name, entry);
+      // D2 guard 5 before the plan: another owner's content must not enter
+      // this row's destructive plan, and an explicit ref refuses before any
+      // prompt.
+      await assertSkillTargetFree(
+        input.project,
+        target.kind,
+        target.name,
+        {
+          project: input.projectLock,
+          local: input.localLock,
+          remotes: input.remotes,
+        },
+        { key: target.key },
+      );
+      const source = remoteApplySource(target.kind, target.name, entry);
       results.push(
         remoteApplyRow(
           target,
@@ -847,9 +928,9 @@ async function planApplyPreflight(
             project: input.project,
             source,
             manifest: input.manifest,
-            kind: REMOTE_ITEM_KIND,
+            kind: target.kind,
             name: target.name,
-            key: dataKey(REMOTE_ITEM_KIND, target.name),
+            key: dataKey(target.kind, target.name),
             entry: remoteEntryAsDataEntry(entry),
             scope: "local",
             dryRun: true,
@@ -861,13 +942,13 @@ async function planApplyPreflight(
         currentSource: source,
         selectedSource: source,
         manifest: input.manifest,
-        kind: REMOTE_ITEM_KIND,
+        kind: target.kind,
         name: target.name,
         key: target.key,
         scope: "local",
         currentEntry: remoteEntryAsDataEntry(entry),
         selectedEntry: remoteEntryAsDataEntry(entry),
-        reviewCommand: `${PRODUCT_NAME} status ${REMOTE_ITEM_KIND}/${target.name} --diff-view installed`,
+        reviewCommand: `${PRODUCT_NAME} status ${target.kind}/${target.name} --diff-view installed`,
       });
       changes.push(...planned.changes);
       snapshotParts.push(...planned.snapshotParts);
@@ -879,7 +960,7 @@ async function planApplyPreflight(
         scope: "local",
         key: target.key,
         source: "remote",
-        kind: REMOTE_ITEM_KIND,
+        kind: target.kind,
         name: target.name,
         action: "error",
         error: error instanceof Error ? error.message : String(error),
@@ -898,11 +979,12 @@ async function planApplyPreflight(
 
 /** The cache tree a remote row reads, or the refusal that names the fetch. */
 function remoteApplySource(
+  kind: RemoteItemKind,
   name: string,
   entry: RemoteLockEntry,
 ): GitTreeSource {
   const cache = remoteCacheState(entry.upstream);
-  if (!cache.present) throw coldCacheRefusal(name, entry);
+  if (!cache.present) throw coldCacheRefusal(kind, name, entry);
   return remoteTreeSource(cache.path, entry.sourceCommit, entry.subpath);
 }
 
@@ -1009,7 +1091,7 @@ function remoteApplyRow(
     scope: "local",
     key: target.key,
     source: "remote",
-    kind: REMOTE_ITEM_KIND,
+    kind: target.kind,
     name: target.name,
     action: result.action,
     path: result.path,

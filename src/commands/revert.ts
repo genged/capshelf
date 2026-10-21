@@ -14,7 +14,7 @@ import { resolveDataRepo } from "../data-repo";
 import { loadManifest } from "../manifest";
 import {
   entryIdentity,
-  assertLockV4,
+  assertWritableLock,
   loadLocalLock,
   loadLock,
   saveLocalLock,
@@ -32,7 +32,11 @@ import { assertNotPulledSkill } from "../remote-refusal";
 import { materializeLockEntry } from "../materialize";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import { printRuntimeWarnings } from "../runtime-warnings";
-import { isCopyDirectoryItemKind, isMaterializedItemKind } from "../master";
+import {
+  installsAtSkillTarget,
+  isCopyDirectoryItemKind,
+  isMaterializedItemKind,
+} from "../master";
 import {
   applyFragmentOutputPlans,
   fragmentContributionState,
@@ -45,6 +49,8 @@ import {
 } from "../fragments";
 import { materializeSubagent } from "../subagents";
 import { PRODUCT_NAME } from "../identity";
+import { loadRemotesLock } from "../remotes-lock";
+import { assertSkillTargetFree } from "../skill-target";
 
 interface RevertOptions {
   json?: boolean;
@@ -72,11 +78,11 @@ export function registerRevert(program: Command): void {
       await assertNotPulledSkill(project, ref, "reverting");
       const key = lockKeyForRef(lock, ref);
       if (!key) {
-        if (ref.kind === undefined || ref.kind === "skills") {
+        if (ref.kind === undefined || installsAtSkillTarget(ref.kind)) {
           const external = await findSkillsShSkill(project, ref.name);
           if (external) {
             throw new PreconditionError(
-              `not reverting skills/${ref.name} — ${skillsShConflictMessage(external)}`,
+              `not reverting ${ref.kind ?? "skills"}/${ref.name} — ${skillsShConflictMessage(external)}`,
             );
           }
         }
@@ -87,11 +93,11 @@ export function registerRevert(program: Command): void {
       if (opts.local) {
         assertLocalScopeSupported(parsed.kind, parsed.name, "revert --local");
       }
-      if (parsed.kind === "skills") {
+      if (installsAtSkillTarget(parsed.kind)) {
         const external = await findSkillsShSkill(project, parsed.name);
         if (external) {
           throw new PreconditionError(
-            `not reverting skills/${parsed.name} — ${skillsShConflictMessage(external)}`,
+            `not reverting ${parsed.kind}/${parsed.name} — ${skillsShConflictMessage(external)}`,
           );
         }
       }
@@ -107,7 +113,7 @@ export function registerRevert(program: Command): void {
 
       // PIN-12: before the source is read, so an unmigrated project is told to
       // migrate rather than shown a pin mismatch it cannot repair here.
-      assertLockV4(lock, `${PRODUCT_NAME} revert`);
+      assertWritableLock(lock, `${PRODUCT_NAME} revert`);
       const entry = lock.items[key]!;
       const scope = opts.local ? "local" : "project";
       const reviewCommand = `${PRODUCT_NAME} status ${parsed.kind}/${parsed.name}${
@@ -313,10 +319,25 @@ export function registerRevert(program: Command): void {
         revalidated.destructivePlan,
       );
 
+      // D2 guard 5: before the restore write.
+      if (installsAtSkillTarget(parsed.kind)) {
+        await assertSkillTargetFree(
+          project,
+          parsed.kind,
+          parsed.name,
+          {
+            project: opts.local ? await loadLock(project) : lock,
+            local: opts.local ? lock : await loadLocalLock(project),
+            remotes: await loadRemotesLock(project),
+          },
+          { key },
+        );
+      }
+
       // The keep-local marker records intent, not a fact about current
       // content, so revert restores bytes and leaves it alone. Only
       // `keep-local --unset` clears it. See the field doc in lock.ts.
-      const nextLock = assertLockV4(
+      const nextLock = assertWritableLock(
         structuredClone(lock),
         `${PRODUCT_NAME} revert`,
       );

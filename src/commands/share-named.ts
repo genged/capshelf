@@ -23,7 +23,7 @@ import {
   addManifestName,
 } from "../manifest";
 import {
-  assertLockV4,
+  assertWritableLock,
   createDataLockEntry,
   dataKey,
   entryIdentity,
@@ -37,9 +37,23 @@ import type { PinnedSource } from "../pin";
 import { gitTreeSource } from "../item-source";
 import { assertCommittedTreeEqualsCandidate } from "../promote-proof";
 import { isSystemItemName } from "../bundled";
-import { isCopyDirectoryItemKind, itemRepoRelPath } from "../master";
-import type { CopyDirectoryItemKind, FragmentItemKind } from "../master";
-import { assertRepoClean, headSha, originRemoteUrl } from "../git";
+import {
+  installsAtSkillTarget,
+  isCopyDirectoryItemKind,
+  itemRepoRelPath,
+  PLUGIN_MANIFEST_REL,
+} from "../master";
+import type {
+  CopyDirectoryItemKind,
+  FragmentItemKind,
+  SkillTargetKind,
+} from "../master";
+import {
+  assertRepoClean,
+  headSha,
+  originRemoteUrl,
+  projectIgnoreRule,
+} from "../git";
 import { commitDataRepoMutation } from "../marketplace-files";
 import { PreconditionError } from "../errors";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
@@ -54,7 +68,7 @@ import {
   saveLocalConfig,
 } from "../local-config";
 import { addToManifest } from "../promote-core";
-import type { PromoteResult, Scope } from "../promote-core";
+import type { AdoptionCandidate, PromoteResult, Scope } from "../promote-core";
 import {
   findPreviousOwner,
   previousOwnerFor,
@@ -64,6 +78,11 @@ import type { PreviousOwnerRecord } from "../previous-owner";
 import { remoteCacheState } from "../remote-cache";
 import { assertNotPulledSkill } from "../remote-refusal";
 import { findLicense } from "../remote-discovery";
+import { loadRemotesLock, remoteKey } from "../remotes-lock";
+import { assertSkillTargetFree } from "../skill-target";
+import { confirmPluginConsent } from "../plugin-consent";
+import { itemPluginRunsFromFiles } from "../plugin-runs";
+import { sanitizeDisplayText } from "../pick-core";
 import { installedPath } from "../installed";
 import { PRODUCT_NAME, METADATA_SIDECAR } from "../identity";
 import { adoptIntoDataRepo } from "../data-repo-adopt";
@@ -97,9 +116,12 @@ import {
   unmanagedRemainder,
 } from "../fragment-pick";
 import {
+  isConfigObject,
+  isConfigString,
   isPlainConfigObject,
   mergeConfigObjects,
   type ConfigObject,
+  type ConfigValue,
 } from "../config-values";
 import { captureCommittedItemNeeds, readSidecarBytes } from "../metadata";
 import {
@@ -135,6 +157,8 @@ export interface ShareOptions {
   boundRepo?: string;
   /** Take ownership from a previous owner: a remote row or a skills.sh row. */
   adopt?: boolean;
+  /** Authorize the commands a plugin runs in project scope (D7 point 3). */
+  yes?: boolean;
 }
 
 export async function shareOne(
@@ -153,15 +177,15 @@ export async function shareOne(
   // Step 1 of the adopt ordering, and it has to be here rather than in
   // `shareCopyItem`: a fragment or subagent ref is routed away below and would
   // never reach it.
-  if (opts.adopt === true && kind !== "skills") {
+  if (opts.adopt === true && !installsAtSkillTarget(kind)) {
     throw new PreconditionError(
-      `share --adopt supports skills only; ${kind}/${ref.name} is a ${kind} item`,
+      `share --adopt supports skills and plugins only; ${kind}/${ref.name} is a ${kind} item`,
     );
   }
   const name = ref.name;
   const scope = parseShareScope(
     opts.to,
-    kind === "skills" ? "local" : "project",
+    installsAtSkillTarget(kind) ? "local" : "project",
   );
   if (isFragmentKind(kind)) {
     await shareFragment(kind, name, scope, opts, cmd);
@@ -231,13 +255,18 @@ export async function shareCopyItem(
     await assertNotPulledSkill(project, { kind, name }, "sharing");
   }
   const owner =
-    opts.adopt === true ? await findPreviousOwner(project, name) : null;
+    opts.adopt === true && installsAtSkillTarget(kind)
+      ? await findPreviousOwner(project, kind, name)
+      : null;
   if (opts.adopt === true) {
     if (owner === null && projectKey === null && localKey === null) {
+      const searched = installsAtSkillTarget(kind)
+        ? previousOwnerSearchPaths(project, kind)
+        : [];
       throw new PreconditionError(
         `nothing to adopt for ${kind}/${name}: no previous owner and no capshelf lock entry`,
         {
-          hint: `searched:\n    ${previousOwnerSearchPaths(project).join("\n    ")}`,
+          hint: `searched:\n    ${searched.join("\n    ")}`,
         },
       );
     }
@@ -298,10 +327,56 @@ export async function shareCopyItem(
   // `adoptIntoDataRepo`, so a legacy lock refused the share only after the
   // item was already committed — leaving a data-repo commit with no project
   // tracking.
-  const writableProjectLock = assertLockV4(projectLock, "capshelf share");
-  const writableLocalLock = assertLockV4(localLock, "capshelf share");
+  const writableProjectLock = assertWritableLock(projectLock, "capshelf share");
+  const writableLocalLock = assertWritableLock(localLock, "capshelf share");
 
-  if (owner !== null) await warnAboutMissingLicense(project, name, owner);
+  // D2 guard 5, for every share that acquires the skill-target folder, not
+  // only a remote adopt: a plain `share plugins/<n>` beside a tracked
+  // `skills/<n>` finds no plugin lock entry, and only this folder check stops
+  // a second owner. `self` is the key the share takes the folder from: the
+  // remote row an adopt releases, or the local entry a `--to project` share
+  // moves. With neither, `self` is null, which exempts only an unmanaged
+  // folder at the exact destination, the folder being shared. A skills.sh row
+  // of the same name is a legitimate previous owner of a skill, so a skill
+  // share keeps its pre-guard behavior. For a plugin it is a second owner of
+  // the folder, and the share refuses.
+  if (installsAtSkillTarget(kind)) {
+    const self =
+      owner?.kind === "remote"
+        ? { key: remoteKey(kind, name) }
+        : localKey !== null
+          ? { key: localKey }
+          : null;
+    await assertSkillTargetFree(
+      project,
+      kind,
+      name,
+      {
+        project: projectLock,
+        local: localLock,
+        remotes: await loadRemotesLock(project),
+      },
+      self,
+      { ignoreSkillsSh: kind === "skills" },
+    );
+  }
+  // The plugin checks (D3, D7 point 3) run inside the adopt, over the
+  // candidate it commits (`checkCandidate`), before any data-repo write.
+  const checkCandidate = installsAtSkillTarget(kind)
+    ? async (candidate: AdoptionCandidate): Promise<void> => {
+        const approved = await checkPluginShareCandidate(
+          project,
+          kind,
+          name,
+          scope,
+          candidate,
+          { json: opts.json === true, yes: opts.yes === true },
+        );
+        if (!approved) throw new ShareDeclined();
+      }
+    : undefined;
+
+  if (owner !== null) await warnAboutMissingLicense(project, kind, name, owner);
 
   // Before the snapshot, not after the commit, and unconditional the way
   // `move --to project` drops it. A project-scope adopt reads the installed
@@ -343,6 +418,7 @@ export async function shareCopyItem(
         allowPreviousOwner: true,
       }),
       ...(owner !== null && { provenance: owner.provenance }),
+      ...(checkCandidate !== undefined && { checkCandidate }),
     });
 
     snapshot = await captureCommittedItemNeeds(dataRepo, { kind, name });
@@ -380,6 +456,8 @@ export async function shareCopyItem(
     if (excludeDropped && !ownerEstablished) {
       await ensureLocalExcludes(project, kind, name).catch(() => {});
     }
+    // The user answered no: nothing was written, and that is not an error.
+    if (error instanceof ShareDeclined) return;
     throw error;
   }
   const runtimeWarnings = runtimeWarningsForItem(project, kind, name);
@@ -388,7 +466,7 @@ export async function shareCopyItem(
   // a second run converges through `finishInterruptedAdopt` above.
   let released = false;
   if (owner !== null) {
-    await previousOwnerFor(owner.kind).release(project, name, owner);
+    await releasePreviousOwner(project, kind, name, owner);
     released = true;
   }
 
@@ -467,7 +545,7 @@ async function finishInterruptedAdopt(input: {
     entry?.source === "data" ? entry.sourceCommit : "(unknown)";
   let released = false;
   if (owner !== null) {
-    await previousOwnerFor(owner.kind).release(project, name, owner);
+    await releasePreviousOwner(project, kind, name, owner);
     released = true;
   }
   if (input.json) {
@@ -502,6 +580,118 @@ async function finishInterruptedAdopt(input: {
   if (owner !== null) {
     console.log(`  released: ${ownerLabel(owner)} for ${kind}/${name}`);
   }
+}
+
+/**
+ * A previous owner exists only for a kind that installs at the skill target,
+ * because `findPreviousOwner` is asked for no other kind.
+ */
+async function releasePreviousOwner(
+  project: string,
+  kind: CopyDirectoryItemKind,
+  name: string,
+  owner: PreviousOwnerRecord,
+): Promise<void> {
+  if (!installsAtSkillTarget(kind)) {
+    throw new Error(`no previous owner can hold ${kind}/${name}`);
+  }
+  await previousOwnerFor(owner.kind).release(project, kind, name, owner);
+}
+
+/** The user declined plugin consent inside the adopt. */
+class ShareDeclined extends Error {
+  constructor() {
+    super("share declined");
+  }
+}
+
+/**
+ * The plugin checks of a share, over the candidate the adopt commits and
+ * before any data-repo write. D3: a plugin's candidate must hold
+ * `.claude-plugin/plugin.json` as a regular file, and the manifest must carry
+ * the item name, because Claude Code names the plugin from it. A manifest
+ * that exists on disk but that an ignore rule keeps out of the candidate
+ * refuses and names the rule. D7 point 3: project scope asks for consent with
+ * everything the candidate runs. A skill whose candidate holds a plugin
+ * manifest asks the same way (R1), but it keeps its name. Returns false when
+ * the user answered no.
+ */
+async function checkPluginShareCandidate(
+  project: string,
+  kind: SkillTargetKind,
+  name: string,
+  scope: ShareScope,
+  candidate: AdoptionCandidate,
+  opts: { json: boolean; yes: boolean },
+): Promise<boolean> {
+  if (kind === "plugins") {
+    const file = candidate.files.find(
+      (entry) => entry.path === PLUGIN_MANIFEST_REL,
+    );
+    if (file === undefined) {
+      throw await missingManifestRefusal(project, name, candidate);
+    }
+    let parsed: ConfigValue = null;
+    try {
+      parsed = JSON.parse(file.content.toString("utf8"));
+    } catch {
+      // An unparseable manifest names no plugin.
+    }
+    const manifestName =
+      isConfigObject(parsed) && isConfigString(parsed.name)
+        ? parsed.name
+        : null;
+    if (manifestName !== name) {
+      throw new PreconditionError(
+        manifestName === null
+          ? `not sharing plugins/${name} — ${PLUGIN_MANIFEST_REL} has no "name" field`
+          : `not sharing plugins/${name} — its plugin.json names it "${sanitizeDisplayText(manifestName)}"`,
+        {
+          hint: `the item name is "${name}". ${PRODUCT_NAME} does not rename an item.`,
+        },
+      );
+    }
+  }
+  if (scope !== "project") return true;
+  const runs = await itemPluginRunsFromFiles(kind, candidate.files);
+  if (runs === null) return true;
+  return confirmPluginConsent(
+    [{ kind: "project-scope", ref: `${kind}/${name}`, runs }],
+    { json: opts.json, yes: opts.yes },
+  );
+}
+
+/**
+ * The refusal for a plugin candidate with no manifest. When the file is on
+ * disk, an ignore rule kept it out of the snapshot, and the message names
+ * the rule: Git's for a project-scope share, the plugin folder's own
+ * `.gitignore` for a local-scope share.
+ */
+async function missingManifestRefusal(
+  project: string,
+  name: string,
+  candidate: AdoptionCandidate,
+): Promise<PreconditionError> {
+  const manifestPath = join(candidate.path, ...PLUGIN_MANIFEST_REL.split("/"));
+  if (!lstatOrNull(manifestPath)?.isFile()) {
+    return new PreconditionError(
+      `not sharing plugins/${name} — required ${PLUGIN_MANIFEST_REL} is missing or not a regular file`,
+    );
+  }
+  const rule =
+    candidate.snapshot.source === "git-visible"
+      ? await projectIgnoreRule(project, relative(project, manifestPath))
+      : null;
+  const where =
+    rule !== null
+      ? `the ignore rule "${sanitizeDisplayText(rule.pattern)}" in ${sanitizeDisplayText(rule.source)}:${rule.line}`
+      : `an ignore rule in ${relative(project, join(candidate.path, ".gitignore"))}`;
+  return new PreconditionError(
+    `not sharing plugins/${name} — ${PLUGIN_MANIFEST_REL} exists, but ${where} keeps it out of the share`,
+    {
+      hint: "A shared plugin needs its manifest on the shelf. Remove the rule, then share again.",
+    },
+  );
 }
 
 function ownerLabel(owner: PreviousOwnerRecord): string {
@@ -540,19 +730,23 @@ async function printAdoptProvenance(
         : `  ⚠ no provenance in ${itemRepoRelPath(kind, name)}/${METADATA_SIDECAR}; the shelf already held this content, so nothing was committed`,
     );
     if (!recorded) {
-      console.log(`      it came from: ${upstream ?? "(unknown)"}`);
+      console.log(
+        `      it came from: ${sanitizeDisplayText(upstream ?? "(unknown)")}`,
+      );
     }
     return;
   }
   console.log(
     `  provenance recorded in ${itemRepoRelPath(kind, name)}/${METADATA_SIDECAR}:`,
   );
-  if (upstream !== null) console.log(`      upstream:       ${upstream}`);
+  if (upstream !== null) {
+    console.log(`      upstream:       ${sanitizeDisplayText(upstream)}`);
+  }
   if (upstreamCommit !== null) {
     console.log(`      upstreamCommit: ${upstreamCommit}`);
   }
   if (upstreamPath !== null) {
-    console.log(`      upstreamPath:   ${upstreamPath}`);
+    console.log(`      upstreamPath:   ${sanitizeDisplayText(upstreamPath)}`);
   }
 }
 
@@ -563,6 +757,7 @@ async function printAdoptProvenance(
  */
 async function warnAboutMissingLicense(
   project: string,
+  kind: CopyDirectoryItemKind,
   name: string,
   owner: PreviousOwnerRecord,
 ): Promise<void> {
@@ -570,15 +765,28 @@ async function warnAboutMissingLicense(
     owner.kind === "remote" && owner.provenance.upstream !== null;
   const found = inspectedRoot
     ? await remoteLicense(owner)
-    : installedLicense(project, name);
-  if (found) return;
+    : { present: installedLicense(project, kind, name), insideItem: true };
+  // D9: a plugin is warned about a license at the repository root too. The
+  // adopt copies the plugin folder only, so a root license stays behind.
+  if (found.present && !found.insideItem && kind === "plugins") {
+    console.error(
+      `⚠ the license is at the ${sanitizeDisplayText(owner.provenance.upstream ?? "upstream")} root${found.label ? ` (${found.label})` : ""}, not in the plugin`,
+    );
+    console.error(
+      "  you are copying someone else's work into your shelf. Check the terms yourself.",
+    );
+    return;
+  }
+  if (found.present) return;
   // The root is named only when it was read. A skills.sh row carries a `source`
   // URL too, but capshelf clones nothing for it, so the other branch inspects
   // the installed directory alone — claiming the root was checked would be a
   // statement about work that never happened.
   console.error(
     `⚠ no license file in the remote item${
-      inspectedRoot ? ` or at the ${owner.provenance.upstream} root` : ""
+      inspectedRoot
+        ? ` or at the ${sanitizeDisplayText(owner.provenance.upstream ?? "upstream")} root`
+        : ""
     }`,
   );
   console.error(
@@ -586,23 +794,43 @@ async function warnAboutMissingLicense(
   );
 }
 
-async function remoteLicense(owner: PreviousOwnerRecord): Promise<boolean> {
+interface LicensePresence {
+  present: boolean;
+  /** False only when the license was found at the repository root. */
+  insideItem: boolean;
+  label?: string | null;
+}
+
+async function remoteLicense(
+  owner: PreviousOwnerRecord,
+): Promise<LicensePresence> {
+  const missing = { present: false, insideItem: false };
   const upstream = owner.provenance.upstream;
   const commit = owner.provenance.upstreamCommit;
   const subpath = owner.provenance.upstreamPath;
-  if (upstream === null || commit === null || subpath === null) return false;
+  if (upstream === null || commit === null || subpath === null) return missing;
   const cache = remoteCacheState(upstream);
-  if (!cache.present) return false;
+  if (!cache.present) return missing;
   // A cold cache cannot answer, and a warning nobody can act on is worse than
   // none, so an unreachable cache reports "found" and stays quiet.
   const finding = await findLicense(cache.path, commit, subpath).catch(
     () => null,
   );
-  return finding === null || finding.path !== null;
+  if (finding === null) return { present: true, insideItem: true };
+  if (finding.path === null) return missing;
+  return {
+    present: true,
+    insideItem: finding.insideItem,
+    label: finding.label,
+  };
 }
 
-function installedLicense(project: string, name: string): boolean {
-  const root = installedPath(project, "skills", name);
+function installedLicense(
+  project: string,
+  kind: CopyDirectoryItemKind,
+  name: string,
+): boolean {
+  const root = installedPath(project, kind, name);
   return ["LICENSE", "LICENSE.md", "LICENCE", "LICENCE.md", "COPYING"].some(
     (file) => existsSync(join(root, file)),
   );
@@ -645,7 +873,7 @@ export async function shareSubagent(
   // Before any data-repo mutation. This assertion used to run after the
   // commit, so a legacy lock refused the share only after the subagent was
   // already committed — leaving a data-repo commit with no project tracking.
-  const writableProjectLock = assertLockV4(projectLock, "capshelf share");
+  const writableProjectLock = assertWritableLock(projectLock, "capshelf share");
 
   const allCandidates = subagentSourceCandidates(project, name);
   for (const candidate of allCandidates) {
@@ -818,7 +1046,7 @@ export async function shareFragment(
   // Before any data-repo mutation. This assertion used to run after the
   // commit, so a legacy lock refused the share only after the fragment was
   // already committed — leaving a data-repo commit with no project tracking.
-  const writableProjectLock = assertLockV4(projectLock, "capshelf share");
+  const writableProjectLock = assertWritableLock(projectLock, "capshelf share");
   const oldManifest = structuredClone(manifest);
   const oldLock = structuredClone(projectLock);
   const dataRepo =

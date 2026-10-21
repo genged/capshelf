@@ -13,6 +13,8 @@ import type { ItemNeeds } from "./metadata";
 import type { InstallationAxis } from "./install-identity";
 import type { InstallDifference } from "./install-diff";
 import type { FilteredPath } from "./pin";
+import type { PluginRunCounts } from "./plugin-runs";
+import type { ClaudeTrust } from "./claude-trust";
 import type {
   TargetCoverageFields,
   TargetCoverageJson,
@@ -84,11 +86,21 @@ export interface RemoteRowFacts {
   alsoTrackedInShelf: boolean;
 }
 
+/**
+ * What a plugin runs with no request from the agent, as counts (spec D11).
+ * `unknown` lists each declaration the reader could not read.
+ */
+export type StatusRowRuns = PluginRunCounts;
+
 export interface StatusRow {
   scope: "project" | "local";
   source: RowSource;
   /** Remote rows only: where the pin came from. */
   remote?: RemoteRowFacts;
+  /** Plugin rows only: what the plugin runs. */
+  runs?: StatusRowRuns;
+  /** Plugin rows only: whether Claude Code has trusted this workspace (M8). */
+  claudeTrust?: ClaudeTrust;
   kind: ItemKind;
   name: string;
   state: State;
@@ -245,6 +257,8 @@ export interface BuildStatusRowInput {
   scope: "project" | "local";
   source: RowSource;
   remote?: RemoteRowFacts;
+  runs?: StatusRowRuns;
+  claudeTrust?: ClaudeTrust;
   kind: ItemKind;
   name: string;
   entry: LockEntry;
@@ -267,6 +281,8 @@ export function buildStatusRow(input: BuildStatusRowInput): StatusRow {
     scope,
     source,
     ...(input.remote !== undefined && { remote: input.remote }),
+    ...(input.runs !== undefined && { runs: input.runs }),
+    ...(input.claudeTrust !== undefined && { claudeTrust: input.claudeTrust }),
     kind,
     name,
     state,

@@ -47,7 +47,7 @@ describe("reportItemFailure", () => {
 
   test("preserves a structured CliError hint the CLI boundary would have printed", () => {
     // The interactive loops catch errors before cli.ts prints `message` plus
-    // `hint`, so the reporter must carry the hint itself — an assertLockV4
+    // `hint`, so the reporter must carry the hint itself — an assertWritableLock
     // refusal without its migrate instruction is a dead end.
     reportItemFailure(
       "skills/hello",

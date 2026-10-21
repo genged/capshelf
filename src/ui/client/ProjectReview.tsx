@@ -121,7 +121,7 @@ export function ProjectReview({
   }
   if (plugins.length > 0) {
     chips.push({
-      id: "plugins",
+      id: "claude-plugins",
       label: "Claude plugins",
       count: externalCount(plugins.length),
     });
@@ -154,8 +154,10 @@ export function ProjectReview({
         matchesQuery(`skills/${skill.name}`, query),
       )
     : [];
-  const shownPlugins = showExternal("plugins")
-    ? plugins.filter((plugin) => matchesQuery(`plugins/${plugin.id}`, query))
+  const shownPlugins = showExternal("claude-plugins")
+    ? plugins.filter((plugin) =>
+        matchesQuery(`claude-plugins/${plugin.id}`, query),
+      )
     : [];
   const shownUserSkills = showExternal("user-skills")
     ? userSkills.filter((skill) => matchesQuery(`skills/${skill.name}`, query))
@@ -349,8 +351,11 @@ export function ProjectReview({
           ))}
 
           {shownPlugins.length > 0 ? (
-            <section class="kind-group" aria-labelledby="review-kind-plugins">
-              <h2 id="review-kind-plugins" class="kind-heading">
+            <section
+              class="kind-group"
+              aria-labelledby="review-kind-claude-plugins"
+            >
+              <h2 id="review-kind-claude-plugins" class="kind-heading">
                 <span>Claude plugins</span>
                 <span class="kind-count">{shownPlugins.length}</span>
               </h2>
@@ -359,7 +364,7 @@ export function ProjectReview({
                   <ExternalRow
                     key={`${plugin.scope}:${plugin.id}`}
                     domId={panelDomId(`plugin/${plugin.scope}/${plugin.id}`)}
-                    itemRef={`plugins/${plugin.id}`}
+                    itemRef={`claude-plugins/${plugin.id}`}
                     origin="plugin"
                     detail={`${plugin.enabled ? "enabled" : "disabled"} · ${plugin.scope} · ${displayPath(plugin.settingsPath)}`}
                     note="Enabled in Claude settings. Capshelf reports it and never edits it."
