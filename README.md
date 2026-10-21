@@ -618,7 +618,7 @@ codes is in [`docs/cli.md`](docs/cli.md).
 
 | Capability | State | Reference |
 |---|---|---|
-| Skills, project-local Pi extensions, Claude/Codex subagents | shipped | [item kinds](docs/cli.md#item-kinds) |
+| Skills, plugins, project-local Pi extensions, Claude/Codex subagents | shipped | [item kinds](docs/cli.md#item-kinds) |
 | Settings, MCP, and project-scoped Codex config fragments | shipped | [config fragments](docs/cli.md#config-fragments) |
 | Bundles: curated item sets, installed all or nothing | shipped | [bundles](docs/cli.md#bundles) |
 | Item metadata driving `ls --tag`, `search`, and `requires`/`conflicts-with` | shipped | [item metadata](docs/cli.md#item-metadata) |
@@ -668,11 +668,12 @@ coding agents that work in this repo is in [`AGENTS.md`](AGENTS.md).
 ### Release history
 
 The latest release is described in
-[`docs/whats-new-0.13.md`](docs/whats-new-0.13.md).
+[`docs/whats-new-0.14.md`](docs/whats-new-0.14.md).
 
 <details>
 <summary>All releases</summary>
 
+- [`docs/whats-new-0.14.md`](docs/whats-new-0.14.md): Claude Code plugins as items, plugin consent, whole plugins from a repository URL, lock version 5
 - [`docs/whats-new-0.13.md`](docs/whats-new-0.13.md): remote skills from any repository URL, `--check-upstream`, `share --adopt`, faster status reports
 - [`docs/whats-new-0.12.md`](docs/whats-new-0.12.md): the `capshelf ui` dashboard, the project registry, Pi shadow warnings, no more `promote --merge`
 - [`docs/whats-new-0.11.md`](docs/whats-new-0.11.md): interactive pickers for setup, sharing, and promotion, plus publication previews
