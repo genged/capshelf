@@ -5,7 +5,7 @@
   "private": true,
   "license": "MIT",
   "//packageManager": "The one Bun version. Workflows read it with setup-bun's bun-version-file, then assert the version they actually got. scripts/check-bun-version.ts makes local test, build, and e2e:run stop on any other Bun.",
-  "packageManager": "bun@1.3.14",
+  "packageManager": "bun@1.4.3",
   "bin": {
     "capshelf": "./dist/capshelf"
   },
