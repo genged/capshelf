@@ -25,6 +25,12 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
 
+    # scripts/check-bun-version.ts stops `bun run test`, `build`, and `e2e:run`
+    # on a Bun that package.json does not declare. A caller that names a Bun,
+    # such as the canary, wants that Bun, so the check lets it through.
+    env:
+      CAPSHELF_ANY_BUN: ${{ inputs.bun-version != '' && '1' || '' }}
+
     steps:
       # Full history with tags: scripts/smoke-older-binary.sh builds capshelf
       # 0.13 from tag v0.13.0, and fails in CI when the tag is missing.

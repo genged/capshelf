@@ -281,10 +281,27 @@ The pull-request lane calls it, the release calls it before packaging, and a
 scheduled canary calls it with the newest Bun — so those three cannot drift
 apart.
 
-One Bun version is declared in `package.json#packageManager`, and
-`.github/actions/bun-toolchain` installs it and then asserts which version
-arrived: setup-bun warns and falls back to the newest Bun when it cannot read
-the declared version, and a warning does not fail a job.
+One Bun version is declared in `package.json#packageManager`. In CI,
+`.github/actions/bun-toolchain` installs that version and then asserts which
+version arrived. The assertion is necessary because setup-bun falls back to the
+newest Bun when it cannot read the declared version. It only writes a warning,
+and a warning does not fail a job.
+
+Bun itself ignores `packageManager`, so a local run uses the first `bun` on
+PATH. To prevent this, `bun run test`, `bun run build`, and `bun run e2e:run`
+first run `scripts/check-bun-version.ts`. `bun run e2e` gets the check through
+`bun run build`. On a different Bun, the check stops the command before any
+test starts. The message names both versions and gives two ways to get the
+declared one:
+
+```sh
+npx -y bun@<declared> run test
+curl -fsSL https://bun.sh/install | bash -s "bun-v<declared>"
+```
+
+To run on a different Bun on purpose, set `CAPSHELF_ANY_BUN=1`. The test lane
+sets it when its caller names a Bun version, so the scheduled canary can test
+the newest Bun.
 
 One file declares the release platforms: `scripts/release-platforms.json`. The
 packaging script builds from it and the validation matrix is derived from it,
