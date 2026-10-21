@@ -122,41 +122,36 @@ test -f "$P/.agents/skills/worker/SKILL.md"
 test ! -e "$P/.agents/skills/worker/agents"
 assert_fixed_contains 'uses parts of the heavy plugin' "$TMP/plugin-skill.err"
 
-# --- PTY cases: these need a real terminal, so they run only when `script`
-#     and `timeout` are both on PATH. Neither is required for the
+# --- PTY cases: these need a real terminal, so they run only when `script`,
+#     `timeout`, and `python3` are all on PATH. None is required for the
 #     non-interactive behavior this suite otherwise proves. ---
-# Run "$1" in a pty, wait until the output in "$3" holds the text "$2", then
-# send Ctrl-C. Sets PTY_EXIT to the exit code of the command. The text match
-# is fixed, not a pattern. A timeout (exit 124), or a command that ends
-# before the text appears, fails the run.
+# Run the shell text "$1" in a pty, wait until the output holds the text "$2",
+# then send Ctrl-C. Write the output to "$3", and set PTY_EXIT to the exit code
+# of the command. The text match is fixed, not a pattern. A timeout (exit
+# 124), or a command that ends before the text appears, fails the run.
+#
+# The E2E pty driver opens the terminal. `script` cannot do it here: Ctrl-C
+# must wait for the prompt, so stdin must stay open, and a FIFO does that. BSD
+# `script` on macOS then fails with "tcgetattr/ioctl: Operation not supported
+# on socket", because a macOS FIFO is a socket.
+PTY_DRIVER="$ROOT/e2e/support/pty-driver.py"
 ctrl_c_at() {
-  local cmd="$1" text="$2" out="$3" fifo="$TMP/pty-in" pid waited=0
-  rm -f "$fifo"
-  mkfifo "$fifo"
-  pty_argv "$cmd"
-  timeout 30 "${PTY_ARGV[@]}" < "$fifo" > "$out" 2>&1 &
-  pid=$!
-  # Hold the write end open, so `script` does not read end of input.
-  exec 3>"$fifo"
-  until grep -qF -- "$text" "$out"; do
-    if ! kill -0 "$pid" 2>/dev/null || [ "$waited" -ge 300 ]; then
-      exec 3>&-
-      echo "expected '$text' before Ctrl-C; output:"
-      cat "$out"
-      exit 1
-    fi
-    sleep 0.1
-    waited=$((waited + 1))
-  done
-  printf '\003' >&3
+  local cmd="$1" text="$2" out="$3" steps="$TMP/pty-steps.json"
+  python3 -c 'import json, sys; print(json.dumps([{"waitFor": sys.argv[1], "send": "\u0003"}]))' \
+    "$text" > "$steps"
   set +e
-  wait "$pid"
+  timeout 30 python3 "$PTY_DRIVER" --interactions-after-raw "$steps" \
+    bash -c "$cmd" > "$out" 2>&1
   PTY_EXIT=$?
   set -e
-  exec 3>&-
-  rm -f "$fifo"
   if [ "$PTY_EXIT" -eq 124 ]; then
-    echo "timed out after Ctrl-C at '$text'"
+    echo "timed out waiting for '$text' or after Ctrl-C; output:"
+    cat "$out"
+    exit 1
+  fi
+  if ! grep -qF -- "$text" "$out"; then
+    echo "expected '$text' before Ctrl-C; output:"
+    cat "$out"
     exit 1
   fi
 }
@@ -165,7 +160,8 @@ ctrl_c_at() {
 # has no `-c` and takes the command as arguments after the log file. Probe
 # each form once. If neither runs, skip the PTY cases.
 PTY_STYLE=""
-if command -v script >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+if command -v script >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1 &&
+  command -v python3 >/dev/null 2>&1; then
   if timeout 5 script -qec true /dev/null </dev/null >/dev/null 2>&1; then
     PTY_STYLE=util-linux
   elif timeout 5 script -qe /dev/null true </dev/null >/dev/null 2>&1; then
@@ -224,7 +220,7 @@ if [ -n "$PTY_STYLE" ]; then
   cmp -s "$TMP/remotes-before-ctrlc.json" "$P/.capshelf/remotes.lock.json"
   test ! -e "$P/.agents/skills/plain"
 else
-  echo "skip: PTY cases need 'timeout' and a 'script' that runs a command in a pty"
+  echo "skip: PTY cases need 'timeout', 'python3', and a 'script' that runs a command in a pty"
 fi
 
 (cd "$P" && "${CLI[@]}" rm skills/worker --yes --json >/dev/null)
