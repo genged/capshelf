@@ -1,6 +1,7 @@
 import { $ } from "bun";
 import { spyOn } from "bun:test";
 import { Buffer } from "node:buffer";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import {
   mkdir,
   mkdtemp,
@@ -23,6 +24,19 @@ import type { PickContext } from "../src/pick";
 // Bun's 5-second default on macOS filesystems. Apply this only to those broad
 // integration workflows so focused tests retain the strict default timeout.
 export const CLI_INTEGRATION_TEST_TIMEOUT_MS = 30_000;
+
+// True when the volume under tmpdir() treats `A` and `a` as one name, as the
+// default macOS volume does. Tests that put two case variants side by side
+// on disk skip there, because the volume merges the two paths.
+export const tmpdirFoldsCase = ((): boolean => {
+  const dir = mkdtempSync(join(tmpdir(), "capshelf-case-probe-"));
+  try {
+    writeFileSync(join(dir, "A"), "");
+    return existsSync(join(dir, "a"));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+})();
 
 export async function tempDir(prefix: string): Promise<string> {
   // realpath: on macOS tmpdir() is a symlink (/var -> /private/var); the CLI

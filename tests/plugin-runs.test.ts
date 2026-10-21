@@ -17,7 +17,7 @@ import {
   runsHaveEntries,
   serverCommandLine,
 } from "../src/plugin-runs";
-import { commitAll, tempDir, tempRepo } from "./cli-fixtures";
+import { commitAll, tempDir, tempRepo, tmpdirFoldsCase } from "./cli-fixtures";
 
 function reader(files: Record<string, string>) {
   return async (rel: string) =>
@@ -515,33 +515,36 @@ describe("pluginRunsAtCommit and pluginRunsOnDisk: case variants of declarations
     expect(runs.hooks).toEqual([]);
     expect(runs.unknown).toEqual(expected);
   });
-  test("on disk", async () => {
+  test.skipIf(tmpdirFoldsCase)("on disk", async () => {
     const dir = await tempDir("capshelf-plugin-runs-disk-case-");
     await writeCaseVariantPlugin(dir);
     const runs = await pluginRunsOnDisk(dir);
     expect(runs.hooks).toEqual([]);
     expect(runs.unknown).toEqual(expected);
   });
-  test("a skill with a case-variant manifest is a plugin", async () => {
-    const dir = await tempDir("capshelf-plugin-runs-disk-case-skill-");
-    await mkdir(join(dir, ".Claude-Plugin"), { recursive: true });
-    await writeFile(join(dir, "SKILL.md"), "---\nname: s\n---\n");
-    await writeFile(join(dir, ".Claude-Plugin", "plugin.json"), "{}");
-    const onDisk = await itemPluginRunsOnDisk("skills", dir);
-    expect(onDisk?.unknown).toContain(
-      ".Claude-Plugin/plugin.json differs only in case from .claude-plugin/plugin.json; capshelf does not read it",
-    );
-    const repo = await tempRepo("capshelf-plugin-runs-commit-case-skill-");
-    await mkdir(join(repo, "skills"), { recursive: true });
-    await cp(dir, join(repo, "skills", "s"), { recursive: true });
-    await commitAll(repo, "skill s");
-    const entries = await itemTreeEntriesAtCommit(
-      gitTreeSource({ repo, kind: "skills", name: "s", commit: "HEAD" }),
-      "skills",
-    );
-    const atCommit = await itemPluginRunsAtCommit(repo, "skills", entries);
-    expect(atCommit?.unknown).toEqual(onDisk?.unknown);
-  });
+  test.skipIf(tmpdirFoldsCase)(
+    "a skill with a case-variant manifest is a plugin",
+    async () => {
+      const dir = await tempDir("capshelf-plugin-runs-disk-case-skill-");
+      await mkdir(join(dir, ".Claude-Plugin"), { recursive: true });
+      await writeFile(join(dir, "SKILL.md"), "---\nname: s\n---\n");
+      await writeFile(join(dir, ".Claude-Plugin", "plugin.json"), "{}");
+      const onDisk = await itemPluginRunsOnDisk("skills", dir);
+      expect(onDisk?.unknown).toContain(
+        ".Claude-Plugin/plugin.json differs only in case from .claude-plugin/plugin.json; capshelf does not read it",
+      );
+      const repo = await tempRepo("capshelf-plugin-runs-commit-case-skill-");
+      await mkdir(join(repo, "skills"), { recursive: true });
+      await cp(dir, join(repo, "skills", "s"), { recursive: true });
+      await commitAll(repo, "skill s");
+      const entries = await itemTreeEntriesAtCommit(
+        gitTreeSource({ repo, kind: "skills", name: "s", commit: "HEAD" }),
+        "skills",
+      );
+      const atCommit = await itemPluginRunsAtCommit(repo, "skills", entries);
+      expect(atCommit?.unknown).toEqual(onDisk?.unknown);
+    },
+  );
 });
 
 describe("symlinked ancestors of declaration paths are unknown", () => {
