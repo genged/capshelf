@@ -1016,9 +1016,9 @@ Semantics:
   `.yml` is recognized; `.yaml` warns and is ignored. Bundles cannot
   include bundles.
 - **Scope**: `add bundles/<name> --local` works for copy-directory members
-  (skills and Pi extensions); every project-only member (fragments and
-  subagents) fails preflight with one aggregated error naming all unsupported
-  members.
+  (skills, plugins, and Pi extensions); every project-only member (fragments
+  and subagents) fails preflight with one aggregated error naming all
+  unsupported members.
 - **Freshness**: the bundle file is read from the data repo working tree
   and may be uncommitted (nothing pins it); member items still require
   clean, committed paths individually.

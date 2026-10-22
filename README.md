@@ -176,7 +176,7 @@ capshelf status security-review --diff-view installed   # review the result
 
 `update --merge` does a three-way merge into the installed copy and publishes
 nothing. A conflict lists the files and changes nothing. The merge works for
-skills and Pi extensions.
+skills, plugins, and Pi extensions.
 
 ## Your agent runs it. You approve.
 
@@ -245,9 +245,10 @@ kind is in [`docs/security.md`](docs/security.md).
 
 ### Keep a skill for yourself in a team project
 
-Skills and Pi extensions can use local scope. A local item is on your shelf,
-but the project's committed lock does not list it. Capshelf adds its paths to
-`.git/info/exclude`. A teammate who clones the project does not install it.
+Skills, plugins, and Pi extensions can use local scope. A local item is on
+your shelf, but the project's committed lock does not list it. Capshelf adds
+its paths to `.git/info/exclude`. A teammate who clones the project does not
+install it.
 
 Local scope is not private. The item is committed to the data repo, so anyone
 who can read that repo can read the item. Keep private content on a personal
