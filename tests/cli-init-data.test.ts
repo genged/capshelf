@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { chmod, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { commitAll, tempDir, tempRepo } from "./cli-fixtures";
+import { initRepo } from "./git-fixtures";
 
 describe("cli integration", () => {
   test("reports missing git with exit code 7", async () => {
@@ -452,9 +453,7 @@ describe("cli integration", () => {
       "agent-config",
     );
     await mkdir(clonePath, { recursive: true });
-    await $`git -C ${clonePath} init -q`.quiet();
-    await $`git -C ${clonePath} config user.email capshelf@example.invalid`.quiet();
-    await $`git -C ${clonePath} config user.name capshelf`.quiet();
+    await initRepo(clonePath);
     await writeFile(join(clonePath, "README.md"), "data\n");
     await commitAll(clonePath, "baseline");
     await $`git -C ${clonePath} remote add origin ${upstream}`.quiet();

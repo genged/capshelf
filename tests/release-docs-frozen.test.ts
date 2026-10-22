@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { CLI_INTEGRATION_TEST_TIMEOUT_MS, tempDir } from "./cli-fixtures";
+import { initRepo } from "./git-fixtures";
 
 const SCRIPT = join(
   import.meta.dir,
@@ -38,9 +39,7 @@ function check(repo: string, args: string[] = []): Result {
  */
 async function notesRepo(): Promise<string> {
   const repo = await tempDir("capshelf-frozen-notes-");
-  await $`git -C ${repo} init -q`.quiet();
-  await $`git -C ${repo} config user.email capshelf@example.invalid`.quiet();
-  await $`git -C ${repo} config user.name capshelf`.quiet();
+  await initRepo(repo);
   await mkdir(join(repo, "docs", "release-notes"), { recursive: true });
   await writeFile(
     join(repo, "docs", "release-notes", "release-notes-1.0.0.md"),

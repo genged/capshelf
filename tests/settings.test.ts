@@ -15,6 +15,7 @@ import {
   settingsContributionState,
   settingsOutputPath,
 } from "../src/settings";
+import { initRepo } from "./git-fixtures";
 
 async function tempDir(prefix: string): Promise<string> {
   return await mkdtemp(join(tmpdir(), prefix));
@@ -22,9 +23,7 @@ async function tempDir(prefix: string): Promise<string> {
 
 async function tempRepo(): Promise<string> {
   const repo = await tempDir("capshelf-settings-repo-");
-  await $`git -C ${repo} init -q`.quiet();
-  await $`git -C ${repo} config user.email capshelf@example.invalid`.quiet();
-  await $`git -C ${repo} config user.name capshelf`.quiet();
+  await initRepo(repo);
   return repo;
 }
 

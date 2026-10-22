@@ -12,6 +12,7 @@ import {
   parseGitVersion,
   showAtCommit,
 } from "../src/git";
+import { initRepo } from "./git-fixtures";
 
 /**
  * PIN-4. Every one of these asserts the same property from a different angle:
@@ -22,9 +23,7 @@ import {
 
 async function tempRepo(prefix: string): Promise<string> {
   const repo = await mkdtemp(join(tmpdir(), prefix));
-  await $`git -C ${repo} init -q`.quiet();
-  await $`git -C ${repo} config user.email capshelf@example.invalid`.quiet();
-  await $`git -C ${repo} config user.name capshelf`.quiet();
+  await initRepo(repo);
   return repo;
 }
 

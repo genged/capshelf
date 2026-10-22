@@ -12,6 +12,7 @@ import {
   type SyncReport,
   type SyncState,
 } from "../src/data-sync";
+import { setTestIdentity } from "./git-fixtures";
 
 function facts(overrides: Partial<SyncFacts> = {}): SyncFacts {
   return {
@@ -316,8 +317,7 @@ describe("formatSyncHuman", () => {
 });
 
 async function configUser(repo: string): Promise<void> {
-  await $`git -C ${repo} config user.email capshelf@example.invalid`.quiet();
-  await $`git -C ${repo} config user.name capshelf`.quiet();
+  await setTestIdentity(repo);
 }
 
 /**

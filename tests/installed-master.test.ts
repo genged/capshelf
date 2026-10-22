@@ -32,6 +32,7 @@ import {
   SYSTEM_ITEMS,
 } from "../src/bundled";
 import type { SystemItem } from "../src/bundled";
+import { initRepo } from "./git-fixtures";
 
 async function tempDir(prefix = "capshelf-installed-"): Promise<string> {
   return await mkdtemp(join(tmpdir(), prefix));
@@ -39,9 +40,7 @@ async function tempDir(prefix = "capshelf-installed-"): Promise<string> {
 
 async function tempRepo(prefix = "capshelf-installed-repo-"): Promise<string> {
   const repo = await tempDir(prefix);
-  await $`git -C ${repo} init -q`.quiet();
-  await $`git -C ${repo} config user.email capshelf@example.invalid`.quiet();
-  await $`git -C ${repo} config user.name capshelf`.quiet();
+  await initRepo(repo);
   return repo;
 }
 

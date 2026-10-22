@@ -30,12 +30,11 @@ import {
 } from "../src/status-diff";
 import { buildStatusReport, collectStatusDiffs } from "../src/status-report";
 import { runInProcess } from "./cli-fixtures";
+import { initRepo } from "./git-fixtures";
 
 async function tempRepo(prefix: string): Promise<string> {
   const repo = await mkdtemp(join(tmpdir(), prefix));
-  await $`git -C ${repo} init -q`.quiet();
-  await $`git -C ${repo} config user.email capshelf@example.invalid`.quiet();
-  await $`git -C ${repo} config user.name capshelf`.quiet();
+  await initRepo(repo);
   return repo;
 }
 

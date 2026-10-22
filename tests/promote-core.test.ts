@@ -43,6 +43,7 @@ import { emptyManifest } from "../src/manifest";
 import { PreconditionError } from "../src/errors";
 import { rejection } from "./cli-fixtures";
 import { upstreamFactsForItem } from "../src/upstream-facts";
+import { initRepo } from "./git-fixtures";
 
 const dataEntry: DataLockEntry = {
   source: "data",
@@ -120,9 +121,7 @@ describe("expectedAdoptionPath", () => {
 
 async function tempRepo(prefix: string): Promise<string> {
   const repo = await mkdtemp(join(tmpdir(), prefix));
-  await $`git -C ${repo} init -q`.quiet();
-  await $`git -C ${repo} config user.email capshelf@example.invalid`.quiet();
-  await $`git -C ${repo} config user.name capshelf`.quiet();
+  await initRepo(repo);
   return repo;
 }
 

@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { initRepo } from "./git-fixtures";
 
 async function tempDir(prefix: string): Promise<string> {
   return await realpath(await mkdtemp(join(tmpdir(), prefix)));
@@ -10,10 +11,7 @@ async function tempDir(prefix: string): Promise<string> {
 
 async function tempRepo(prefix: string): Promise<string> {
   const repo = await tempDir(prefix);
-  await $`git -C ${repo} init -q`.quiet();
-  await $`git -C ${repo} config user.email capshelf@example.invalid`.quiet();
-  await $`git -C ${repo} config user.name capshelf`.quiet();
-  await $`git -C ${repo} remote add origin ${`https://example.invalid/${basename(repo)}`}`.quiet();
+  await initRepo(repo, { origin: `https://example.invalid/${basename(repo)}` });
   return repo;
 }
 

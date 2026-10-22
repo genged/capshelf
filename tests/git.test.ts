@@ -40,12 +40,11 @@ import {
   trackingRef,
 } from "../src/git";
 import { rejection } from "./cli-fixtures";
+import { initRepo, setTestIdentity } from "./git-fixtures";
 
 async function tempRepo(): Promise<string> {
   const repo = await mkdtemp(join(tmpdir(), "capshelf-git-"));
-  await $`git -C ${repo} init -q`.quiet();
-  await $`git -C ${repo} config user.email capshelf@example.invalid`.quiet();
-  await $`git -C ${repo} config user.name capshelf`.quiet();
+  await initRepo(repo);
   return repo;
 }
 
@@ -630,8 +629,7 @@ describe("git sync helpers", () => {
     const parent = await mkdtemp(join(tmpdir(), "capshelf-clone-"));
     const repo = join(parent, "clone");
     await $`git clone -q ${origin} ${repo}`.quiet();
-    await $`git -C ${repo} config user.email capshelf@example.invalid`.quiet();
-    await $`git -C ${repo} config user.name capshelf`.quiet();
+    await setTestIdentity(repo);
     return repo;
   }
 

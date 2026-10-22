@@ -19,6 +19,7 @@ import type { MasterItem } from "../src/master";
 import { emptyMetadata } from "../src/metadata";
 import type { ItemMetadata } from "../src/metadata";
 import type { ApplyFragmentOutputOptions } from "../src/fragments";
+import { initRepo } from "./git-fixtures";
 
 function bundleOf(refs: string[], name = "b"): Bundle {
   return {
@@ -277,9 +278,7 @@ describe("planBundleInstall", () => {
 describe("preflightBundleChecks fragment collisions", () => {
   async function fragmentDataRepo(): Promise<string> {
     const repo = await mkdtemp(join(tmpdir(), "capshelf-bundle-frag-"));
-    await $`git -C ${repo} init -q`.quiet();
-    await $`git -C ${repo} config user.email capshelf@example.invalid`.quiet();
-    await $`git -C ${repo} config user.name capshelf`.quiet();
+    await initRepo(repo);
     for (const name of ["base", "go"]) {
       await mkdir(join(repo, "settings", name), { recursive: true });
       await writeFile(

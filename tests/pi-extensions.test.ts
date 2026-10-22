@@ -22,6 +22,7 @@ import {
 import { listMasterItems } from "../src/master";
 import { lastTouchingContentCommit, lastTouchingCommit } from "../src/git";
 import { CLI_INTEGRATION_TEST_TIMEOUT_MS, runInProcess } from "./cli-fixtures";
+import { initRepo } from "./git-fixtures";
 
 async function tempDir(prefix: string): Promise<string> {
   // macOS exposes tmpdir() through /var, which resolves to /private/var. The
@@ -31,9 +32,7 @@ async function tempDir(prefix: string): Promise<string> {
 
 async function tempRepo(prefix: string): Promise<string> {
   const repo = await tempDir(prefix);
-  await $`git -C ${repo} init -q`.quiet();
-  await $`git -C ${repo} config user.email capshelf@example.invalid`.quiet();
-  await $`git -C ${repo} config user.name capshelf`.quiet();
+  await initRepo(repo);
   return repo;
 }
 

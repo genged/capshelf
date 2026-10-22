@@ -13,6 +13,7 @@ import {
 import { CliError, PreconditionError } from "../src/errors";
 import { normalizeRemoteUrl } from "../src/git";
 import { rejection } from "./cli-fixtures";
+import { initRepo } from "./git-fixtures";
 
 const env = { XDG_DATA_HOME: "/xdg" };
 
@@ -187,9 +188,7 @@ describe("resolveDataInput", () => {
 
 async function tempSourceRepo(): Promise<{ repo: string; url: string }> {
   const repo = await mkdtemp(join(tmpdir(), "capshelf-clone-src-"));
-  await $`git -C ${repo} init -q`.quiet();
-  await $`git -C ${repo} config user.email capshelf@example.invalid`.quiet();
-  await $`git -C ${repo} config user.name capshelf`.quiet();
+  await initRepo(repo);
   await mkdir(join(repo, "skills", "hello"), { recursive: true });
   await writeFile(join(repo, "skills", "hello", "SKILL.md"), "hello\n");
   await $`git -C ${repo} add -A`.quiet();

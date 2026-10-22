@@ -24,6 +24,7 @@ import { planCopyDirectoryDestruction } from "../src/destructive-preflight";
 import { materializeLockEntry } from "../src/materialize";
 import { CLI_INTEGRATION_TEST_TIMEOUT_MS } from "./cli-fixtures";
 import { inventoryLocalTree } from "../src/gitignore";
+import { initRepo } from "./git-fixtures";
 
 async function tempDir(prefix: string): Promise<string> {
   return await mkdtemp(join(tmpdir(), prefix));
@@ -31,9 +32,7 @@ async function tempDir(prefix: string): Promise<string> {
 
 async function tempRepo(): Promise<string> {
   const repo = await tempDir("capshelf-materialize-repo-");
-  await $`git -C ${repo} init -q`.quiet();
-  await $`git -C ${repo} config user.email capshelf@example.invalid`.quiet();
-  await $`git -C ${repo} config user.name capshelf`.quiet();
+  await initRepo(repo);
   return repo;
 }
 

@@ -12,6 +12,7 @@ import {
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { main } from "../src/cli";
+import { initRepo } from "./git-fixtures";
 import { isConfigObject, isConfigString } from "../src/config-values";
 import type { ConfigObject, ConfigValue } from "../src/config-values";
 import { parseJsonConfigObject, parseJsonc } from "../src/json-fragments";
@@ -49,16 +50,11 @@ export async function tempRepo(
   opts: { origin?: string | null } = {},
 ): Promise<string> {
   const repo = await tempDir(prefix);
-  await $`git -C ${repo} init -q`.quiet();
-  await $`git -C ${repo} config user.email capshelf@example.invalid`.quiet();
-  await $`git -C ${repo} config user.name capshelf`.quiet();
   const origin =
     opts.origin === undefined
       ? `https://example.invalid/${basename(repo)}`
       : opts.origin;
-  if (origin !== null) {
-    await $`git -C ${repo} remote add origin ${origin}`.quiet();
-  }
+  await initRepo(repo, origin === null ? {} : { origin });
   return repo;
 }
 
