@@ -74,6 +74,9 @@ make check           # every layer, with e2e last
 `CAPSHELF_E2E_BIN` at an extracted release archive. A job that could rebuild
 its candidate would no longer be testing the file it publishes.
 
+Both commands run the test files in four worker processes. Set `E2E_JOBS` to
+change the number.
+
 ### What a test may do
 
 Each test owns one temporary world: its own root, `HOME`, XDG directories,
@@ -81,6 +84,12 @@ empty global Git config, repositories, and logs. The child environment is built
 from an allowlist rather than copied from `process.env`, so `CAPSHELF_HOME`,
 `CODEX_HOME`, `GIT_DIR`, credential helpers, and proxy settings cannot leak in
 undeclared.
+
+The allowlist sets `CAPSHELF_NO_SELF_UPDATE=1`. On a terminal, capshelf asks
+Homebrew whether an update exists. Each world has a fresh `HOME`, so that check
+always misses its cache. It then runs a cold `brew` on every terminal command,
+and the result depends on whether the host has Homebrew. The unit tests cover
+the startup check.
 
 Four layers stay separate, and every test says which ones it used:
 

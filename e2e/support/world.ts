@@ -139,6 +139,11 @@ function baseEnvironment(paths: {
     TZ: "UTC",
     TERM: "dumb",
     NO_COLOR: "1",
+    // On a terminal, capshelf asks Homebrew whether an update exists. Every
+    // world has a fresh HOME, so that check always misses its cache and runs
+    // a cold `brew`, which took 3 s per terminal command. It also made the
+    // lane depend on whether the host has Homebrew.
+    CAPSHELF_NO_SELF_UPDATE: "1",
   };
 }
 

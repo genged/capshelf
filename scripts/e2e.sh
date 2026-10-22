@@ -33,4 +33,7 @@ if [ -z "${CAPSHELF_E2E_BIN:-}" ]; then
   exit 1
 fi
 
-exec bun test ./e2e "$@"
+# Each test owns its own world, so the files can run in parallel. Four workers
+# match the unit suite. More workers made that suite slower on a 12-core host,
+# because it spends its time starting processes.
+exec bun test --parallel="${E2E_JOBS:-4}" ./e2e "$@"
