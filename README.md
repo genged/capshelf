@@ -669,11 +669,12 @@ coding agents that work in this repo is in [`AGENTS.md`](AGENTS.md).
 ### Release history
 
 The latest release is described in
-[`docs/whats-new-0.14.md`](docs/whats-new-0.14.md).
+[`docs/whats-new-0.15.md`](docs/whats-new-0.15.md).
 
 <details>
 <summary>All releases</summary>
 
+- [`docs/whats-new-0.15.md`](docs/whats-new-0.15.md): `share` defaults a skill that project Git tracks to project scope
 - [`docs/whats-new-0.14.md`](docs/whats-new-0.14.md): Claude Code plugins as items, plugin consent, whole plugins from a repository URL, lock version 5
 - [`docs/whats-new-0.13.md`](docs/whats-new-0.13.md): remote skills from any repository URL, `--check-upstream`, `share --adopt`, faster status reports
 - [`docs/whats-new-0.12.md`](docs/whats-new-0.12.md): the `capshelf ui` dashboard, the project registry, Pi shadow warnings, no more `promote --merge`
