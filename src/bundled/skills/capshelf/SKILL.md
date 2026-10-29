@@ -95,7 +95,7 @@ For system items (e.g. this `capshelf` skill), the edit loop doesn't apply — t
   repository outside your shelf. Added via `add <url>`, removed via `rm`,
   never promoted. `share <item> --adopt` is the one exit. See Remote skills.
 
-Mutating commands only touch files tracked in the lockfiles: `add` refuses to overwrite an existing untracked target, and `rm` deletes only locked data items. Copy-directory items can use committed project scope or clone-local scope; subagents are project-only. `share skills/<name>` defaults to local scope; Pi extensions default to project scope, so pass `--to local` when adopting one as clone-local intent.
+Mutating commands only touch files tracked in the lockfiles: `add` refuses to overwrite an existing untracked target, and `rm` deletes only locked data items. Copy-directory items can use committed project scope or clone-local scope; subagents are project-only. `share skills/<name>` defaults to local scope, or to project scope when project Git already tracks the skill's files; Pi extensions default to project scope, so pass `--to local` when adopting one as clone-local intent.
 
 ## Command reference
 

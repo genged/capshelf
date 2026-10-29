@@ -349,7 +349,11 @@ capshelf share skills/write-migration --to project -m "initial write-migration s
 
 Without `--to project`, `share` tracks the skill in local scope after committing
 it to the data repo, so other clones can add it later without making this
-project's committed policy require it. For existing Claude projects in the
+project's committed policy require it. One exception applies. If project Git
+already tracks the skill's install path, teammates already have the files.
+Then the default is project scope, and the output names the tracked path.
+`--to local` still refuses that skill, because `.git/info/exclude` cannot hide
+a tracked file. For existing Claude projects in the
 default layout, `share` can also adopt a real `.claude/skills/<name>/` directory
 when `.agents/skills/<name>/` does not already exist. After the data-repo commit
 succeeds, capshelf normalizes the project to the default layout: real files under
@@ -1158,7 +1162,8 @@ runtime output file, like an MCP row. Mark both files and the share needs no
 `--target`. Mark one file and the command carries it. The item name comes
 from the directory or file name, so these rows need no name prompt. Skills
 share to local scope, and Pi extensions and subagents share to project
-scope. Each is the named command's own default, so the printed command
+scope. A skill that project Git already tracks shares to project scope.
+Each is the named command's own default, so the printed command
 carries no `--to` flag. An item the
 named command would refuse stays visible, struck through, with the refusal
 in its detail column.
