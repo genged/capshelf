@@ -10,9 +10,11 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { PreconditionError } from "../src/errors";
 import {
   GitUnavailableError,
   aheadBehind,
+  assertNoIgnoredPublicationFiles,
   assertIsGitRepo,
   assertPathClean,
   assertRepoClean,
@@ -26,6 +28,7 @@ import {
   sourceWriteBuffer,
   sourceVisibleFilesUnderPath,
   headSha,
+  ignoredUntrackedPaths,
   indexEntryFlags,
   isPathClean,
   isRepoClean,
@@ -34,6 +37,7 @@ import {
   lsTreeAtCommit,
   normalizeRemoteUrl,
   showAtCommit,
+  sourceIgnoreRules,
   statusPorcelain,
   statusPorcelainOutsidePath,
   statusPorcelainRecords,
@@ -501,6 +505,137 @@ describe("git historical content helpers", () => {
  * are restored, the working tree is not. Restoring the working tree would
  * discard the edit the command exists to publish.
  */
+describe("ignoredUntrackedPaths", () => {
+  test("lists exactly the files that git add -- <dir> skips", async () => {
+    const repo = await tempRepo();
+    await writeFile(join(repo, ".gitignore"), "*.pyc\n!keep.pyc\nbuild/\n");
+    await mkdir(join(repo, "d", "build"), { recursive: true });
+    await mkdir(join(repo, "d", "sub"), { recursive: true });
+    for (const rel of [
+      "d/a.pyc",
+      "d/keep.pyc",
+      "d/x.txt",
+      "d/build/out.js",
+      "d/sub/b.pyc",
+      "d/tracked.pyc",
+    ]) {
+      await writeFile(join(repo, ...rel.split("/")), "x\n");
+    }
+    await $`git -C ${repo} add .gitignore`.quiet();
+    await $`git -C ${repo} add -f d/tracked.pyc`.quiet();
+    await $`git -C ${repo} commit -qm init`.quiet();
+
+    // The `!keep.pyc` re-include and the tracked file are not in the set:
+    // `git add -- d` stages both of them.
+    expect(await ignoredUntrackedPaths(repo, ["d"])).toEqual([
+      "d/a.pyc",
+      "d/build/out.js",
+      "d/sub/b.pyc",
+    ]);
+    await $`git -C ${repo} add -- d`.quiet();
+    const staged = (
+      await $`git -C ${repo} diff --cached --name-only`.quiet().text()
+    )
+      .trim()
+      .split("\n");
+    expect(staged).toEqual(["d/keep.pyc", "d/x.txt"]);
+  });
+
+  test("reads .git/info/exclude and core.excludesFile", async () => {
+    const repo = await tempRepo();
+    const excludes = await mkdtemp(join(tmpdir(), "capshelf-excludes-"));
+    await writeFile(join(excludes, "ignore"), "*.tmp\n");
+    await $`git -C ${repo} config core.excludesFile ${join(excludes, "ignore")}`.quiet();
+    await writeFile(join(repo, ".git", "info", "exclude"), "*.log\n");
+    await mkdir(join(repo, "d"));
+    await writeFile(join(repo, "d", "z.log"), "x\n");
+    await writeFile(join(repo, "d", "z.tmp"), "x\n");
+    await writeFile(join(repo, "d", "z.txt"), "x\n");
+
+    expect(await ignoredUntrackedPaths(repo, ["d"])).toEqual([
+      "d/z.log",
+      "d/z.tmp",
+    ]);
+  });
+
+  test("returns nothing for a missing root and throws when git fails", async () => {
+    const repo = await tempRepo();
+    expect(await ignoredUntrackedPaths(repo, ["missing"])).toEqual([]);
+    expect(await ignoredUntrackedPaths(repo, [])).toEqual([]);
+    const notRepo = await mkdtemp(join(tmpdir(), "capshelf-not-a-repo-"));
+    await expect(ignoredUntrackedPaths(notRepo, ["d"])).rejects.toThrow();
+  });
+});
+
+describe("sourceIgnoreRules", () => {
+  test("names the deciding rule and drops a path that a ! rule includes", async () => {
+    const repo = await tempRepo();
+    await writeFile(join(repo, ".gitignore"), "*.pyc\n!keep.pyc\n");
+
+    const rules = await sourceIgnoreRules(repo, [
+      "gone.pyc",
+      "keep.pyc",
+      "x.txt",
+    ]);
+
+    expect([...rules.keys()]).toEqual(["gone.pyc"]);
+    expect(rules.get("gone.pyc")).toEqual({
+      source: ".gitignore",
+      line: 1,
+      pattern: "*.pyc",
+    });
+  });
+
+  test("keeps a literal backslash in a path", async () => {
+    const repo = await tempRepo();
+    await writeFile(join(repo, ".gitignore"), "*.pyc\n");
+    await writeFile(join(repo, "a\\b.pyc"), "x");
+
+    const ignored = await ignoredUntrackedPaths(repo, ["."]);
+    expect(ignored).toEqual(["a\\b.pyc"]);
+    const rules = await sourceIgnoreRules(repo, ignored);
+    expect(rules.get("a\\b.pyc")?.pattern).toBe("*.pyc");
+  });
+
+  test("returns no rules when git fails", async () => {
+    const notRepo = await mkdtemp(join(tmpdir(), "capshelf-not-a-repo-"));
+    expect((await sourceIgnoreRules(notRepo, ["a.pyc"])).size).toBe(0);
+  });
+});
+
+describe("assertNoIgnoredPublicationFiles", () => {
+  test("refuses with exit 3 and names the rule", async () => {
+    const repo = await tempRepo();
+    await writeFile(join(repo, ".gitignore"), "__pycache__/\n");
+    await mkdir(join(repo, "skills", "s", "__pycache__"), { recursive: true });
+    await writeFile(join(repo, "skills", "s", "__pycache__", "x.pyc"), "x");
+
+    const error = await rejection(
+      assertNoIgnoredPublicationFiles(repo, ["skills/s"]),
+      PreconditionError,
+    );
+    expect(error.exitCode).toBe(3);
+    expect(error.message).toContain(
+      "the data repo ignores files that this commit must contain",
+    );
+    expect(error.message).toContain("skills/s/__pycache__/x.pyc");
+    expect(error.message).toContain("ignored by .gitignore:1  __pycache__/");
+  });
+
+  test("passes a file that the caller kept in place", async () => {
+    const repo = await tempRepo();
+    await writeFile(join(repo, ".gitignore"), ".capshelf.yml\n");
+    await mkdir(join(repo, "skills", "s"), { recursive: true });
+    await writeFile(join(repo, "skills", "s", ".capshelf.yml"), "needs: []\n");
+
+    await assertNoIgnoredPublicationFiles(
+      repo,
+      ["skills/s"],
+      ["skills/s/.capshelf.yml"],
+    );
+  });
+});
+
 describe("commitExistingPaths", () => {
   async function fixture(): Promise<{ repo: string; source: string }> {
     const repo = await tempRepo();
@@ -537,6 +672,30 @@ describe("commitExistingPaths", () => {
     expect(await file(source).text()).toBe('{"v":2}\n');
     expect((await $`git -C ${repo} status --porcelain`.quiet().text()).trim()) //
       .toBe("");
+  });
+
+  test("an ignored untracked canonical path refuses before staging", async () => {
+    const { repo } = await fixture();
+    await writeFile(join(repo, ".gitignore"), "*.local.json\n");
+    await commitAll(repo, "ignore rule");
+    const before = await headSha(repo);
+    await writeFile(join(repo, "settings", "theme", "x.local.json"), "{}\n");
+    const indexBefore = await readFile(join(repo, ".git", "index"));
+
+    const error = await rejection(
+      commitExistingPaths({
+        repo,
+        relPaths: ["settings/theme/x.local.json"],
+        message: "theme",
+        expectedHead: before,
+      }),
+      PreconditionError,
+    );
+
+    expect(error.exitCode).toBe(3);
+    expect(error.message).toContain("ignored by .gitignore:1  *.local.json");
+    expect(await headSha(repo)).toBe(before);
+    expect(await readFile(join(repo, ".git", "index"))).toEqual(indexBefore);
   });
 
   test("a rejecting hook keeps the edit and puts the index back", async () => {

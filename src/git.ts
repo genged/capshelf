@@ -15,6 +15,7 @@ import { basename, delimiter, join, resolve } from "node:path";
 import { CliError, ExitCode, PreconditionError } from "./errors";
 import { isErrno } from "./fs-utils";
 import { recordGitRead } from "./git-measure";
+import { ignoredPublicationMessage } from "./publication-ignore";
 
 const GIT_MISSING_MESSAGE =
   "git is required but was not found on PATH\n  install Git, then retry";
@@ -1761,6 +1762,103 @@ export async function projectIgnoreRule(
 }
 
 /**
+ * Untracked files under `relPaths` that the repository's ignore rules hide.
+ * `git add -- <dir>` skips exactly these and exits 0 (verified on git
+ * 2.53.0), so a commit that names `relPaths` would not contain them and
+ * nothing would say so. Git computes the set with its own rules, including
+ * `!` re-includes, `.git/info/exclude`, and `core.excludesFile`, so no
+ * pattern is parsed here. A guard, not a diagnosis: a git failure throws.
+ */
+export async function ignoredUntrackedPaths(
+  repo: string,
+  relPaths: readonly string[],
+): Promise<string[]> {
+  if (relPaths.length === 0) return [];
+  const out = await sourceReadText(repo, [
+    "ls-files",
+    "-z",
+    "--others",
+    "--ignored",
+    "--exclude-standard",
+    "--",
+    ...relPaths.map(literalPathspec),
+  ]);
+  return out
+    .split("\0")
+    .filter((path) => path.length > 0)
+    .sort();
+}
+
+/**
+ * The rule that ignores each of `relPaths` in a source repository. This only
+ * diagnoses, so any git failure returns no rules.
+ *
+ * Two calls, because `check-ignore --verbose` also prints a record for a path
+ * that a `!` rule re-includes, and that path is not ignored (verified on git
+ * 2.53.0). The plain call returns only ignored paths, and for those the
+ * verbose record is the rule that decides.
+ */
+export async function sourceIgnoreRules(
+  repo: string,
+  relPaths: readonly string[],
+): Promise<Map<string, IgnoreRule>> {
+  const rules = new Map<string, IgnoreRule>();
+  if (relPaths.length === 0) return rules;
+  const plain = await sourceRead(repo, ["check-ignore", "-z", "--stdin"], {
+    stdin: nulTerminated(relPaths),
+  }).catch(() => null);
+  if (plain?.exitCode !== 0) return rules;
+  const ignored = plain.stdout
+    .toString("utf-8")
+    .split("\0")
+    .filter((path) => path.length > 0);
+  const verbose = await sourceRead(
+    repo,
+    ["check-ignore", "--verbose", "-z", "--stdin"],
+    { stdin: nulTerminated(ignored) },
+  ).catch(() => null);
+  if (verbose?.exitCode !== 0) return rules;
+  // `-z` records are `source NUL line NUL pattern NUL path NUL`.
+  const fields = verbose.stdout.toString("utf-8").split("\0");
+  for (let at = 0; at + 3 < fields.length; at += 4) {
+    const [source, line, pattern, path] = fields.slice(at, at + 4);
+    if (!source || !line || pattern === undefined || !path) continue;
+    rules.set(path, { source, line: Number(line), pattern });
+  }
+  return rules;
+}
+
+// Unchanged: these paths come from Git or are built with `/`, and a
+// backslash is a valid filename character on Unix, so `normalizeGitPath`
+// would query a different file.
+function nulTerminated(paths: readonly string[]): string {
+  return paths.map((path) => `${path}\0`).join("");
+}
+
+/**
+ * Refuse a publication commit that `git add -- <ownedRoots>` would silently
+ * shorten. Runs after the files are written and before anything is staged,
+ * so it sees the ignore rules the copy left behind. `keptInPlace` names files
+ * the caller wrote back unchanged and does not publish, such as a restored
+ * upstream sidecar.
+ */
+export async function assertNoIgnoredPublicationFiles(
+  repo: string,
+  ownedRoots: readonly string[],
+  keptInPlace: readonly string[] = [],
+): Promise<void> {
+  const kept = new Set(keptInPlace);
+  const ignored = (await ignoredUntrackedPaths(repo, ownedRoots)).filter(
+    (path) => !kept.has(path),
+  );
+  if (ignored.length === 0) return;
+  const rules = await sourceIgnoreRules(repo, ignored);
+  throw new PreconditionError(
+    ignoredPublicationMessage(ignored, rules, ownedRoots),
+  );
+}
+
+/**
  * Repo-relative paths under `relPath` that the project's complete ignore stack
  * treats as visible — `.gitignore` at every level, parent ignore files,
  * `.git/info/exclude`, and `core.excludesFile`.
@@ -2269,6 +2367,9 @@ export async function commitExistingPaths(
     throw new PreconditionError("data repo HEAD changed during the commit");
   }
   await assertRepoCleanOutsidePaths(repo, relPaths);
+  // Before the index backup: nothing is staged yet, so a refusal here needs
+  // no rollback. The files are the user's own edits, so nothing is exempt.
+  await assertNoIgnoredPublicationFiles(repo, relPaths);
 
   const indexPath = resolve(
     repo,

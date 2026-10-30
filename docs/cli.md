@@ -2577,7 +2577,7 @@ metadata and never adopts the user skill.
 | 0 | success |
 | 1 | generic error (missing args, bad config, I/O) |
 | 2 | item or bundle not found in data repo |
-| 3 | conflict or refused precondition (project is already initialized, a destructive `add`/`apply`/`update`/`rm`/`revert`/marketplace sync lacks consent, a plugin consent point lacks consent, a project lock is an older version than this capshelf writes, a second item would install into one skill folder, promote would clobber, a system or externally managed item was selected, an untracked target would be overwritten, a bundle failed preflight, an interactive `add`, `share`, or `promote` had a selection fail or had no usable terminal, `add` was given `<something>/<name>` where the something is not an item kind, or data sync cannot run safely) |
+| 3 | conflict or refused precondition (project is already initialized, a destructive `add`/`apply`/`update`/`rm`/`revert`/marketplace sync lacks consent, a plugin consent point lacks consent, a project lock is an older version than this capshelf writes, a second item would install into one skill folder, promote would clobber, a system or externally managed item was selected, an untracked target would be overwritten, the data repo ignores a file that a `share` or `promote` commit must contain, a bundle failed preflight, an interactive `add`, `share`, or `promote` had a selection fail or had no usable terminal, `add` was given `<something>/<name>` where the something is not an item kind, or data sync cannot run safely) |
 | 4 | drift detected (for `status --strict`), upstream verification failed, or `data sync` needs human action (diverged history, or upstream commits blocked by a dirty worktree) |
 | 5 | reserved for future unmet-requires checks (`add` with unmet `requires` warns and exits 0) |
 | 6 | no data repo configured for this project (pass `--data`, set `.capshelf/local.json`, or `$CAPSHELF_HOME`) |
@@ -2640,6 +2640,51 @@ the error names the canonical source path and the commit:
 outputs or project metadata. `status` reports the error instead of a healthy
 fragment row. Restore the missing Git objects from a healthy data-repo clone,
 then retry.
+
+### A file that the data repo ignores
+
+`share`, `promote`, adopt, and the marketplace commands write files into the
+data repo and then commit them. Git does not commit a file that the data repo
+ignores, and it gives no error for a file inside a directory. So before the
+commit, capshelf asks Git which written files it will skip. The rules come
+from the data repo's `.gitignore` files, `.git/info/exclude`, and
+`core.excludesFile`. A file that the data repo already tracks is not skipped,
+even when a rule matches it.
+
+If Git will skip a file, the command refuses with exit 3 and names the rule:
+
+```text
+✗ the data repo ignores files that this commit must contain
+
+    skills/hello/scripts/__pycache__/x.pyc
+      ignored by .gitignore:1  __pycache__/
+
+  remove the rule from the data repo, or, if the item supplies the file,
+  delete it from the item
+  the data repo was restored; nothing was published
+```
+
+To fix it, do one of these:
+
+- Delete the file from the item in the project, then retry. For `--local`
+  scope, a `.gitignore` inside the item also works, because the selection
+  reads it. For project scope it does not work for a file that project Git
+  tracks, so delete the file or untrack it.
+- Remove or change the rule in the data repo, then retry.
+
+When the rule is in a `.gitignore` that the commit writes, the message says
+so. Then the rule comes from the item itself, or from a canonical skill that
+a Codex projection copies, and the fix belongs there.
+
+The `.capshelf.yml` that `promote` writes back unchanged is not checked. An
+ignored upstream sidecar stays unpublished, as before.
+
+After the commit, `promote` and a `share` of a skill, Pi extension, plugin, or
+subagent still compare the committed tree with the selected files. A `share`
+of a settings, MCP, or codex-config fragment does not run this comparison.
+When a file is absent from the commit, that refusal names
+an ignore rule if one matches. It also lists the other causes: a pre-commit
+hook, a clean filter, or a `.gitattributes` rule.
 
 ### Interrupted initialization
 

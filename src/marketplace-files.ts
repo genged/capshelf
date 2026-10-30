@@ -17,6 +17,7 @@ import { atomicWriteFile, isErrno } from "./fs-utils";
 import {
   assertRepoClean,
   assertRepoCleanOutsidePaths,
+  assertNoIgnoredPublicationFiles,
   commitLiteralPathsInRepo,
   commitParents,
   sourceRead,
@@ -169,9 +170,23 @@ export async function commitDataRepoMutation(options: {
    * known before the commit it is checking.
    */
   verify?: (commit: string) => Promise<void>;
+  /**
+   * Repo-relative files the mutation wrote back unchanged and does not
+   * publish, such as a restored upstream sidecar. Read after `mutate()`. The
+   * ignore preflight skips them, so an ignored sidecar that the data repo
+   * never committed stays unpublished, as it was before the preflight.
+   */
+  keptInPlace?: () => readonly string[];
 }): Promise<string> {
-  const { dataRepo, expectedHead, message, ownedRoots, mutate, verify } =
-    options;
+  const {
+    dataRepo,
+    expectedHead,
+    message,
+    ownedRoots,
+    mutate,
+    verify,
+    keptInPlace,
+  } = options;
   await assertRepoClean(dataRepo);
   if ((await currentHead(dataRepo)) !== expectedHead) {
     throw new PreconditionError(
@@ -202,6 +217,13 @@ export async function commitDataRepoMutation(options: {
       );
     }
     await assertRepoCleanOutsidePaths(dataRepo, ownedRoots);
+    // `git add -- <root>` skips an ignored file with exit 0. Refuse here,
+    // inside the try, so the rollback below restores the owned files.
+    await assertNoIgnoredPublicationFiles(
+      dataRepo,
+      ownedRoots,
+      keptInPlace?.() ?? [],
+    );
     createdCommit = await commitLiteralPathsInRepo(
       dataRepo,
       ownedRoots,

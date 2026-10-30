@@ -61,6 +61,7 @@ import { lockKeyForRef, parseItemRef } from "../item-ref";
 import { assertLocalScopeSupported } from "../local-config";
 import { assertNotPulledSkill } from "../remote-refusal";
 import {
+  METADATA_SIDECAR,
   captureCommittedItemNeeds,
   readSidecarBytes,
   restoreSidecarBytes,
@@ -1035,10 +1036,11 @@ export async function syncTrackedIntoDataRepo(
   const dataDir = join(dataRepo, repoRelPath);
   const upstreamSidecar = await readSidecarBytes(dataDir);
   const codexConfigured = kind === "skills" && hasCodexMarketplace(dataRepo);
+  let keptSidecar = false;
   const replaceSource = async (): Promise<void> => {
     await opts.snapshotHooks?.beforeCanonicalCopy?.();
     await replaceDirFromFiles(localPath, snapshot.files, dataDir);
-    await restoreSidecarBytes(dataDir, upstreamSidecar);
+    keptSidecar = await restoreSidecarBytes(dataDir, upstreamSidecar);
     await opts.snapshotHooks?.afterCanonicalCopy?.();
     const currentSnapshot = await installedSnapshot(
       project,
@@ -1078,6 +1080,8 @@ export async function syncTrackedIntoDataRepo(
       : [repoRelPath],
     message: opts.message ?? `capshelf: ${kind}/${name}`,
     mutate: replaceSource,
+    keptInPlace: () =>
+      keptSidecar ? [`${repoRelPath}/${METADATA_SIDECAR}`] : [],
     verify: async (commit) => {
       pin = await assertCommittedTreeEqualsCandidate({
         dataRepo,
