@@ -570,15 +570,22 @@ describe("ignoredUntrackedPaths", () => {
 describe("sourceIgnoreRules", () => {
   test("names the deciding rule and drops a path that a ! rule includes", async () => {
     const repo = await tempRepo();
-    await writeFile(join(repo, ".gitignore"), "*.pyc\n!keep.pyc\n");
+    // `\!bang.txt` is an escaped literal, not a re-include: it ignores the
+    // file named `!bang.txt`.
+    await writeFile(
+      join(repo, ".gitignore"),
+      "*.pyc\n!keep.pyc\n\\!bang.txt\n",
+    );
 
     const rules = await sourceIgnoreRules(repo, [
       "gone.pyc",
       "keep.pyc",
+      "!bang.txt",
       "x.txt",
     ]);
 
-    expect([...rules.keys()]).toEqual(["gone.pyc"]);
+    expect([...rules.keys()].sort()).toEqual(["!bang.txt", "gone.pyc"]);
+    expect(rules.get("!bang.txt")?.pattern).toBe("\\!bang.txt");
     expect(rules.get("gone.pyc")).toEqual({
       source: ".gitignore",
       line: 1,

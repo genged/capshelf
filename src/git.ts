@@ -1793,10 +1793,9 @@ export async function ignoredUntrackedPaths(
  * The rule that ignores each of `relPaths` in a source repository. This only
  * diagnoses, so any git failure returns no rules.
  *
- * Two calls, because `check-ignore --verbose` also prints a record for a path
- * that a `!` rule re-includes, and that path is not ignored (verified on git
- * 2.53.0). The plain call returns only ignored paths, and for those the
- * verbose record is the rule that decides.
+ * `check-ignore --verbose` also prints a record for a path that a `!` rule
+ * re-includes, and that path is not ignored. Such a record's pattern starts
+ * with `!`; an escaped literal prints as `\!` (verified on git 2.53.0).
  */
 export async function sourceIgnoreRules(
   repo: string,
@@ -1804,35 +1803,24 @@ export async function sourceIgnoreRules(
 ): Promise<Map<string, IgnoreRule>> {
   const rules = new Map<string, IgnoreRule>();
   if (relPaths.length === 0) return rules;
-  const plain = await sourceRead(repo, ["check-ignore", "-z", "--stdin"], {
-    stdin: nulTerminated(relPaths),
-  }).catch(() => null);
-  if (plain?.exitCode !== 0) return rules;
-  const ignored = plain.stdout
-    .toString("utf-8")
-    .split("\0")
-    .filter((path) => path.length > 0);
-  const verbose = await sourceRead(
+  // Paths go unchanged: they come from Git or are built with `/`, and a
+  // backslash is a valid filename character on Unix, so `normalizeGitPath`
+  // would query a different file.
+  const result = await sourceRead(
     repo,
     ["check-ignore", "--verbose", "-z", "--stdin"],
-    { stdin: nulTerminated(ignored) },
+    { stdin: relPaths.map((path) => `${path}\0`).join("") },
   ).catch(() => null);
-  if (verbose?.exitCode !== 0) return rules;
+  if (result?.exitCode !== 0) return rules;
   // `-z` records are `source NUL line NUL pattern NUL path NUL`.
-  const fields = verbose.stdout.toString("utf-8").split("\0");
+  const fields = result.stdout.toString("utf-8").split("\0");
   for (let at = 0; at + 3 < fields.length; at += 4) {
     const [source, line, pattern, path] = fields.slice(at, at + 4);
     if (!source || !line || pattern === undefined || !path) continue;
+    if (pattern.startsWith("!")) continue;
     rules.set(path, { source, line: Number(line), pattern });
   }
   return rules;
-}
-
-// Unchanged: these paths come from Git or are built with `/`, and a
-// backslash is a valid filename character on Unix, so `normalizeGitPath`
-// would query a different file.
-function nulTerminated(paths: readonly string[]): string {
-  return paths.map((path) => `${path}\0`).join("");
 }
 
 /**

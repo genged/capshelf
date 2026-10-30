@@ -135,8 +135,7 @@ export async function adoptIntoDataRepo(
     kind === "skills" && hasCodexMarketplace(dataRepo)
       ? [...CODEX_PROJECTION_ROOTS]
       : [];
-  let keptSidecar = false;
-  const mutateSource = async (): Promise<void> => {
+  const mutateSource = async (): Promise<string[]> => {
     if (snapshot.source === "filesystem") {
       await replaceDirFromFiles(adoption.path, snapshot.files, dataPath);
     } else {
@@ -149,9 +148,6 @@ export async function adoptIntoDataRepo(
     }
     const restored = await restoreSidecarBytes(dataPath, upstreamSidecar);
     if (!restored) await warnAboutAdoptedSidecar(dataPath, kind, name);
-    // Provenance rewrites the sidecar below, so it is then new content to
-    // publish, not a file kept in place.
-    keptSidecar = restored && !opts.provenance;
     // Inside the mutation, so the provenance is part of the one commit rather
     // than an uncommitted change left in the shelf. The sidecar is excluded
     // from the pin, so it changes no identity and PIN-11 still compares the
@@ -160,6 +156,11 @@ export async function adoptIntoDataRepo(
       await writeSidecarProvenance(dataPath, opts.provenance);
     }
     if (kind === "skills") await refreshCodexProjection(dataRepo);
+    // Provenance rewrites the sidecar above, so it is then new content to
+    // publish, not a file kept in place.
+    return restored && !opts.provenance
+      ? [`${repoRelPath}/${METADATA_SIDECAR}`]
+      : [];
   };
   // PIN-11: `A`, captured from the project *before* the copy. The bytes are
   // held so their Git ids can be computed after the commit, using whatever
@@ -233,8 +234,6 @@ export async function adoptIntoDataRepo(
     ownedRoots: [repoRelPath, ...projectionRoots],
     message: opts.message ?? `capshelf: ${kind}/${name}`,
     mutate: mutateSource,
-    keptInPlace: () =>
-      keptSidecar ? [`${repoRelPath}/${METADATA_SIDECAR}`] : [],
     verify: async (commit) => {
       pin = await assertCommittedTreeEqualsCandidate({
         dataRepo,

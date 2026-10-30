@@ -21,7 +21,7 @@ import {
 } from "./git";
 import type { GitTreeEntry, LastTouchingOptions, IgnoreRule} from "./git";
 import { PRODUCT_NAME } from "./identity";
-import { displayText } from "./publication-ignore";
+import { ignoreRuleLine } from "./publication-ignore";
 import {
   allCanonicalItemRelPaths,
   isCopyDirectoryItemKind,
@@ -887,11 +887,7 @@ export function commitProofRefusalMessage(
       `    ${entry.path.padEnd(width)}    selected ${abbreviatePin(entry.candidate ?? "(absent)")}   committed ${abbreviatePin(entry.committed ?? "(absent)")}`,
     );
     const rule = entry.committed === null ? ruleFor(entry.path) : undefined;
-    if (rule) {
-      rows.push(
-        `      ignored by ${displayText(rule.source)}:${rule.line}  ${displayText(rule.pattern)}`,
-      );
-    }
+    if (rule) rows.push(ignoreRuleLine(rule));
   }
   return [
     `not publishing ${ref}`,

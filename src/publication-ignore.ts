@@ -31,9 +31,7 @@ export function ignoredPublicationMessage(
       otherRule = true;
       continue;
     }
-    lines.push(
-      `      ignored by ${displayText(rule.source)}:${rule.line}  ${displayText(rule.pattern)}`,
-    );
+    lines.push(ignoreRuleLine(rule));
     const source = rule.source;
     const written = ownedRoots.some(
       (root) => source === root || source.startsWith(`${root}/`),
@@ -58,11 +56,16 @@ export function ignoredPublicationMessage(
   return lines.join("\n");
 }
 
+/** The row line that names an ignore rule, shared with the PIN-11 refusal. */
+export function ignoreRuleLine(rule: IgnoreRule): string {
+  return `      ignored by ${displayText(rule.source)}:${rule.line}  ${displayText(rule.pattern)}`;
+}
+
 /**
  * A path or ignore pattern from Git can hold any byte but NUL. A terminal
  * control code in it must not reach the terminal.
  */
-export function displayText(text: string): string {
+function displayText(text: string): string {
   return [...text]
     .map((char) =>
       isTerminalControlCode(char.codePointAt(0) ?? 0) ? " " : char,

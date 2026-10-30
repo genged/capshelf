@@ -473,8 +473,8 @@ describe("marketplace hardening", () => {
       message: "edit",
       mutate: async () => {
         await writeFile(join(repo, "skills", "s", "SKILL.md"), "v2");
+        return ["skills/s/.capshelf.yml"];
       },
-      keptInPlace: () => ["skills/s/.capshelf.yml"],
     });
 
     expect(
