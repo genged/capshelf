@@ -109,11 +109,12 @@ printf -- '---\nname: hello\ndescription: Smoke test.\n---\n\nReply with "capshe
 Then create the data repo and connect the project:
 
 ```bash
-git init ~/agent-config
-git -C ~/agent-config commit --allow-empty -m "initialize shared agent config"
+DATA=~/agent-config    # a folder you choose and can see
+git init "$DATA"
+git -C "$DATA" commit --allow-empty -m "initialize shared agent config"
 
 cd ~/code/my-app
-capshelf init --data ~/agent-config --no-upstream
+capshelf init --data "$DATA" --no-upstream
 capshelf share       # mark the skills this project already has, then press enter
 capshelf status
 ```
@@ -140,7 +141,7 @@ The picker shares a skill in local scope. The skill is on the shelf, but the
 project's committed lock does not list it. To make it a team item, run
 `capshelf move skills/<name> --to project`.
 
-Now run `capshelf init --data ~/agent-config --no-upstream` in a second
+Now run `capshelf init --data "$DATA" --no-upstream` in a second
 project, then `capshelf add`. The picker shows the skills that the first
 project shared.
 
@@ -217,7 +218,7 @@ through the same review as code:
 ```bash
 # Alice, in ~/code/billing
 capshelf promote security-review -m "add SQLi checklist"
-git -C ~/code/agent-shared push      # or open a pull request
+git -C "$(capshelf data path)" push   # or open a pull request
 
 # Bob, in ~/code/checkout
 capshelf data sync                   # fetch and fast-forward the data repo
@@ -457,9 +458,13 @@ The data repo is a second Git repo, separate from every project that uses it.
 Create it once. Every project you connect later reads from it. In the
 commands, replace `YOUR_ACCOUNT` with your account or organization.
 
+Put the data repo in a folder that you can see. In a container or a sandbox,
+`~` is often a folder that is not on your machine.
+
 ```bash
-mkdir -p ~/code/agent-config
-cd ~/code/agent-config
+DATA=~/code/agent-config    # a folder you choose and can see
+mkdir -p "$DATA"
+cd "$DATA"
 git init
 git remote add origin https://github.com/YOUR_ACCOUNT/agent-config
 git commit --allow-empty -m "initialize shared agent config"
@@ -476,7 +481,7 @@ Bind the project, then look at the shelf:
 
 ```bash
 cd ~/code/my-app
-capshelf init --data ~/code/agent-config
+capshelf init --data "$DATA"
 capshelf ls
 ```
 
@@ -541,7 +546,7 @@ If your team already has one, skip step 2 and bind to your clone of it:
 
 ```bash
 cd ~/code/my-app
-capshelf init --data ~/code/agent-shared
+capshelf init --data <path-to-your-clone>
 capshelf status
 ```
 

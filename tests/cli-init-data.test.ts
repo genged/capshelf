@@ -333,7 +333,10 @@ describe("cli integration", () => {
   test("init --data <remote-url> bootstraps a managed clone", async () => {
     const project = await tempRepo("capshelf-bootstrap-project-");
     const dataRepo = await tempRepo("capshelf-bootstrap-data-");
-    const xdg = await tempDir("capshelf-bootstrap-xdg-");
+    // The clone lands under $HOME, so a `~`-relative clone line would fail
+    // the absolute-path assertion below.
+    const home = await tempDir("capshelf-bootstrap-home-");
+    const xdg = join(home, ".local", "share");
     const cli = join(import.meta.dir, "..", "src", "cli.ts");
     await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
     await writeFile(join(dataRepo, "skills", "hello", "SKILL.md"), "hello\n");
@@ -343,7 +346,7 @@ describe("cli integration", () => {
     const result = Bun.spawnSync({
       cmd: [process.execPath, cli, "init", "--data", url, "--no-upstream"],
       cwd: project,
-      env: { ...process.env, XDG_DATA_HOME: xdg },
+      env: { ...process.env, HOME: home, XDG_DATA_HOME: xdg },
       stdout: "pipe",
       stderr: "pipe",
     });

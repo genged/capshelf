@@ -142,7 +142,7 @@ with `capshelf data bind <path>` instead — see Changing the binding.
 ```
 capshelf init --data https://github.com/genged/agent-shared
 capshelf init --data git@github.com:genged/agent-shared.git
-capshelf init --data https://github.com/genged/agent-shared --data-dir ~/code/agent-shared
+capshelf init --data https://github.com/genged/agent-shared --data-dir <path>
 ```
 
 A remote URL is bootstrap input, not the runtime data repo. Capshelf clones it
@@ -153,6 +153,8 @@ clone had been passed to `--data`:
   (falling back to `~/.local/share`), derived from the normalized remote
   identity with credentials and one trailing `.git` stripped.
 - `--data-dir <path>` overrides the clone destination.
+- `init` prints the absolute clone path. It does not shorten `$HOME` to `~`,
+  because in a container `~` is often a folder that the user cannot see.
 - The clone path is written to gitignored `.capshelf/local.json` and the
   normalized remote identity to `dataRepoUpstream` in `.capshelf/capshelf.json`.
 - `file://` URLs are accepted as bootstrap input only with `--no-upstream`

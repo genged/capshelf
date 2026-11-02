@@ -15,7 +15,7 @@ Alice, in `~/code/billing`:
 
 ```bash
 capshelf promote security-review -m "add SQLi checklist"
-git -C ~/code/agent-shared push
+git -C "$(capshelf data path)" push
 ```
 
 Bob, in `~/code/checkout`:
