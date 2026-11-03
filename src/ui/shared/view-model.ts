@@ -144,6 +144,8 @@ export interface ProjectFindings {
   project: string;
   display: string;
   name: string;
+  /** The shelf the project reads, so equal refs on two shelves stay apart. */
+  dataRepo: string | null;
   rows: UiItem[];
 }
 
@@ -160,6 +162,7 @@ export function findingsAcrossProjects(
       project: status.project,
       display: status.display,
       name: splitDisplayPath(status.display).name,
+      dataRepo: status.dataRepo,
       rows: sortItems(status.items.filter((item) => item.attention)),
     }))
     .filter((group) => group.rows.length > 0)
@@ -182,8 +185,11 @@ export interface SharedFinding {
 export function sharedFindings(
   groups: readonly ProjectFindings[],
 ): SharedFinding[] {
-  const behind = new Map<string, string[]>();
+  // One change means one shelf and one ref: `skills/foo` on two shelves is
+  // two items. A project with no data repo shares nothing.
+  const behind = new Map<string, SharedFinding>();
   for (const group of groups) {
+    if (group.dataRepo === null) continue;
     for (const row of group.rows) {
       if (
         row.source !== "data" ||
@@ -192,14 +198,14 @@ export function sharedFindings(
       ) {
         continue;
       }
-      const names = behind.get(row.ref) ?? [];
-      names.push(group.name);
-      behind.set(row.ref, names);
+      const key = `${group.dataRepo}\t${row.ref}`;
+      const entry = behind.get(key) ?? { ref: row.ref, projects: [] };
+      entry.projects.push(group.name);
+      behind.set(key, entry);
     }
   }
-  return [...behind]
-    .filter(([, projects]) => projects.length > 1)
-    .map(([ref, projects]) => ({ ref, projects }))
+  return [...behind.values()]
+    .filter((entry) => entry.projects.length > 1)
     .sort((a, b) => a.ref.localeCompare(b.ref));
 }
 
@@ -644,6 +650,30 @@ export function shelfRollouts(
   return rollouts.sort(
     (a, b) => b.behind - a.behind || a.ref.localeCompare(b.ref),
   );
+}
+
+/**
+ * Projects with an old pin on this shelf and no current status, after a
+ * failed read for one. They cannot join a rollout, because their state is
+ * unknown, but Rollouts must not claim that every project is current while
+ * one exists. Names are unique and sorted.
+ */
+export function unreadOldPins(
+  items: readonly UiShelfItem[],
+  statuses: ReadonlyMap<string, UiProjectStatus>,
+  pending: ReadonlySet<string> = new Set(),
+): string[] {
+  const names = new Set<string>();
+  for (const item of items) {
+    if (item.source !== "data") continue;
+    for (const usage of item.usage) {
+      const joined = usageState(item.ref, usage, statuses, "data", pending);
+      if (joined.state === "unknown" && usage.current === false) {
+        names.add(joined.name);
+      }
+    }
+  }
+  return [...names].sort();
 }
 
 export interface CoverageRow {

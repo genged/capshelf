@@ -230,7 +230,13 @@ export function ItemDetail({
         {item.diffViews.length > 0 ? (
           <section class="detail-section" aria-label="What changed">
             <h3 class="section-label">What changed</h3>
-            <DiffView key={item.id} item={item} loadDiff={loadDiff} />
+            <DiffView
+              // A refresh that moves a digest must drop the loaded diff,
+              // or the facts update while the comparison stays old.
+              key={`${item.id}\t${item.row.lockedSha}\t${item.row.currentSha}\t${item.row.upstreamSha}`}
+              item={item}
+              loadDiff={loadDiff}
+            />
           </section>
         ) : null}
 

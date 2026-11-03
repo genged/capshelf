@@ -32,6 +32,7 @@ import {
   sharedFindings,
   shelfCoverage,
   shelfRollouts,
+  unreadOldPins,
   shortenDigests,
   sortItems,
   sortTree,
@@ -446,6 +447,17 @@ describe("across projects", () => {
     expect(sharedFindings(findingsAcrossProjects([billing]))).toEqual([]);
   });
 
+  test("one ref on two shelves is two items, not a shared change", () => {
+    const other = status(
+      "~/code/elsewhere",
+      [item("skills/quick-review", "update_available")],
+      { dataRepo: "/home/u/other-shelf" },
+    );
+    expect(sharedFindings(findingsAcrossProjects([billing, other]))).toEqual(
+      [],
+    );
+  });
+
   test("jump lists every registered project, read or not", () => {
     const rows = jumpCandidates(
       [
@@ -662,6 +674,19 @@ describe("shelf views", () => {
       "behind-edited",
       "current",
     ]);
+  });
+
+  test("an old pin with no current status is named, not dropped", () => {
+    // billing-api's status read failed: it is not in the map.
+    const items = [
+      shelfItem("skills/quick-review", [usage(billing, { current: false })]),
+      shelfItem("skills/other", [usage(billing, { current: true })]),
+    ];
+    expect(shelfRollouts(items, new Map())).toEqual([]);
+    expect(unreadOldPins(items, new Map())).toEqual(["billing-api"]);
+    // While its first read runs, the pin joins the rollout instead.
+    const loading = new Set([billing.project]);
+    expect(unreadOldPins(items, new Map(), loading)).toEqual([]);
   });
 
   test("a pin behind another finding still joins the rollout", () => {

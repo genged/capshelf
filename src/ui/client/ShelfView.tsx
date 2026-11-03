@@ -19,6 +19,7 @@ import {
   type Rollout,
   shelfCoverage,
   shelfRollouts,
+  unreadOldPins,
   splitDisplayPath,
   type UsageState,
   usageState,
@@ -281,6 +282,7 @@ export function ShelfView({
           <RolloutList
             picker={picker}
             rollouts={rollouts}
+            unread={unreadOldPins(data.items, statuses, pending)}
             selected={route.ref}
             onSelect={(ref) => go("rollouts", ref)}
           />
@@ -778,12 +780,25 @@ function ItemReader({
       ...(file !== null && { file }),
     }).then(
       (data) => setDetail({ state: "ready", data }),
-      (cause: unknown) =>
+      (cause: unknown) => {
+        // A refresh can remove the selected file while the item stays. The
+        // server answers 404 for that, so the reader falls back to the
+        // item's main file. A missing item answers 404 again without a file,
+        // and that shows as the error.
+        if (
+          file !== null &&
+          cause instanceof ApiError &&
+          cause.status === 404
+        ) {
+          setFile(null);
+          return;
+        }
         setDetail({
           state: "error",
           error:
             cause instanceof ApiError ? cause : new ApiError(0, String(cause)),
-        }),
+        });
+      },
     );
   }, [repo, itemRef, file, generation]);
 
@@ -1116,11 +1131,14 @@ function BundleReader({
 function RolloutList({
   picker,
   rollouts,
+  unread,
   selected,
   onSelect,
 }: {
   picker: ComponentChildren;
   rollouts: Rollout[];
+  /** Projects with an old pin and no current status; see `unreadOldPins`. */
+  unread: string[];
   selected: string | null;
   onSelect: (ref: string) => void;
 }): preact.JSX.Element {
@@ -1135,10 +1153,22 @@ function RolloutList({
           only when its own update runs.
         </p>
       </div>
+      {unread.length > 0 ? (
+        <p class="list-note" role="status">
+          <Icon name="alert" />
+          <span>
+            {unread.join(", ")} {unread.length === 1 ? "pins" : "pin"} an older
+            version but {unread.length === 1 ? "has" : "have"} no current
+            status, so {unread.length === 1 ? "it is" : "they are"} not in this
+            list.
+          </span>
+        </p>
+      ) : null}
       {rollouts.length === 0 ? (
         <p class="list-empty">
-          Every project that uses an item from this shelf has its latest
-          version.
+          {unread.length === 0
+            ? "Every project that uses an item from this shelf has its latest version."
+            : "No project with a current status is behind the shelf."}
         </p>
       ) : (
         <ul class="list-rows">
