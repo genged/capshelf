@@ -407,7 +407,9 @@ async function preflightFragmentCollisions(
       pin: await pinCurrentSource(ctx.dataRepo, item.kind, item.name, {
         memo: ctx.memo,
       }),
-      ...(await captureCommittedItemNeeds(ctx.dataRepo, item)),
+      ...(await captureCommittedItemNeeds(ctx.dataRepo, item, {
+        memo: ctx.memo,
+      })),
     });
     targetsByRef.set(
       m.ref,

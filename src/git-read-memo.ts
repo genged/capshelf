@@ -1,4 +1,4 @@
-import type { GitTreeEntry } from "./git";
+import type { CheckAttrResult, GitTreeEntry } from "./git";
 
 /** Immutable reads retained only by the caller that owns this instance. */
 export class GitReadMemo {
@@ -6,6 +6,10 @@ export class GitReadMemo {
   readonly commits = new Set<string>();
   readonly trees = new Map<string, GitTreeEntry[]>();
   readonly blobs = new Map<string, Buffer>();
+  /** `check-attr` answers from a commit's own attributes. */
+  readonly attributes = new Map<string, CheckAttrResult[]>();
+  /** `log -1 <head> -- <pathspecs>` answers from a fixed `head`. */
+  readonly lastTouching = new Map<string, string | null>();
 }
 
 export function gitObjectReadKey(
