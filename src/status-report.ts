@@ -34,7 +34,9 @@ import {
   isGitWorkTreeRoot,
   headSha,
   repositoryObjectsDirectory,
+  worktreeCleanSnapshot,
 } from "./git";
+import type { PathCleanCheck } from "./git";
 import { upstreamFactsForItem } from "./upstream-facts";
 import {
   listClaudePlugins,
@@ -87,7 +89,11 @@ import { buildRemoteStatusRows } from "./remote-status";
 import type { RemotesLock } from "./remotes-lock";
 import { contentSourceOrNull, isBundled, isGitTree } from "./item-source";
 import type { GitTreeSource } from "./item-source";
-import { loadCommittedItemNeeds } from "./metadata";
+import {
+  committedItemNeedsFromSidecar,
+  committedSidecarsAtCommit,
+  loadCommittedItemNeeds,
+} from "./metadata";
 import type { ItemNeeds } from "./metadata";
 import {
   shaOfInstalledSubagent,
@@ -252,6 +258,18 @@ export async function buildStatusReport(
     observedObjectsDir ??= await repositoryObjectsDirectory(dataRepo!);
     return observedObjectsDir;
   };
+  // One `git status` of the data repo answers every row's dirty check, in
+  // place of one `git status -- <path>` per row.
+  let observedClean: PathCleanCheck | undefined;
+  const isDataPathClean: PathCleanCheck = async (relPath) => {
+    observedClean ??= await worktreeCleanSnapshot(dataRepo!);
+    return await observedClean(relPath);
+  };
+  // One listing reads the committed sidecar of every data row at `HEAD`.
+  const dataItems = targets
+    .map((target) => parseLockKey(target.key))
+    .filter((parsed) => parsed.source === "data");
+  let observedSidecars: Map<string, Buffer> | undefined;
   const rows: StatusRow[] = [];
   const fragmentStates = new Map<string, FragmentContributionState>();
   for (const target of targets) {
@@ -378,6 +396,7 @@ export async function buildStatusReport(
           itemName,
           treeIdentity ? "tree" : "worktree",
           memo,
+          isDataPathClean,
         );
         upstreamSha = upstream.upstreamSha;
         upstreamDirty = upstream.upstreamDirty;
@@ -389,12 +408,19 @@ export async function buildStatusReport(
         if (upstreamSha !== null || upstreamDirty) {
           try {
             observedHead ??= await headSha(dataRepo);
+            const item = { kind, name: itemName };
+            observedSidecars ??= await committedSidecarsAtCommit(
+              dataRepo,
+              dataItems,
+              observedHead,
+              memo,
+            ).catch(() => undefined);
+            // A failed batch read falls back to this row's own read, which
+            // reports no needs when Git cannot read the sidecar.
             currentNeeds = (
-              await loadCommittedItemNeeds(
-                dataRepo,
-                { kind, name: itemName },
-                observedHead,
-              )
+              observedSidecars === undefined
+                ? await loadCommittedItemNeeds(dataRepo, item, observedHead)
+                : committedItemNeedsFromSidecar(item, observedSidecars)
             ).needs;
           } catch {
             currentNeeds = undefined;

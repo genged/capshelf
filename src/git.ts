@@ -1441,6 +1441,34 @@ export async function isPathClean(
   return out.trim().length === 0;
 }
 
+/** Whether a repository-relative path has no uncommitted change. */
+export type PathCleanCheck = (relPath: string) => Promise<boolean>;
+
+/**
+ * `isPathClean` for many paths from one `git status` of the whole repository.
+ *
+ * A path is dirty when a record, or the original path of a rename, is the
+ * path itself or lies under it. That is what `git status -- <path>` reports.
+ * `--untracked-files=all` lists each untracked file, so a collapsed untracked
+ * parent directory cannot make a path dirty that holds no file. The snapshot
+ * is one observation: a caller takes it once for one report, never for a
+ * plan that a later pass revalidates.
+ */
+export async function worktreeCleanSnapshot(
+  repo: string,
+): Promise<PathCleanCheck> {
+  const records = await statusPorcelainRecords(repo, [], {
+    untrackedFiles: "all",
+  });
+  const changed = records.flatMap((record) =>
+    record.origPath === undefined
+      ? [record.path]
+      : [record.path, record.origPath],
+  );
+  return async (relPath) =>
+    !changed.some((path) => path === relPath || path.startsWith(`${relPath}/`));
+}
+
 /**
  * Throws if the path has uncommitted changes.
  *

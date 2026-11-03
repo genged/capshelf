@@ -16,6 +16,7 @@ import {
 import { gitTreeSource } from "./item-source";
 import type { FragmentItemKind, ItemKind } from "./master";
 import { isPathClean, lastTouchingContentCommit } from "./git";
+import type { PathCleanCheck } from "./git";
 import {
   allCanonicalFragmentRelPaths,
   lastTouchingFragmentCommit,
@@ -63,13 +64,14 @@ export async function upstreamFactsForItem(
   name: string,
   identity: UpstreamIdentity = "worktree",
   memo?: GitReadMemo,
+  isClean: PathCleanCheck = (relPath) => isPathClean(dataRepo, relPath),
 ): Promise<UpstreamFacts> {
   const masterItem = await findMasterItemByRef(dataRepo, { kind, name });
   if (!masterItem) {
     return { upstreamSha: null, upstreamDirty: false, sourceCommit: null };
   }
   if (identity === "tree") {
-    const upstreamDirty = await sourcePathsDirty(dataRepo, kind, name);
+    const upstreamDirty = await sourcePathsDirty(kind, name, isClean);
     const sourceCommit = await currentSourceCommit(dataRepo, kind, name).catch(
       () => null,
     );
@@ -94,7 +96,12 @@ export async function upstreamFactsForItem(
     };
   }
   if (isFragmentItemKind(kind)) {
-    const upstreamDirty = await fragmentSourceDirty(dataRepo, kind, name);
+    const upstreamDirty = await fragmentSourceDirty(
+      dataRepo,
+      kind,
+      name,
+      isClean,
+    );
     return {
       upstreamSha: upstreamDirty
         ? null
@@ -106,10 +113,7 @@ export async function upstreamFactsForItem(
     };
   }
   if (isCopyDirectoryItemKind(kind)) {
-    const upstreamDirty = !(await isPathClean(
-      dataRepo,
-      masterItem.repoRelPath,
-    ));
+    const upstreamDirty = !(await isClean(masterItem.repoRelPath));
     return {
       upstreamSha: upstreamDirty
         ? null
@@ -123,9 +127,7 @@ export async function upstreamFactsForItem(
   if (isCopyTargetFileItemKind(kind)) {
     const sources = subagentSourceCandidates("", name);
     const upstreamDirty = (
-      await Promise.all(
-        sources.map((source) => isPathClean(dataRepo, source.relPath)),
-      )
+      await Promise.all(sources.map((source) => isClean(source.relPath)))
     ).some((clean) => !clean);
     return {
       upstreamSha: upstreamDirty
@@ -142,18 +144,21 @@ export async function upstreamFactsForItem(
 
 /** Whichever paths define this kind's source, checked for uncommitted change. */
 async function sourcePathsDirty(
-  dataRepo: string,
   kind: ItemKind,
   name: string,
+  isClean: PathCleanCheck,
 ): Promise<boolean> {
   if (isFragmentItemKind(kind)) {
-    return await fragmentSourceDirty(dataRepo, kind, name);
+    for (const relPath of allCanonicalFragmentRelPaths(kind, name)) {
+      if (!(await isClean(relPath))) return true;
+    }
+    return false;
   }
   if (isCopyDirectoryItemKind(kind)) {
-    return !(await isPathClean(dataRepo, itemRepoRelPath(kind, name)));
+    return !(await isClean(itemRepoRelPath(kind, name)));
   }
   for (const relPath of allCanonicalItemRelPaths(kind, name)) {
-    if (!(await isPathClean(dataRepo, relPath))) return true;
+    if (!(await isClean(relPath))) return true;
   }
   return false;
 }
@@ -162,9 +167,10 @@ export async function fragmentSourceDirty(
   dataRepo: string,
   kind: FragmentItemKind,
   name: string,
+  isClean: PathCleanCheck = (relPath) => isPathClean(dataRepo, relPath),
 ): Promise<boolean> {
   for (const relPath of allCanonicalFragmentRelPaths(kind, name)) {
-    if (!(await isPathClean(dataRepo, relPath))) return true;
+    if (!(await isClean(relPath))) return true;
   }
   return false;
 }

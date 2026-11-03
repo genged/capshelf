@@ -214,30 +214,64 @@ export async function loadCommittedItemNeeds(
   commit: string,
   memo?: GitReadMemo,
 ): Promise<ItemMetadata> {
-  const label = `${item.kind}/${item.name}`;
-  const relPath = `${itemRepoRelPath(item.kind, item.name)}/${METADATA_SIDECAR}`;
-  // A listing that finds no sidecar is a successful read, so `memo` keeps
-  // "no sidecar" as well as the bytes. Most items have no sidecar, and
-  // `update` asks again in each preflight pass. Any failure means no needs,
-  // as it did when this was one `git show`.
-  let bytes: Buffer | undefined;
+  // Any Git failure means no needs, as it did when this was one `git show`.
+  let sidecars: Map<string, Buffer>;
   try {
-    const entry = (
-      await lsTreeEntriesForPathspecs(
-        dataRepo,
-        commit,
-        [literalPathspec(relPath)],
-        { memo },
-      )
-    ).find((candidate) => candidate.path === relPath);
-    if (entry?.type === "blob") {
-      bytes = (await catFileBlobs(dataRepo, [entry.object], memo)).get(
-        entry.object,
-      );
-    }
+    sidecars = await committedSidecarsAtCommit(dataRepo, [item], commit, memo);
   } catch {
     return emptyMetadata();
   }
+  return committedItemNeedsFromSidecar(item, sidecars);
+}
+
+/**
+ * The committed sidecar bytes of each item that has one at `commit`, keyed by
+ * `<kind>/<name>`, from one `ls-tree` and one `cat-file --batch`. An item with
+ * no sidecar has no entry. A listing that finds no sidecar is a successful
+ * read, so `memo` keeps "no sidecar" as well as the bytes.
+ */
+export async function committedSidecarsAtCommit(
+  dataRepo: string,
+  items: ReadonlyArray<Pick<MasterItem, "kind" | "name">>,
+  commit: string,
+  memo?: GitReadMemo,
+): Promise<Map<string, Buffer>> {
+  const refBySidecar = new Map(
+    items.map((item) => [
+      `${itemRepoRelPath(item.kind, item.name)}/${METADATA_SIDECAR}`,
+      `${item.kind}/${item.name}`,
+    ]),
+  );
+  const sidecars = new Map<string, Buffer>();
+  if (refBySidecar.size === 0) return sidecars;
+  const blobIdByRef = new Map<string, string>();
+  for (const entry of await lsTreeEntriesForPathspecs(
+    dataRepo,
+    commit,
+    [...refBySidecar.keys()].map(literalPathspec),
+    { memo },
+  )) {
+    const ref = refBySidecar.get(entry.path);
+    if (ref !== undefined && entry.type === "blob") {
+      blobIdByRef.set(ref, entry.object);
+    }
+  }
+  if (blobIdByRef.size === 0) return sidecars;
+  const blobs = await catFileBlobs(dataRepo, blobIdByRef.values(), memo);
+  for (const [ref, blobId] of blobIdByRef) {
+    const bytes = blobs.get(blobId);
+    if (bytes !== undefined) sidecars.set(ref, bytes);
+  }
+  return sidecars;
+}
+
+/** The needs of one item from `committedSidecarsAtCommit` output. */
+export function committedItemNeedsFromSidecar(
+  item: Pick<MasterItem, "kind" | "name">,
+  sidecars: ReadonlyMap<string, Buffer>,
+): ItemMetadata {
+  const label = `${item.kind}/${item.name}`;
+  const bytes = sidecars.get(label);
   if (bytes === undefined) return emptyMetadata();
   return parseSidecar(bytes.toString("utf-8"), label, item.name);
 }
