@@ -550,20 +550,35 @@ async function projectWorkTreeRoot(project: string): Promise<string | null> {
  * The commit whose tree at `relPath` matches the current HEAD content.
  * Used as the `sourceCommit` recorded in lock entries.
  */
+/**
+ * Where a last-touching-commit walk starts. `head` is a commit the caller
+ * already read as `HEAD`. When it is given, the walk starts there instead of
+ * at the live `HEAD`, so one command pass that reads `HEAD` once sees one
+ * history for all of its items. The history from a full commit id cannot
+ * change, so `memo` keeps that answer for the rest of the command.
+ */
+export interface LastTouchingOptions {
+  head?: string;
+  memo?: GitReadMemo;
+}
+
 export async function lastTouchingCommit(
   repo: string,
   relPath: string,
+  options: LastTouchingOptions = {},
 ): Promise<string> {
-  return await lastTouchingCommitForPaths(repo, [relPath]);
+  return await lastTouchingCommitForPaths(repo, [relPath], options);
 }
 
 export async function lastTouchingCommitForPaths(
   repo: string,
   relPaths: string[],
+  options: LastTouchingOptions = {},
 ): Promise<string> {
   const sha = await tryLastTouchingCommitForPathspecs(
     repo,
     relPaths.map(literalPathspec),
+    options,
   );
   if (!sha) {
     const relPathLabel = relPaths.join(", ");
@@ -586,33 +601,47 @@ export async function lastTouchingCommitForPaths(
 export async function lastTouchingContentCommit(
   repo: string,
   relPath: string,
+  options: LastTouchingOptions = {},
 ): Promise<string> {
-  const sha = await tryLastTouchingCommitForPathspecs(repo, [
-    literalPathspec(relPath),
-    excludePathspec(`${relPath}/.capshelf.yml`),
-  ]);
+  const sha = await tryLastTouchingCommitForPathspecs(
+    repo,
+    [literalPathspec(relPath), excludePathspec(`${relPath}/.capshelf.yml`)],
+    options,
+  );
   if (sha) return sha;
-  return await lastTouchingCommit(repo, relPath);
+  return await lastTouchingCommit(repo, relPath, options);
 }
 
 async function tryLastTouchingCommitForPathspecs(
   repo: string,
   pathspecs: string[],
+  { head, memo }: LastTouchingOptions,
 ): Promise<string | null> {
   if (pathspecs.length === 0) {
     throw new Error(
       "cannot compute last touching commit for an empty path list",
     );
   }
+  const key =
+    head === undefined ? undefined : gitObjectReadKey(repo, head, pathspecs);
+  if (head !== undefined && key === undefined) {
+    throw new Error(`last touching commit needs a full commit id, got ${head}`);
+  }
+  // A walk from the live `HEAD` has no key and is never reused.
+  const cached = key === undefined ? undefined : memo?.lastTouching.get(key);
+  if (cached !== undefined) return cached;
   const result = await sourceRead(repo, [
     "log",
     "-1",
     "--format=%H",
+    ...(head === undefined ? [] : [head]),
     "--",
     ...pathspecs,
   ]);
   if (result.exitCode !== 0) return null;
-  return result.stdout.toString("utf-8").trim() || null;
+  const sha = result.stdout.toString("utf-8").trim() || null;
+  if (key !== undefined) memo?.lastTouching.set(key, sha);
+  return sha;
 }
 
 export async function showAtCommit(
@@ -963,12 +992,20 @@ export async function repositoryObjectsDirectory(
   );
 }
 
+/**
+ * `memo` keeps a successful answer for the rest of the command. The query
+ * reads only the commit's own `.gitattributes`: the shadow repository has no
+ * `info/attributes`, and the system and global files are disabled. So the
+ * answer for one full commit id, path list, and attribute list cannot change.
+ * `update` asks the same question in each preflight pass.
+ */
 export async function checkAttrAtCommit(
   repo: string,
   commit: string,
   paths: string[],
   attributes: string[],
   observeObjectsDir?: () => Promise<string>,
+  memo?: GitReadMemo,
 ): Promise<CheckAttrResult[]> {
   if (paths.length === 0 || attributes.length === 0) return [];
   for (const path of paths) {
@@ -981,6 +1018,15 @@ export async function checkAttrAtCommit(
       `checkAttrAtCommit needs a full object name, got ${commit}`,
     );
   }
+  const cacheKey = gitObjectReadKey(repo, commit, [
+    "check-attr",
+    ...attributes,
+    "--",
+    ...paths,
+  ]);
+  const cached =
+    cacheKey === undefined ? undefined : memo?.attributes.get(cacheKey);
+  if (cached !== undefined) return cached.map((result) => ({ ...result }));
   const objectsDir = await (observeObjectsDir
     ? observeObjectsDir()
     : repositoryObjectsDirectory(repo));
@@ -1035,6 +1081,12 @@ export async function checkAttrAtCommit(
         attribute: fields[index + 1]!,
         value: fields[index + 2]!,
       });
+    }
+    if (cacheKey !== undefined) {
+      memo?.attributes.set(
+        cacheKey,
+        results.map((result) => ({ ...result })),
+      );
     }
     return results;
   } finally {

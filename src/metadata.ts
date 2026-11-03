@@ -18,7 +18,13 @@ import { z } from "zod";
 import type { SystemItem } from "./bundled";
 import { isConfigObject } from "./config-values";
 import type { ConfigObject } from "./config-values";
-import { headSha, sourceRead } from "./git";
+import {
+  catFileBlobs,
+  headSha,
+  literalPathspec,
+  lsTreeEntriesForPathspecs,
+} from "./git";
+import type { GitReadMemo } from "./git-read-memo";
 import { isItemKind, itemRepoRelPath } from "./master";
 import type { MasterItem } from "./master";
 import { parseYamlDocument, setYamlFields } from "./yaml-document";
@@ -206,23 +212,51 @@ export async function loadCommittedItemNeeds(
   dataRepo: string,
   item: Pick<MasterItem, "kind" | "name">,
   commit: string,
+  memo?: GitReadMemo,
 ): Promise<ItemMetadata> {
   const label = `${item.kind}/${item.name}`;
   const relPath = `${itemRepoRelPath(item.kind, item.name)}/${METADATA_SIDECAR}`;
-  const result = await sourceRead(dataRepo, ["show", `${commit}:${relPath}`]);
-  if (result.exitCode !== 0) return emptyMetadata();
-  return parseSidecar(result.stdout.toString("utf-8"), label, item.name);
+  // A listing that finds no sidecar is a successful read, so `memo` keeps
+  // "no sidecar" as well as the bytes. Most items have no sidecar, and
+  // `update` asks again in each preflight pass. Any failure means no needs,
+  // as it did when this was one `git show`.
+  let bytes: Buffer | undefined;
+  try {
+    const entry = (
+      await lsTreeEntriesForPathspecs(
+        dataRepo,
+        commit,
+        [literalPathspec(relPath)],
+        { memo },
+      )
+    ).find((candidate) => candidate.path === relPath);
+    if (entry?.type === "blob") {
+      bytes = (await catFileBlobs(dataRepo, [entry.object], memo)).get(
+        entry.object,
+      );
+    }
+  } catch {
+    return emptyMetadata();
+  }
+  if (bytes === undefined) return emptyMetadata();
+  return parseSidecar(bytes.toString("utf-8"), label, item.name);
 }
 
+/**
+ * `head` is a data-repo `HEAD` the caller already read. `memo` is the calling
+ * command's memo for reads at a full commit id.
+ */
 export async function captureCommittedItemNeeds(
   dataRepo: string,
   item: Pick<MasterItem, "kind" | "name">,
+  options: { head?: string; memo?: GitReadMemo } = {},
 ): Promise<{ needs: ItemNeeds; needsSourceCommit: string }> {
-  const needsSourceCommit = await headSha(dataRepo);
+  const needsSourceCommit = options.head ?? (await headSha(dataRepo));
   const metadata = await loadCommittedItemNeeds(
     dataRepo,
     item,
     needsSourceCommit,
+    options.memo,
   );
   return { needs: metadata.needs, needsSourceCommit };
 }

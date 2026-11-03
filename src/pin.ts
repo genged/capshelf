@@ -14,7 +14,7 @@ import {
   lastTouchingContentCommit,
   resolveCommit,
 } from "./git";
-import type { GitTreeEntry } from "./git";
+import type { GitTreeEntry, LastTouchingOptions } from "./git";
 import { PRODUCT_NAME } from "./identity";
 import {
   allCanonicalItemRelPaths,
@@ -250,6 +250,11 @@ export interface PinOptions {
   /** Skip PIN-9. Only the one-time `lock migrate` audit path sets this. */
   skipFilterCheck?: boolean;
   memo?: GitReadMemo;
+  /**
+   * A data-repo `HEAD` the caller already read. `pinCurrentSource` selects
+   * the commit from that history instead of the live `HEAD`.
+   */
+  head?: string;
 }
 
 /**
@@ -268,6 +273,17 @@ export async function pinItemAtCommit(
       `data repo at ${source.repo} does not contain commit ${source.commit}`,
     );
   }
+  return await pinResolvedCommit(source, resolved, kind, name, options);
+}
+
+/** `pinItemAtCommit` after Git resolved `source.commit` to `resolved`. */
+async function pinResolvedCommit(
+  source: GitTreeSource,
+  resolved: string,
+  kind: ItemKind,
+  name: string,
+  options: PinOptions,
+): Promise<PinnedSource> {
   const entries = await itemTreeEntriesAtCommit(
     { ...source, commit: resolved },
     kind,
@@ -279,9 +295,12 @@ export async function pinItemAtCommit(
     );
   }
   if (options.skipFilterCheck !== true) {
-    await assertNoExternalFilterDrivers(source.repo, resolved, [
-      { kind, name, entries },
-    ]);
+    await assertNoExternalFilterDrivers(
+      source.repo,
+      resolved,
+      [{ kind, name, entries }],
+      options.memo,
+    );
   }
   return brandPin(resolved, entries);
 }
@@ -295,17 +314,20 @@ export async function currentSourceCommit(
   dataRepo: string,
   kind: ItemKind,
   name: string,
+  options: LastTouchingOptions = {},
 ): Promise<string> {
   if (isCopyDirectoryItemKind(kind)) {
     return await lastTouchingContentCommit(
       dataRepo,
       itemRepoRelPath(kind, name),
+      options,
     );
   }
   if (isCopyTargetFileItemKind(kind) || isFragmentItemKind(kind)) {
     return await lastTouchingCommitForPaths(
       dataRepo,
       allCanonicalItemRelPaths(kind, name),
+      options,
     );
   }
   throw new Error(`no pin strategy for ${kind}/${name}`);
@@ -315,6 +337,9 @@ export async function currentSourceCommit(
  * `currentSourceCommit` followed by `pinItemAtCommit`. It reads the shelf's
  * own working tree to select the commit, so it takes a repository rather than
  * a content source.
+ *
+ * `git log --format=%H` prints only the full id of a commit it walked, so the
+ * selected commit needs no second `rev-parse --verify`.
  */
 export async function pinCurrentSource(
   dataRepo: string,
@@ -322,13 +347,13 @@ export async function pinCurrentSource(
   name: string,
   options: PinOptions = {},
 ): Promise<PinnedSource> {
-  return await pinItemAtCommit(
-    gitTreeSource({
-      repo: dataRepo,
-      kind,
-      name,
-      commit: await currentSourceCommit(dataRepo, kind, name),
-    }),
+  const commit = await currentSourceCommit(dataRepo, kind, name, {
+    head: options.head,
+    memo: options.memo,
+  });
+  return await pinResolvedCommit(
+    gitTreeSource({ repo: dataRepo, kind, name, commit }),
+    commit,
     kind,
     name,
     options,
@@ -374,6 +399,7 @@ export async function filteredPathsAtCommit(
   commit: string,
   subjects: readonly FilterCheckSubject[],
   observeObjectsDir?: () => Promise<string>,
+  memo?: GitReadMemo,
 ): Promise<FilteredPath[]> {
   const paths: string[] = [];
   const owner = new Map<string, string>();
@@ -390,6 +416,7 @@ export async function filteredPathsAtCommit(
     paths,
     ["filter"],
     observeObjectsDir,
+    memo,
   );
   const filtered: FilteredPath[] = [];
   for (const result of results) {
@@ -416,8 +443,15 @@ export async function assertNoExternalFilterDrivers(
   dataRepo: string,
   commit: string,
   subjects: readonly FilterCheckSubject[],
+  memo?: GitReadMemo,
 ): Promise<void> {
-  const filtered = await filteredPathsAtCommit(dataRepo, commit, subjects);
+  const filtered = await filteredPathsAtCommit(
+    dataRepo,
+    commit,
+    subjects,
+    undefined,
+    memo,
+  );
   if (filtered.length === 0) return;
   throw new PreconditionError(filterRefusalMessage(filtered));
 }

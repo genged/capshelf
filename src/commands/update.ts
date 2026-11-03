@@ -1635,6 +1635,12 @@ export interface UpdateContext {
    * entry pairs files and needs from one read.
    */
   approvedPins?: ReadonlyMap<string, ApprovedSource>;
+  /**
+   * Data-repo `HEAD`, read once at the start of each preflight pass. Every pin
+   * and needs snapshot in the pass reads from this commit. The next pass reads
+   * `HEAD` again, so the revalidation pass still sees a moved `HEAD`.
+   */
+  dataHead?: string;
 }
 
 interface UpdatePreflight {
@@ -1665,7 +1671,17 @@ async function planUpdatePreflight(
   projectLock: WritableLock,
   localLock: WritableLock,
 ): Promise<UpdatePreflight> {
-  const dryContext = { ...ctx, dryRun: true };
+  // A failed read leaves `dataHead` unset, so each item reads `HEAD` itself
+  // and reports the failure as before.
+  const dataHead =
+    ctx.dataRepo === undefined
+      ? undefined
+      : await headSha(ctx.dataRepo).catch(() => undefined);
+  const dryContext = {
+    ...ctx,
+    dryRun: true,
+    ...(dataHead !== undefined && { dataHead }),
+  };
   const results: UpdateResult[] = [];
   const changes: DestructiveChange[] = [];
   const snapshotParts: string[] = [];
@@ -2016,6 +2032,7 @@ export async function updateOneTarget(
       ? (approved?.pin ??
         (await pinCurrentSource(ctx.dataRepo, parsed.kind, parsed.name, {
           memo: ctx.memo,
+          head: ctx.dataHead,
         }).catch(() => null)))
       : null;
   let newRuns: PluginRuns | null = null;
@@ -2257,6 +2274,7 @@ async function updateDataTarget(
     givenPin ??
     (await pinCurrentSource(ctx.dataRepo, parsed.kind, parsed.name, {
       memo: ctx.memo,
+      head: ctx.dataHead,
     }));
   const sha = pin.sourcePinDigest;
   const sourceCommit = pin.sourceCommit;
@@ -2270,7 +2288,11 @@ async function updateDataTarget(
     );
   }
   const currentSnapshot =
-    givenNeeds ?? (await captureCommittedItemNeeds(ctx.dataRepo, item));
+    givenNeeds ??
+    (await captureCommittedItemNeeds(ctx.dataRepo, item, {
+      head: ctx.dataHead,
+      memo: ctx.memo,
+    }));
   const lockedNeeds = entry.needs ?? null;
   const needsWouldChange =
     lockedNeeds === null || !needsEqual(lockedNeeds, currentSnapshot.needs);

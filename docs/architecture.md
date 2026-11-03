@@ -685,6 +685,12 @@ answer. Four rules hold it:
   again before the first write, and installed bytes before a copy transaction
   commits are all read live, every time.
 
+`update` reads data-repo `HEAD` once at the start of each preflight pass. Every
+item in that pass selects its commit with a walk from that commit id, not from
+the live `HEAD`. The history from a fixed commit cannot change, so the memo
+keeps the answer of that walk. The next pass reads `HEAD` again, so a commit
+made while the consent prompt is open still changes the revalidation plan.
+
 The status report adds one narrower reuse of its own: it merges each shared
 fragment output once per report rather than once per item. A failed repository
 observation leaves its slot empty, so later rows retry it.
