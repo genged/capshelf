@@ -275,22 +275,26 @@ export interface JumpShelf {
  * and its item are one row, under Findings.
  */
 export function jumpCandidates(
+  /** Every registered project, read or not: the rail lists them all. */
+  projects: ReadonlyArray<{ path: string; display: string }>,
   statuses: readonly UiProjectStatus[],
   shelves: readonly JumpShelf[],
 ): JumpRow[] {
   const rows: JumpRow[] = [];
+  for (const project of projects) {
+    rows.push({
+      ref: splitDisplayPath(project.display).name,
+      tags: [],
+      description: project.display,
+      group: "Projects",
+      detail: project.display,
+      command: null,
+      target: { type: "project", project: project.path },
+      key: `project:${project.path}`,
+    });
+  }
   for (const status of statuses) {
     const projectName = splitDisplayPath(status.display).name;
-    rows.push({
-      ref: projectName,
-      tags: [],
-      description: status.display,
-      group: "Projects",
-      detail: status.display,
-      command: null,
-      target: { type: "project", project: status.project },
-      key: `project:${status.project}`,
-    });
     for (const item of status.items) {
       rows.push({
         ref: item.name,
@@ -474,12 +478,19 @@ export function externalEntries(
  * shelf with a local edit, which no group update can take; `other` is a
  * finding that is not about the shelf, such as a plain local edit.
  */
+/**
+ * `pin-current` and `pin-behind` come from the lock alone, while the
+ * project's first status read runs. They say nothing about the installed
+ * copy, so no view may call them up to date or free of edits.
+ */
 export type UsageState =
   | "current"
   | "behind"
   | "behind-edited"
   | "kept"
   | "other"
+  | "pin-current"
+  | "pin-behind"
   | "unknown";
 
 export interface ProjectUsage {
@@ -545,9 +556,9 @@ export function usageState(
         : usage.keptLocal
           ? "kept"
           : usage.current === true
-            ? "current"
+            ? "pin-current"
             : usage.current === false
-              ? "behind"
+              ? "pin-behind"
               : "unknown",
       label: null,
       rowState: null,
@@ -594,6 +605,7 @@ export function isBehind(usage: ProjectUsage): boolean {
   return (
     usage.state === "behind" ||
     usage.state === "behind-edited" ||
+    usage.state === "pin-behind" ||
     (usage.state === "other" && usage.pinCurrent === false)
   );
 }

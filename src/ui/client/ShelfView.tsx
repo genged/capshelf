@@ -84,6 +84,7 @@ export function ShelfView({
   navigate,
   statuses,
   pending,
+  generation,
 }: {
   overview: UiOverview | null;
   route: ShelfRoute;
@@ -91,6 +92,11 @@ export function ShelfView({
   statuses: ReadonlyMap<string, UiProjectStatus>;
   /** Projects on their first status read; see `usageState`. */
   pending: ReadonlySet<string>;
+  /**
+   * Changes on every dashboard refresh. The shelf's usage and pins must be
+   * read again with the statuses they are joined to.
+   */
+  generation: number;
 }): preact.JSX.Element {
   const repo = route.repo ?? overview?.shelves[0]?.dataRepo ?? null;
   // Every printed command repeats the session's --data override, as the
@@ -99,9 +105,15 @@ export function ShelfView({
   const [shelf, setShelf] = useState<Load<UiShelf>>({ state: "idle" });
   const [query, setQuery] = useState("");
 
+  // `generation` is in the dependencies as the refresh trigger.
   useEffect(() => {
     if (repo === null) return;
-    setShelf({ state: "loading" });
+    // A refresh keeps the last read of the same shelf on screen.
+    setShelf((previous) =>
+      previous.state === "ready" && previous.data.dataRepo === repo
+        ? previous
+        : { state: "loading" },
+    );
     apiGet<UiShelf>("/api/shelf", { repo }).then(
       (data) => setShelf({ state: "ready", data }),
       (cause: unknown) =>
@@ -111,7 +123,7 @@ export function ShelfView({
             cause instanceof ApiError ? cause : new ApiError(0, String(cause)),
         }),
     );
-  }, [repo]);
+  }, [repo, generation]);
 
   const go = (section: ShelfSection, ref: string | null): void =>
     navigate({ view: "shelf", repo, section, ref });
@@ -309,6 +321,7 @@ export function ShelfView({
               statuses={statuses}
               pending={pending}
               dataOverride={dataOverride}
+              generation={generation}
               onSelect={(ref) => go("items", ref)}
               onBack={() => go("items", null)}
             />
@@ -688,7 +701,19 @@ const USAGE_WORDS: Record<
   },
   kept: { icon: "notequal", tone: "kept", word: "Kept local" },
   other: { icon: "bang", tone: "attention", word: "Needs attention" },
-  unknown: { icon: "question", tone: "kept", word: "Not read yet" },
+  // From the lock only, while the first status read runs: a pin fact, not a
+  // state of the installed copy.
+  "pin-current": {
+    icon: "question",
+    tone: "kept",
+    word: "Pin is current, reading status",
+  },
+  "pin-behind": {
+    icon: "question",
+    tone: "attention",
+    word: "Pin is behind, reading status",
+  },
+  unknown: { icon: "question", tone: "kept", word: "No status" },
 };
 
 /** A usage state as an icon and a word, never by color alone. */
@@ -719,6 +744,7 @@ function ItemReader({
   statuses,
   pending,
   dataOverride,
+  generation,
   onSelect,
   onBack,
 }: {
@@ -727,6 +753,8 @@ function ItemReader({
   statuses: ReadonlyMap<string, UiProjectStatus>;
   pending: ReadonlySet<string>;
   dataOverride: string | undefined;
+  /** Changes on every dashboard refresh; see `ShelfView`. */
+  generation: number;
   onSelect: (ref: string) => void;
   onBack: () => void;
 }): preact.JSX.Element {
@@ -734,8 +762,14 @@ function ItemReader({
   const [detail, setDetail] = useState<Load<UiShelfItemDetail>>({
     state: "loading",
   });
+  // `generation` is in the dependencies as the refresh trigger.
   useEffect(() => {
-    setDetail({ state: "loading" });
+    // A refresh keeps the last read of the same item on screen.
+    setDetail((previous) =>
+      previous.state === "ready" && previous.data.ref === itemRef
+        ? previous
+        : { state: "loading" },
+    );
     apiGet<UiShelfItemDetail>("/api/shelf/item", {
       repo,
       ref: itemRef,
@@ -749,12 +783,17 @@ function ItemReader({
             cause instanceof ApiError ? cause : new ApiError(0, String(cause)),
         }),
     );
-  }, [repo, itemRef, file]);
+  }, [repo, itemRef, file, generation]);
 
   if (detail.state !== "ready") {
+    // On a phone the list is hidden here, so the back link must stay.
     return (
       <article class="detail" aria-label={itemRef}>
         <div class="detail-body">
+          <button type="button" class="link-button back-link" onClick={onBack}>
+            <Icon name="chevron" />
+            Items
+          </button>
           {detail.state === "error" ? (
             <EmptyState title="The item could not be read">
               <p>{detail.error.message}</p>
@@ -1212,7 +1251,9 @@ function RolloutDetail({
                         ? "No local edit. A plain update takes it."
                         : usage.state === "other" && usage.pinCurrent === false
                           ? "Pins an older version. Resolve the finding in the project first."
-                          : ""}
+                          : usage.state === "pin-behind"
+                            ? "Reading the project's status."
+                            : ""}
                   </td>
                 </tr>
               ))}

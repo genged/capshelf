@@ -18,6 +18,7 @@ export function FindingsView({
   statuses,
   pending,
   unread,
+  discovering,
   project,
   item,
   onSelect,
@@ -34,6 +35,8 @@ export function FindingsView({
    * never all clear while one exists.
    */
   unread: string[];
+  /** The overview has not arrived, so the project count is unknown. */
+  discovering: boolean;
   /** The session's --data override, repeated on every printed command. */
   dataOverride: string | undefined;
   project: string | null;
@@ -62,11 +65,13 @@ export function FindingsView({
         <div class="list-head">
           <h1 class="list-title">All findings</h1>
           <p class="list-sub">
-            {total === 0
-              ? pending > 0
-                ? `Reading ${pending} more ${pending === 1 ? "project" : "projects"}…`
-                : `Nothing needs attention in the ${statuses.length} ${statuses.length === 1 ? "project" : "projects"} read.`
-              : `${total} ${total === 1 ? "item" : "items"} in ${groups.length} of the ${statuses.length} ${statuses.length === 1 ? "project" : "projects"} read.`}
+            {discovering
+              ? "Reading every project…"
+              : total === 0
+                ? pending > 0
+                  ? `Reading ${pending} more ${pending === 1 ? "project" : "projects"}…`
+                  : `Nothing needs attention in the ${statuses.length} ${statuses.length === 1 ? "project" : "projects"} read.`
+                : `${total} ${total === 1 ? "item" : "items"} in ${groups.length} of the ${statuses.length} ${statuses.length === 1 ? "project" : "projects"} read.`}
           </p>
         </div>
         {unread.length > 0 ? (
@@ -137,7 +142,10 @@ export function FindingsView({
         />
       ) : (
         <section class="detail detail-empty">
-          {total === 0 && pending === 0 && unread.length === 0 ? (
+          {!discovering &&
+          total === 0 &&
+          pending === 0 &&
+          unread.length === 0 ? (
             <p class="banner" role="status">
               <Icon name="check" />
               <span>Every project is up to date. Nothing to run.</span>

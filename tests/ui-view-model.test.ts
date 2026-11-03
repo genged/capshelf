@@ -446,8 +446,23 @@ describe("across projects", () => {
     expect(sharedFindings(findingsAcrossProjects([billing]))).toEqual([]);
   });
 
+  test("jump lists every registered project, read or not", () => {
+    const rows = jumpCandidates(
+      [
+        { path: billing.project, display: billing.display },
+        { path: "/home/u/code/gone", display: "~/code/gone" },
+      ],
+      [billing],
+      [],
+    );
+    expect(
+      rows.filter((row) => row.group === "Projects").map((row) => row.ref),
+    ).toEqual(["billing-api", "gone"]);
+  });
+
   test("jump rows put a finding under Findings with its command", () => {
     const rows = jumpCandidates(
+      [{ path: billing.project, display: billing.display }],
       [billing],
       [
         {
@@ -490,6 +505,7 @@ describe("across projects", () => {
       shadows: [],
     };
     const rows = jumpCandidates(
+      [],
       [
         status("~/a", [], { externalUserSkills: [skill] }),
         status("~/b", [], { externalUserSkills: [skill] }),
@@ -601,7 +617,7 @@ describe("shelf views", () => {
         "data",
         loading,
       ),
-    ).toMatchObject({ state: "behind", label: null, itemId: null });
+    ).toMatchObject({ state: "pin-behind", label: null, itemId: null });
     expect(
       usageState(
         "skills/quick-review",

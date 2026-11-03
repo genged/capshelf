@@ -241,13 +241,14 @@ export function Dashboard(): preact.JSX.Element {
   const jumpRows = useMemo(
     () =>
       jumpCandidates(
+        overview?.projects ?? [],
         statuses,
         (shelves ?? []).map((shelf) => ({
           dataRepo: shelf.dataRepo,
           items: shelf.items,
         })),
       ),
-    [statuses, shelves],
+    [overview, statuses, shelves],
   );
   const treeEntries = useMemo<TreeEntry[]>(
     () =>
@@ -451,6 +452,7 @@ export function Dashboard(): preact.JSX.Element {
           navigate={navigate}
           statuses={statusByProject}
           pending={pendingProjects}
+          generation={refreshedAt?.getTime() ?? 0}
         />
       ) : overview !== null && projects.length === 0 ? (
         <main class="page-message">
@@ -498,6 +500,7 @@ export function Dashboard(): preact.JSX.Element {
             <FindingsView
               statuses={statuses}
               pending={pending}
+              discovering={overview === null}
               unread={projects
                 .filter(
                   (registered) =>
