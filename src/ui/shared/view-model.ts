@@ -311,18 +311,21 @@ export function jumpCandidates(
     }
   }
   for (const shelf of shelves) {
+    // Two shelves can hold one item, so the row names its shelf, and the
+    // shelf's name is searchable.
+    const shelfName = splitDisplayPath(shelf.dataRepo).name;
     for (const item of shelf.items) {
       rows.push({
         ref: item.name,
-        tags: item.tags,
+        tags: [...item.tags, shelfName],
         ...(item.description !== undefined && {
           description: item.description,
         }),
         group: "Shelf",
         detail:
           item.usage.length === 0
-            ? `${item.ref} · used nowhere`
-            : `${item.ref} · ${item.usage.length} ${item.usage.length === 1 ? "project" : "projects"}`,
+            ? `${shelfName} · ${item.ref} · used nowhere`
+            : `${shelfName} · ${item.ref} · ${item.usage.length} ${item.usage.length === 1 ? "project" : "projects"}`,
         command: null,
         target: { type: "shelf", repo: shelf.dataRepo, ref: item.ref },
         key: `shelf:${shelf.dataRepo}:${item.ref}`,

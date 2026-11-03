@@ -190,37 +190,44 @@ function focusQuiet(element: HTMLElement): void {
  * to the detail's title on the way in and back to the row that opened it on
  * the way out, or to the list's title when that row is gone.
  */
-export function usePaneFocus(hasSelection: boolean): void {
+export function usePaneFocus(selection: string | null): void {
   const opener = useRef<HTMLElement | null>(null);
-  const previous = useRef(hasSelection);
+  // Starts empty, so a view that mounts with a selection, as a direct link
+  // does, still moves focus into its detail.
+  const previous = useRef<string | null>(null);
   useEffect(() => {
-    if (previous.current === hasSelection) return;
-    previous.current = hasSelection;
+    const before = previous.current;
+    if (before === selection) return;
+    previous.current = selection;
     if (!window.matchMedia(NARROW).matches) return;
-    if (hasSelection) {
+    // The row that opened the first detail is where focus returns. Moving
+    // from one detail to another keeps that row.
+    if (selection !== null && before === null) {
       opener.current =
         document.activeElement instanceof HTMLElement
           ? document.activeElement
           : null;
     }
     const frame = window.requestAnimationFrame(() => {
-      const target = hasSelection
-        ? document.querySelector<HTMLElement>(".frame .detail .detail-title")
-        : opener.current?.isConnected
-          ? opener.current
-          : document.querySelector<HTMLElement>(".frame .list .list-title");
+      const target =
+        selection !== null
+          ? document.querySelector<HTMLElement>(".frame .detail .detail-title")
+          : opener.current?.isConnected
+            ? opener.current
+            : document.querySelector<HTMLElement>(".frame .list .list-title");
       if (target) focusQuiet(target);
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [hasSelection]);
+  }, [selection]);
 }
 
 /**
  * `usePaneFocus` as an element, for views that know the selection only after
- * an early return, where a hook cannot be called.
+ * an early return, where a hook cannot be called. `selection` names the open
+ * entry, or is null when the list shows.
  */
-export function PaneFocus({ hasSelection }: { hasSelection: boolean }): null {
-  usePaneFocus(hasSelection);
+export function PaneFocus({ selection }: { selection: string | null }): null {
+  usePaneFocus(selection);
   return null;
 }
 

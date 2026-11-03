@@ -37,7 +37,12 @@ import {
 import type { ItemKind, MasterItem } from "../master";
 import { loadDataItemMetadata, loadSystemItemMetadata } from "../metadata";
 import type { ItemMetadata } from "../metadata";
-import { homeRelative, manifestReadPath, shellArg } from "../paths";
+import {
+  homeRelative,
+  manifestReadPath,
+  normalizePath,
+  shellArg,
+} from "../paths";
 import { currentSourceCommit } from "../pin";
 import { loadProjectRegistry } from "../project-registry";
 import {
@@ -124,6 +129,14 @@ export function itemId(
 }
 
 export function createUiApi(ctx: UiContext): UiApi {
+  // `--data` resolves against the directory `capshelf ui` started in
+  // (src/data-repo.ts, candidateDataRepo). Every printed command runs from a
+  // project root instead, so the override is made absolute here, once. The
+  // repository it names is the same; only the spelling changes.
+  const dataOverride =
+    ctx.dataOverride === undefined
+      ? undefined
+      : normalizePath(ctx.dataOverride);
   // The rows a project last reported. A diff request names one of them, so
   // the comparison is built from the row the user is looking at rather than
   // from a second status run that could disagree with it.
@@ -171,7 +184,7 @@ export function createUiApi(ctx: UiContext): UiApi {
       let dataRepo: string | null = null;
       try {
         dataRepo = await resolveStatusDataRepo({
-          override: ctx.dataOverride,
+          override: dataOverride,
           manifest: await loadManifest(project.path),
           project: project.path,
         });
@@ -194,7 +207,7 @@ export function createUiApi(ctx: UiContext): UiApi {
     ]);
     assertNoScopeCollisions(projectLock, localLock);
     const dataRepo = await resolveStatusDataRepo({
-      override: ctx.dataOverride,
+      override: dataOverride,
       manifest,
       project,
     });
@@ -237,7 +250,7 @@ export function createUiApi(ctx: UiContext): UiApi {
         registryPath: ctx.registryPath,
         registryDisplay: homeRelative(ctx.registryPath),
         home: homedir(),
-        dataOverride: ctx.dataOverride ?? null,
+        dataOverride: dataOverride ?? null,
         projects,
         shelves: [...shelves.values()],
         generatedAt: new Date().toISOString(),
@@ -255,7 +268,7 @@ export function createUiApi(ctx: UiContext): UiApi {
       ]);
       assertNoScopeCollisions(projectLock, localLock);
       const dataRepo = await resolveStatusDataRepo({
-        override: ctx.dataOverride,
+        override: dataOverride,
         manifest,
         project,
       });
@@ -300,7 +313,7 @@ export function createUiApi(ctx: UiContext): UiApi {
         installMode: manifest.installMode,
         cliVersion: CLI_VERSION,
         items: report.rows.map((row) =>
-          toUiItem(row, project, dataRepo, ctx.dataOverride),
+          toUiItem(row, project, dataRepo, dataOverride),
         ),
         external: report.external,
         externalClaudePlugins: report.externalClaudePlugins,

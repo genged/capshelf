@@ -491,7 +491,7 @@ describe("across projects", () => {
       rows.filter((row) => row.group === "Items").map((row) => row.ref),
     ).toEqual(["sql-migrations"]);
     expect(rows.find((row) => row.group === "Shelf")?.detail).toBe(
-      "skills/quick-review · 2 projects",
+      "shelf · skills/quick-review · 2 projects",
     );
     expect(new Set(rows.map((row) => row.key)).size).toBe(rows.length);
   });

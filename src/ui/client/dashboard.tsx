@@ -468,7 +468,13 @@ export function Dashboard(): preact.JSX.Element {
         </main>
       ) : (
         <div class={`frame${hasSelection ? " has-selection" : ""}`}>
-          <PaneFocus hasSelection={hasSelection} />
+          <PaneFocus
+            selection={
+              hasSelection
+                ? `${route.view}\t${routedProject}\t${routedItem}`
+                : null
+            }
+          />
           <ProjectRail
             entries={treeEntries}
             selectedPath={inFindings ? null : selectedPath}

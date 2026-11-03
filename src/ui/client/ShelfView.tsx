@@ -272,7 +272,9 @@ export function ShelfView({
 
   return (
     <div class={`frame${selectionExists ? " has-selection" : ""}`}>
-      <PaneFocus hasSelection={selectionExists} />
+      <PaneFocus
+        selection={selectionExists ? `${route.section}\t${ref}` : null}
+      />
       {rail}
       {route.section === "rollouts" ? (
         <>

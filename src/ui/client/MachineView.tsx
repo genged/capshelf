@@ -135,7 +135,7 @@ export function MachineView({
   const hasSelection = current !== null && current.key === selected;
   return (
     <div class={`frame is-machine${hasSelection ? " has-selection" : ""}`}>
-      <PaneFocus hasSelection={hasSelection} />
+      <PaneFocus selection={hasSelection ? selected : null} />
       <section class="list" aria-label="This machine">
         <div class="list-head">
           <h1 class="list-title">This machine</h1>
@@ -393,9 +393,9 @@ function MachineDetail({
               <dd class="mono">{display(skill.path)}</dd>
               <dt>Loaded by</dt>
               <dd>{surface}, in every project on this machine</dd>
-              <dt>Managed by</dt>
+              <dt>Capshelf</dt>
               <dd class="muted">
-                Nobody. Capshelf does not edit files in the home folder.
+                Does not manage it, and does not edit files in the home folder.
               </dd>
             </dl>
           </div>

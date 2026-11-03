@@ -116,7 +116,9 @@ export function ProjectView({
       />
       {item ? (
         <ItemDetail
-          key={item.id}
+          // One item id can exist in two projects; the key must remount the
+          // detail, and its loaded diff, when the project changes.
+          key={`${project}\t${item.id}`}
           item={item}
           projectName={name}
           dataOverride={dataOverride}
@@ -125,7 +127,7 @@ export function ProjectView({
         />
       ) : external ? (
         <ExternalDetail
-          key={external.id}
+          key={`${project}\t${external.id}`}
           entry={external}
           project={project}
           projectName={name}

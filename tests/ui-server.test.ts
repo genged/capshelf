@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { parseJsonc } from "../src/json-fragments";
 import { isConfigObject } from "../src/config-values";
 import { writeFile } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { shellArg } from "../src/command-text";
 import { registerProject } from "../src/project-registry";
 import { createUiApi } from "../src/ui/api";
@@ -513,6 +513,17 @@ describe("capshelf ui server", () => {
         `capshelf --data ${shellArg(world.dataRepo)} `,
       );
     }
+  });
+
+  test("a relative --data override is absolute even when it names no repository", async () => {
+    // With no repository at the path, status has no dataRepo to fall back
+    // on, so the override itself must already be absolute.
+    const api = createUiApi({
+      registryPath: world.registryPath,
+      dataOverride: "../no-such-shelf",
+    });
+    const overview = await api.overview();
+    expect(overview.dataOverride).toBe(resolve("../no-such-shelf"));
   });
 });
 
