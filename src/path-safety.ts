@@ -4,10 +4,7 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { PreconditionError } from "./errors";
 import { isErrno } from "./fs-utils";
 
-export async function assertNoSymlinkAncestors(
-  root: string,
-  relPath: string,
-): Promise<void> {
+function safeRelativeParts(relPath: string): string[] {
   const parts =
     relPath === "." ? [] : relPath.split("/").filter((part) => part.length > 0);
   if (
@@ -18,6 +15,14 @@ export async function assertNoSymlinkAncestors(
   ) {
     throw new PreconditionError(`unsafe repository path "${relPath}"`);
   }
+  return parts;
+}
+
+export async function assertNoSymlinkAncestors(
+  root: string,
+  relPath: string,
+): Promise<void> {
+  const parts = safeRelativeParts(relPath);
   let current = await realpath(root);
   for (const part of parts) {
     current = join(current, part);
@@ -39,8 +44,7 @@ export function assertNoSymlinkAncestorsSync(
   root: string,
   relPath: string,
 ): void {
-  const parts =
-    relPath === "." ? [] : relPath.split("/").filter((part) => part.length > 0);
+  const parts = safeRelativeParts(relPath);
   let current = realpathSync(root);
   for (const part of parts) {
     current = join(current, part);
