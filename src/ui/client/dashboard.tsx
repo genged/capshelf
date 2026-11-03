@@ -32,6 +32,7 @@ import { JumpDialog } from "./JumpDialog";
 import { MachineView } from "./MachineView";
 import { ProjectRail, RailPicker } from "./ProjectRail";
 import { type ListFilter, ProjectView } from "./ProjectView";
+import { isLegacyUserSkillItem } from "../shared/route";
 import { type Route, routeHash, useRoute } from "./router";
 import { ShelfView } from "./ShelfView";
 import { TopBar, topView } from "./TopBar";
@@ -326,6 +327,16 @@ export function Dashboard(): preact.JSX.Element {
     [],
   );
 
+  // A bookmark from an earlier dashboard may name a user-level skill row in a
+  // project. Those skills are listed in This machine now.
+  const legacyUserSkill =
+    route.view === "status" &&
+    route.item !== null &&
+    isLegacyUserSkillItem(route.item);
+  useEffect(() => {
+    if (legacyUserSkill) navigate({ view: "machine", entry: null });
+  }, [legacyUserSkill, navigate]);
+
   if (!hasToken()) {
     return (
       <div class="app">
@@ -494,9 +505,11 @@ export function Dashboard(): preact.JSX.Element {
                 >
                   {findingsCount > 0 ? findingsCount : <Icon name="check" />}
                   <span class="visually-hidden">
-                    {findingsCount === 1
-                      ? " item needs attention"
-                      : " items need attention"}
+                    {findingsCount === 0
+                      ? "No item needs attention"
+                      : findingsCount === 1
+                        ? " item needs attention"
+                        : " items need attention"}
                   </span>
                 </span>
               </a>

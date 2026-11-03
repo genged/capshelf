@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { parseRoute, type Route, routeHash } from "../src/ui/shared/route";
+import {
+  isLegacyUserSkillItem,
+  parseRoute,
+  type Route,
+  routeHash,
+} from "../src/ui/shared/route";
 
 describe("hash routes", () => {
   const routes: Route[] = [
@@ -35,6 +40,18 @@ describe("hash routes", () => {
       entry: "skill:claude:/home/u/.claude/skills/quick-review",
     },
   ];
+
+  test("old user-level skill ids are recognized, new ones are not", () => {
+    expect(isLegacyUserSkillItem("user-skills")).toBe(true);
+    expect(isLegacyUserSkillItem("user/claude/quick-review")).toBe(true);
+    expect(isLegacyUserSkillItem("user/codex/notes")).toBe(true);
+    expect(
+      isLegacyUserSkillItem("user/claude:/home/u/.claude/skills/quick-review"),
+    ).toBe(false);
+    expect(isLegacyUserSkillItem("project/data/skills/quick-review")).toBe(
+      false,
+    );
+  });
 
   test("an old shelf link without a section still opens the item", () => {
     expect(parseRoute("#/shelf/%2Fs/skills%2Fx")).toEqual({

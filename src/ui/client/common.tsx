@@ -202,10 +202,13 @@ export function usePaneFocus(selection: string | null): void {
     if (!window.matchMedia(NARROW).matches) return;
     // The row that opened the first detail is where focus returns. Moving
     // from one detail to another keeps that row.
+    // Only a control in the list counts. On a direct link the body has
+    // focus, and returning focus there would leave it nowhere visible.
     if (selection !== null && before === null) {
+      const active = document.activeElement;
       opener.current =
-        document.activeElement instanceof HTMLElement
-          ? document.activeElement
+        active instanceof HTMLElement && active.closest(".frame .list")
+          ? active
           : null;
     }
     const frame = window.requestAnimationFrame(() => {

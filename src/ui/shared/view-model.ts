@@ -554,15 +554,15 @@ export function usageState(
     const loading = pending.has(usage.project);
     return {
       ...base,
+      // The lock's kept-local marker is not a state either: the installed
+      // copy can be gone. Only the pin's commit is known until the row comes.
       state: !loading
         ? "unknown"
-        : usage.keptLocal
-          ? "kept"
-          : usage.current === true
-            ? "pin-current"
-            : usage.current === false
-              ? "pin-behind"
-              : "unknown",
+        : usage.current === true
+          ? "pin-current"
+          : usage.current === false
+            ? "pin-behind"
+            : "unknown",
       label: null,
       rowState: null,
       itemId: null,

@@ -65,6 +65,17 @@ export function parseRoute(hash: string): Route {
   };
 }
 
+/**
+ * Item ids that earlier releases of the dashboard put in a status route for
+ * user-level skills: the aggregate `user-skills` row, and the per-skill
+ * `user/<surface>/<name>`. User-level skills now live in This machine, and
+ * the per-skill id carries the path (`user/<surface>:<path>`), so an old link
+ * opens This machine instead of a project overview.
+ */
+export function isLegacyUserSkillItem(item: string): boolean {
+  return item === "user-skills" || /^user\/(claude|codex)\/[^:]+$/.test(item);
+}
+
 export function routeHash(route: Route): string {
   const segments =
     route.view === "shelf"
