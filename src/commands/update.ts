@@ -1759,6 +1759,7 @@ async function planUpdatePreflight(
           selectedEntry,
           reviewCommand,
           repairUnresolvableCurrent: true,
+          memo: ctx.memo,
         });
         changes.push(...planned.changes);
         snapshotParts.push(...planned.snapshotParts);
@@ -2356,6 +2357,7 @@ async function updateDataTarget(
           ctx.dataRepo,
           parsed.name,
           entry.sourceCommit,
+          ctx.memo,
         )
       : await shaOfInstalled(ctx.project, parsed.kind, parsed.name)
     : null;
@@ -2380,6 +2382,7 @@ async function updateDataTarget(
             dataRepo,
             parsed.name,
             entry.sourceCommit,
+            ctx.memo,
           );
           const applied = await materializeSubagent({
             project: ctx.project,
@@ -2388,6 +2391,7 @@ async function updateDataTarget(
             entry: newEntry,
             previousEntry: entry,
             dryRun: ctx.dryRun,
+            memo: ctx.memo,
           });
           for (const warning of applied.warnings) {
             console.error(`⚠ ${warning}`);
@@ -2466,10 +2470,15 @@ async function installedSubagentShaAtPin(
   dataRepo: string,
   name: string,
   commit: string,
+  memo: GitReadMemo,
 ): Promise<string | null> {
-  return await shaOfInstalledSubagent(project, dataRepo, name, commit).catch(
-    () => null,
-  );
+  return await shaOfInstalledSubagent(
+    project,
+    dataRepo,
+    name,
+    commit,
+    memo,
+  ).catch(() => null);
 }
 
 async function updateSystemTarget(

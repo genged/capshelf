@@ -44,7 +44,7 @@ import {
   lockedFragmentTargetsForItem,
   planFragmentOutput,
 } from "./fragments";
-import { subagentSourcesAtCommit } from "./subagents";
+import { subagentSourceAtCommit, subagentSourcesAtCommit } from "./subagents";
 import { isErrno, lstatOrNull } from "./fs-utils";
 import { currentSourceCommit } from "./pin";
 
@@ -325,8 +325,9 @@ export async function buildStatusDiff(
     );
     const parts: string[] = [];
     for (const source of sources) {
-      const expected = await showAtCommit(
+      const expected = await subagentSourceAtCommit(
         opts.dataRepo,
+        row.name,
         row.sourceCommit,
         source.relPath,
       );

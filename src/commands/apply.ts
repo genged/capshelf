@@ -434,6 +434,7 @@ export function registerApply(program: Command): void {
                 dataRepo,
                 name: parsed.name,
                 entry,
+                memo,
               });
               for (const warning of applied.warnings) {
                 console.error(`⚠ ${warning}`);
@@ -747,6 +748,7 @@ async function planApplyPreflight(
           input.dataRepo,
           parsed.name,
           entry.sourceCommit,
+          input.memo,
         );
         const applied = await materializeSubagent({
           project: input.project,
@@ -754,6 +756,7 @@ async function planApplyPreflight(
           name: parsed.name,
           entry,
           dryRun: true,
+          memo: input.memo,
         });
         results.push(
           addScope(scope, {
@@ -787,6 +790,7 @@ async function planApplyPreflight(
           currentEntry: entry,
           selectedEntry: entry,
           reviewCommand,
+          memo: input.memo,
         });
         changes.push(...planned.changes);
         snapshotParts.push(...planned.snapshotParts);
