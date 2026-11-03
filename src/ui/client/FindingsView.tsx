@@ -17,15 +17,25 @@ import { Icon } from "./icons";
 export function FindingsView({
   statuses,
   pending,
+  unread,
   project,
   item,
   onSelect,
   loadDiff,
   picker,
+  dataOverride,
 }: {
   statuses: UiProjectStatus[];
   /** Projects still loading, so an empty list is not called all clear. */
   pending: number;
+  /**
+   * Registered projects with no current status: a missing manifest, a failed
+   * read, or a failed refresh. Their findings are unknown, so the view is
+   * never all clear while one exists.
+   */
+  unread: string[];
+  /** The session's --data override, repeated on every printed command. */
+  dataOverride: string | undefined;
   project: string | null;
   item: string | null;
   onSelect: (project: string, item: string | null) => void;
@@ -55,10 +65,21 @@ export function FindingsView({
             {total === 0
               ? pending > 0
                 ? `Reading ${pending} more ${pending === 1 ? "project" : "projects"}…`
-                : `Nothing needs attention in ${statuses.length} ${statuses.length === 1 ? "project" : "projects"}.`
-              : `${total} ${total === 1 ? "item" : "items"} in ${groups.length} of ${statuses.length} projects.`}
+                : `Nothing needs attention in the ${statuses.length} ${statuses.length === 1 ? "project" : "projects"} read.`
+              : `${total} ${total === 1 ? "item" : "items"} in ${groups.length} of the ${statuses.length} ${statuses.length === 1 ? "project" : "projects"} read.`}
           </p>
         </div>
+        {unread.length > 0 ? (
+          <p class="list-note" role="status">
+            <Icon name="alert" />
+            <span>
+              {unread.length === 1
+                ? "1 project has no current status"
+                : `${unread.length} projects have no current status`}
+              : {unread.join(", ")}. Their findings are not in this list.
+            </span>
+          </p>
+        ) : null}
         {groups.map((group) => (
           <section key={group.project} aria-label={group.name}>
             <h2 class="list-group-head">
@@ -108,6 +129,7 @@ export function FindingsView({
           key={`${selectedGroup.project}:${selected.id}`}
           item={selected}
           projectName={selectedGroup.name}
+          dataOverride={dataOverride}
           loadDiff={(view) =>
             loadDiff(selectedGroup.project, selected.id, view)
           }
@@ -115,7 +137,7 @@ export function FindingsView({
         />
       ) : (
         <section class="detail detail-empty">
-          {total === 0 && pending === 0 ? (
+          {total === 0 && pending === 0 && unread.length === 0 ? (
             <p class="banner" role="status">
               <Icon name="check" />
               <span>Every project is up to date. Nothing to run.</span>

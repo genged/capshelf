@@ -8,6 +8,7 @@ import type {
   UiShelf,
   UiShelfItemDetail,
 } from "../shared/api-types";
+import { capshelfCommand } from "../../command-text";
 import { kindNoun } from "../shared/kind-label";
 import type { ShelfSection } from "../shared/route";
 import { itemIcon } from "../shared/state-label";
@@ -88,6 +89,9 @@ export function ShelfView({
   statuses: ReadonlyMap<string, UiProjectStatus>;
 }): preact.JSX.Element {
   const repo = route.repo ?? overview?.shelves[0]?.dataRepo ?? null;
+  // Every printed command repeats the session's --data override, as the
+  // server's own actions do (src/status-actions.ts).
+  const dataOverride = overview?.dataOverride ?? undefined;
   const [shelf, setShelf] = useState<Load<UiShelf>>({ state: "idle" });
   const [query, setQuery] = useState("");
 
@@ -227,6 +231,7 @@ export function ShelfView({
               (route.ref === null ? (rollouts[0] ?? null) : null)
             }
             statuses={statuses}
+            dataOverride={dataOverride}
             onBack={() => go("rollouts", null)}
             onItem={(ref) => go("items", ref)}
           />
@@ -246,6 +251,7 @@ export function ShelfView({
           ) : route.ref.startsWith("bundles/") ? (
             <BundleReader
               shelf={data}
+              dataOverride={dataOverride}
               bundleRef={route.ref}
               onSelect={(ref) => go("items", ref)}
               onBack={() => go("items", null)}
@@ -256,6 +262,7 @@ export function ShelfView({
               repo={repo}
               itemRef={route.ref}
               statuses={statuses}
+              dataOverride={dataOverride}
               onSelect={(ref) => go("items", ref)}
               onBack={() => go("items", null)}
             />
@@ -664,12 +671,14 @@ function ItemReader({
   repo,
   itemRef,
   statuses,
+  dataOverride,
   onSelect,
   onBack,
 }: {
   repo: string;
   itemRef: string;
   statuses: ReadonlyMap<string, UiProjectStatus>;
+  dataOverride: string | undefined;
   onSelect: (ref: string) => void;
   onBack: () => void;
 }): preact.JSX.Element {
@@ -721,7 +730,7 @@ function ItemReader({
   const usages = data.usage.map((usage) =>
     usageState(data.ref, usage, statuses),
   );
-  const addCommand = `capshelf add ${data.ref}`;
+  const addCommand = capshelfCommand(dataOverride, ["add", data.ref]);
   return (
     <article class="detail" aria-label={data.ref}>
       <div class="detail-body">
@@ -813,7 +822,9 @@ function ItemReader({
               <CommandText command={addCommand} />
               <CopyButton text={addCommand} label={`Copy ${addCommand}`} />
             </div>
-            <p class="section-note">Run it in the project folder.</p>
+            <p class="section-note">
+              <AddNote dataOverride={dataOverride} />
+            </p>
           </section>
         ) : null}
 
@@ -919,13 +930,31 @@ function ItemReader({
   );
 }
 
+/**
+ * Where an add command runs. Without `--data`, `add` reads the shelf the
+ * project is bound to, which may not be the shelf on screen.
+ */
+function AddNote({
+  dataOverride,
+}: {
+  dataOverride: string | undefined;
+}): preact.JSX.Element {
+  return dataOverride === undefined ? (
+    <>Run it in a project that is bound to this shelf.</>
+  ) : (
+    <>Run it in the project folder.</>
+  );
+}
+
 function BundleReader({
   shelf,
+  dataOverride,
   bundleRef,
   onSelect,
   onBack,
 }: {
   shelf: UiShelf;
+  dataOverride: string | undefined;
   bundleRef: string;
   onSelect: (ref: string) => void;
   onBack: () => void;
@@ -940,7 +969,7 @@ function BundleReader({
       </article>
     );
   }
-  const addCommand = `capshelf add ${bundle.ref}`;
+  const addCommand = capshelfCommand(dataOverride, ["add", bundle.ref]);
   return (
     <article class="detail" aria-label={bundle.ref}>
       <div class="detail-body">
@@ -986,7 +1015,9 @@ function BundleReader({
             <CommandText command={addCommand} />
             <CopyButton text={addCommand} label={`Copy ${addCommand}`} />
           </div>
-          <p class="section-note">Run it in the project folder.</p>
+          <p class="section-note">
+            <AddNote dataOverride={dataOverride} />
+          </p>
         </section>
       </div>
     </article>
@@ -1057,11 +1088,13 @@ function RolloutList({
 function RolloutDetail({
   rollout,
   statuses,
+  dataOverride,
   onBack,
   onItem,
 }: {
   rollout: Rollout | null;
   statuses: ReadonlyMap<string, UiProjectStatus>;
+  dataOverride: string | undefined;
   onBack: () => void;
   onItem: (ref: string) => void;
 }): preact.JSX.Element {
@@ -1071,15 +1104,17 @@ function RolloutDetail({
   const clean = rollout.projects.filter((entry) => entry.state === "behind");
   // One command per clean project, with its cd, because each project takes
   // the update on its own. A project still loading has no cd command yet.
+  // The update part is built like the server's own action: the same prefix,
+  // the ref quoted, and --local after it (src/status-actions.ts).
   const commands = clean.flatMap((entry) => {
     const cd = statuses.get(entry.project)?.cdCommand;
     if (!cd) return [];
-    return [
-      {
-        project: entry.name,
-        command: `${cd} && capshelf update${entry.scope === "local" ? " --local" : ""} ${rollout.ref}`,
-      },
-    ];
+    const update = capshelfCommand(dataOverride, [
+      "update",
+      rollout.ref,
+      ...(entry.scope === "local" ? ["--local"] : []),
+    ]);
+    return [{ project: entry.name, command: `${cd} && ${update}` }];
   });
   return (
     <article class="detail" aria-label={`${rollout.name} rollout`}>
@@ -1127,7 +1162,9 @@ function RolloutDetail({
                       ? "Decide in the project: merge or overwrite."
                       : usage.state === "behind"
                         ? "No local edit. A plain update takes it."
-                        : ""}
+                        : usage.state === "other" && usage.pinCurrent === false
+                          ? "Pins an older version. Resolve the finding in the project first."
+                          : ""}
                   </td>
                 </tr>
               ))}

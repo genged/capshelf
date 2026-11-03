@@ -584,6 +584,29 @@ describe("shelf views", () => {
     ]);
   });
 
+  test("a pin behind another finding still joins the rollout", () => {
+    const missing = status("~/code/missing-copy", [
+      item("skills/quick-review", "missing_installed"),
+    ]);
+    const rollouts = shelfRollouts(
+      [shelfItem("skills/quick-review", [usage(missing, { current: false })])],
+      new Map([[missing.project, missing]]),
+    );
+    expect(rollouts).toHaveLength(1);
+    expect(rollouts[0]?.projects[0]).toMatchObject({
+      state: "other",
+      label: "Not installed",
+      pinCurrent: false,
+    });
+    // The same finding on a current pin is not a rollout.
+    expect(
+      shelfRollouts(
+        [shelfItem("skills/quick-review", [usage(missing, { current: true })])],
+        new Map([[missing.project, missing]]),
+      ),
+    ).toEqual([]);
+  });
+
   test("coverage has one cell per project and marks unused items", () => {
     const rows = shelfCoverage(
       [

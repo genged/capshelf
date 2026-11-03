@@ -1,5 +1,9 @@
 import type { ExternalUserSkill } from "../../external";
-import type { ExternalEntry } from "../shared/view-model";
+import {
+  type ExternalEntry,
+  machinePluginKey,
+  machineSkillKey,
+} from "../shared/view-model";
 import { DetailHead } from "./ItemDetail";
 import { Icon, type IconName } from "./icons";
 
@@ -79,8 +83,18 @@ export function ExternalDetail({
     entry.type === "skills.sh"
       ? "Managed by skills.sh."
       : entry.type === "plugin"
-        ? "Enabled in Claude settings."
+        ? entry.plugin.enabled
+          ? "Enabled in Claude settings."
+          : "Disabled in Claude settings. Claude does not load it."
         : "A user-level skill from the home folder.";
+  // The entry in This machine, for a skill or plugin from the home folder.
+  const machineEntry =
+    entry.type === "user-skill"
+      ? machineSkillKey(entry.skill)
+      : entry.type === "plugin" &&
+          (entry.plugin.scope === "user" || entry.plugin.scope === "managed")
+        ? machinePluginKey(entry.plugin)
+        : null;
   const shadows = entry.type === "user-skill" ? entry.skill.shadows : [];
   const words =
     entry.type === "user-skill" ? shadowWording(entry.skill.surface) : null;
@@ -183,13 +197,12 @@ export function ExternalDetail({
               )}
             </dl>
           </div>
-          {entry.type === "user-skill" ||
-          (entry.type === "plugin" &&
-            (entry.plugin.scope === "user" ||
-              entry.plugin.scope === "managed")) ? (
+          {machineEntry !== null ? (
             <p class="section-note">
-              <a href="#/machine">This machine</a> lists everything in the home
-              folder.
+              <a href={`#/machine/${encodeURIComponent(machineEntry)}`}>
+                This machine
+              </a>{" "}
+              lists everything in the home folder.
             </p>
           ) : null}
         </section>

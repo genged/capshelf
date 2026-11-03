@@ -19,6 +19,7 @@ import {
   type JumpTarget,
   projectCounts,
   sortTree,
+  splitDisplayPath,
   type TreeEntry,
 } from "../shared/view-model";
 import { ApiError, apiGet, hasToken } from "./api";
@@ -48,7 +49,7 @@ function jumpRoute(target: JumpTarget): Route {
         ref: target.ref,
       };
     case "machine":
-      return { view: "machine" };
+      return { view: "machine", entry: target.entry };
   }
 }
 
@@ -387,7 +388,12 @@ export function Dashboard(): preact.JSX.Element {
           </EmptyState>
         </main>
       ) : route.view === "machine" ? (
-        <MachineView overview={overview} loads={loads} />
+        <MachineView
+          overview={overview}
+          loads={loads}
+          entry={route.entry}
+          onSelect={(entry) => navigate({ view: "machine", entry })}
+        />
       ) : route.view === "shelf" ? (
         <ShelfView
           overview={overview}
@@ -440,6 +446,14 @@ export function Dashboard(): preact.JSX.Element {
             <FindingsView
               statuses={statuses}
               pending={pending}
+              unread={projects
+                .filter(
+                  (registered) =>
+                    !registered.exists ||
+                    loads.get(registered.path)?.state === "error",
+                )
+                .map((registered) => splitDisplayPath(registered.display).name)}
+              dataOverride={overview?.dataOverride ?? undefined}
               project={route.project}
               item={route.item}
               onSelect={(project, item) =>
@@ -497,6 +511,7 @@ export function Dashboard(): preact.JSX.Element {
               displayPath={(path) => homeDisplay(path, overview.home)}
               loadDiff={(itemId, view) => loadDiff(selectedPath, itemId, view)}
               picker={picker}
+              dataOverride={overview.dataOverride ?? undefined}
             />
           )}
         </div>

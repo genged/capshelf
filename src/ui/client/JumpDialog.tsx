@@ -53,10 +53,19 @@ export function JumpDialog({
   const flat = shown.flatMap((section) => section.entries);
   const current = flat[Math.min(active, flat.length - 1)] ?? null;
 
+  // The dialog is modal: focus moves in on open and returns to the opener on
+  // close, as the diff dialog does.
   useEffect(() => {
+    const opener =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     inputRef.current?.focus();
     document.body.classList.add("has-dialog");
-    return () => document.body.classList.remove("has-dialog");
+    return () => {
+      document.body.classList.remove("has-dialog");
+      opener?.focus();
+    };
   }, []);
 
   useEffect(() => setActive(0), [query]);
@@ -65,6 +74,11 @@ export function JumpDialog({
     if (event.key === "Escape") {
       event.preventDefault();
       onClose();
+    } else if (event.key === "Tab") {
+      // The input is the dialog's only Tab stop: the rows follow
+      // aria-activedescendant and the scrim is not focusable. Tab stays here
+      // so focus cannot reach the page behind the modal.
+      event.preventDefault();
     } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       const step = event.key === "ArrowDown" ? 1 : -1;

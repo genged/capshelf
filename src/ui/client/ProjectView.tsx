@@ -1,4 +1,5 @@
 import type { ComponentChildren } from "preact";
+import { capshelfCommand } from "../../command-text";
 import type {
   DiffViewName,
   UiDiffResponse,
@@ -42,9 +43,12 @@ export function ProjectView({
   displayPath,
   loadDiff,
   picker,
+  dataOverride,
 }: {
   /** The phone's project picker; hidden on wider screens. */
   picker: ComponentChildren;
+  /** The session's --data override, repeated on every printed command. */
+  dataOverride: string | undefined;
   project: string;
   registered: UiRegisteredProject;
   load: ProjectLoad;
@@ -115,6 +119,7 @@ export function ProjectView({
           key={item.id}
           item={item}
           projectName={name}
+          dataOverride={dataOverride}
           loadDiff={(view) => loadDiff(item.id, view)}
           onBack={() => onSelect(null)}
         />
@@ -132,6 +137,7 @@ export function ProjectView({
           data={data}
           name={name}
           externals={externals}
+          dataOverride={dataOverride}
           onBack={() => onSelect(null)}
         />
       )}
@@ -188,12 +194,12 @@ function ItemList({
             <span class="tone-attention">refresh failed: {refreshError}</span>
           ) : null}
         </p>
-        <div class="seg" role="tablist" aria-label="Show">
+        <fieldset class="seg">
+          <legend class="visually-hidden">Show</legend>
           <button
             type="button"
-            role="tab"
             class="seg-option"
-            aria-selected={filter === "attention"}
+            aria-pressed={filter === "attention"}
             onClick={() => onFilter("attention")}
           >
             Needs attention{" "}
@@ -203,14 +209,13 @@ function ItemList({
           </button>
           <button
             type="button"
-            role="tab"
             class="seg-option"
-            aria-selected={filter === "all"}
+            aria-pressed={filter === "all"}
             onClick={() => onFilter("all")}
           >
             All <span class="count">{counts.items}</span>
           </button>
-        </div>
+        </fieldset>
       </div>
 
       {warnings.map((notice) => (
@@ -293,11 +298,13 @@ function ProjectOverview({
   data,
   name,
   externals,
+  dataOverride,
   onBack,
 }: {
   data: UiProjectStatus;
   name: string;
   externals: ExternalEntry[];
+  dataOverride: string | undefined;
   onBack: () => void;
 }): preact.JSX.Element {
   const counts = projectCounts(data.items);
@@ -412,10 +419,13 @@ function ProjectOverview({
             {[
               { command: data.cdCommand, purpose: "Go to the project" },
               {
-                command: "capshelf add",
+                command: capshelfCommand(dataOverride, ["add"]),
                 purpose: "Add an item from the shelf",
               },
-              { command: "capshelf status", purpose: "Check from a terminal" },
+              {
+                command: capshelfCommand(dataOverride, ["status"]),
+                purpose: "Check from a terminal",
+              },
             ].map((action) => (
               <li key={action.command} class="alt-row">
                 <span class="alt-row-purpose">{action.purpose}</span>

@@ -1,5 +1,6 @@
 import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
+import { capshelfCommand } from "../../command-text";
 import type {
   DiffViewName,
   UiAction,
@@ -133,14 +134,22 @@ export function DetailHead({
 export function ItemDetail({
   item,
   projectName,
+  dataOverride,
   loadDiff,
   onBack,
 }: {
   item: UiItem;
   projectName: string;
+  /** The session's --data override, repeated on every printed command. */
+  dataOverride: string | undefined;
   loadDiff: (view: DiffViewName) => Promise<UiDiffResponse>;
   onBack: () => void;
 }): preact.JSX.Element {
+  const updateCommand = capshelfCommand(dataOverride, [
+    "update",
+    item.ref,
+    ...(item.scope === "local" ? ["--local"] : []),
+  ]);
   const tone = item.attention ? "attention" : item.tone;
   const icon = itemIcon(item.row.state, item.attention);
   const [recommended, ...others] = item.actions;
@@ -227,13 +236,13 @@ export function ItemDetail({
               Pin, installed copy, and shelf
             </summary>
             <div class="card">
-              <Facts item={item} />
+              <Facts item={item} updateCommand={updateCommand} />
             </div>
           </details>
         ) : (
           <section class="detail-section" aria-label="Facts">
             <div class="card">
-              <Facts item={item} />
+              <Facts item={item} updateCommand={updateCommand} />
             </div>
           </section>
         )}
@@ -242,7 +251,13 @@ export function ItemDetail({
   );
 }
 
-function Facts({ item }: { item: UiItem }): preact.JSX.Element {
+function Facts({
+  item,
+  updateCommand,
+}: {
+  item: UiItem;
+  updateCommand: string;
+}): preact.JSX.Element {
   const { row } = item;
   const needs = row.lockedNeeds;
   const needsText =
@@ -351,7 +366,8 @@ function Facts({ item }: { item: UiItem }): preact.JSX.Element {
                     {target.present === false ? (
                       <span class="muted">
                         {" "}
-                        · once it is committed there: capshelf update {item.ref}
+                        · once it is committed there:{" "}
+                        <span class="mono">{updateCommand}</span>
                       </span>
                     ) : null}
                   </li>

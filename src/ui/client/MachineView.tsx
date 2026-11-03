@@ -1,8 +1,11 @@
-import { useState } from "preact/hooks";
 import type { ExternalClaudePlugin, ExternalUserSkill } from "../../external";
 import type { UiOverview, UiProjectStatus } from "../shared/api-types";
 import { homeDisplay } from "../shared/display";
-import { splitDisplayPath } from "../shared/view-model";
+import {
+  machinePluginKey,
+  machineSkillKey,
+  splitDisplayPath,
+} from "../shared/view-model";
 import { EmptyState, Skeleton } from "./common";
 import type { ProjectLoad } from "./dashboard";
 import { shadowedItemId, shadowWording } from "./ExternalRow";
@@ -36,11 +39,15 @@ type MachineEntry = SkillEntry | PluginEntry;
 export function MachineView({
   overview,
   loads,
+  entry: selected,
+  onSelect,
 }: {
   overview: UiOverview | null;
   loads: Map<string, ProjectLoad>;
+  /** The route's entry key, so a link or a Jump row opens one entry. */
+  entry: string | null;
+  onSelect: (entry: string | null) => void;
 }): preact.JSX.Element {
-  const [selected, setSelected] = useState<string | null>(null);
   if (overview === null) {
     return (
       <main class="page-message">
@@ -61,7 +68,7 @@ export function MachineView({
   for (const status of ready) {
     const projectName = splitDisplayPath(status.display).name;
     for (const skill of status.externalUserSkills) {
-      const key = `skill\t${skill.surface}\t${skill.path}`;
+      const key = machineSkillKey(skill);
       const entry = skills.get(key) ?? {
         type: "skill" as const,
         key,
@@ -79,7 +86,7 @@ export function MachineView({
     }
     for (const plugin of status.externalClaudePlugins) {
       if (plugin.scope !== "user" && plugin.scope !== "managed") continue;
-      const key = `plugin\t${plugin.scope}\t${plugin.id}`;
+      const key = machinePluginKey(plugin);
       const entry = plugins.get(key) ?? {
         type: "plugin" as const,
         key,
@@ -160,7 +167,7 @@ export function MachineView({
                     entry={entry}
                     selected={current?.key === entry.key}
                     display={display}
-                    onSelect={() => setSelected(entry.key)}
+                    onSelect={() => onSelect(entry.key)}
                   />
                 ))}
               </ul>
@@ -185,7 +192,7 @@ export function MachineView({
         <MachineDetail
           entry={current}
           display={display}
-          onBack={() => setSelected(null)}
+          onBack={() => onSelect(null)}
         />
       )}
     </div>
@@ -269,10 +276,16 @@ function MachineDetail({
             <p class="detail-state">
               <Icon name="notequal" />
               <span>
-                <b>Enabled in Claude settings.</b>{" "}
+                <b>
+                  {plugin.enabled
+                    ? "Enabled in Claude settings."
+                    : "Disabled in Claude settings."}
+                </b>{" "}
                 <span class="muted">
-                  It loads in every project. Capshelf reports it and never edits
-                  it.
+                  {plugin.enabled
+                    ? "It loads in every project."
+                    : "Claude does not load it."}{" "}
+                  Capshelf reports it and never edits it.
                 </span>
               </span>
             </p>

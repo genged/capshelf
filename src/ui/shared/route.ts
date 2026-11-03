@@ -2,7 +2,8 @@
  * Hash routes, so the page needs no server route table and a reload keeps
  * the place. `#/status/<project>/<item>`, `#/findings/<project>/<item>`,
  * `#/shelf/<repo>/<ref>`, `#/shelf/<repo>/rollouts/<ref>`,
- * `#/shelf/<repo>/coverage`, and `#/machine`; every segment is URI-encoded.
+ * `#/shelf/<repo>/coverage`, and `#/machine/<entry>`; every segment is
+ * URI-encoded.
  * An encoded ref always holds `%2F`, so a section name never reads as one.
  * Pure: the hook that follows the location lives in the client router.
  */
@@ -18,7 +19,8 @@ export type Route =
       section: ShelfSection;
       ref: string | null;
     }
-  | { view: "machine" };
+  /** `entry` is a `machineEntryKey` from the view model. */
+  | { view: "machine"; entry: string | null };
 
 function isSection(value: string | undefined): value is ShelfSection {
   return value === "items" || value === "rollouts" || value === "coverage";
@@ -47,7 +49,7 @@ export function parseRoute(hash: string): Route {
         };
   }
   if (parts[0] === "machine") {
-    return { view: "machine" };
+    return { view: "machine", entry: parts[1] ?? null };
   }
   if (parts[0] === "findings") {
     return {
@@ -70,7 +72,7 @@ export function routeHash(route: Route): string {
         ? ["shelf", route.repo, route.ref]
         : ["shelf", route.repo, route.section, route.ref]
       : route.view === "machine"
-        ? ["machine"]
+        ? ["machine", route.entry]
         : [route.view, route.project, route.item];
   const encoded: string[] = [];
   for (const segment of segments) {

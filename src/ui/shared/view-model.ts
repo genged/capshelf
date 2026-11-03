@@ -208,7 +208,24 @@ export type JumpTarget =
   | { type: "item"; project: string; item: string }
   | { type: "project"; project: string }
   | { type: "shelf"; repo: string; ref: string }
-  | { type: "machine" };
+  | { type: "machine"; entry: string };
+
+/**
+ * The identity of an entry in This machine, used in its route and by Jump.
+ * Two harnesses can hold a skill with one name, so the key carries the
+ * surface and the path, not the name.
+ */
+export function machineSkillKey(
+  skill: Pick<ExternalUserSkill, "surface" | "path">,
+): string {
+  return `skill:${skill.surface}:${skill.path}`;
+}
+
+export function machinePluginKey(
+  plugin: Pick<ExternalClaudePlugin, "scope" | "id">,
+): string {
+  return `plugin:${plugin.scope}:${plugin.id}`;
+}
 
 export type JumpGroup =
   | "Findings"
@@ -311,17 +328,17 @@ export function jumpCandidates(
   const seen = new Set<string>();
   for (const status of statuses) {
     for (const skill of status.externalUserSkills) {
-      const key = `machine:${skill.surface}:${skill.path}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
+      const entry = machineSkillKey(skill);
+      if (seen.has(entry)) continue;
+      seen.add(entry);
       rows.push({
         ref: skill.name,
         tags: [skill.surface],
         group: "This machine",
         detail: `${skill.surface === "claude" ? "Claude" : "Codex"} user skill`,
         command: null,
-        target: { type: "machine" },
-        key,
+        target: { type: "machine", entry },
+        key: `machine:${entry}`,
       });
     }
   }
@@ -472,6 +489,12 @@ export interface ProjectUsage {
   label: string | null;
   /** The status row's state, so the badge draws the same icon as the list. */
   rowState: State | null;
+  /**
+   * The shelf's own flag: the pin names the item's latest shelf commit. It
+   * is kept apart from `state`, because a row can show another finding, such
+   * as a missing install, while its pin is also behind.
+   */
+  pinCurrent: boolean | null;
   /** The project's item id, for a link into its detail. */
   itemId: string | null;
 }
@@ -496,7 +519,12 @@ export function usageState(
         entry.scope === usage.scope &&
         entry.source === "data",
     );
-  const base = { project: usage.project, name, scope: usage.scope };
+  const base = {
+    project: usage.project,
+    name,
+    scope: usage.scope,
+    pinCurrent: usage.current,
+  };
   if (!row) {
     return {
       ...base,
@@ -543,6 +571,20 @@ export interface Rollout {
 }
 
 /**
+ * A project that has not taken the shelf's latest version. The row's state
+ * says so for a plain or edited update. A row with another finding, such as
+ * a missing install, can hide an old pin behind it, so the shelf's flag
+ * decides there.
+ */
+export function isBehind(usage: ProjectUsage): boolean {
+  return (
+    usage.state === "behind" ||
+    usage.state === "behind-edited" ||
+    (usage.state === "other" && usage.pinCurrent === false)
+  );
+}
+
+/**
  * The shelf items that some bound projects have not taken. Each project
  * keeps its pin until it updates, so a rollout lists who is behind, who has
  * a local edit in the way, and who is already current.
@@ -557,9 +599,7 @@ export function shelfRollouts(
     const projects = item.usage.map((usage) =>
       usageState(item.ref, usage, statuses),
     );
-    const behind = projects.filter(
-      (entry) => entry.state === "behind" || entry.state === "behind-edited",
-    ).length;
+    const behind = projects.filter(isBehind).length;
     if (behind === 0) continue;
     rollouts.push({
       ref: item.ref,

@@ -29,7 +29,11 @@ describe("hash routes", () => {
       ref: "skills/quick-review",
     },
     { view: "shelf", repo: "/home/u/shelf", section: "coverage", ref: null },
-    { view: "machine" },
+    { view: "machine", entry: null },
+    {
+      view: "machine",
+      entry: "skill:claude:/home/u/.claude/skills/quick-review",
+    },
   ];
 
   test("an old shelf link without a section still opens the item", () => {
