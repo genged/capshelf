@@ -580,7 +580,7 @@ missing, the diff behind each state, and the command to run. See
 
 <p align="center">
   <img src="docs/screenshots/capshelf_ui.png" width="900"
-    alt="The capshelf ui dashboard. The left column lists three registered projects and the selected project's skills, Pi extensions, settings, MCP servers, and Claude plugins. The main panel reports that all 11 items are up to date and lists each item with its pinned digest." />
+    alt="The capshelf ui dashboard in three panes. The left rail lists All findings and three projects with their attention counts. The middle list shows the billing-api project, with three items that need attention above three that are up to date. The right pane shows the drifted commit-message skill: the recommended command, capshelf promote skills/commit-message, two other ways to resolve it, and the first changed lines of its diff." />
 </p>
 
 ### Mental model

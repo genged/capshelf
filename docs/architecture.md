@@ -1031,13 +1031,22 @@ second implementation. The command starts a `Bun.serve` server on 127.0.0.1
 browser is the row `status --json` prints. The server adds display labels
 (`src/ui/shared/state-label.ts`) and the commands a state can be resolved
 with (`src/status-actions.ts`). It computes no new fact and writes no file.
-The client groups rows by kind (`src/ui/shared/kind-label.ts`). That file
-repeats the order of `ITEM_KINDS` in `src/master.ts`, because the browser
-bundle cannot import that module. A unit test holds the two lists equal.
-External state travels in the same status response: skills.sh skills,
-Claude plugins, and user-level skills become read-only rows in the project
-view, and `#/machine` aggregates the user-level inventory across the
-statuses already loaded, so no route exists for it.
+The client groups a project's rows by state and names their kind with
+`src/ui/shared/kind-label.ts`. That file repeats the order of `ITEM_KINDS`
+in `src/master.ts`, because the browser bundle cannot import that module. A
+unit test holds the two lists equal. External state travels in the same
+status response. skills.sh skills, Claude plugins, and user-level skills
+become read-only rows in the project view.
+
+Some views combine responses the client already has. They are pure
+functions in `src/ui/shared/view-model.ts`, each with a unit test. All
+findings (`#/findings`) and This machine (`#/machine`) read the project
+statuses already loaded, so neither has an API route. Rollouts and Coverage
+in the shelf view join the shelf's per-project usage with each project's
+status row. The status row decides the state, because the usage only says
+whether a pin names the item's latest shelf commit. Route shapes live in
+`src/ui/shared/route.ts`, apart from the Preact hook, so tests import them
+without the DOM types.
 
 Projects come from a registry, `$XDG_CONFIG_HOME/capshelf/projects.json`
 (`src/project-registry.ts`), because no project discovery exists on the

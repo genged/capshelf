@@ -630,7 +630,6 @@
   padding: 10px 12px;
   border: 1px solid var(--green-line);
   border-radius: var(--radius-lg);
-  box-shadow: inset 3px 0 0 var(--green);
 }
 
 .recommended .command-text {
@@ -958,7 +957,6 @@
 
 .recommended.is-plain {
   border-color: var(--line);
-  box-shadow: none;
 }
 
 .table {

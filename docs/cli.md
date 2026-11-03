@@ -1838,49 +1838,88 @@ manifest stays in the list and is marked missing.
 
 ### What the dashboard shows
 
-- Left: every registered project, sorted by the number of items that need
-  attention, then by path. The selected project lists its items under one
-  heading per kind, with dimmed rows for skills.sh skills and for every
-  Claude plugin that loads in it, marked with its scope when it comes from
-  the home directory or from managed settings, and one row that jumps to
-  the project's user-level skills.
-- Center: the selected project's items as panels, in one group per kind. A
-  kind with an item that needs attention comes first. Kinds with the same
-  count follow the order `ls` prints. A panel opens in place to the commands
-  that resolve it, each with a copy button, then its facts and a summary of
-  its diff: each changed file with its added and removed line counts. The
-  Open diff button shows the full diff in a dialog at the width of the
-  window, side by side or unified. Three-way has no unified form. The header
-  carries the `cd` command for the project with a copy button. Filter tabs
-  select all items, items that need attention, or items that are up to date.
-  A chip row under the tabs selects one kind. The tabs then count that kind
-  only, and each chip counts the items the active tab shows. A chip with no
-  such item is disabled. A second click on the active chip clears it.
-- External rows: everything a harness loads in this project that Capshelf
-  does not manage appears as a read-only row in the same groups, with an
-  "External" badge, no pin, no commands, and no diff. skills.sh skills sit
-  under Skills. Claude plugins from every settings scope form a "Claude
-  plugins" group. User-level skills from the home directory form a
-  "User-level skills" group, since every harness loads them in every
-  project. A user-level Claude skill with a managed skill's name says
-  `shadows` and links to that item. A Codex one says `same name as`, because
-  Codex offers both. External rows count under the All tab only.
-- Shadows: an item that is up to date but hidden from a harness carries the
-  warning as its badge, such as "Shadowed by a personal Claude skill" or
-  "Shadowed by a Pi project skill", in the tree and in the panel. The
-  warning's sentence and path are in the panel facts.
-- Machine: the host name in the top bar opens "This machine", the canonical
-  description of the home directory: each user-level skill with the projects
-  where it shadows or shares a name with a managed skill, and each user or
-  managed Claude plugin. The view is built from the project statuses the
-  dashboard has already loaded and needs no other request.
-- Shelf: every item and bundle in the data repo, in one section per kind,
-  bundles first, with the picker's search. The same chip row selects one
-  section. A search ranks across every shown section. Until an item is
-  selected, the reader shows the shelf's head, branch, bound projects, and
-  recent commits. The shelf name in the top bar and in a project's header
-  opens this view. After a click, the reader shows the item's files and the
-  projects that hold it.
+The top bar has three views: Projects, Shelf, and This machine. It also has
+Jump, a Read-only badge, the time of the last refresh, and a refresh
+button. Each view has the same three panes: a rail on the left, a list in
+the middle, and the selected entry on the right. Each pane scrolls on its
+own.
+
+**Projects.** The rail starts with All findings. Below it, every registered
+project is listed by its folder name, with the parent folder under the
+name. The project with the most items that need attention comes first, then
+the others by path. A count shows how many items need attention. A
+registered path with no manifest stays in the rail and is marked missing.
+
+- The list shows the selected project's path, a copy button for its `cd`
+  command, and two filters: Needs attention and All. Items are grouped by
+  state: Needs attention, then Kept local, then Up to date. Each row shows
+  the item's name, its kind, and its state.
+- Under All, a last group lists what a harness loads here that Capshelf
+  does not manage. These are skills.sh skills, Claude plugins from every
+  settings scope, and user-level skills from the home folder. These rows have no
+  pin, no command, and no diff. The detail says who manages the entry. A
+  user-level Claude skill with a managed skill's name says that it shadows
+  that item, with a link. A Codex one says that it has the same name,
+  because Codex offers both copies.
+- The detail of an item starts with a bar that holds the item's name and
+  a button. The button copies the recommended command. The `c` key does
+  the same. Below the bar are the state and the CLI's sentence for it, the
+  recommended command, and the other ways to resolve the state. Each
+  command has a copy button.
+- What changed shows the first changed lines of the diff. Open full diff
+  shows every line in a dialog at the width of the window, side by side or
+  unified. Three-way has no unified form.
+- The pin, the installed copy, the shelf version, and the other facts are
+  behind a disclosure for an item that needs attention. They show at once
+  for an item that is up to date.
+- An item that is up to date but hidden from a harness needs attention. Its
+  state names the warning, such as "Shadowed by a personal Claude skill".
+  The warning's sentence and path are in the facts.
+- With no item selected, the detail shows the project. It says whether
+  anything needs attention. It shows the path, the shelf, where skills go,
+  the lock version, the notices, and the commands to start with.
+
+**All findings.** Every item that needs attention on this machine, in one
+list grouped by project. The project with the most findings comes first.
+The first finding opens. A note names each shelf item that is behind the
+shelf in more than one project. Each project still takes the update on its
+own.
+
+**Jump.** The `/` key or the field in the top bar opens Jump. It ranks
+findings, projects, items, shelf items, and user-level skills with the
+picker's search. Enter opens the row. Ctrl+Enter copies the recommended
+command of a finding. Jump reads each shelf the first time it opens.
+
+**Shelf.** The rail picks the shelf and one of three views. It also lists
+the recent commits.
+
+- Items lists every item and bundle in the data repo, bundles first, then
+  one group per kind, with the picker's search. Until an item is selected,
+  the detail shows the shelf's head, branch, origin, bound projects, and
+  recent commits. An item's detail shows each project that holds it, with
+  the pin and the project's state, then the add command, the metadata, and
+  the files.
+- Rollouts lists each shelf item that some bound projects have not taken.
+  The detail shows the state of every project that holds it. It gives one
+  update command, with the project's `cd`, for each project that has no
+  local edit. A project with a local edit links to its own detail, where
+  the edit is merged or overwritten on its own.
+- Coverage is a table of shelf items by bound projects. Each cell shows the
+  project's state with an icon and a word, or a dash when the project does
+  not have the item. A row is marked when no project uses the item.
+
+The state of a project in Rollouts and Coverage is the state of the
+project's own status row. While a project is still loading, the view shows
+whether the pin names the item's latest shelf commit.
+
+**This machine.** User-level skills and user or managed Claude plugins,
+with the selected entry on the right. A skill's detail lists the projects
+where it shadows or shares a name with a managed skill. The view is built
+from the project statuses that the dashboard has already loaded and needs
+no other request.
+
+Below 800 pixels, the panes stack. A select replaces the rail, and an
+entry opens on its own page with a link back to the list.
 
 An item needs attention when `status --strict` would fail on it. Requirement
 freshness and target coverage gaps are shown as notes and are not counted.

@@ -341,7 +341,11 @@ function DiffSummary({
       {ready.length > 0 && paths.length === 0 ? (
         <p class="diff-status muted">No content differences.</p>
       ) : null}
-      {paths.length > 0 ? (
+      {/* One text file in one comparison is the preview itself; the list
+          adds nothing until a second file, a second comparison, or a file
+          with no preview, such as a binary one. */}
+      {paths.length > 1 ||
+      (paths.length > 0 && (ready.length > 1 || preview === null)) ? (
         <ul class="diff-summary-files">
           {shownPaths.map((path) => (
             <li key={path} class="diff-summary-file">
