@@ -418,6 +418,40 @@ describe("startup self-update prompt", () => {
     expect(runner.calls).toEqual([]);
   });
 
+  test("a failed startup check is cached for one interval", async () => {
+    const cachePath = await tempFilePath();
+    // `brew outdated` fails, for example on a timeout.
+    const results = homebrewResults(FIXTURE_LATEST);
+    results.set(
+      commandKey(["brew", "outdated", "--json=v2", "--formula", FORMULA]),
+      { exitCode: 1, stdout: "", stderr: "timed out" },
+    );
+    const at = (time: string) =>
+      makeContext({
+        cachePath,
+        runner: new MockRunner(results),
+        now: new Date(time),
+      });
+    const argv = ["capshelf", "src/cli.ts", "status"];
+
+    const first = await at("2026-06-05T12:00:00.000Z");
+    expect(await runStartupSelfUpdate(argv, first.context)).toBeNull();
+    expect(first.runner.calls.length).toBeGreaterThan(0);
+    expect(await readJsonObject(cachePath)).toEqual({
+      checkedAt: "2026-06-05T12:00:00.000Z",
+      failed: true,
+    });
+
+    const sameDay = await at("2026-06-06T11:59:00.000Z");
+    expect(await runStartupSelfUpdate(argv, sameDay.context)).toBeNull();
+    expect(sameDay.runner.calls).toEqual([]);
+
+    const nextDay = await at("2026-06-06T12:00:00.000Z");
+    expect(await runStartupSelfUpdate(argv, nextDay.context)).toBeNull();
+    expect(nextDay.runner.calls.length).toBeGreaterThan(0);
+    expect(nextDay.prompts).toEqual([]);
+  });
+
   test("stale cache triggers a fresh startup check", async () => {
     const cachePath = await tempFilePath();
     await writeFile(
