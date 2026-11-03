@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   capshelfCommand,
   capshelfCommandPrefix,
+  commandDataOverride,
   shellArg,
 } from "../src/command-text";
 import * as paths from "../src/paths";
@@ -24,6 +25,13 @@ describe("command text", () => {
       capshelfCommand("/srv/team shelf", ["update", "skills/a", "--local"]),
     ).toBe("capshelf --data '/srv/team shelf' update skills/a --local");
     expect(capshelfCommandPrefix(undefined)).toBe("capshelf");
+  });
+
+  test("a dashboard command names the resolved repository, not the spelling", () => {
+    expect(commandDataOverride(undefined, "/srv/shelf")).toBeUndefined();
+    expect(commandDataOverride(null, "/srv/shelf")).toBeUndefined();
+    expect(commandDataOverride("../shelf", "/srv/shelf")).toBe("/srv/shelf");
+    expect(commandDataOverride("../shelf", null)).toBe("../shelf");
   });
 
   test("paths.ts re-exports the same functions the web UI uses", () => {

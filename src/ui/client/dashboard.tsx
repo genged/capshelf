@@ -22,6 +22,7 @@ import {
   splitDisplayPath,
   type TreeEntry,
 } from "../shared/view-model";
+import { commandDataOverride } from "../../command-text";
 import { ApiError, apiGet, hasToken } from "./api";
 import { EmptyState, KeyHelp } from "./common";
 import { FindingsView } from "./FindingsView";
@@ -208,8 +209,16 @@ export function Dashboard(): preact.JSX.Element {
   }, [jumpOpen, shelves, overview]);
 
   const projects = overview?.projects ?? [];
+  // The views across projects read only current statuses. A failed refresh
+  // keeps its old data for the project view, which says the refresh failed,
+  // but All findings, Jump, Rollouts, and Coverage leave it out and All
+  // findings names it as unread. A refresh in progress keeps the last good
+  // read, so the views do not empty while it runs.
   const statuses = useMemo<UiProjectStatus[]>(
-    () => [...loads.values()].flatMap((load) => (load.data ? [load.data] : [])),
+    () =>
+      [...loads.values()].flatMap((load) =>
+        load.data && load.state !== "error" ? [load.data] : [],
+      ),
     [loads],
   );
   const statusByProject = useMemo(
@@ -328,6 +337,12 @@ export function Dashboard(): preact.JSX.Element {
     null;
   const shelfRepo =
     railShelf?.dataRepo ?? overview?.shelves[0]?.dataRepo ?? null;
+  // With --data, every project reads the one override repository, so the
+  // first shelf is the resolved path that commands must name.
+  const commandOverride = commandDataOverride(
+    overview?.dataOverride,
+    overview?.shelves[0]?.dataRepo,
+  );
   const selectProject = (path: string): void =>
     navigate({ view: "status", project: path, item: null });
   const openFindings = (): void =>
@@ -453,7 +468,7 @@ export function Dashboard(): preact.JSX.Element {
                     loads.get(registered.path)?.state === "error",
                 )
                 .map((registered) => splitDisplayPath(registered.display).name)}
-              dataOverride={overview?.dataOverride ?? undefined}
+              dataOverride={commandOverride}
               project={route.project}
               item={route.item}
               onSelect={(project, item) =>
@@ -511,7 +526,7 @@ export function Dashboard(): preact.JSX.Element {
               displayPath={(path) => homeDisplay(path, overview.home)}
               loadDiff={(itemId, view) => loadDiff(selectedPath, itemId, view)}
               picker={picker}
-              dataOverride={overview.dataOverride ?? undefined}
+              dataOverride={commandOverride}
             />
           )}
         </div>

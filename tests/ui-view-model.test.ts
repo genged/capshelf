@@ -289,6 +289,25 @@ describe("item list", () => {
     ).toBe("drifted + update available → 444444444444");
   });
 
+  test("two Codex skills with one name in two roots get two ids", () => {
+    const codex = (path: string) => ({
+      kind: "skills" as const,
+      name: "notes",
+      surface: "codex" as const,
+      path,
+      shadows: [],
+    });
+    const ids = externalEntries({
+      external: [],
+      externalClaudePlugins: [],
+      externalUserSkills: [
+        codex("/home/u/.agents/skills/notes"),
+        codex("/home/u/.codex/skills/notes"),
+      ],
+    }).map((entry) => entry.id);
+    expect(new Set(ids).size).toBe(2);
+  });
+
   test("lists external rows by name with ids that cannot be item ids", () => {
     const entries = externalEntries({
       external: [{ name: "terraform-plan", source: "hashicorp/agent-skills" }],
@@ -313,7 +332,7 @@ describe("item list", () => {
     });
     expect(entries.map((entry) => entry.id)).toEqual([
       "plugin/project/github@official",
-      "user/claude/quick-review",
+      "user/claude:/home/u/.claude/skills/quick-review",
       "external/skills/terraform-plan",
     ]);
     for (const entry of entries) {
@@ -550,6 +569,26 @@ describe("shelf views", () => {
     expect(usageState("skills/quick-review", usage(checkout), read).state).toBe(
       "behind-edited",
     );
+  });
+
+  test("a bundled item joins the project's system row", () => {
+    const withSystem = status("~/code/sys", [
+      item("skills/capshelf", "update_available", {
+        id: "project/system/skills/capshelf",
+        source: "system",
+      }),
+    ]);
+    expect(
+      usageState(
+        "skills/capshelf",
+        usage(withSystem, { sourceCommit: null, current: null }),
+        new Map([[withSystem.project, withSystem]]),
+        "system",
+      ),
+    ).toMatchObject({
+      state: "behind",
+      itemId: "project/system/skills/capshelf",
+    });
   });
 
   test("a project still loading falls back to the shelf flag", () => {

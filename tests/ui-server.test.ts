@@ -3,8 +3,10 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { parseJsonc } from "../src/json-fragments";
 import { isConfigObject } from "../src/config-values";
 import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
+import { shellArg } from "../src/command-text";
 import { registerProject } from "../src/project-registry";
+import { createUiApi } from "../src/ui/api";
 import { startUiServer } from "../src/ui/server";
 import type { UiServer } from "../src/ui/server";
 import type {
@@ -488,6 +490,28 @@ describe("capshelf ui server", () => {
       );
     } finally {
       await server.stop();
+    }
+  });
+
+  test("a relative --data override is printed as the resolved repository", async () => {
+    // `capshelf --data ../shelf ui` resolves the override against the
+    // directory it started in, but each printed command runs from a project
+    // root. The command must name the repository the dashboard read.
+    await writeFile(
+      join(world.project, ".agents", "skills", "hello", "SKILL.md"),
+      "# hello\n\nfirst line\nedited line\n",
+    );
+    const api = createUiApi({
+      registryPath: world.registryPath,
+      dataOverride: relative(process.cwd(), world.dataRepo),
+    });
+    const status = await api.projectStatus(world.project);
+    const hello = status.items.find((item) => item.ref === "skills/hello");
+    expect(hello?.actions.length).toBeGreaterThan(0);
+    for (const action of hello?.actions ?? []) {
+      expect(action.command).toStartWith(
+        `capshelf --data ${shellArg(world.dataRepo)} `,
+      );
     }
   });
 });

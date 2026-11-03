@@ -456,7 +456,9 @@ export function externalEntries(
     ...status.externalUserSkills.map(
       (skill): ExternalEntry => ({
         type: "user-skill",
-        id: `user/${skill.surface}/${skill.name}`,
+        // Codex reads two roots, so a name can repeat: the path makes the
+        // id unique (src/external.ts, the user skill roots).
+        id: `user/${skill.surface}:${skill.path}`,
         name: skill.name,
         skill,
       }),
@@ -509,6 +511,8 @@ export function usageState(
   ref: string,
   usage: UiItemUsage,
   statuses: ReadonlyMap<string, UiProjectStatus>,
+  /** The shelf item's source: a bundled item joins the system row. */
+  source: UiShelfItem["source"] = "data",
 ): ProjectUsage {
   const name = splitDisplayPath(usage.display).name;
   const row = statuses
@@ -517,7 +521,7 @@ export function usageState(
       (entry) =>
         entry.ref === ref &&
         entry.scope === usage.scope &&
-        entry.source === "data",
+        entry.source === source,
     );
   const base = {
     project: usage.project,

@@ -8,7 +8,7 @@ import type {
   UiShelf,
   UiShelfItemDetail,
 } from "../shared/api-types";
-import { capshelfCommand } from "../../command-text";
+import { capshelfCommand, commandDataOverride } from "../../command-text";
 import { kindNoun } from "../shared/kind-label";
 import type { ShelfSection } from "../shared/route";
 import { itemIcon } from "../shared/state-label";
@@ -91,7 +91,7 @@ export function ShelfView({
   const repo = route.repo ?? overview?.shelves[0]?.dataRepo ?? null;
   // Every printed command repeats the session's --data override, as the
   // server's own actions do (src/status-actions.ts).
-  const dataOverride = overview?.dataOverride ?? undefined;
+  const dataOverride = commandDataOverride(overview?.dataOverride, repo);
   const [shelf, setShelf] = useState<Load<UiShelf>>({ state: "idle" });
   const [query, setQuery] = useState("");
 
@@ -728,7 +728,7 @@ function ItemReader({
   const isMarkdown = currentName?.toLowerCase().endsWith(".md") ?? false;
   const { metadata } = data;
   const usages = data.usage.map((usage) =>
-    usageState(data.ref, usage, statuses),
+    usageState(data.ref, usage, statuses, data.source),
   );
   const addCommand = capshelfCommand(dataOverride, ["add", data.ref]);
   return (

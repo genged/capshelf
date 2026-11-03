@@ -44,6 +44,7 @@ import {
   MAX_SEARCHABLE_CONTENT_BYTES,
   isSearchableContent,
 } from "../search-core";
+import { commandDataOverride } from "../command-text";
 import { actionsForRow } from "../status-actions";
 import { assertNoScopeCollisions } from "../status-core";
 import type { StatusRow } from "../status-core";
@@ -593,7 +594,10 @@ function toUiItem(
       ? warningLabel(hidden.type)
       : stateLabel(row.state, row.source),
     stateDetail: hidden ? hidden.message : describe(row),
-    actions: actionsForRow(row, { dataOverride, dataRepo }),
+    actions: actionsForRow(row, {
+      dataOverride: commandDataOverride(dataOverride, dataRepo),
+      dataRepo,
+    }),
     diffViews: statusDiffViews(row.state),
     installedPath: installed,
   };

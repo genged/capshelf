@@ -1881,9 +1881,10 @@ registered path with no manifest stays in the rail and is marked missing.
 
 **All findings.** Every item that needs attention on this machine, in one
 list grouped by project. The project with the most findings comes first.
-The first finding opens. A note names each shelf item that is behind the
-shelf in more than one project. Each project still takes the update on its
-own. A note also names each project with no current status, such as a
+The first finding opens. A note names each shelf item that shows an
+available update in more than one project. Each project still takes the
+update on its own. Rollouts in the shelf view also lists a project whose
+old pin is hidden behind another finding. A note also names each project with no current status, such as a
 missing manifest or a failed read. While one exists, the view never reports
 that every project is up to date.
 
@@ -1908,9 +1909,11 @@ the recent commits.
   the edit is merged or overwritten on its own. A project whose pin is old
   but that shows another finding, such as a missing install, is listed
   with that finding and no command.
-- Every command the shelf view prints quotes its arguments, and it repeats
-  `--data` when `capshelf ui` ran with that override. Without the override,
-  an add command uses the shelf the project is bound to. The view says so.
+- Every command the dashboard prints quotes its arguments. When
+  `capshelf ui` ran with `--data`, each command repeats it with the full path
+  of the repository the dashboard read. The command runs from a project
+  root, so a relative path would name another folder. Without the override, an add command uses the shelf the
+  project is bound to. The view says so.
 - Coverage is a table of shelf items by bound projects. Each cell shows the
   project's state with an icon and a word, or a dash when the project does
   not have the item. A row is marked when no project uses the item.

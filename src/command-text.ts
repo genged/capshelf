@@ -50,6 +50,21 @@ export function capshelfCommandPrefix(
     : `capshelf --data ${shellArg(dataOverride)}`;
 }
 
+/**
+ * The `--data` value a dashboard command repeats. `capshelf ui` resolved its
+ * override against the directory it started in, but a dashboard command runs
+ * from a project root. A relative spelling such as `../shelf` would then name
+ * another repository. The resolved absolute repository names the same one
+ * from anywhere. Without an override, nothing is repeated.
+ */
+export function commandDataOverride(
+  dataOverride: string | null | undefined,
+  dataRepo: string | null | undefined,
+): string | undefined {
+  if (dataOverride === null || dataOverride === undefined) return undefined;
+  return dataRepo ?? dataOverride;
+}
+
 /** The prefix, then each argument quoted with `shellArg`. */
 export function capshelfCommand(
   dataOverride: string | undefined,

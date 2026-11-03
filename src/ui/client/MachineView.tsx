@@ -58,8 +58,9 @@ export function MachineView({
   const display = (path: string): string => homeDisplay(path, overview.home);
   const ready: UiProjectStatus[] = [];
   let pending = 0;
+  // A failed refresh keeps old data; this view reads current statuses only.
   for (const load of loads.values()) {
-    if (load.data) ready.push(load.data);
+    if (load.data && load.state !== "error") ready.push(load.data);
     else if (load.state === "loading") pending += 1;
   }
 
