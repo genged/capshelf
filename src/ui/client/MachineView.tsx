@@ -6,7 +6,7 @@ import {
   machineSkillKey,
   splitDisplayPath,
 } from "../shared/view-model";
-import { EmptyState, Skeleton } from "./common";
+import { EmptyState, PaneFocus, Skeleton } from "./common";
 import type { ProjectLoad } from "./dashboard";
 import { shadowedItemId, shadowWording } from "./ExternalRow";
 import { DetailHead } from "./ItemDetail";
@@ -132,8 +132,10 @@ export function MachineView({
     all[0] ??
     null;
 
+  const hasSelection = current !== null && current.key === selected;
   return (
-    <div class={`frame is-machine${selected !== null ? " has-selection" : ""}`}>
+    <div class={`frame is-machine${hasSelection ? " has-selection" : ""}`}>
+      <PaneFocus hasSelection={hasSelection} />
       <section class="list" aria-label="This machine">
         <div class="list-head">
           <h1 class="list-title">This machine</h1>

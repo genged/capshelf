@@ -1920,7 +1920,9 @@ the recent commits.
 
 The state of a project in Rollouts and Coverage is the state of the
 project's own status row. While a project is still loading, the view shows
-whether the pin names the item's latest shelf commit.
+whether the pin names the item's latest shelf commit. A project whose status
+read failed, or whose status does not list the item, shows no state and
+gets no command.
 
 **This machine.** User-level skills and user or managed Claude plugins,
 with the selected entry on the right. A skill's detail lists the projects

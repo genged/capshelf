@@ -176,6 +176,54 @@ export function formatDay(iso: string): string {
   return iso;
 }
 
+/** The width under which the panes stack; frame.css uses the same. */
+const NARROW = "(max-width: 800px)";
+
+function focusQuiet(element: HTMLElement): void {
+  if (!element.hasAttribute("tabindex")) element.setAttribute("tabindex", "-1");
+  element.focus();
+}
+
+/**
+ * On a phone, a selection hides the list and shows the detail, and going
+ * back does the reverse. Focus would stay on a hidden element. This moves it
+ * to the detail's title on the way in and back to the row that opened it on
+ * the way out, or to the list's title when that row is gone.
+ */
+export function usePaneFocus(hasSelection: boolean): void {
+  const opener = useRef<HTMLElement | null>(null);
+  const previous = useRef(hasSelection);
+  useEffect(() => {
+    if (previous.current === hasSelection) return;
+    previous.current = hasSelection;
+    if (!window.matchMedia(NARROW).matches) return;
+    if (hasSelection) {
+      opener.current =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      const target = hasSelection
+        ? document.querySelector<HTMLElement>(".frame .detail .detail-title")
+        : opener.current?.isConnected
+          ? opener.current
+          : document.querySelector<HTMLElement>(".frame .list .list-title");
+      if (target) focusQuiet(target);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [hasSelection]);
+}
+
+/**
+ * `usePaneFocus` as an element, for views that know the selection only after
+ * an early return, where a hook cannot be called.
+ */
+export function PaneFocus({ hasSelection }: { hasSelection: boolean }): null {
+  usePaneFocus(hasSelection);
+  return null;
+}
+
 export function useRelativeTime(date: Date | null): string {
   const [, tick] = useState(0);
   useEffect(() => {

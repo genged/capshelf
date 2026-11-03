@@ -29,6 +29,7 @@ import {
   CopyButton,
   EmptyState,
   formatDay,
+  PaneFocus,
   Skeleton,
 } from "./common";
 import { highlightLine, languageForPath } from "./highlight";
@@ -82,11 +83,14 @@ export function ShelfView({
   route,
   navigate,
   statuses,
+  pending,
 }: {
   overview: UiOverview | null;
   route: ShelfRoute;
   navigate: (route: Route) => void;
   statuses: ReadonlyMap<string, UiProjectStatus>;
+  /** Projects on their first status read; see `usageState`. */
+  pending: ReadonlySet<string>;
 }): preact.JSX.Element {
   const repo = route.repo ?? overview?.shelves[0]?.dataRepo ?? null;
   // Every printed command repeats the session's --data override, as the
@@ -114,8 +118,10 @@ export function ShelfView({
 
   const rollouts = useMemo<Rollout[]>(
     () =>
-      shelf.state === "ready" ? shelfRollouts(shelf.data.items, statuses) : [],
-    [shelf, statuses],
+      shelf.state === "ready"
+        ? shelfRollouts(shelf.data.items, statuses, pending)
+        : [],
+    [shelf, statuses, pending],
   );
 
   if (overview === null) {
@@ -135,26 +141,53 @@ export function ShelfView({
     );
   }
 
+  // The phone's stand-in for the rail: the shelf, when there is more than
+  // one, and the view.
   const picker = (
-    <label class="rail-picker">
-      <Icon name="shelf" />
-      <span>Shelf</span>
-      <select
-        value={route.section}
-        onChange={(event) => {
-          const value = event.currentTarget.value;
-          const next = SECTIONS.find((section) => section.id === value);
-          if (next) go(next.id, null);
-        }}
-      >
-        {SECTIONS.map((section) => (
-          <option key={section.id} value={section.id}>
-            {section.label}
-            {section.id === "rollouts" ? ` (${rollouts.length})` : ""}
-          </option>
-        ))}
-      </select>
-    </label>
+    <div class="rail-picker-group">
+      {overview.shelves.length > 1 ? (
+        <label class="rail-picker">
+          <Icon name="shelf" />
+          <span>Shelf</span>
+          <select
+            value={repo}
+            onChange={(event) =>
+              navigate({
+                view: "shelf",
+                repo: event.currentTarget.value,
+                section: route.section,
+                ref: null,
+              })
+            }
+          >
+            {overview.shelves.map((entry) => (
+              <option key={entry.dataRepo} value={entry.dataRepo}>
+                {splitDisplayPath(entry.display).name}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+      <label class="rail-picker">
+        <Icon name={overview.shelves.length > 1 ? "folder" : "shelf"} />
+        <span>{overview.shelves.length > 1 ? "View" : "Shelf"}</span>
+        <select
+          value={route.section}
+          onChange={(event) => {
+            const value = event.currentTarget.value;
+            const next = SECTIONS.find((section) => section.id === value);
+            if (next) go(next.id, null);
+          }}
+        >
+          {SECTIONS.map((section) => (
+            <option key={section.id} value={section.id}>
+              {section.label}
+              {section.id === "rollouts" ? ` (${rollouts.length})` : ""}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
   );
 
   const rail = (
@@ -200,6 +233,16 @@ export function ShelfView({
   }
 
   const data = shelf.data;
+  // A phone shows the detail only for an entry that still exists. A rollout
+  // that an update finished, or an item a refresh removed, falls back to the
+  // list and its picker instead of an empty page.
+  const ref = route.ref;
+  const selectionExists =
+    ref !== null &&
+    (route.section === "rollouts"
+      ? rollouts.some((entry) => entry.ref === ref)
+      : data.items.some((item) => item.ref === ref) ||
+        data.bundles.some((bundle) => bundle.ref === ref));
   if (route.section === "coverage") {
     return (
       <div class="frame is-two">
@@ -208,6 +251,7 @@ export function ShelfView({
           picker={picker}
           shelf={data}
           statuses={statuses}
+          pending={pending}
           onItem={(ref) => go("items", ref)}
         />
       </div>
@@ -215,7 +259,8 @@ export function ShelfView({
   }
 
   return (
-    <div class={`frame${route.ref !== null ? " has-selection" : ""}`}>
+    <div class={`frame${selectionExists ? " has-selection" : ""}`}>
+      <PaneFocus hasSelection={selectionExists} />
       {rail}
       {route.section === "rollouts" ? (
         <>
@@ -262,6 +307,7 @@ export function ShelfView({
               repo={repo}
               itemRef={route.ref}
               statuses={statuses}
+              pending={pending}
               dataOverride={dataOverride}
               onSelect={(ref) => go("items", ref)}
               onBack={() => go("items", null)}
@@ -671,6 +717,7 @@ function ItemReader({
   repo,
   itemRef,
   statuses,
+  pending,
   dataOverride,
   onSelect,
   onBack,
@@ -678,6 +725,7 @@ function ItemReader({
   repo: string;
   itemRef: string;
   statuses: ReadonlyMap<string, UiProjectStatus>;
+  pending: ReadonlySet<string>;
   dataOverride: string | undefined;
   onSelect: (ref: string) => void;
   onBack: () => void;
@@ -728,7 +776,7 @@ function ItemReader({
   const isMarkdown = currentName?.toLowerCase().endsWith(".md") ?? false;
   const { metadata } = data;
   const usages = data.usage.map((usage) =>
-    usageState(data.ref, usage, statuses, data.source),
+    usageState(data.ref, usage, statuses, data.source, pending),
   );
   const addCommand = capshelfCommand(dataOverride, ["add", data.ref]);
   return (
@@ -1217,11 +1265,13 @@ function CoveragePane({
   picker,
   shelf,
   statuses,
+  pending,
   onItem,
 }: {
   picker: ComponentChildren;
   shelf: UiShelf;
   statuses: ReadonlyMap<string, UiProjectStatus>;
+  pending: ReadonlySet<string>;
   onItem: (ref: string) => void;
 }): preact.JSX.Element {
   const projects = shelf.projects.filter((project) => project.exists);
@@ -1229,6 +1279,7 @@ function CoveragePane({
     shelf.items,
     projects.map((project) => project.path),
     statuses,
+    pending,
   );
   return (
     <section class="list coverage" aria-label="Coverage">

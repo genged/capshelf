@@ -592,16 +592,41 @@ describe("shelf views", () => {
   });
 
   test("a project still loading falls back to the shelf flag", () => {
+    const loading = new Set([billing.project]);
     expect(
-      usageState("skills/quick-review", usage(billing), new Map()),
+      usageState(
+        "skills/quick-review",
+        usage(billing),
+        new Map(),
+        "data",
+        loading,
+      ),
     ).toMatchObject({ state: "behind", label: null, itemId: null });
     expect(
       usageState(
         "skills/quick-review",
         usage(billing, { current: null }),
         new Map(),
+        "data",
+        loading,
       ).state,
     ).toBe("unknown");
+  });
+
+  test("a failed read or a missing row stays unknown, with no rollout", () => {
+    // Not loading and not read: a failed status read.
+    expect(
+      usageState("skills/quick-review", usage(billing), new Map()).state,
+    ).toBe("unknown");
+    // Read, but the status leaves the item out, as for a name skills.sh owns.
+    const without = status("~/code/owned", [item("skills/other", "ok")]);
+    const read = new Map([[without.project, without]]);
+    expect(usageState("skills/quick-review", usage(without), read).state).toBe(
+      "unknown",
+    );
+    expect(
+      shelfRollouts([shelfItem("skills/quick-review", [usage(without)])], read),
+    ).toEqual([]);
   });
 
   test("a rollout lists items some project has not taken", () => {

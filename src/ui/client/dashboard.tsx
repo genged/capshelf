@@ -15,6 +15,7 @@ import type {
 import { homeDisplay } from "../shared/display";
 import {
   changedItemIds,
+  externalEntries,
   jumpCandidates,
   type JumpTarget,
   projectCounts,
@@ -24,7 +25,7 @@ import {
 } from "../shared/view-model";
 import { commandDataOverride } from "../../command-text";
 import { ApiError, apiGet, hasToken } from "./api";
-import { EmptyState, KeyHelp } from "./common";
+import { EmptyState, KeyHelp, PaneFocus } from "./common";
 import { FindingsView } from "./FindingsView";
 import { Icon } from "./icons";
 import { JumpDialog } from "./JumpDialog";
@@ -225,9 +226,18 @@ export function Dashboard(): preact.JSX.Element {
     () => new Map(statuses.map((status) => [status.project, status])),
     [statuses],
   );
-  const pending = [...loads.values()].filter(
-    (load) => load.data === null && load.state === "loading",
-  ).length;
+  // Projects on their first status read. Only for these does a shelf view
+  // let the shelf's pin flag stand in for the missing row.
+  const pendingProjects = useMemo(
+    () =>
+      new Set(
+        [...loads.entries()].flatMap(([path, load]) =>
+          load.data === null && load.state === "loading" ? [path] : [],
+        ),
+      ),
+    [loads],
+  );
+  const pending = pendingProjects.size;
   const jumpRows = useMemo(
     () =>
       jumpCandidates(
@@ -361,9 +371,34 @@ export function Dashboard(): preact.JSX.Element {
       onFindings={openFindings}
     />
   );
+  // A phone shows the detail only for an entry that still exists. A finding
+  // that an update resolved, or an item that a refresh removed, falls back
+  // to the list instead of an empty page with no way back.
+  const routedItem =
+    route.view === "status" || route.view === "findings" ? route.item : null;
+  const routedProject =
+    route.view === "findings"
+      ? route.project
+      : route.view === "status"
+        ? selectedPath
+        : null;
+  // The project view still renders a failed refresh's old data, so it
+  // resolves against the load. All findings reads current statuses only.
+  const routedStatus =
+    routedProject === null
+      ? undefined
+      : route.view === "status"
+        ? (loads.get(routedProject)?.data ?? undefined)
+        : statusByProject.get(routedProject);
   const hasSelection =
-    (route.view === "status" || route.view === "findings") &&
-    route.item !== null;
+    routedItem !== null &&
+    routedStatus !== undefined &&
+    (route.view === "findings"
+      ? routedStatus.items.some(
+          (entry) => entry.id === routedItem && entry.attention,
+        )
+      : routedStatus.items.some((entry) => entry.id === routedItem) ||
+        externalEntries(routedStatus).some((entry) => entry.id === routedItem));
 
   return (
     <div class="app">
@@ -415,6 +450,7 @@ export function Dashboard(): preact.JSX.Element {
           route={route}
           navigate={navigate}
           statuses={statusByProject}
+          pending={pendingProjects}
         />
       ) : overview !== null && projects.length === 0 ? (
         <main class="page-message">
@@ -430,6 +466,7 @@ export function Dashboard(): preact.JSX.Element {
         </main>
       ) : (
         <div class={`frame${hasSelection ? " has-selection" : ""}`}>
+          <PaneFocus hasSelection={hasSelection} />
           <ProjectRail
             entries={treeEntries}
             selectedPath={inFindings ? null : selectedPath}

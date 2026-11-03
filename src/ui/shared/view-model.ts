@@ -513,6 +513,13 @@ export function usageState(
   statuses: ReadonlyMap<string, UiProjectStatus>,
   /** The shelf item's source: a bundled item joins the system row. */
   source: UiShelfItem["source"] = "data",
+  /**
+   * Projects whose first status read is still running. Only for them does
+   * the shelf flag stand in for the row. A failed read, or a status that
+   * leaves the item out (a name skills.sh owns, for one), stays unknown, so
+   * the views show no state and no command the CLI did not compute.
+   */
+  pending: ReadonlySet<string> = new Set(),
 ): ProjectUsage {
   const name = splitDisplayPath(usage.display).name;
   const row = statuses
@@ -530,15 +537,18 @@ export function usageState(
     pinCurrent: usage.current,
   };
   if (!row) {
+    const loading = pending.has(usage.project);
     return {
       ...base,
-      state: usage.keptLocal
-        ? "kept"
-        : usage.current === true
-          ? "current"
-          : usage.current === false
-            ? "behind"
-            : "unknown",
+      state: !loading
+        ? "unknown"
+        : usage.keptLocal
+          ? "kept"
+          : usage.current === true
+            ? "current"
+            : usage.current === false
+              ? "behind"
+              : "unknown",
       label: null,
       rowState: null,
       itemId: null,
@@ -596,12 +606,13 @@ export function isBehind(usage: ProjectUsage): boolean {
 export function shelfRollouts(
   items: readonly UiShelfItem[],
   statuses: ReadonlyMap<string, UiProjectStatus>,
+  pending: ReadonlySet<string> = new Set(),
 ): Rollout[] {
   const rollouts: Rollout[] = [];
   for (const item of items) {
     if (item.source !== "data") continue;
     const projects = item.usage.map((usage) =>
-      usageState(item.ref, usage, statuses),
+      usageState(item.ref, usage, statuses, "data", pending),
     );
     const behind = projects.filter(isBehind).length;
     if (behind === 0) continue;
@@ -638,6 +649,7 @@ export function shelfCoverage(
   items: readonly UiShelfItem[],
   projects: readonly string[],
   statuses: ReadonlyMap<string, UiProjectStatus>,
+  pending: ReadonlySet<string> = new Set(),
 ): CoverageRow[] {
   return items
     .filter((item) => item.source === "data")
@@ -646,7 +658,9 @@ export function shelfCoverage(
         const usages = item.usage.filter((usage) => usage.project === project);
         const chosen =
           usages.find((usage) => usage.scope === "project") ?? usages[0];
-        return chosen ? usageState(item.ref, chosen, statuses) : null;
+        return chosen
+          ? usageState(item.ref, chosen, statuses, "data", pending)
+          : null;
       });
       return {
         ref: item.ref,

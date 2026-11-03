@@ -61,6 +61,14 @@ function PrimaryCopy({ action }: { action: UiAction }): preact.JSX.Element {
     if (timer.current !== null) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => setState("idle"), 1600);
   };
+  // The reset timer outlives renders. Only an unmount clears it, or the
+  // render that "Copied" causes would cancel its own reset.
+  useEffect(
+    () => () => {
+      if (timer.current !== null) window.clearTimeout(timer.current);
+    },
+    [],
+  );
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (event.key !== "c" || event.metaKey || event.ctrlKey || event.altKey)
@@ -79,10 +87,7 @@ function PrimaryCopy({ action }: { action: UiAction }): preact.JSX.Element {
       void copy();
     };
     window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      if (timer.current !== null) window.clearTimeout(timer.current);
-    };
+    return () => window.removeEventListener("keydown", onKey);
   });
   return (
     <button

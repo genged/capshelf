@@ -34,7 +34,9 @@ export function JumpDialog({
   onClose: () => void;
 }): preact.JSX.Element {
   const [query, setQuery] = useState("");
-  const [active, setActive] = useState(0);
+  // The active row is held by its key, not its index: shelf rows arrive
+  // after the dialog opens, and an index would then point at another row.
+  const [activeKey, setActiveKey] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -51,7 +53,8 @@ export function JumpDialog({
     })).filter((section) => section.entries.length > 0);
   }, [rows, query]);
   const flat = shown.flatMap((section) => section.entries);
-  const current = flat[Math.min(active, flat.length - 1)] ?? null;
+  const current =
+    flat.find((entry) => entry.row.key === activeKey) ?? flat[0] ?? null;
 
   // The dialog is modal: focus moves in on open and returns to the opener on
   // close, as the diff dialog does.
@@ -68,7 +71,7 @@ export function JumpDialog({
     };
   }, []);
 
-  useEffect(() => setActive(0), [query]);
+  useEffect(() => setActiveKey(null), [query]);
 
   const onKeyDown = async (event: KeyboardEvent): Promise<void> => {
     if (event.key === "Escape") {
@@ -82,9 +85,10 @@ export function JumpDialog({
     } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       const step = event.key === "ArrowDown" ? 1 : -1;
-      setActive((index) =>
-        flat.length === 0 ? 0 : (index + step + flat.length) % flat.length,
-      );
+      if (flat.length === 0) return;
+      const index = current === null ? 0 : flat.indexOf(current);
+      const next = flat[(index + step + flat.length) % flat.length];
+      setActiveKey(next?.row.key ?? null);
     } else if (event.key === "Enter" && current) {
       event.preventDefault();
       if (event.ctrlKey || event.metaKey) {
@@ -154,9 +158,9 @@ export function JumpDialog({
                       // Focus stays in the input; the listbox follows
                       // aria-activedescendant. -1 keeps rows out of Tab.
                       tabIndex={-1}
-                      aria-selected={index === active}
+                      aria-selected={entry === current}
                       class={`jump-row${tone}`}
-                      onMouseEnter={() => setActive(index)}
+                      onMouseEnter={() => setActiveKey(entry.row.key)}
                       onClick={() => onOpen(entry.row.target)}
                       onKeyDown={(event) => {
                         if (event.key === "Enter") onOpen(entry.row.target);
