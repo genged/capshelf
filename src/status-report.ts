@@ -330,6 +330,7 @@ export async function buildStatusReport(
               tree.repo,
               itemName,
               tree.commit,
+              memo,
             )
           : entryIdentity(entry);
     } else {

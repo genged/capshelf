@@ -14,9 +14,11 @@ import { hashNamedContents } from "./content-hash";
 import { PreconditionError } from "./errors";
 import { atomicWriteFile, lstatOrNull } from "./fs-utils";
 import {
+  catFileBlobs,
+  type GitTreeEntry,
   lastTouchingCommitForPaths,
-  objectTypeAtCommit,
-  showAtCommit,
+  literalPathspec,
+  lsTreeEntriesForPathspecs,
 } from "./git";
 import { itemOutputTargets } from "./installed";
 import { entryIdentity } from "./lock";
@@ -113,21 +115,82 @@ export function subagentTargetPresenceInPaths(
   }));
 }
 
+/**
+ * The blob id of each candidate target that is a blob at `commit`, keyed by
+ * repository-relative path, from one `ls-tree` over both candidate paths.
+ *
+ * A target is present only when its exact path is a blob. A tree or a gitlink
+ * at that path is absent, as `cat-file -t` reported before. A commit that Git
+ * cannot read gives no present targets. The memo keeps only a successful
+ * listing at a full commit id, so one `apply` or `update` lists a commit once
+ * across its preflight, revalidation, and write passes.
+ */
+async function subagentBlobIdsAtCommit(
+  dataRepo: string,
+  name: string,
+  commit: string,
+  memo?: GitReadMemo,
+): Promise<Map<string, string>> {
+  const candidatePaths = new Set(
+    subagentCandidates(name).map((candidate) => candidate.relPath),
+  );
+  let entries: GitTreeEntry[];
+  try {
+    entries = await lsTreeEntriesForPathspecs(
+      dataRepo,
+      commit,
+      [...candidatePaths].map(literalPathspec),
+      { memo },
+    );
+  } catch {
+    return new Map();
+  }
+  const blobIds = new Map<string, string>();
+  for (const entry of entries) {
+    if (entry.type === "blob" && candidatePaths.has(entry.path)) {
+      blobIds.set(entry.path, entry.object);
+    }
+  }
+  return blobIds;
+}
+
 async function subagentTargetPresenceAtCommit(
   dataRepo: string,
   name: string,
   commit: string,
+  memo?: GitReadMemo,
 ): Promise<SubagentTargetPresence[]> {
-  const presence: SubagentTargetPresence[] = [];
-  for (const candidate of subagentCandidates(name)) {
-    presence.push({
-      candidate,
-      present:
-        (await objectTypeAtCommit(dataRepo, commit, candidate.relPath)) ===
-        "blob",
-    });
+  const blobIds = await subagentBlobIdsAtCommit(dataRepo, name, commit, memo);
+  return subagentCandidates(name).map((candidate) => ({
+    candidate,
+    present: blobIds.has(candidate.relPath),
+  }));
+}
+
+/**
+ * The committed bytes of one subagent source. One `cat-file --batch` reads
+ * every present target of the commit, so with a memo the next target is a
+ * cache hit. `cat-file` applies no filter, so the bytes are exactly what the
+ * commit holds. Copy items read their bytes the same way.
+ */
+export async function subagentSourceAtCommit(
+  dataRepo: string,
+  name: string,
+  commit: string,
+  relPath: string,
+  memo?: GitReadMemo,
+): Promise<Buffer> {
+  const blobIds = await subagentBlobIdsAtCommit(dataRepo, name, commit, memo);
+  const blobId = blobIds.get(relPath);
+  if (blobId === undefined) {
+    throw new Error(`${relPath} is not a file at ${commit} in ${dataRepo}`);
   }
-  return presence;
+  const blobs = await catFileBlobs(dataRepo, blobIds.values(), memo);
+  const content = blobs.get(blobId);
+  if (content === undefined) {
+    throw new Error(`git cat-file did not return ${relPath} at ${commit}`);
+  }
+  return content;
 }
 
 function sourcesForPresentTargets(
@@ -168,11 +231,12 @@ export async function subagentSourcesAtCommit(
   dataRepo: string,
   name: string,
   commit: string,
+  memo?: GitReadMemo,
 ): Promise<SubagentSource[]> {
   const sources = sourcesForPresentTargets(
     project,
     name,
-    await subagentTargetPresenceAtCommit(dataRepo, name, commit),
+    await subagentTargetPresenceAtCommit(dataRepo, name, commit, memo),
   );
   if (sources.length === 0) {
     throw new Error(
@@ -234,7 +298,12 @@ export async function shaOfSubagentAtCommit(
     (await subagentSourcesAtCommit(project, dataRepo, name, commit)).map(
       async (source) => ({
         name: source.relPath,
-        content: await showAtCommit(dataRepo, commit, source.relPath),
+        content: await subagentSourceAtCommit(
+          dataRepo,
+          name,
+          commit,
+          source.relPath,
+        ),
       }),
     ),
   );
@@ -257,6 +326,7 @@ export async function shaOfInstalledSubagent(
   dataRepo: string,
   name: string,
   commit: string,
+  memo?: GitReadMemo,
 ): Promise<string | null> {
   const entries: Array<{ name: string; content: Uint8Array }> = [];
   for (const source of await subagentSourcesAtCommit(
@@ -264,6 +334,7 @@ export async function shaOfInstalledSubagent(
     dataRepo,
     name,
     commit,
+    memo,
   )) {
     const stat = lstatOrNull(source.outputPath);
     if (!stat?.isFile() || stat.isSymbolicLink()) return null;
@@ -296,6 +367,8 @@ export interface MaterializeSubagentOptions {
   entry: DataLockEntry;
   previousEntry?: DataLockEntry;
   dryRun?: boolean;
+  /** The calling command's memo for reads at a full commit id. */
+  memo?: GitReadMemo;
   hooks?: {
     beforeReplace?: (
       source: SubagentSource,
@@ -360,6 +433,7 @@ export async function materializeSubagent(
     options.dataRepo,
     options.name,
     options.entry.sourceCommit,
+    options.memo,
   );
   // PIN-8: the previous commit only names which targets capshelf already owns,
   // so an unresolvable previous pin degrades to the desired target set instead
@@ -373,6 +447,7 @@ export async function materializeSubagent(
         options.dataRepo,
         options.name,
         options.previousEntry.sourceCommit,
+        options.memo,
       ).catch(() => desired)
     : desired;
   const managedTargets = new Set(previous.map((source) => source.target));
@@ -381,10 +456,12 @@ export async function materializeSubagent(
   const warnings: string[] = [];
 
   for (const source of desired) {
-    const content = await showAtCommit(
+    const content = await subagentSourceAtCommit(
       options.dataRepo,
+      options.name,
       options.entry.sourceCommit,
       source.relPath,
+      options.memo,
     );
     warnings.push(
       ...validateSubagentSource(
@@ -413,6 +490,7 @@ export async function materializeSubagent(
     options.entry,
     desired,
     contents,
+    options.memo,
   );
 
   const stale = previous.filter((source) => !desiredTargets.has(source.target));
@@ -480,6 +558,7 @@ export async function materializeSubagent(
             options.dataRepo,
             options.name,
             options.entry.sourceCommit,
+            options.memo,
           );
     if (installedSha !== expected) {
       throw new Error(
@@ -519,6 +598,7 @@ async function assertSubagentSourceMatchesEntry(
   entry: DataLockEntry,
   desired: SubagentSource[],
   contents: Map<SubagentTarget, Buffer>,
+  memo?: GitReadMemo,
 ): Promise<void> {
   if (entry.sourcePinDigest !== undefined) {
     const digest = sourcePinDigest(
@@ -530,6 +610,7 @@ async function assertSubagentSourceMatchesEntry(
           commit: entry.sourceCommit,
         }),
         "subagents",
+        memo,
       ),
     );
     if (digest === entry.sourcePinDigest) return;
@@ -569,13 +650,14 @@ export async function subagentTargetStatusAtCommit(
     dataRepo,
     name,
     commit,
+    memo,
   )) {
     const stat = lstatOrNull(source.outputPath);
     let state: SubagentTargetStatus["state"] = "missing";
     if (stat?.isFile() && !stat.isSymbolicLink()) {
       const [installed, expected] = await Promise.all([
         readFile(source.outputPath),
-        showAtCommit(dataRepo, commit, source.relPath, memo),
+        subagentSourceAtCommit(dataRepo, name, commit, source.relPath, memo),
       ]);
       state = installed.equals(expected) ? "ok" : "drifted";
     } else if (stat !== null) {

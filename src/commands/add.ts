@@ -966,6 +966,7 @@ export async function installDataItem(
       name: item.name,
       entry,
       ...(previousEntry?.source === "data" && { previousEntry }),
+      memo,
     });
     for (const warning of result.warnings) console.error(`⚠ ${warning}`);
   } else {
