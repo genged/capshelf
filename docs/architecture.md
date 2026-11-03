@@ -691,9 +691,12 @@ the live `HEAD`. The history from a fixed commit cannot change, so the memo
 keeps the answer of that walk. The next pass reads `HEAD` again, so a commit
 made while the consent prompt is open still changes the revalidation plan.
 
-The status report adds one narrower reuse of its own: it merges each shared
-fragment output once per report rather than once per item. A failed repository
-observation leaves its slot empty, so later rows retry it.
+The status report adds narrower reuse of its own. It merges each shared
+fragment output once per report rather than once per item. It runs one
+`git status` of the data repo per report and answers the dirty check of each
+row from it. It reads the committed sidecars of all rows with one listing at
+the observed `HEAD`. A failed repository observation leaves its slot empty, so
+later rows retry it.
 
 ### The object model
 
