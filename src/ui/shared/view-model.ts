@@ -8,20 +8,14 @@ import type {
   ExternalUserSkill,
 } from "../../external";
 import type { ItemKind } from "../../master";
-import type { UiItem, UiProjectStatus } from "./api-types";
+import type { State } from "../../status-core";
+import type {
+  UiItem,
+  UiItemUsage,
+  UiProjectStatus,
+  UiShelfItem,
+} from "./api-types";
 import { KIND_ORDER, kindLabel } from "./kind-label";
-
-export type FilterTab = "all" | "attention" | "ok";
-
-/** What a kind chip can select: a kind, or one of the two external groups. */
-export type ReviewKind = ItemKind | "claude-plugins" | "user-skills";
-
-export interface KindChip<Id extends string> {
-  id: Id;
-  label: string;
-  /** The rows the other filters leave for this kind. */
-  count: number;
-}
 
 export interface ProjectCounts {
   items: number;
@@ -76,62 +70,6 @@ export function groupByKind<Row extends { kind: ItemKind }>(
     }
   }
   return groups;
-}
-
-/**
- * The kind groups a project shows. A kind with a finding comes first, as the
- * tree orders projects; ties keep `KIND_ORDER`. Rows follow `sortItems`.
- */
-export function groupItems(items: readonly UiItem[]): KindGroup<UiItem>[] {
-  const findings = (rows: readonly UiItem[]): number =>
-    rows.filter((row) => row.attention).length;
-  return groupByKind(sortItems(items)).sort(
-    (a, b) => findings(b.rows) - findings(a.rows),
-  );
-}
-
-export function matchesQuery(text: string, query: string): boolean {
-  const needle = query.trim().toLowerCase();
-  if (needle.length === 0) return true;
-  return text.toLowerCase().includes(needle);
-}
-
-export function inTab(item: UiItem, tab: FilterTab): boolean {
-  return tab === "all" || (tab === "attention") === item.attention;
-}
-
-export function filterItems(
-  items: readonly UiItem[],
-  tab: FilterTab,
-  query: string,
-  kind: ItemKind | null = null,
-): UiItem[] {
-  return sortItems(items).filter(
-    (item) =>
-      (kind === null || item.kind === kind) &&
-      inTab(item, tab) &&
-      matchesQuery(item.ref, query),
-  );
-}
-
-/** `5 items · 3 up to date · 1 update available · 1 drifted`. */
-export function summaryLine(items: readonly UiItem[]): string {
-  const parts: string[] = [
-    `${items.length} ${items.length === 1 ? "item" : "items"}`,
-  ];
-  const counts = new Map<string, number>();
-  for (const item of sortItems(items)) {
-    const label =
-      item.stateLabel.charAt(0).toLowerCase() + item.stateLabel.slice(1);
-    counts.set(label, (counts.get(label) ?? 0) + 1);
-  }
-  const ok = counts.get("up to date");
-  if (ok !== undefined) parts.push(`${ok} up to date`);
-  for (const [label, count] of counts) {
-    if (label === "up to date") continue;
-    parts.push(`${count} ${label}`);
-  }
-  return parts.join(" · ");
 }
 
 /**
@@ -510,4 +448,172 @@ export function externalEntries(
   return entries.sort(
     (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
   );
+}
+
+/**
+ * Where one project stands on one shelf item. `behind-edited` is behind the
+ * shelf with a local edit, which no group update can take; `other` is a
+ * finding that is not about the shelf, such as a plain local edit.
+ */
+export type UsageState =
+  | "current"
+  | "behind"
+  | "behind-edited"
+  | "kept"
+  | "other"
+  | "unknown";
+
+export interface ProjectUsage {
+  project: string;
+  name: string;
+  scope: "project" | "local";
+  state: UsageState;
+  /** The status label when the project's row is read, else null. */
+  label: string | null;
+  /** The status row's state, so the badge draws the same icon as the list. */
+  rowState: State | null;
+  /** The project's item id, for a link into its detail. */
+  itemId: string | null;
+}
+
+/**
+ * Join one usage entry with the project's status row. The row is the CLI's
+ * own state, so it wins. While the project is still loading, the shelf's
+ * `current` flag stands in: it only knows whether the pin names the item's
+ * latest shelf commit (src/ui/api.ts, usage `current`).
+ */
+export function usageState(
+  ref: string,
+  usage: UiItemUsage,
+  statuses: ReadonlyMap<string, UiProjectStatus>,
+): ProjectUsage {
+  const name = splitDisplayPath(usage.display).name;
+  const row = statuses
+    .get(usage.project)
+    ?.items.find(
+      (entry) =>
+        entry.ref === ref &&
+        entry.scope === usage.scope &&
+        entry.source === "data",
+    );
+  const base = { project: usage.project, name, scope: usage.scope };
+  if (!row) {
+    return {
+      ...base,
+      state: usage.keptLocal
+        ? "kept"
+        : usage.current === true
+          ? "current"
+          : usage.current === false
+            ? "behind"
+            : "unknown",
+      label: null,
+      rowState: null,
+      itemId: null,
+    };
+  }
+  const state: UsageState =
+    row.row.state === "update_available"
+      ? "behind"
+      : row.row.state === "drifted_and_update"
+        ? "behind-edited"
+        : row.row.state === "kept-local"
+          ? "kept"
+          : row.attention
+            ? "other"
+            : "current";
+  return {
+    ...base,
+    state,
+    label: row.stateLabel,
+    rowState: row.row.state,
+    itemId: row.id,
+  };
+}
+
+export interface Rollout {
+  ref: string;
+  name: string;
+  kind: ItemKind;
+  /** Last change on the shelf, when the server found one. */
+  commit: string | null;
+  subject: string | null;
+  projects: ProjectUsage[];
+  behind: number;
+}
+
+/**
+ * The shelf items that some bound projects have not taken. Each project
+ * keeps its pin until it updates, so a rollout lists who is behind, who has
+ * a local edit in the way, and who is already current.
+ */
+export function shelfRollouts(
+  items: readonly UiShelfItem[],
+  statuses: ReadonlyMap<string, UiProjectStatus>,
+): Rollout[] {
+  const rollouts: Rollout[] = [];
+  for (const item of items) {
+    if (item.source !== "data") continue;
+    const projects = item.usage.map((usage) =>
+      usageState(item.ref, usage, statuses),
+    );
+    const behind = projects.filter(
+      (entry) => entry.state === "behind" || entry.state === "behind-edited",
+    ).length;
+    if (behind === 0) continue;
+    rollouts.push({
+      ref: item.ref,
+      name: item.name,
+      kind: item.kind,
+      commit: item.lastCommit?.short ?? null,
+      subject: item.lastCommit?.subject ?? null,
+      projects,
+      behind,
+    });
+  }
+  return rollouts.sort(
+    (a, b) => b.behind - a.behind || a.ref.localeCompare(b.ref),
+  );
+}
+
+export interface CoverageRow {
+  ref: string;
+  name: string;
+  kind: ItemKind;
+  /** One cell per column project; null when the project lacks the item. */
+  cells: Array<ProjectUsage | null>;
+  used: number;
+}
+
+/**
+ * Shelf items by bound projects. A row with no usage is an item no project
+ * on this machine holds. Project-scope usage wins over a local one in a
+ * cell, because it is the one the project commits.
+ */
+export function shelfCoverage(
+  items: readonly UiShelfItem[],
+  projects: readonly string[],
+  statuses: ReadonlyMap<string, UiProjectStatus>,
+): CoverageRow[] {
+  return items
+    .filter((item) => item.source === "data")
+    .map((item) => {
+      const cells = projects.map((project) => {
+        const usages = item.usage.filter((usage) => usage.project === project);
+        const chosen =
+          usages.find((usage) => usage.scope === "project") ?? usages[0];
+        return chosen ? usageState(item.ref, chosen, statuses) : null;
+      });
+      return {
+        ref: item.ref,
+        name: item.name,
+        kind: item.kind,
+        cells,
+        used: cells.filter((cell) => cell !== null).length,
+      };
+    })
+    .sort((a, b) => {
+      const kinds = KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind);
+      return kinds !== 0 ? kinds : a.name.localeCompare(b.name);
+    });
 }

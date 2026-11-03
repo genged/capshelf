@@ -122,6 +122,11 @@
   grid-template-columns: var(--rail-width) minmax(0, 1fr);
 }
 
+/* This machine has no rail: a list and its detail. */
+.frame.is-machine {
+  grid-template-columns: var(--list-width) minmax(0, 1fr);
+}
+
 .frame > * {
   min-width: 0;
   min-height: 0;
@@ -866,6 +871,188 @@
   color: var(--ink-2);
 }
 
+.state-badge {
+  font-weight: 500;
+}
+
+.state-badge.tone-attention .icon {
+  color: var(--orange);
+}
+
+.state-badge.tone-ok .icon {
+  color: var(--green);
+}
+
+/* ---------- shelf ---------- */
+
+.rail-commits {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 2px 10px;
+  font-size: 12.5px;
+  list-style: none;
+}
+
+.rail-commits .mono {
+  color: var(--ink-3);
+}
+
+.rail-commits .rail-row-parent {
+  display: block;
+}
+
+.list-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  margin-top: 10px;
+  padding: 0 10px;
+  color: var(--ink-3);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.list-search:focus-within {
+  border-color: var(--green);
+  outline: 2px solid var(--green-soft);
+}
+
+.list-search input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+.list-row.tone-shelf > .icon {
+  color: var(--ink-3);
+}
+
+.list-row.tone-shelf .list-row-state {
+  color: var(--ink-2);
+}
+
+.list-row-name mark {
+  color: inherit;
+  background: none;
+  text-decoration: underline;
+  text-decoration-color: var(--green);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
+.list-registry {
+  padding: 0 20px;
+}
+
+.detail-lead {
+  margin-top: 6px;
+  color: var(--ink-2);
+}
+
+.recommended.is-plain {
+  border-color: var(--line);
+  box-shadow: none;
+}
+
+.table {
+  width: 100%;
+  font-size: 13px;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+}
+
+.table th {
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  text-align: left;
+  background: var(--bg-rail);
+  border-bottom: 1px solid var(--line);
+}
+
+.table td,
+.table tbody th {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.table tbody th {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  text-align: left;
+  background: transparent;
+}
+
+.table tr:last-child td,
+.table tr:last-child th {
+  border-bottom: 0;
+}
+
+.table a {
+  color: var(--green-ink);
+}
+
+/* Coverage spans the list and detail panes. */
+.list.coverage {
+  border-right: 0;
+}
+
+.coverage-scroll {
+  overflow-x: auto;
+  padding: 16px 20px 24px;
+}
+
+.coverage-table {
+  width: auto;
+  min-width: 100%;
+}
+
+.coverage-table thead th:not(:first-child) {
+  text-align: center;
+  white-space: nowrap;
+}
+
+.coverage-table td,
+.coverage-table tbody th {
+  white-space: nowrap;
+}
+
+.coverage-table td {
+  text-align: center;
+}
+
+.coverage-table td:last-child {
+  text-align: right;
+}
+
+.coverage-cell {
+  text-decoration: none;
+}
+
+.coverage-cell .state-badge span {
+  font-size: 12.5px;
+}
+
+.coverage-none {
+  color: var(--line);
+}
+
+.coverage-table tr.is-unused th,
+.coverage-table tr.is-unused td {
+  background: var(--orange-soft);
+}
+
 /* ---------- jump ---------- */
 
 .jump-layer {
@@ -1039,7 +1226,8 @@
   }
 
   .frame,
-  .frame.is-two {
+  .frame.is-two,
+  .frame.is-machine {
     display: block;
     height: auto;
   }
@@ -1102,28 +1290,11 @@
     margin-top: 8px;
   }
 
-  .facts {
-    grid-template-columns: 1fr;
-    gap: 2px;
+  .coverage-scroll {
+    padding: 12px 16px 20px;
   }
 
-  .fact dt {
-    margin-top: 6px;
-  }
-
-  .shelf {
-    grid-template-columns: 1fr;
-  }
-
-  .shelf-list {
-    position: static;
-    height: auto;
-    max-height: 50vh;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .shelf-reader {
-    padding: 16px 12px 32px;
+  .table-note {
+    display: none;
   }
 }

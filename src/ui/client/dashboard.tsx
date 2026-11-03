@@ -41,7 +41,12 @@ function jumpRoute(target: JumpTarget): Route {
     case "project":
       return { view: "status", project: target.project, item: null };
     case "shelf":
-      return { view: "shelf", repo: target.repo, ref: target.ref };
+      return {
+        view: "shelf",
+        repo: target.repo,
+        section: "items",
+        ref: target.ref,
+      };
     case "machine":
       return { view: "machine" };
   }
@@ -206,6 +211,10 @@ export function Dashboard(): preact.JSX.Element {
     () => [...loads.values()].flatMap((load) => (load.data ? [load.data] : [])),
     [loads],
   );
+  const statusByProject = useMemo(
+    () => new Map(statuses.map((status) => [status.project, status])),
+    [statuses],
+  );
   const pending = [...loads.values()].filter(
     (load) => load.data === null && load.state === "loading",
   ).length;
@@ -349,7 +358,12 @@ export function Dashboard(): preact.JSX.Element {
           project: selectedPath,
           item: null,
         })}
-        shelfHref={routeHash({ view: "shelf", repo: shelfRepo, ref: null })}
+        shelfHref={routeHash({
+          view: "shelf",
+          repo: shelfRepo,
+          section: "items",
+          ref: null,
+        })}
         refreshing={refreshing}
         refreshedAt={refreshedAt}
         onRefresh={() => void refreshAll()}
@@ -375,7 +389,12 @@ export function Dashboard(): preact.JSX.Element {
       ) : route.view === "machine" ? (
         <MachineView overview={overview} loads={loads} />
       ) : route.view === "shelf" ? (
-        <ShelfView overview={overview} route={route} navigate={navigate} />
+        <ShelfView
+          overview={overview}
+          route={route}
+          navigate={navigate}
+          statuses={statusByProject}
+        />
       ) : overview !== null && projects.length === 0 ? (
         <main class="page-message">
           <EmptyState title="No projects yet">

@@ -2,7 +2,6 @@ import type { ComponentChildren } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { UiAction, UiNotice } from "../shared/api-types";
 import type { StateIconName } from "../shared/state-label";
-import type { KindChip } from "../shared/view-model";
 import { copyText } from "./copy";
 import { Icon } from "./icons";
 
@@ -130,47 +129,6 @@ export function StateBadge({
       <Icon name={icon} />
       <span>{label}</span>
     </span>
-  );
-}
-
-/**
- * One toggle per kind a list holds. The active chip clears on a second click.
- * A chip with no row is disabled, so a click cannot lead to an empty list.
- * Fewer than two kinds render nothing, because there is nothing to choose.
- */
-export function KindChips<Id extends string>({
-  label,
-  chips,
-  selected,
-  onSelect,
-}: {
-  label: string;
-  chips: KindChip<Id>[];
-  selected: Id | null;
-  onSelect: (id: Id | null) => void;
-}): preact.JSX.Element | null {
-  if (chips.length < 2) return null;
-  return (
-    <fieldset class="kind-chips">
-      <legend class="visually-hidden">{label}</legend>
-      {chips.map((chip) => {
-        const active = chip.id === selected;
-        return (
-          <button
-            key={chip.id}
-            type="button"
-            class={`kind-chip${active ? " is-active" : ""}${chip.count === 0 ? " is-empty" : ""}`}
-            aria-pressed={active}
-            disabled={chip.count === 0 && !active}
-            onClick={() => onSelect(active ? null : chip.id)}
-          >
-            <span>{chip.label}</span>
-            <span class="kind-chip-count">{chip.count}</span>
-            {active ? <Icon name="close" /> : null}
-          </button>
-        );
-      })}
-    </fieldset>
   );
 }
 

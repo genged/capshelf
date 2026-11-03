@@ -15,9 +15,31 @@ describe("hash routes", () => {
       project: "/home/u/code/app",
       item: "project/data/skills/quick-review",
     },
-    { view: "shelf", repo: "/home/u/shelf", ref: "skills/quick-review" },
+    {
+      view: "shelf",
+      repo: "/home/u/shelf",
+      section: "items",
+      ref: "skills/quick-review",
+    },
+    { view: "shelf", repo: "/home/u/shelf", section: "rollouts", ref: null },
+    {
+      view: "shelf",
+      repo: "/home/u/shelf",
+      section: "rollouts",
+      ref: "skills/quick-review",
+    },
+    { view: "shelf", repo: "/home/u/shelf", section: "coverage", ref: null },
     { view: "machine" },
   ];
+
+  test("an old shelf link without a section still opens the item", () => {
+    expect(parseRoute("#/shelf/%2Fs/skills%2Fx")).toEqual({
+      view: "shelf",
+      repo: "/s",
+      section: "items",
+      ref: "skills/x",
+    });
+  });
 
   test("every route survives a round trip through its hash", () => {
     for (const route of routes) {

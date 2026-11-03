@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import type { UiItem, UiProjectStatus } from "../src/ui/shared/api-types";
+import type {
+  UiItem,
+  UiItemUsage,
+  UiProjectStatus,
+  UiShelfItem,
+} from "../src/ui/shared/api-types";
 import { homeDisplay } from "../src/ui/shared/display";
 import {
   isKind,
@@ -17,23 +22,22 @@ import {
 import {
   changedItemIds,
   externalEntries,
-  filterItems,
   findingsAcrossProjects,
   groupByKind,
-  groupItems,
-  inTab,
   jumpCandidates,
   listGroups,
   projectCounts,
   shortCommit,
   shortDigest,
   sharedFindings,
+  shelfCoverage,
+  shelfRollouts,
   shortenDigests,
   sortItems,
   sortTree,
   splitDisplayPath,
   stateSentence,
-  summaryLine,
+  usageState,
 } from "../src/ui/shared/view-model";
 import { ITEM_KINDS, parseItemKind } from "../src/master";
 import type { State } from "../src/status-core";
@@ -102,38 +106,6 @@ describe("view model", () => {
     ]);
   });
 
-  test("filters by tab and by query", () => {
-    expect(
-      filterItems(items, "attention", "").map((entry) => entry.ref),
-    ).toEqual(["settings/base", "skills/alpha"]);
-    expect(filterItems(items, "ok", "").map((entry) => entry.ref)).toEqual([
-      "skills/beta",
-      "mcp/context7",
-      "skills/zeta",
-    ]);
-    expect(
-      filterItems(items, "all", "SKILLS/").map((entry) => entry.ref),
-    ).toEqual(["skills/alpha", "skills/beta", "skills/zeta"]);
-  });
-
-  test("filters by kind on top of the tab and the query", () => {
-    expect(
-      filterItems(items, "all", "", "skills").map((entry) => entry.ref),
-    ).toEqual(["skills/alpha", "skills/beta", "skills/zeta"]);
-    expect(
-      filterItems(items, "attention", "", "settings").map((entry) => entry.ref),
-    ).toEqual(["settings/base"]);
-    expect(filterItems(items, "attention", "", "mcp")).toEqual([]);
-    expect(
-      filterItems(items, "ok", "zeta", "skills").map((e) => e.ref),
-    ).toEqual(["skills/zeta"]);
-    const ok = item("skills/one", "ok");
-    expect(inTab(ok, "all")).toBe(true);
-    expect(inTab(ok, "ok")).toBe(true);
-    expect(inTab(ok, "attention")).toBe(false);
-    expect(inTab(item("skills/two", "drifted_local"), "attention")).toBe(true);
-  });
-
   test("groups rows by kind in the order ls prints, skipping empty kinds", () => {
     const groups = groupByKind([
       { kind: "mcp", ref: "mcp/b" },
@@ -153,39 +125,6 @@ describe("view model", () => {
     ]);
     expect(groups[2]?.rows.map((row) => row.ref)).toEqual(["mcp/b", "mcp/a"]);
     expect(groupByKind([])).toEqual([]);
-  });
-
-  test("puts a kind with a finding first, then keeps the ls order", () => {
-    const groups = groupItems(items);
-    expect(groups.map((group) => group.kind)).toEqual([
-      "skills",
-      "settings",
-      "mcp",
-    ]);
-    expect(groups[0]?.rows.map((row) => row.ref)).toEqual([
-      "skills/alpha",
-      "skills/beta",
-      "skills/zeta",
-    ]);
-    const settingsOnly = groupItems([
-      item("skills/zeta", "ok"),
-      item("mcp/context7", "ok"),
-      item("settings/base", "drifted_local"),
-    ]);
-    expect(settingsOnly.map((group) => group.kind)).toEqual([
-      "settings",
-      "skills",
-      "mcp",
-    ]);
-  });
-
-  test("writes the summary line the way the comp reads", () => {
-    expect(summaryLine(items)).toBe(
-      "5 items · 2 up to date · 1 drifted · 1 update available · 1 kept local",
-    );
-    expect(summaryLine([item("skills/one", "ok")])).toBe(
-      "1 item · 1 up to date",
-    );
   });
 
   test("reports which rows moved between refreshes", () => {
@@ -539,5 +478,131 @@ describe("across projects", () => {
       [],
     );
     expect(rows.filter((row) => row.group === "This machine")).toHaveLength(1);
+  });
+});
+
+function usage(
+  project: UiProjectStatus,
+  overrides: Partial<UiItemUsage> = {},
+): UiItemUsage {
+  return {
+    project: project.project,
+    display: project.display,
+    scope: "project",
+    sourceCommit: "1".repeat(40),
+    sourceCommitShort: "1111111",
+    cliVersion: null,
+    lockedSha: "a".repeat(64),
+    current: false,
+    keptLocal: false,
+    ...overrides,
+  };
+}
+
+function shelfItem(
+  ref: string,
+  usages: UiItemUsage[],
+  overrides: Partial<UiShelfItem> = {},
+): UiShelfItem {
+  const [kindText = "", name = ""] = ref.split("/");
+  return {
+    ref,
+    kind: parseItemKind(kindText),
+    name,
+    source: "data",
+    tags: [],
+    lastCommit: null,
+    usage: usages,
+    ...overrides,
+  };
+}
+
+describe("shelf views", () => {
+  const billing = status("~/code/billing-api", [
+    item("skills/quick-review", "update_available"),
+    item("skills/notes", "kept-local"),
+  ]);
+  const checkout = status("~/code/checkout-web", [
+    item("skills/quick-review", "drifted_and_update"),
+  ]);
+  const infra = status("~/code/infra-tools", [
+    item("skills/quick-review", "ok"),
+  ]);
+  const read = new Map([
+    [billing.project, billing],
+    [checkout.project, checkout],
+    [infra.project, infra],
+  ]);
+
+  test("the project's status row decides the state, not the shelf flag", () => {
+    // The shelf says current, the status row says behind: the row wins.
+    expect(
+      usageState(
+        "skills/quick-review",
+        usage(billing, { current: true }),
+        read,
+      ),
+    ).toMatchObject({
+      state: "behind",
+      label: "Update available",
+      itemId: "project/data/skills/quick-review",
+    });
+    expect(usageState("skills/quick-review", usage(checkout), read).state).toBe(
+      "behind-edited",
+    );
+  });
+
+  test("a project still loading falls back to the shelf flag", () => {
+    expect(
+      usageState("skills/quick-review", usage(billing), new Map()),
+    ).toMatchObject({ state: "behind", label: null, itemId: null });
+    expect(
+      usageState(
+        "skills/quick-review",
+        usage(billing, { current: null }),
+        new Map(),
+      ).state,
+    ).toBe("unknown");
+  });
+
+  test("a rollout lists items some project has not taken", () => {
+    const items = [
+      shelfItem("skills/quick-review", [
+        usage(billing),
+        usage(checkout),
+        usage(infra, { current: true }),
+      ]),
+      shelfItem("skills/notes", [usage(billing, { keptLocal: true })]),
+    ];
+    const rollouts = shelfRollouts(items, read);
+    expect(rollouts).toHaveLength(1);
+    expect(rollouts[0]?.behind).toBe(2);
+    expect(rollouts[0]?.projects.map((entry) => entry.state)).toEqual([
+      "behind",
+      "behind-edited",
+      "current",
+    ]);
+  });
+
+  test("coverage has one cell per project and marks unused items", () => {
+    const rows = shelfCoverage(
+      [
+        shelfItem("skills/quick-review", [usage(billing), usage(infra)]),
+        shelfItem("skills/unused", []),
+        shelfItem("skills/system-one", [], { source: "system" }),
+      ],
+      [billing.project, checkout.project, infra.project],
+      read,
+    );
+    expect(rows.map((row) => row.ref)).toEqual([
+      "skills/quick-review",
+      "skills/unused",
+    ]);
+    expect(rows[0]?.cells.map((cell) => cell?.state ?? null)).toEqual([
+      "behind",
+      null,
+      "current",
+    ]);
+    expect(rows[1]?.used).toBe(0);
   });
 });
