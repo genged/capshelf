@@ -39,6 +39,7 @@
   color: var(--ink-2);
   font-weight: 500;
   text-decoration: none;
+  white-space: nowrap;
 }
 
 .nav-link:hover {
@@ -353,6 +354,13 @@
 .list-group-head a {
   margin-left: auto;
   font-weight: 500;
+  color: var(--green-ink);
+  text-decoration: none;
+}
+
+.list-group-head a:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 
 .list-rows {
@@ -858,6 +866,110 @@
   color: var(--ink-2);
 }
 
+/* ---------- jump ---------- */
+
+.jump-layer {
+  align-items: flex-start;
+  padding-top: 96px;
+}
+
+.jump-dialog {
+  width: min(640px, 100%);
+  max-height: calc(100vh - 140px);
+  border-color: var(--line);
+  border-radius: 12px;
+}
+
+.jump-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  color: var(--ink-3);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.jump-input input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 16px;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+.jump-results {
+  overflow: auto;
+  padding: 4px 6px 8px;
+}
+
+.jump-group {
+  padding: 10px 10px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+.jump-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+}
+
+.jump-row[aria-selected="true"] {
+  background: var(--green-soft);
+  box-shadow: inset 0 0 0 1px var(--green-line);
+}
+
+.jump-row-name {
+  font-weight: 500;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.jump-row-name mark {
+  color: inherit;
+  background: none;
+  text-decoration: underline;
+  text-decoration-color: var(--green);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+
+.jump-row-detail {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.jump-row.tone-attention .jump-row-detail {
+  color: var(--orange-ink);
+}
+
+.jump-empty {
+  padding: 12px 10px;
+  color: var(--ink-2);
+}
+
+.jump-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  padding: 10px 16px;
+  font-size: 12px;
+  color: var(--ink-2);
+  background: var(--bg-rail);
+  border-top: 1px solid var(--line-soft);
+}
+
 /* The project picker that stands in for the rail on a phone. */
 .rail-picker {
   display: none;
@@ -908,7 +1020,8 @@
   }
 
   .brand-name,
-  .ro-badge {
+  .ro-badge,
+  .help-toggle {
     display: none;
   }
 

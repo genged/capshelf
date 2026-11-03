@@ -495,7 +495,7 @@ function ShelfRowButton({
   );
 }
 
-function HighlightedRef({
+export function HighlightedRef({
   text,
   positions,
 }: {

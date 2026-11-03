@@ -5,8 +5,6 @@ import type {
   UiProjectStatus,
   UiRegisteredProject,
 } from "../shared/api-types";
-import { kindNoun } from "../shared/kind-label";
-import { itemIcon } from "../shared/state-label";
 import {
   type ExternalEntry,
   externalEntries,
@@ -24,6 +22,7 @@ import {
 import type { ProjectLoad } from "./dashboard";
 import { ExternalDetail, externalRowText } from "./ExternalRow";
 import { ActionBar, DetailHead, ItemDetail } from "./ItemDetail";
+import { ItemRow, onListKeyDown } from "./ItemRow";
 import { Icon } from "./icons";
 
 export type ListFilter = "attention" | "all";
@@ -171,23 +170,6 @@ function ItemList({
   const groups = listGroups(shown);
   const warnings = data.notices.filter((notice) => notice.level === "warn");
 
-  // Arrow keys move between rows in document order, across groups.
-  const onKeyDown = (event: KeyboardEvent): void => {
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-    const current = event.currentTarget;
-    if (!(current instanceof HTMLElement)) return;
-    const rows = Array.from(
-      current.closest(".list")?.querySelectorAll<HTMLElement>(".list-row") ??
-        [],
-    );
-    const next =
-      rows[rows.indexOf(current) + (event.key === "ArrowDown" ? 1 : -1)];
-    if (!next) return;
-    event.preventDefault();
-    next.focus();
-    next.click();
-  };
-
   return (
     <section class="list" aria-label={`${name} items`}>
       {picker}
@@ -260,39 +242,16 @@ function ItemList({
         <section key={group.id} aria-label={group.label}>
           <h2 class="list-group-head">{group.label}</h2>
           <ul class="list-rows">
-            {group.rows.map((entry) => {
-              const tone = entry.attention ? "attention" : entry.tone;
-              return (
-                <li key={entry.id}>
-                  <button
-                    type="button"
-                    class={`list-row tone-${tone}${changed.has(entry.id) ? " is-changed" : ""}`}
-                    aria-current={selected === entry.id ? "true" : undefined}
-                    onClick={() => onSelect(entry.id)}
-                    onKeyDown={onKeyDown}
-                    title={`${entry.ref} · ${entry.stateLabel}`}
-                  >
-                    <Icon
-                      name={itemIcon(entry.row.state, entry.attention)}
-                      label={entry.stateLabel}
-                    />
-                    <span class="list-row-name">
-                      {entry.name}
-                      <span class="list-row-kind">
-                        {entry.source === "system" ? "system " : ""}
-                        {kindNoun(entry.kind)}
-                        {entry.scope === "local" ? ", local" : ""}
-                      </span>
-                    </span>
-                    <span class="list-row-state">
-                      {group.id === "ok" && !entry.attention
-                        ? ""
-                        : entry.stateLabel}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
+            {group.rows.map((entry) => (
+              <ItemRow
+                key={entry.id}
+                item={entry}
+                selected={selected === entry.id}
+                changed={changed.has(entry.id)}
+                showState={group.id !== "ok" || entry.attention}
+                onSelect={() => onSelect(entry.id)}
+              />
+            ))}
           </ul>
         </section>
       ))}
@@ -310,7 +269,7 @@ function ItemList({
                     class="list-row tone-external"
                     aria-current={selected === entry.id ? "true" : undefined}
                     onClick={() => onSelect(entry.id)}
-                    onKeyDown={onKeyDown}
+                    onKeyDown={onListKeyDown}
                   >
                     <Icon name={text.icon} label="Not managed by Capshelf" />
                     <span class="list-row-name">

@@ -16,7 +16,8 @@ export type IconName =
   | "keyboard"
   | "shelf"
   | "arrow"
-  | "expand";
+  | "expand"
+  | "inbox";
 
 const PATHS: Record<IconName, string> = {
   check: "M3.5 8.5l3 3 6-7",
@@ -38,6 +39,7 @@ const PATHS: Record<IconName, string> = {
   shelf: "M2 5h12M2 8.5h12M2 12h12M4 3v2M4 6.5v2M4 10v2",
   arrow: "M3 8h10M9 4l4 4-4 4",
   expand: "M9.5 2.5h4v4M13.5 2.5L9 7M6.5 13.5h-4v-4M2.5 13.5L7 9",
+  inbox: "M2 9.5L3.8 3.5h8.4L14 9.5V13H2zM2 9.5h3.5l1 1.5h3l1-1.5H14",
 };
 
 const STROKE = {

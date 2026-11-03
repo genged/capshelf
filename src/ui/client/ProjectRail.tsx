@@ -143,25 +143,40 @@ export function RailCount({ entry }: { entry: TreeEntry }): preact.JSX.Element {
   );
 }
 
-/** The phone's stand-in for the rail: one select over the projects. */
+/** The select value that stands for All findings; no project path is empty. */
+const FINDINGS_VALUE = "";
+
+/**
+ * The phone's stand-in for the rail: one select over All findings and the
+ * projects. A null `selectedPath` selects All findings.
+ */
 export function RailPicker({
   entries,
   selectedPath,
+  findings,
   onSelect,
+  onFindings,
 }: {
   entries: TreeEntry[];
   selectedPath: string | null;
+  findings: number;
   onSelect: (path: string) => void;
+  onFindings: () => void;
 }): preact.JSX.Element | null {
   if (entries.length === 0) return null;
   return (
     <label class="rail-picker">
       <Icon name="folder" />
-      <span>Project</span>
+      <span>View</span>
       <select
-        value={selectedPath ?? ""}
-        onChange={(event) => onSelect(event.currentTarget.value)}
+        value={selectedPath ?? FINDINGS_VALUE}
+        onChange={(event) => {
+          const value = event.currentTarget.value;
+          if (value === FINDINGS_VALUE) onFindings();
+          else onSelect(value);
+        }}
       >
+        <option value={FINDINGS_VALUE}>All findings ({findings})</option>
         {entries.map((entry) => {
           const attention = entry.counts?.attention ?? 0;
           return (

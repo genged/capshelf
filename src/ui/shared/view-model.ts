@@ -202,6 +202,194 @@ export function shortenDigests(text: string): string {
   return text.replace(/\b[0-9a-f]{64}\b/g, (digest) => digest.slice(0, 12));
 }
 
+export interface ProjectFindings {
+  project: string;
+  display: string;
+  name: string;
+  rows: UiItem[];
+}
+
+/**
+ * Every finding on the machine, one group per project that has one. The
+ * project with the most findings comes first, then by display path. Rows
+ * keep `sortItems` order.
+ */
+export function findingsAcrossProjects(
+  statuses: readonly UiProjectStatus[],
+): ProjectFindings[] {
+  return statuses
+    .map((status) => ({
+      project: status.project,
+      display: status.display,
+      name: splitDisplayPath(status.display).name,
+      rows: sortItems(status.items.filter((item) => item.attention)),
+    }))
+    .filter((group) => group.rows.length > 0)
+    .sort(
+      (a, b) =>
+        b.rows.length - a.rows.length || a.display.localeCompare(b.display),
+    );
+}
+
+export interface SharedFinding {
+  ref: string;
+  /** Project names, in the order the findings list shows them. */
+  projects: string[];
+}
+
+/**
+ * Shelf items behind the shelf in more than one project. Each project still
+ * takes the update on its own; the note only says the change is the same.
+ */
+export function sharedFindings(
+  groups: readonly ProjectFindings[],
+): SharedFinding[] {
+  const behind = new Map<string, string[]>();
+  for (const group of groups) {
+    for (const row of group.rows) {
+      if (
+        row.source !== "data" ||
+        (row.row.state !== "update_available" &&
+          row.row.state !== "drifted_and_update")
+      ) {
+        continue;
+      }
+      const names = behind.get(row.ref) ?? [];
+      names.push(group.name);
+      behind.set(row.ref, names);
+    }
+  }
+  return [...behind]
+    .filter(([, projects]) => projects.length > 1)
+    .map(([ref, projects]) => ({ ref, projects }))
+    .sort((a, b) => a.ref.localeCompare(b.ref));
+}
+
+/** Where a jump row leads. The client maps it to a route. */
+export type JumpTarget =
+  | { type: "item"; project: string; item: string }
+  | { type: "project"; project: string }
+  | { type: "shelf"; repo: string; ref: string }
+  | { type: "machine" };
+
+export type JumpGroup =
+  | "Findings"
+  | "Projects"
+  | "Items"
+  | "Shelf"
+  | "This machine";
+
+export interface JumpRow {
+  /** The text the query matches and highlights. */
+  ref: string;
+  tags: string[];
+  description?: string;
+  group: JumpGroup;
+  /** Quiet words after the name: the project, the kind, or the state. */
+  detail: string;
+  /** A finding's recommended command, for the `c` key. */
+  command: string | null;
+  target: JumpTarget;
+  /** Unique across every row, for list keys. */
+  key: string;
+}
+
+/** The order the jump dialog shows its groups in. */
+export const JUMP_GROUPS: readonly JumpGroup[] = [
+  "Findings",
+  "Projects",
+  "Items",
+  "Shelf",
+  "This machine",
+];
+
+export interface JumpShelf {
+  dataRepo: string;
+  items: ReadonlyArray<{
+    ref: string;
+    name: string;
+    tags: string[];
+    description?: string;
+    usage: readonly unknown[];
+  }>;
+}
+
+/**
+ * Everything the jump dialog can open: findings first, then projects,
+ * the other items, the shelf items, and the user-level skills. A finding
+ * and its item are one row, under Findings.
+ */
+export function jumpCandidates(
+  statuses: readonly UiProjectStatus[],
+  shelves: readonly JumpShelf[],
+): JumpRow[] {
+  const rows: JumpRow[] = [];
+  for (const status of statuses) {
+    const projectName = splitDisplayPath(status.display).name;
+    rows.push({
+      ref: projectName,
+      tags: [],
+      description: status.display,
+      group: "Projects",
+      detail: status.display,
+      command: null,
+      target: { type: "project", project: status.project },
+      key: `project:${status.project}`,
+    });
+    for (const item of status.items) {
+      rows.push({
+        ref: item.name,
+        tags: [projectName, item.kind],
+        description: item.ref,
+        group: item.attention ? "Findings" : "Items",
+        detail: item.attention
+          ? `${projectName} · ${item.stateLabel}`
+          : projectName,
+        command: item.attention ? (item.actions[0]?.command ?? null) : null,
+        target: { type: "item", project: status.project, item: item.id },
+        key: `item:${status.project}:${item.id}`,
+      });
+    }
+  }
+  for (const shelf of shelves) {
+    for (const item of shelf.items) {
+      rows.push({
+        ref: item.name,
+        tags: item.tags,
+        ...(item.description !== undefined && {
+          description: item.description,
+        }),
+        group: "Shelf",
+        detail:
+          item.usage.length === 0
+            ? `${item.ref} · used nowhere`
+            : `${item.ref} · ${item.usage.length} ${item.usage.length === 1 ? "project" : "projects"}`,
+        command: null,
+        target: { type: "shelf", repo: shelf.dataRepo, ref: item.ref },
+        key: `shelf:${shelf.dataRepo}:${item.ref}`,
+      });
+    }
+  }
+  const seen = new Set<string>();
+  for (const status of statuses) {
+    for (const skill of status.externalUserSkills) {
+      const key = `machine:${skill.surface}:${skill.path}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({
+        ref: skill.name,
+        tags: [skill.surface],
+        group: "This machine",
+        detail: `${skill.surface === "claude" ? "Claude" : "Codex"} user skill`,
+        command: null,
+        target: { type: "machine" },
+        key,
+      });
+    }
+  }
+  return rows;
+}
+
 /**
  * The CLI's state sentence, shortened, or null when it only restates the
  * label: `up-to-date` under "Up to date" adds nothing, while

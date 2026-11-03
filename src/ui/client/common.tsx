@@ -241,8 +241,10 @@ export function KeyHelp({
   const rows: Array<[string, string]> = [
     ["↑ ↓", "Move between projects in the rail, or between items in the list"],
     ["c", "Copy the recommended command of the open item"],
+    ["/", "Jump to a finding, project, item, or shelf item"],
+    ["Ctrl Enter", "In Jump: copy the recommended command of a finding"],
     ["r", "Refresh every project"],
-    ["Esc", "Close this help or the diff dialog"],
+    ["Esc", "Close this help, Jump, or the diff dialog"],
   ];
   return (
     <div class="key-help" role="dialog" aria-label="Keyboard shortcuts">

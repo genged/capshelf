@@ -10,22 +10,42 @@ import type {
   UiDiffResponse,
   UiOverview,
   UiProjectStatus,
+  UiShelf,
 } from "../shared/api-types";
 import { homeDisplay } from "../shared/display";
 import {
   changedItemIds,
+  jumpCandidates,
+  type JumpTarget,
   projectCounts,
   sortTree,
   type TreeEntry,
 } from "../shared/view-model";
 import { ApiError, apiGet, hasToken } from "./api";
 import { EmptyState, KeyHelp } from "./common";
+import { FindingsView } from "./FindingsView";
+import { Icon } from "./icons";
+import { JumpDialog } from "./JumpDialog";
 import { MachineView } from "./MachineView";
 import { ProjectRail, RailPicker } from "./ProjectRail";
 import { type ListFilter, ProjectView } from "./ProjectView";
-import { routeHash, useRoute } from "./router";
+import { type Route, routeHash, useRoute } from "./router";
 import { ShelfView } from "./ShelfView";
 import { TopBar, topView } from "./TopBar";
+
+/** The route a jump row opens. */
+function jumpRoute(target: JumpTarget): Route {
+  switch (target.type) {
+    case "item":
+      return { view: "status", project: target.project, item: target.item };
+    case "project":
+      return { view: "status", project: target.project, item: null };
+    case "shelf":
+      return { view: "shelf", repo: target.repo, ref: target.ref };
+    case "machine":
+      return { view: "machine" };
+  }
+}
 
 export interface ProjectLoad {
   state: "loading" | "ready" | "error";
@@ -51,6 +71,9 @@ export function Dashboard(): preact.JSX.Element {
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
   const [filter, setFilter] = useState<ListFilter>("all");
   const [helpOpen, setHelpOpen] = useState(false);
+  const [jumpOpen, setJumpOpen] = useState(false);
+  // Shelf catalogs for Jump, read the first time it opens.
+  const [shelves, setShelves] = useState<UiShelf[] | null>(null);
   const diffCache = useRef(new Map<string, Promise<UiDiffResponse>>());
 
   const loadProject = useCallback(async (path: string): Promise<void> => {
@@ -109,6 +132,7 @@ export function Dashboard(): preact.JSX.Element {
         return map;
       });
       diffCache.current.clear();
+      setShelves(null);
       await Promise.all(existing.map((project) => loadProject(project.path)));
       setRefreshedAt(new Date());
     } catch (error) {
@@ -150,6 +174,9 @@ export function Dashboard(): preact.JSX.Element {
       if (event.key === "r") {
         event.preventDefault();
         void refreshAll();
+      } else if (event.key === "/") {
+        event.preventDefault();
+        setJumpOpen(true);
       } else if (event.key === "?") {
         event.preventDefault();
         setHelpOpen((open) => !open);
@@ -159,7 +186,40 @@ export function Dashboard(): preact.JSX.Element {
     return () => window.removeEventListener("keydown", onKey);
   }, [refreshAll]);
 
+  // Jump ranks shelf items too, so it reads each shelf the first time it
+  // opens. A shelf that fails to read only drops out of the results.
+  useEffect(() => {
+    if (!jumpOpen || shelves !== null || overview === null) return;
+    void Promise.all(
+      overview.shelves.map((shelf) =>
+        apiGet<UiShelf>("/api/shelf", { repo: shelf.dataRepo }).catch(
+          () => null,
+        ),
+      ),
+    ).then((read) =>
+      setShelves(read.filter((shelf): shelf is UiShelf => shelf !== null)),
+    );
+  }, [jumpOpen, shelves, overview]);
+
   const projects = overview?.projects ?? [];
+  const statuses = useMemo<UiProjectStatus[]>(
+    () => [...loads.values()].flatMap((load) => (load.data ? [load.data] : [])),
+    [loads],
+  );
+  const pending = [...loads.values()].filter(
+    (load) => load.data === null && load.state === "loading",
+  ).length;
+  const jumpRows = useMemo(
+    () =>
+      jumpCandidates(
+        statuses,
+        (shelves ?? []).map((shelf) => ({
+          dataRepo: shelf.dataRepo,
+          items: shelf.items,
+        })),
+      ),
+    [statuses, shelves],
+  );
   const treeEntries = useMemo<TreeEntry[]>(
     () =>
       sortTree(
@@ -254,13 +314,31 @@ export function Dashboard(): preact.JSX.Element {
   // The rail foot names the shelf of the selected project, else the first.
   const railShelf =
     selectedLoad?.data?.shelf ??
-    null ??
-    [...loads.values()].find((load) => load.data?.shelf)?.data?.shelf ??
+    statuses.find((status) => status.shelf !== null)?.shelf ??
     null;
   const shelfRepo =
     railShelf?.dataRepo ?? overview?.shelves[0]?.dataRepo ?? null;
   const selectProject = (path: string): void =>
     navigate({ view: "status", project: path, item: null });
+  const openFindings = (): void =>
+    navigate({ view: "findings", project: null, item: null });
+  const inFindings = route.view === "findings";
+  const findingsCount = statuses.reduce(
+    (sum, status) => sum + projectCounts(status.items).attention,
+    0,
+  );
+  const picker = (
+    <RailPicker
+      entries={treeEntries}
+      selectedPath={inFindings ? null : selectedPath}
+      findings={findingsCount}
+      onSelect={selectProject}
+      onFindings={openFindings}
+    />
+  );
+  const hasSelection =
+    (route.view === "status" || route.view === "findings") &&
+    route.item !== null;
 
   return (
     <div class="app">
@@ -275,6 +353,7 @@ export function Dashboard(): preact.JSX.Element {
         refreshing={refreshing}
         refreshedAt={refreshedAt}
         onRefresh={() => void refreshAll()}
+        onJump={() => setJumpOpen(true)}
         onHelp={() => setHelpOpen((open) => !open)}
       />
       {overviewError ? (
@@ -310,24 +389,52 @@ export function Dashboard(): preact.JSX.Element {
           </EmptyState>
         </main>
       ) : (
-        <div class={`frame${selectedItem !== null ? " has-selection" : ""}`}>
+        <div class={`frame${hasSelection ? " has-selection" : ""}`}>
           <ProjectRail
             entries={treeEntries}
-            selectedPath={selectedPath}
+            selectedPath={inFindings ? null : selectedPath}
             shelf={railShelf}
             cliVersion={overview?.cliVersion ?? null}
             onSelect={selectProject}
+            top={
+              <a
+                class="rail-row has-icon"
+                href="#/findings"
+                aria-current={inFindings ? "page" : undefined}
+              >
+                <Icon name="inbox" />
+                <span class="rail-row-name">All findings</span>
+                <span
+                  class={`count${findingsCount > 0 ? " is-attention" : " is-ok"}`}
+                >
+                  {findingsCount > 0 ? findingsCount : <Icon name="check" />}
+                  <span class="visually-hidden">
+                    {findingsCount === 1
+                      ? " item needs attention"
+                      : " items need attention"}
+                  </span>
+                </span>
+              </a>
+            }
           />
-          {overview === null ||
-          selectedPath === null ||
-          selectedRegistered === null ? (
+          {route.view === "findings" ? (
+            <FindingsView
+              statuses={statuses}
+              pending={pending}
+              project={route.project}
+              item={route.item}
+              onSelect={(project, item) =>
+                navigate({ view: "findings", project, item })
+              }
+              loadDiff={loadDiff}
+              picker={picker}
+            />
+          ) : overview === null ||
+            selectedPath === null ||
+            selectedRegistered === null ? (
             <>
               <section class="list" aria-label="Items">
-                <RailPicker
-                  entries={treeEntries}
-                  selectedPath={selectedPath}
-                  onSelect={selectProject}
-                />
+                {picker}
                 {overview === null ? (
                   <div class="list-empty">Reading every project…</div>
                 ) : (
@@ -342,11 +449,7 @@ export function Dashboard(): preact.JSX.Element {
           ) : !selectedRegistered.exists ? (
             <>
               <section class="list" aria-label="Items">
-                <RailPicker
-                  entries={treeEntries}
-                  selectedPath={selectedPath}
-                  onSelect={selectProject}
-                />
+                {picker}
                 <EmptyState title={selectedRegistered.display}>
                   <p>
                     This path no longer holds a Capshelf project. Remove its
@@ -374,18 +477,23 @@ export function Dashboard(): preact.JSX.Element {
               }
               displayPath={(path) => homeDisplay(path, overview.home)}
               loadDiff={(itemId, view) => loadDiff(selectedPath, itemId, view)}
-              picker={
-                <RailPicker
-                  entries={treeEntries}
-                  selectedPath={selectedPath}
-                  onSelect={selectProject}
-                />
-              }
+              picker={picker}
             />
           )}
         </div>
       )}
       {helpOpen ? <KeyHelp onClose={() => setHelpOpen(false)} /> : null}
+      {jumpOpen ? (
+        <JumpDialog
+          rows={jumpRows}
+          shelvesLoading={shelves === null}
+          onOpen={(target) => {
+            setJumpOpen(false);
+            navigate(jumpRoute(target));
+          }}
+          onClose={() => setJumpOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

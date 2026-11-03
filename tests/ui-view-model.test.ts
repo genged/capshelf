@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { UiItem } from "../src/ui/shared/api-types";
+import type { UiItem, UiProjectStatus } from "../src/ui/shared/api-types";
 import { homeDisplay } from "../src/ui/shared/display";
 import {
   isKind,
@@ -18,13 +18,16 @@ import {
   changedItemIds,
   externalEntries,
   filterItems,
+  findingsAcrossProjects,
   groupByKind,
   groupItems,
   inTab,
+  jumpCandidates,
   listGroups,
   projectCounts,
   shortCommit,
   shortDigest,
+  sharedFindings,
   shortenDigests,
   sortItems,
   sortTree,
@@ -419,5 +422,122 @@ describe("hidden rows and external display", () => {
     );
     expect(homeDisplay("/Users/mgx/y", "/Users/mg")).toBe("/Users/mgx/y");
     expect(homeDisplay("/Users/mg/y", "")).toBe("/Users/mg/y");
+  });
+});
+
+function status(
+  display: string,
+  items: UiItem[],
+  overrides: Partial<UiProjectStatus> = {},
+): UiProjectStatus {
+  return {
+    project: `/home/u/${display.replace(/^~\//, "")}`,
+    display,
+    cdCommand: `cd ${display}`,
+    dataRepo: "/home/u/shelf",
+    dataRepoDisplay: "~/shelf",
+    dataRepoUpstream: null,
+    lockVersion: 5,
+    localLockVersion: 5,
+    installMode: "codex-compatible",
+    cliVersion: "0.15.0",
+    items,
+    external: [],
+    externalClaudePlugins: [],
+    externalUserSkills: [],
+    personalClaudeExternal: [],
+    shelf: null,
+    notices: [],
+    generatedAt: "2026-11-03T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("across projects", () => {
+  const billing = status("~/code/billing-api", [
+    item("skills/quick-review", "update_available", {
+      actions: [
+        { command: "capshelf update skills/quick-review", purpose: "" },
+      ],
+    }),
+    item("skills/commit-message", "drifted_local"),
+    item("skills/sql-migrations", "ok"),
+  ]);
+  const checkout = status("~/code/checkout-web", [
+    item("skills/quick-review", "drifted_and_update"),
+  ]);
+  const infra = status("~/code/infra-tools", [item("skills/go", "ok")]);
+
+  test("groups findings by project, the most findings first", () => {
+    const groups = findingsAcrossProjects([checkout, infra, billing]);
+    expect(groups.map((group) => group.name)).toEqual([
+      "billing-api",
+      "checkout-web",
+    ]);
+    expect(groups[0]?.rows.map((row) => row.ref)).toEqual([
+      "skills/commit-message",
+      "skills/quick-review",
+    ]);
+  });
+
+  test("names a shelf item that is behind in more than one project", () => {
+    const shared = sharedFindings(findingsAcrossProjects([billing, checkout]));
+    expect(shared).toEqual([
+      { ref: "skills/quick-review", projects: ["billing-api", "checkout-web"] },
+    ]);
+    expect(sharedFindings(findingsAcrossProjects([billing]))).toEqual([]);
+  });
+
+  test("jump rows put a finding under Findings with its command", () => {
+    const rows = jumpCandidates(
+      [billing],
+      [
+        {
+          dataRepo: "/home/u/shelf",
+          items: [
+            {
+              ref: "skills/quick-review",
+              name: "quick-review",
+              tags: [],
+              usage: [{}, {}],
+            },
+          ],
+        },
+      ],
+    );
+    const finding = rows.find(
+      (row) => row.group === "Findings" && row.ref === "quick-review",
+    );
+    expect(finding?.command).toBe("capshelf update skills/quick-review");
+    expect(finding?.target).toEqual({
+      type: "item",
+      project: billing.project,
+      item: "project/data/skills/quick-review",
+    });
+    expect(
+      rows.filter((row) => row.group === "Items").map((row) => row.ref),
+    ).toEqual(["sql-migrations"]);
+    expect(rows.find((row) => row.group === "Shelf")?.detail).toBe(
+      "skills/quick-review · 2 projects",
+    );
+    expect(new Set(rows.map((row) => row.key)).size).toBe(rows.length);
+  });
+
+  test("lists a user-level skill once, however many projects report it", () => {
+    const skill = {
+      kind: "skills" as const,
+      name: "notes",
+      surface: "claude" as const,
+      path: "/home/u/.claude/skills/notes",
+      shadows: [],
+    };
+    const rows = jumpCandidates(
+      [
+        status("~/a", [], { externalUserSkills: [skill] }),
+        status("~/b", [], { externalUserSkills: [skill] }),
+      ],
+      [],
+    );
+    expect(rows.filter((row) => row.group === "This machine")).toHaveLength(1);
   });
 });
