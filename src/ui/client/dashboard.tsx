@@ -16,18 +16,16 @@ import {
   changedItemIds,
   projectCounts,
   sortTree,
-  type FilterTab,
-  type ReviewKind,
   type TreeEntry,
 } from "../shared/view-model";
 import { ApiError, apiGet, hasToken } from "./api";
 import { EmptyState, KeyHelp } from "./common";
 import { MachineView } from "./MachineView";
-import { ProjectReview, ReviewLoading } from "./ProjectReview";
-import { ProjectTree } from "./ProjectTree";
-import { useRoute } from "./router";
+import { ProjectRail, RailPicker } from "./ProjectRail";
+import { type ListFilter, ProjectView } from "./ProjectView";
+import { routeHash, useRoute } from "./router";
 import { ShelfView } from "./ShelfView";
-import { TopBar } from "./TopBar";
+import { TopBar, topView } from "./TopBar";
 
 export interface ProjectLoad {
   state: "loading" | "ready" | "error";
@@ -51,15 +49,9 @@ export function Dashboard(): preact.JSX.Element {
   const [loads, setLoads] = useState<Map<string, ProjectLoad>>(() => new Map());
   const [refreshing, setRefreshing] = useState(false);
   const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
-  const [query, setQuery] = useState("");
-  const [tab, setTab] = useState<FilterTab>("all");
-  const [kind, setKind] = useState<ReviewKind | null>(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [filter, setFilter] = useState<ListFilter>("all");
   const [helpOpen, setHelpOpen] = useState(false);
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
   const diffCache = useRef(new Map<string, Promise<UiDiffResponse>>());
-  const autoOpened = useRef(new Set<string>());
-  const filterRef = useRef<HTMLInputElement>(null);
 
   const loadProject = useCallback(async (path: string): Promise<void> => {
     try {
@@ -143,7 +135,6 @@ export function Dashboard(): preact.JSX.Element {
           target.isContentEditable);
       if (event.key === "Escape") {
         setHelpOpen(false);
-        setDrawerOpen(false);
         return;
       }
       // A dialog holds the keyboard; the page shortcuts wait for it to close.
@@ -159,10 +150,6 @@ export function Dashboard(): preact.JSX.Element {
       if (event.key === "r") {
         event.preventDefault();
         void refreshAll();
-      } else if (event.key === "/") {
-        event.preventDefault();
-        filterRef.current?.focus();
-        filterRef.current?.select();
       } else if (event.key === "?") {
         event.preventDefault();
         setHelpOpen((open) => !open);
@@ -177,34 +164,23 @@ export function Dashboard(): preact.JSX.Element {
     () =>
       sortTree(
         projects.map((project): TreeEntry => {
+          const base = { path: project.path, display: project.display };
           if (!project.exists) {
-            return {
-              path: project.path,
-              display: project.display,
-              state: "missing",
-              counts: null,
-            };
+            return { ...base, state: "missing", counts: null };
           }
           const load = loads.get(project.path);
           if (!load || load.state === "loading") {
             return {
-              path: project.path,
-              display: project.display,
+              ...base,
               state: "loading",
               counts: load?.data ? projectCounts(load.data.items) : null,
             };
           }
           if (load.state === "error" || load.data === null) {
-            return {
-              path: project.path,
-              display: project.display,
-              state: "error",
-              counts: null,
-            };
+            return { ...base, state: "error", counts: null };
           }
           return {
-            path: project.path,
-            display: project.display,
+            ...base,
             state: "ready",
             counts: projectCounts(load.data.items),
           };
@@ -237,50 +213,7 @@ export function Dashboard(): preact.JSX.Element {
     selectedPath === null
       ? null
       : (projects.find((project) => project.path === selectedPath) ?? null);
-  const routeItem = route.view === "status" ? route.item : null;
-
-  const isExpanded = (project: string, itemId: string): boolean =>
-    expanded.has(expandedKey(project, itemId));
-  const toggleExpanded = (project: string, itemId: string): void => {
-    setExpanded((previous) => {
-      const next = new Set(previous);
-      const key = expandedKey(project, itemId);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  };
-
-  // The first attention panel opens by itself once per project, so the
-  // first finding is visible without a click. A route that names an item
-  // opens that item instead.
-  useEffect(() => {
-    if (selectedPath === null || selectedLoad?.state !== "ready") return;
-    const data = selectedLoad.data;
-    if (!data) return;
-    if (routeItem !== null) {
-      const key = expandedKey(selectedPath, routeItem);
-      setExpanded((previous) =>
-        previous.has(key) ? previous : new Set(previous).add(key),
-      );
-      window.requestAnimationFrame(() => {
-        document
-          .getElementById(panelDomId(selectedPath, routeItem))
-          ?.scrollIntoView({ block: "start" });
-      });
-      return;
-    }
-    if (autoOpened.current.has(selectedPath)) return;
-    autoOpened.current.add(selectedPath);
-    const first = data.items.find(
-      (item) => item.attention && item.diffViews.length > 0,
-    );
-    if (first) {
-      setExpanded((previous) =>
-        new Set(previous).add(expandedKey(selectedPath, first.id)),
-      );
-    }
-  }, [selectedPath, selectedLoad, routeItem]);
+  const selectedItem = route.view === "status" ? route.item : null;
 
   const loadDiff = useCallback(
     (
@@ -318,38 +251,31 @@ export function Dashboard(): preact.JSX.Element {
     );
   }
 
-  const selectedShelf =
-    selectedLoad?.state === "ready" ? (selectedLoad.data?.shelf ?? null) : null;
+  // The rail foot names the shelf of the selected project, else the first.
+  const railShelf =
+    selectedLoad?.data?.shelf ??
+    null ??
+    [...loads.values()].find((load) => load.data?.shelf)?.data?.shelf ??
+    null;
+  const shelfRepo =
+    railShelf?.dataRepo ?? overview?.shelves[0]?.dataRepo ?? null;
+  const selectProject = (path: string): void =>
+    navigate({ view: "status", project: path, item: null });
 
   return (
-    <div class={`app${drawerOpen ? " drawer-open" : ""}`}>
+    <div class="app">
       <TopBar
-        overview={overview}
-        shelf={selectedShelf}
+        view={topView(route)}
+        projectsHref={routeHash({
+          view: "status",
+          project: selectedPath,
+          item: null,
+        })}
+        shelfHref={routeHash({ view: "shelf", repo: shelfRepo, ref: null })}
         refreshing={refreshing}
         refreshedAt={refreshedAt}
         onRefresh={() => void refreshAll()}
-        query={query}
-        onQuery={setQuery}
-        filterRef={filterRef}
-        view={route.view}
-        onView={(view) =>
-          navigate(
-            view === "shelf"
-              ? {
-                  view: "shelf",
-                  repo:
-                    selectedShelf?.dataRepo ??
-                    overview?.shelves[0]?.dataRepo ??
-                    null,
-                  ref: null,
-                }
-              : { view: "status", project: selectedPath, item: null },
-          )
-        }
-        drawerOpen={drawerOpen}
-        onToggleDrawer={() => setDrawerOpen((open) => !open)}
-        onToggleHelp={() => setHelpOpen((open) => !open)}
+        onHelp={() => setHelpOpen((open) => !open)}
       />
       {overviewError ? (
         <main class="page-message">
@@ -371,97 +297,95 @@ export function Dashboard(): preact.JSX.Element {
         <MachineView overview={overview} loads={loads} />
       ) : route.view === "shelf" ? (
         <ShelfView overview={overview} route={route} navigate={navigate} />
+      ) : overview !== null && projects.length === 0 ? (
+        <main class="page-message">
+          <EmptyState title="No projects yet">
+            <p>
+              <code>capshelf ui</code> shows every project on this machine that
+              Capshelf manages. <code>capshelf init</code> in a project folder
+              registers it. Running <code>capshelf ui</code> inside an existing
+              project registers that one.
+            </p>
+            <p class="muted">Registry: {overview.registryDisplay}</p>
+          </EmptyState>
+        </main>
       ) : (
-        <div class="workspace">
-          <aside class="tree-rail" aria-label="Projects">
-            <ProjectTree
-              entries={treeEntries}
-              loads={loads}
-              selectedPath={selectedPath}
-              query={query}
-              registryDisplay={overview?.registryDisplay ?? null}
-              onSelect={(path) => {
-                setDrawerOpen(false);
-                navigate({ view: "status", project: path, item: null });
-              }}
-              onSelectItem={(path, itemId) => {
-                setDrawerOpen(false);
-                navigate({ view: "status", project: path, item: itemId });
-              }}
+        <div class={`frame${selectedItem !== null ? " has-selection" : ""}`}>
+          <ProjectRail
+            entries={treeEntries}
+            selectedPath={selectedPath}
+            shelf={railShelf}
+            cliVersion={overview?.cliVersion ?? null}
+            onSelect={selectProject}
+          />
+          {overview === null ||
+          selectedPath === null ||
+          selectedRegistered === null ? (
+            <>
+              <section class="list" aria-label="Items">
+                <RailPicker
+                  entries={treeEntries}
+                  selectedPath={selectedPath}
+                  onSelect={selectProject}
+                />
+                {overview === null ? (
+                  <div class="list-empty">Reading every project…</div>
+                ) : (
+                  <EmptyState title="No project to show">
+                    <p>Every registered path is missing its manifest.</p>
+                    <p class="muted">Registry: {overview.registryDisplay}</p>
+                  </EmptyState>
+                )}
+              </section>
+              <section class="detail" aria-hidden="true" />
+            </>
+          ) : !selectedRegistered.exists ? (
+            <>
+              <section class="list" aria-label="Items">
+                <RailPicker
+                  entries={treeEntries}
+                  selectedPath={selectedPath}
+                  onSelect={selectProject}
+                />
+                <EmptyState title={selectedRegistered.display}>
+                  <p>
+                    This path no longer holds a Capshelf project. Remove its
+                    entry from <code>{overview.registryDisplay}</code>, or run{" "}
+                    <code>capshelf init</code> there again.
+                  </p>
+                </EmptyState>
+              </section>
+              <section class="detail" aria-hidden="true" />
+            </>
+          ) : (
+            <ProjectView
+              project={selectedPath}
+              registered={selectedRegistered}
+              load={selectedLoad ?? EMPTY_LOAD}
+              filter={filter}
+              onFilter={setFilter}
+              selected={selectedItem}
+              onSelect={(itemId) =>
+                navigate({
+                  view: "status",
+                  project: selectedPath,
+                  item: itemId,
+                })
+              }
+              displayPath={(path) => homeDisplay(path, overview.home)}
+              loadDiff={(itemId, view) => loadDiff(selectedPath, itemId, view)}
+              picker={
+                <RailPicker
+                  entries={treeEntries}
+                  selectedPath={selectedPath}
+                  onSelect={selectProject}
+                />
+              }
             />
-          </aside>
-          {drawerOpen ? (
-            <button
-              type="button"
-              class="drawer-scrim"
-              aria-label="Close the project list"
-              onClick={() => setDrawerOpen(false)}
-            />
-          ) : null}
-          <main class="review" aria-label="Review">
-            {overview === null ? (
-              <ReviewLoading />
-            ) : projects.length === 0 ? (
-              <EmptyState title="No projects are registered on this machine">
-                <p>
-                  <code>capshelf init</code> registers a project when it
-                  initializes it. Run <code>capshelf ui</code> inside an
-                  existing project to register that one.
-                </p>
-                <p class="muted">Registry: {overview.registryDisplay}</p>
-              </EmptyState>
-            ) : selectedPath === null || selectedRegistered === null ? (
-              <EmptyState title="No project to show">
-                <p>Every registered path is missing its manifest.</p>
-                <p class="muted">Registry: {overview.registryDisplay}</p>
-              </EmptyState>
-            ) : !selectedRegistered.exists ? (
-              <EmptyState title={selectedRegistered.display}>
-                <p>
-                  This path no longer holds a Capshelf project. Remove its entry
-                  from <code>{overview.registryDisplay}</code>, or run{" "}
-                  <code>capshelf init</code> there again.
-                </p>
-              </EmptyState>
-            ) : (
-              <ProjectReview
-                project={selectedPath}
-                registered={selectedRegistered}
-                load={selectedLoad ?? EMPTY_LOAD}
-                tab={tab}
-                onTab={setTab}
-                kind={kind}
-                onKind={setKind}
-                query={query}
-                displayPath={(path) => homeDisplay(path, overview.home)}
-                isExpanded={(itemId) => isExpanded(selectedPath, itemId)}
-                onToggle={(itemId) => toggleExpanded(selectedPath, itemId)}
-                loadDiff={(itemId, view) =>
-                  loadDiff(selectedPath, itemId, view)
-                }
-                panelDomId={(itemId) => panelDomId(selectedPath, itemId)}
-              />
-            )}
-          </main>
+          )}
         </div>
       )}
       {helpOpen ? <KeyHelp onClose={() => setHelpOpen(false)} /> : null}
     </div>
   );
-}
-
-function expandedKey(project: string, itemId: string): string {
-  return `${project}\t${itemId}`;
-}
-
-export function panelDomId(project: string, itemId: string): string {
-  return `panel-${hashKey(`${project}\t${itemId}`)}`;
-}
-
-function hashKey(text: string): string {
-  let hash = 0;
-  for (let index = 0; index < text.length; index += 1) {
-    hash = (hash * 31 + text.charCodeAt(index)) | 0;
-  }
-  return (hash >>> 0).toString(36);
 }

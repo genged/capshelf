@@ -403,3 +403,45 @@ export function fileStats(parsed: ParsedDiff): DiffFileStat[] {
     };
   });
 }
+
+export interface DiffPreview {
+  path: string;
+  header: string;
+  lines: DiffLine[];
+  /** Changed lines in the whole diff that the preview does not show. */
+  hiddenChanges: number;
+}
+
+/**
+ * The first hunk of the first text file, cut to `limit` lines that start two
+ * lines above its first change. The item pane shows it inline; the dialog
+ * shows the rest. Null when no text file has a hunk.
+ */
+export function diffPreview(
+  parsed: ParsedDiff,
+  limit: number,
+): DiffPreview | null {
+  const file = parsed.files.find(
+    (entry) => !entry.binary && entry.hunks.length > 0,
+  );
+  const hunk = file?.hunks[0];
+  if (!file || !hunk) return null;
+  const firstChange = hunk.lines.findIndex((line) => line.kind !== "context");
+  const start = Math.max(
+    0,
+    Math.min(firstChange - 2, hunk.lines.length - limit),
+  );
+  const lines = hunk.lines.slice(start, start + limit);
+  const changes = (rows: readonly DiffLine[]): number =>
+    rows.filter((line) => line.kind !== "context").length;
+  let total = 0;
+  for (const entry of parsed.files) {
+    for (const block of entry.hunks) total += changes(block.lines);
+  }
+  return {
+    path: file.path,
+    header: hunk.header,
+    lines,
+    hiddenChanges: total - changes(lines),
+  };
+}

@@ -1,7 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import type { UiItem } from "../src/ui/shared/api-types";
 import { homeDisplay } from "../src/ui/shared/display";
-import { isKind, KIND_ORDER, kindLabel } from "../src/ui/shared/kind-label";
+import {
+  isKind,
+  KIND_ORDER,
+  kindLabel,
+  kindNoun,
+} from "../src/ui/shared/kind-label";
 import {
   itemIcon,
   stateIcon,
@@ -11,16 +16,20 @@ import {
 } from "../src/ui/shared/state-label";
 import {
   changedItemIds,
+  externalEntries,
   filterItems,
   groupByKind,
   groupItems,
   inTab,
+  listGroups,
   projectCounts,
   shortCommit,
   shortDigest,
   shortenDigests,
   sortItems,
   sortTree,
+  splitDisplayPath,
+  stateSentence,
   summaryLine,
 } from "../src/ui/shared/view-model";
 import { ITEM_KINDS, parseItemKind } from "../src/master";
@@ -277,6 +286,98 @@ describe("kind labels", () => {
     }
     expect(kindLabel("pi-extensions")).toBe("Pi extensions");
     expect(kindLabel("codex-config")).toBe("Codex config");
+  });
+
+  test("every kind has a singular noun for list rows", () => {
+    for (const kind of ITEM_KINDS) {
+      expect(kindNoun(kind).length).toBeGreaterThan(0);
+    }
+    expect(kindNoun("skills")).toBe("skill");
+    expect(kindNoun("mcp")).toBe("MCP server");
+  });
+});
+
+describe("item list", () => {
+  test("groups findings first, then kept local, then up to date", () => {
+    const groups = listGroups([
+      item("skills/b", "ok"),
+      item("skills/a", "kept-local"),
+      item("skills/c", "drifted_local"),
+      item("settings/d", "update_available"),
+    ]);
+    expect(groups.map((group) => group.id)).toEqual([
+      "attention",
+      "kept",
+      "ok",
+    ]);
+    expect(groups[0]?.rows.map((row) => row.ref)).toEqual([
+      "settings/d",
+      "skills/c",
+    ]);
+  });
+
+  test("drops an empty group", () => {
+    expect(listGroups([item("skills/a", "ok")]).map((g) => g.id)).toEqual([
+      "ok",
+    ]);
+    expect(listGroups([])).toEqual([]);
+  });
+
+  test("splits a display path into the folder name and its parent", () => {
+    expect(splitDisplayPath("~/code/billing-api")).toEqual({
+      name: "billing-api",
+      parent: "~/code",
+    });
+    expect(splitDisplayPath("/srv/app/")).toEqual({
+      name: "app",
+      parent: "/srv",
+    });
+    expect(splitDisplayPath("/app")).toEqual({ name: "app", parent: "/" });
+    expect(splitDisplayPath("~")).toEqual({ name: "~", parent: "" });
+  });
+
+  test("keeps the CLI sentence only when it adds to the label", () => {
+    expect(stateSentence("Up to date", "up-to-date")).toBeNull();
+    expect(stateSentence("Drifted", "")).toBeNull();
+    expect(
+      stateSentence(
+        "Drifted, update available",
+        `drifted + update available → ${"4".repeat(64)}`,
+      ),
+    ).toBe("drifted + update available → 444444444444");
+  });
+
+  test("lists external rows by name with ids that cannot be item ids", () => {
+    const entries = externalEntries({
+      external: [{ name: "terraform-plan", source: "hashicorp/agent-skills" }],
+      externalClaudePlugins: [
+        {
+          id: "github@official",
+          name: "github",
+          scope: "project",
+          enabled: true,
+          settingsPath: "/p/.claude/settings.json",
+        },
+      ],
+      externalUserSkills: [
+        {
+          kind: "skills",
+          name: "quick-review",
+          surface: "claude",
+          path: "/home/u/.claude/skills/quick-review",
+          shadows: [{ scope: "project", source: "data" }],
+        },
+      ],
+    });
+    expect(entries.map((entry) => entry.id)).toEqual([
+      "plugin/project/github@official",
+      "user/claude/quick-review",
+      "external/skills/terraform-plan",
+    ]);
+    for (const entry of entries) {
+      expect(entry.id.split("/")[0]).not.toBe("project");
+      expect(entry.id.split("/")[0]).not.toBe("local");
+    }
   });
 });
 

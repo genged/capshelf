@@ -1,157 +1,112 @@
-import type { RefObject } from "preact";
-import type { UiOverview, UiShelfFacts } from "../shared/api-types";
+import type { Route } from "./router";
 import { formatClock, useRelativeTime } from "./common";
 import { Icon } from "./icons";
 
+export type TopView = "projects" | "shelf" | "machine";
+
+/** Which top-level view a route belongs to. */
+export function topView(route: Route): TopView {
+  if (route.view === "shelf") return "shelf";
+  if (route.view === "machine") return "machine";
+  return "projects";
+}
+
+/**
+ * Brand, the three views, the jump field, the read-only badge, and refresh.
+ * The host and the shelf live in the rail now, so the bar stays short.
+ */
 export function TopBar({
-  overview,
-  shelf,
+  view,
+  projectsHref,
+  shelfHref,
   refreshing,
   refreshedAt,
   onRefresh,
-  query,
-  onQuery,
-  filterRef,
-  view,
-  onView,
-  drawerOpen,
-  onToggleDrawer,
-  onToggleHelp,
+  onJump,
+  onHelp,
 }: {
-  overview: UiOverview | null;
-  shelf: UiShelfFacts | null;
+  view: TopView;
+  projectsHref: string;
+  shelfHref: string;
   refreshing: boolean;
   refreshedAt: Date | null;
   onRefresh: () => void;
-  query: string;
-  onQuery: (query: string) => void;
-  filterRef: RefObject<HTMLInputElement>;
-  view: "status" | "shelf" | "machine";
-  onView: (view: "status" | "shelf") => void;
-  drawerOpen: boolean;
-  onToggleDrawer: () => void;
-  onToggleHelp: () => void;
+  onJump?: (() => void) | undefined;
+  onHelp: () => void;
 }): preact.JSX.Element {
   const relative = useRelativeTime(refreshedAt);
-  const projectCount = overview?.projects.length ?? 0;
+  const link = (
+    id: TopView,
+    href: string,
+    label: string,
+  ): preact.JSX.Element => (
+    <a
+      class="nav-link"
+      href={href}
+      aria-current={view === id ? "page" : undefined}
+    >
+      {label}
+    </a>
+  );
   return (
     <header class="top-bar">
-      <button
-        type="button"
-        class="icon-button drawer-toggle"
-        aria-label={
-          drawerOpen ? "Close the project list" : "Open the project list"
-        }
-        aria-expanded={drawerOpen}
-        onClick={onToggleDrawer}
-      >
-        <Icon name={drawerOpen ? "close" : "menu"} />
-      </button>
-      <a class="brand" href="#/" aria-label="Capshelf status">
+      <a class="brand" href="#/" aria-label="Capshelf projects">
         <img class="brand-mark" src="/logo.png" alt="" width="26" height="34" />
         <span class="brand-name">Capshelf</span>
       </a>
-      <div class="context">
-        {overview ? (
-          <>
-            <a class="context-host" href="#/machine" title="This machine">
-              {overview.host}
-            </a>
-            {shelf ? (
-              <>
-                <span class="context-sep" aria-hidden="true">
-                  ·
-                </span>
-                <a
-                  class="context-shelf"
-                  href={`#/shelf/${encodeURIComponent(shelf.dataRepo)}`}
-                  title="Open the shelf"
-                >
-                  shelf <span class="mono">{shelf.display}</span>
-                  {shelf.headShort ? (
-                    <>
-                      {" @ "}
-                      <span class="mono">{shelf.headShort}</span>
-                    </>
-                  ) : null}
-                  {shelf.clean ? null : (
-                    <span class="context-dirty"> · uncommitted changes</span>
-                  )}
-                </a>
-              </>
-            ) : null}
-            <span class="context-sep" aria-hidden="true">
-              ·
-            </span>
-            <span>
-              {projectCount} {projectCount === 1 ? "project" : "projects"}
-            </span>
-          </>
-        ) : (
-          <span class="muted">Loading…</span>
-        )}
-      </div>
-      <nav class="view-nav" aria-label="View">
-        <button
-          type="button"
-          class={`view-tab${view === "status" ? " is-active" : ""}`}
-          aria-current={view === "status" ? "page" : undefined}
-          onClick={() => onView("status")}
-        >
-          Status
-        </button>
-        <button
-          type="button"
-          class={`view-tab${view === "shelf" ? " is-active" : ""}`}
-          aria-current={view === "shelf" ? "page" : undefined}
-          onClick={() => onView("shelf")}
-        >
-          Shelf
-        </button>
+      <nav class="nav" aria-label="Views">
+        {link("projects", projectsHref, "Projects")}
+        {link("shelf", shelfHref, "Shelf")}
+        {link("machine", "#/machine", "This machine")}
       </nav>
-      {view === "status" ? (
-        <label class="filter">
-          <Icon name="search" />
-          <span class="visually-hidden">Filter projects and items</span>
-          <input
-            ref={filterRef}
-            type="search"
-            placeholder="Filter projects and items"
-            value={query}
-            onInput={(event) => onQuery(event.currentTarget.value)}
-            autocomplete="off"
-            spellcheck={false}
-          />
-        </label>
-      ) : (
-        <div class="filter-spacer" />
-      )}
-      <div class="refresh">
+      <span class="top-spacer" />
+      {onJump ? (
         <button
           type="button"
-          class="button refresh-button"
-          onClick={onRefresh}
-          disabled={refreshing}
-          aria-busy={refreshing}
+          class="jump-trigger"
+          onClick={onJump}
+          aria-label="Jump to an item or project"
+          aria-keyshortcuts="/"
         >
-          <Icon name="refresh" />
-          <span>{refreshing ? "Refreshing…" : "Refresh"}</span>
+          <Icon name="search" />
+          <span class="jump-trigger-text">Jump to an item or project</span>
+          <kbd>/</kbd>
         </button>
+      ) : null}
+      <span
+        class="ro-badge"
+        title="capshelf ui shows commands. Run them in a terminal in the project."
+      >
+        Read-only
+      </span>
+      <div class="refresh">
         <span class="refresh-time" aria-live="polite">
           {refreshedAt
-            ? `Refreshed ${formatClock(refreshedAt)}${
-                relative === "just now" ? "" : ` · ${relative}`
-              }`
+            ? relative === "just now"
+              ? `Updated ${formatClock(refreshedAt)}`
+              : `Updated ${relative}`
             : refreshing
               ? "Reading every project…"
               : ""}
         </span>
+        <button
+          type="button"
+          class="icon-button refresh-button"
+          onClick={onRefresh}
+          disabled={refreshing}
+          aria-busy={refreshing}
+          aria-label={refreshing ? "Refreshing" : "Refresh every project"}
+          title="Refresh (r)"
+        >
+          <Icon name="refresh" />
+        </button>
       </div>
       <button
         type="button"
         class="icon-button help-toggle"
         aria-label="Keyboard shortcuts"
-        onClick={onToggleHelp}
+        title="Keyboard shortcuts (?)"
+        onClick={onHelp}
       >
         <Icon name="keyboard" />
       </button>

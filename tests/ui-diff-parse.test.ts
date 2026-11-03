@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   diffLineCount,
+  diffPreview,
   fileStats,
   parseDiffLabel,
   parseUnifiedDiff,
@@ -280,5 +281,48 @@ describe("fileStats", () => {
     const image = stats.find((stat) => stat.binary);
     expect(image?.added).toBe(0);
     expect(image?.removed).toBe(0);
+  });
+});
+
+describe("diffPreview", () => {
+  const text = [
+    "--- SKILL.md (locked 281c3fa)",
+    "+++ SKILL.md (installed)",
+    "@@ -8,5 +8,5 @@ ## Steps",
+    " a",
+    " b",
+    " c",
+    " d",
+    "-e",
+    "+E",
+    "--- other.md (locked 281c3fa)",
+    "+++ other.md (installed)",
+    "@@ -1,1 +1,2 @@",
+    " x",
+    "+y",
+    "",
+  ].join("\n");
+
+  test("starts two lines above the first change and counts what it hides", () => {
+    const preview = diffPreview(parseUnifiedDiff(text), 4);
+    expect(preview?.path).toBe("SKILL.md");
+    expect(preview?.lines.map((line) => line.text)).toEqual([
+      "c",
+      "d",
+      "e",
+      "E",
+    ]);
+    expect(preview?.hiddenChanges).toBe(1);
+  });
+
+  test("skips a binary file and returns null when no text hunk exists", () => {
+    const binary = [
+      "--- logo.png (locked 281c3fa)",
+      "+++ logo.png (installed)",
+      "Binary files differ",
+      "",
+    ].join("\n");
+    expect(diffPreview(parseUnifiedDiff(binary), 8)).toBeNull();
+    expect(diffPreview(parseUnifiedDiff(""), 8)).toBeNull();
   });
 });

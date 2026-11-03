@@ -38,3 +38,23 @@ export function kindLabel(kind: ItemKind): string {
       return "Codex config";
   }
 }
+
+/** The word for one item of a kind, set quietly beside its name in a list. */
+export function kindNoun(kind: ItemKind): string {
+  switch (kind) {
+    case "skills":
+      return "skill";
+    case "plugins":
+      return "plugin";
+    case "pi-extensions":
+      return "Pi extension";
+    case "subagents":
+      return "subagent";
+    case "settings":
+      return "settings";
+    case "mcp":
+      return "MCP server";
+    case "codex-config":
+      return "Codex config";
+  }
+}

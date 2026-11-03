@@ -239,13 +239,10 @@ export function KeyHelp({
   onClose: () => void;
 }): preact.JSX.Element {
   const rows: Array<[string, string]> = [
-    ["↑ ↓", "Move between projects in the tree, or between item panels"],
-    ["Enter or Space", "Open or close the focused panel"],
-    ["→ / ←", "Expand or collapse a project in the tree"],
-    ["c", "Copy the first command of the focused panel"],
-    ["/", "Focus the filter"],
+    ["↑ ↓", "Move between projects in the rail, or between items in the list"],
+    ["c", "Copy the recommended command of the open item"],
     ["r", "Refresh every project"],
-    ["Esc", "Close this help, the diff dialog, or the tree drawer"],
+    ["Esc", "Close this help or the diff dialog"],
   ];
   return (
     <div class="key-help" role="dialog" aria-label="Keyboard shortcuts">

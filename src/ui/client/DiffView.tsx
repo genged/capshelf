@@ -5,6 +5,8 @@ import type { DiffViewName, UiDiffResponse, UiItem } from "../shared/api-types";
 import {
   type DiffFile,
   type DiffFileStat,
+  type DiffPreview,
+  diffPreview,
   fileStats,
   type ParsedDiff,
   parseUnifiedDiff,
@@ -172,7 +174,11 @@ type Summary =
       files: DiffFileStat[];
       notes: string[];
       note: string | null;
+      preview: DiffPreview | null;
     };
+
+/** Lines the item pane shows before the reader opens the full diff. */
+const PREVIEW_LINES = 8;
 
 function summarize(view: DiffViewName, loaded: Loaded | undefined): Summary {
   if (!loaded || loaded.state === "loading") return { state: "loading" };
@@ -198,6 +204,7 @@ function summarize(view: DiffViewName, loaded: Loaded | undefined): Summary {
     files: fileStats(parsed),
     notes: parsed.notes,
     note: diff.note ?? null,
+    preview: diffPreview(parsed, PREVIEW_LINES),
   };
 }
 
@@ -241,31 +248,73 @@ function DiffSummary({
   const removed =
     single?.files.reduce((sum, file) => sum + file.removed, 0) ?? 0;
   const notes = ready.flatMap((entry) => entry.notes);
+  // Three-way has no single preview; the installed edit is what the reader
+  // decides about first, so it leads.
+  const previewView: DiffViewName =
+    defaultMode === "three" ? "installed" : defaultMode;
+  const previewSource = ready.find((entry) => entry.view === previewView);
+  const preview = previewSource?.preview ?? null;
   return (
-    <section class="diff-summary" aria-label="Diff summary">
-      <div class="diff-bar">
-        <p class="diff-caption muted">
-          {views.length === 2
-            ? "Installed copy and shelf compared with the pin."
-            : `${viewLabel(views[0] ?? "installed")} compared with the pin.`}
-          {single && single.files.length > 1 ? (
-            <>
-              {` ${single.files.length} files, `}
-              <span class="diff-summary-add">+{added}</span>{" "}
-              <span class="diff-summary-del">−{removed}</span>.
-            </>
-          ) : null}
-        </p>
-        <button
-          type="button"
-          class="button diff-open"
-          ref={openerRef}
-          aria-haspopup="dialog"
-          onClick={() => onOpen(defaultMode)}
-        >
-          <Icon name="expand" />
-          <span>Open diff</span>
-        </button>
+    <section class="diff-summary" aria-label="What changed">
+      <div class="diff-preview">
+        <div class="diff-preview-head">
+          {preview ? <span>{preview.path || "(new file)"}</span> : null}
+          <span class="diff-caption muted">
+            {views.length === 2
+              ? "Installed copy and shelf compared with the pin."
+              : `${viewLabel(views[0] ?? "installed")} compared with the pin.`}
+            {single && single.files.length > 1 ? (
+              <>
+                {` ${single.files.length} files, `}
+                <span class="diff-summary-add">+{added}</span>{" "}
+                <span class="diff-summary-del">−{removed}</span>.
+              </>
+            ) : null}
+          </span>
+          <button
+            type="button"
+            class="button diff-open"
+            ref={openerRef}
+            aria-haspopup="dialog"
+            onClick={() => onOpen(defaultMode)}
+          >
+            <Icon name="expand" />
+            <span>Open full diff</span>
+          </button>
+        </div>
+        {preview ? (
+          <figure class="diff-preview-body">
+            <figcaption class="visually-hidden">
+              First changed lines of {preview.path || "the new file"}
+            </figcaption>
+            <div class="diff-preview-line is-hunk">
+              <span class="no" />
+              <span class="sign" />
+              <span class="text">{preview.header}</span>
+            </div>
+            {preview.lines.map((line, index) => (
+              <div
+                key={`${index}-${line.oldNo}-${line.newNo}`}
+                class={`diff-preview-line${line.kind === "add" ? " is-add" : line.kind === "del" ? " is-del" : ""}`}
+              >
+                <span class="no">
+                  {line.kind === "del" ? line.oldNo : line.newNo}
+                </span>
+                <span class="sign">
+                  {line.kind === "add" ? "+" : line.kind === "del" ? "−" : " "}
+                </span>
+                <span class="text">{line.text}</span>
+              </div>
+            ))}
+            {preview.hiddenChanges > 0 ? (
+              <p class="diff-preview-more">
+                {preview.hiddenChanges} more changed{" "}
+                {preview.hiddenChanges === 1 ? "line" : "lines"} in the full
+                diff.
+              </p>
+            ) : null}
+          </figure>
+        ) : null}
       </div>
       {summaries.map(({ view, summary }) =>
         summary.state === "ready" ? null : (

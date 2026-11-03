@@ -1,5 +1,6 @@
 import { render } from "preact";
 import "./styles.css";
+import "./frame.css";
 import { bootstrapToken } from "./api";
 import { Dashboard } from "./dashboard";
 

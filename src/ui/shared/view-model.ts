@@ -2,8 +2,13 @@
  * Pure helpers the dashboard uses to order, count, and filter the rows the
  * server sends. They carry no DOM, so they are unit tests.
  */
+import type {
+  ExternalClaudePlugin,
+  ExternalSkill,
+  ExternalUserSkill,
+} from "../../external";
 import type { ItemKind } from "../../master";
-import type { UiItem } from "./api-types";
+import type { UiItem, UiProjectStatus } from "./api-types";
 import { KIND_ORDER, kindLabel } from "./kind-label";
 
 export type FilterTab = "all" | "attention" | "ok";
@@ -195,4 +200,126 @@ export function shortCommit(value: string | null | undefined): string {
  */
 export function shortenDigests(text: string): string {
   return text.replace(/\b[0-9a-f]{64}\b/g, (digest) => digest.slice(0, 12));
+}
+
+/**
+ * The CLI's state sentence, shortened, or null when it only restates the
+ * label: `up-to-date` under "Up to date" adds nothing, while
+ * `drifted + update available → 4ca4018c5a54` names the target.
+ */
+export function stateSentence(label: string, detail: string): string | null {
+  const words = (text: string): string =>
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+  const sentence = shortenDigests(detail).trim();
+  if (sentence.length === 0) return null;
+  return words(sentence) === words(label) ? null : sentence;
+}
+
+/**
+ * A project's display path as the rail shows it: the folder name first,
+ * because it tells projects apart, and the parent below it.
+ * `~/code/billing-api` → name `billing-api`, parent `~/code`.
+ */
+export interface DisplayPathParts {
+  name: string;
+  parent: string;
+}
+
+export function splitDisplayPath(display: string): DisplayPathParts {
+  const trimmed = display.length > 1 ? display.replace(/\/+$/, "") : display;
+  const slash = trimmed.lastIndexOf("/");
+  if (slash === -1) return { name: trimmed, parent: "" };
+  return {
+    name: trimmed.slice(slash + 1) || trimmed,
+    parent: slash === 0 ? "/" : trimmed.slice(0, slash),
+  };
+}
+
+export type ListGroupId = "attention" | "kept" | "ok";
+
+export interface ListGroup {
+  id: ListGroupId;
+  label: string;
+  rows: UiItem[];
+}
+
+const LIST_GROUPS: ReadonlyArray<{ id: ListGroupId; label: string }> = [
+  { id: "attention", label: "Needs attention" },
+  { id: "kept", label: "Kept local" },
+  { id: "ok", label: "Up to date" },
+];
+
+/**
+ * The item list groups by state, not by kind: findings first, then kept
+ * local, then up to date. Rows keep `sortItems` order. Empty groups drop.
+ */
+export function listGroups(items: readonly UiItem[]): ListGroup[] {
+  const sorted = sortItems(items);
+  const groupOf = (item: UiItem): ListGroupId =>
+    item.attention ? "attention" : item.tone === "kept" ? "kept" : "ok";
+  return LIST_GROUPS.map((group) => ({
+    ...group,
+    rows: sorted.filter((item) => groupOf(item) === group.id),
+  })).filter((group) => group.rows.length > 0);
+}
+
+/**
+ * Something a harness loads in a project that Capshelf does not manage. The
+ * id is the route segment that selects it, so it must not collide with an
+ * item id (`<scope>/<source>/<kind>/<name>`).
+ */
+export type ExternalEntry =
+  | { type: "skills.sh"; id: string; name: string; skill: ExternalSkill }
+  | {
+      type: "plugin";
+      id: string;
+      name: string;
+      plugin: ExternalClaudePlugin;
+    }
+  | {
+      type: "user-skill";
+      id: string;
+      name: string;
+      skill: ExternalUserSkill;
+    };
+
+/** Every external row of a project, ordered by name, then by id. */
+export function externalEntries(
+  status: Pick<
+    UiProjectStatus,
+    "external" | "externalClaudePlugins" | "externalUserSkills"
+  >,
+): ExternalEntry[] {
+  const entries: ExternalEntry[] = [
+    ...status.external.map(
+      (skill): ExternalEntry => ({
+        type: "skills.sh",
+        id: `external/skills/${skill.name}`,
+        name: skill.name,
+        skill,
+      }),
+    ),
+    ...status.externalClaudePlugins.map(
+      (plugin): ExternalEntry => ({
+        type: "plugin",
+        id: `plugin/${plugin.scope}/${plugin.id}`,
+        name: plugin.name,
+        plugin,
+      }),
+    ),
+    ...status.externalUserSkills.map(
+      (skill): ExternalEntry => ({
+        type: "user-skill",
+        id: `user/${skill.surface}/${skill.name}`,
+        name: skill.name,
+        skill,
+      }),
+    ),
+  ];
+  return entries.sort(
+    (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
+  );
 }
