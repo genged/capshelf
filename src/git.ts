@@ -1305,6 +1305,8 @@ export async function catFileBlobs(
   repo: string,
   blobIds: Iterable<string>,
   memo?: GitReadMemo,
+  /** False reads from `memo` but adds nothing to it. */
+  keep = true,
 ): Promise<Map<string, Buffer>> {
   const requestedIds = [...blobIds];
   const out = new Map<string, Buffer>();
@@ -1357,7 +1359,7 @@ export async function catFileBlobs(
       const content = stdout.subarray(start, end);
       out.set(match[1]!, content);
       const key = gitObjectReadKey(repo, requested);
-      if (key !== undefined) memo?.blobs.set(key, Buffer.from(content));
+      if (keep && key !== undefined) memo?.blobs.set(key, Buffer.from(content));
       // Git writes a single LF after each object's contents.
       offset = end + 1;
     }

@@ -718,13 +718,16 @@ A pin is the last commit that touched its item, so pins are often different
 commits. An item at a commit of its own keeps its own reads. The command also
 reads the blobs of all items in one `cat-file` process. A blob id names its
 bytes, so that answer cannot change. The memo keeps those bytes until the
-command ends, so the peak memory of a command is about the size of its items. A failed batch read is not kept, and each
+command ends. So the prefetch first reads the blob sizes, and it reads nothing
+when they come to more than 32 MiB. Then each item reads its own bytes, as
+before, and peak memory follows the largest item. A failed batch read is not kept, and each
 item then asks Git with its own arguments and gets its own error. Remote clones
 are never registered.
 
 `status --diff` renders its diffs in a second pass with a memo of its own. It
 registers the pinned commits of the rows and reads the bytes of every row with
-one `cat-file`, not one `git show` per file. `git show <commit>:<path>` prints
+one `cat-file`, not one `git show` per file. Bytes that a row reads itself are
+not kept, because each row is read once. `git show <commit>:<path>` prints
 a blob raw, with no textconv driver and no smudge filter, so the bytes are the
 same.
 

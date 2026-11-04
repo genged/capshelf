@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import * as git from "../src/git";
 import * as gitMeasure from "../src/git-measure";
 import { GitReadMemo } from "../src/git-read-memo";
+import { prefetchItemBlobs } from "../src/pin";
 import { commitAll, tempRepo } from "./cli-fixtures";
 
 /**
@@ -423,6 +424,40 @@ test("registering more paths after a batch read lists them too", async () => {
       { memo },
     ),
   ).toEqual(direct);
+});
+
+test("a prefetch above the byte budget reads no blob", async () => {
+  const repo = await tempRepo("capshelf-prefetch-budget-");
+  for (const name of ["one", "two"]) {
+    await mkdir(join(repo, "skills", name), { recursive: true });
+    await writeFile(join(repo, "skills", name, "SKILL.md"), `${name}\n`);
+  }
+  await commitAll(repo, "items");
+  const commit = await gitOut(repo, ["rev-parse", "HEAD"]);
+  const items = ["one", "two"].map((name) => ({
+    kind: "skills" as const,
+    name,
+    commit,
+  }));
+  // The two files hold 8 bytes together.
+  const small = new GitReadMemo();
+  await prefetchItemBlobs(repo, items, small, 7);
+  expect(small.blobs.size).toBe(0);
+  const fits = new GitReadMemo();
+  await prefetchItemBlobs(repo, items, fits, 8);
+  expect(fits.blobs.size).toBe(2);
+  // One item alone reads its own bytes, so a prefetch adds nothing.
+  const alone = new GitReadMemo();
+  await prefetchItemBlobs(repo, [items[0]!, items[0]!], alone);
+  expect(alone.blobs.size).toBe(0);
+  // A second prefetch of cached blobs starts no Git process.
+  const reads = spyOn(gitMeasure, "recordGitRead");
+  try {
+    await prefetchItemBlobs(repo, items, fits, 8);
+    expect(reads.mock.calls.filter((call) => call[4]).length).toBe(0);
+  } finally {
+    reads.mockRestore();
+  }
 });
 
 test("git show of a committed file prints the blob bytes cat-file reads", async () => {
