@@ -10,6 +10,7 @@ import {
   lsTreeEntriesForPathspecs,
   catFileBlobs,
   catFileSizes,
+  MEMO_BLOB_LIMIT,
   checkAttrAtCommit,
   contentCommitPathspecs,
   lastTouchingCommitForPaths,
@@ -742,6 +743,13 @@ export function batchItemReads(
 }
 
 /**
+ * The most bytes one prefetch reads. The batch is one buffer, and the memo
+ * keeps a copy of each small blob until the command ends. Above this size,
+ * each item reads its own bytes.
+ */
+export const PREFETCH_BYTE_BUDGET = 32 * 1024 * 1024;
+
+/**
  * Read the blobs of many data-repo items in one `cat-file --batch`, and keep
  * them in `memo`. A later read of the same blob id in this command starts no
  * Git process. A blob id names its bytes, so the answer cannot change.
@@ -749,13 +757,6 @@ export function batchItemReads(
  * This only fills the memo. An item whose tree or blobs cannot be read is
  * skipped, and its own read later reports its own error.
  */
-/**
- * The most bytes one prefetch reads. The batch is one buffer, and the memo
- * keeps a copy of each blob until the command ends. Above this size, each
- * item reads its own bytes, so peak memory follows the largest item.
- */
-export const PREFETCH_BYTE_BUDGET = 32 * 1024 * 1024;
-
 export async function prefetchItemBlobs(
   dataRepo: string,
   items: ReadonlyArray<ItemAtCommit>,
@@ -782,10 +783,16 @@ export async function prefetchItemBlobs(
   if (ids.size === 0 || distinct.size < 2) return;
   const sizes = await catFileSizes(dataRepo, ids).catch(() => undefined);
   if (sizes === undefined) return;
-  let total = 0;
-  for (const size of sizes.values()) total += size;
-  if (total > budget) return;
-  await catFileBlobs(dataRepo, ids, memo).catch(() => undefined);
+  // The memo keeps no large blob, so a prefetch does not read one. Its item
+  // reads it when it needs it.
+  const small = [...sizes].filter(([, size]) => size <= MEMO_BLOB_LIMIT);
+  const total = small.reduce((sum, [, size]) => sum + size, 0);
+  if (small.length === 0 || total > budget) return;
+  await catFileBlobs(
+    dataRepo,
+    small.map(([id]) => id),
+    memo,
+  ).catch(() => undefined);
 }
 
 /* --------------------------------------------------------------- PIN-11 */

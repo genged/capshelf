@@ -1301,6 +1301,13 @@ function assertValidObjectNames(ids: readonly string[]): void {
   }
 }
 
+/**
+ * The largest blob a memo keeps. Managed config files are far smaller. A
+ * larger blob, such as an image in a skill, is read again when a command needs
+ * it twice, so the memo never holds a second copy of large content.
+ */
+export const MEMO_BLOB_LIMIT = 1024 * 1024;
+
 export async function catFileBlobs(
   repo: string,
   blobIds: Iterable<string>,
@@ -1359,7 +1366,9 @@ export async function catFileBlobs(
       const content = stdout.subarray(start, end);
       out.set(match[1]!, content);
       const key = gitObjectReadKey(repo, requested);
-      if (keep && key !== undefined) memo?.blobs.set(key, Buffer.from(content));
+      if (keep && key !== undefined && content.length <= MEMO_BLOB_LIMIT) {
+        memo?.blobs.set(key, Buffer.from(content));
+      }
       // Git writes a single LF after each object's contents.
       offset = end + 1;
     }
