@@ -202,14 +202,6 @@ async function lsAvailable(
   const sharesTargetWith = (itemKind: ItemKind, name: string): string | null =>
     itemKind === "plugins" && skillNames.has(name) ? `skills/${name}` : null;
 
-  // One `ls-files` lists the working-tree files of every copy item.
-  const listFiles = await sourceVisibleFilesLister(
-    dataRepo,
-    dataItems
-      .filter((item) => isCopyDirectoryItemKind(item.kind))
-      .map((item) => item.repoRelPath),
-  );
-
   const systemRows = systemItems
     .map((item) => ({ item, meta: loadSystemItemMetadata(item) }))
     .filter(({ meta }) => matchesTagFilter(meta, tags));
@@ -221,6 +213,13 @@ async function lsAvailable(
       })),
     )
   ).filter(({ meta }) => matchesTagFilter(meta, tags));
+  // One `ls-files` lists the working-tree files of every copy item shown.
+  const listFiles = await sourceVisibleFilesLister(
+    dataRepo,
+    dataRows
+      .filter(({ item }) => isCopyDirectoryItemKind(item.kind))
+      .map(({ item }) => item.repoRelPath),
+  );
   for (const { meta } of [...systemRows, ...dataRows]) {
     printMetadataWarnings(meta);
   }
