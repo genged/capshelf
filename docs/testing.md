@@ -55,6 +55,11 @@ command reported the wrong thing.
 Add to these when you move a reuse boundary. The boundary itself is described
 in [`docs/architecture.md`](architecture.md).
 
+`tests/git-batch-reads.test.ts` and `tests/git-history-walk.test.ts` compare
+each batched read with the read it replaces, on random trees and histories.
+To measure a change and to compare the results of two binaries, use the tools
+that [`docs/performance.md`](performance.md) describes.
+
 ## The end-to-end layer
 
 Every E2E test starts the compiled executable named by `CAPSHELF_E2E_BIN` as a
