@@ -48,6 +48,6 @@ item.
 - `equiv.sh` passing is necessary, not sufficient. A new batched read also
   needs a unit test that compares it with the read it replaces, on random
   inputs. Then break the batching on purpose and confirm that the test fails.
-- Before a long series of `make check` runs, check free inodes with
-  `df -i /`. The test suites leave `capshelf-*` directories in the temporary
-  directory. Ask the user before you delete any that you did not create.
+- The test suites remove their temporary files after a passing run. If
+  `df -i /` still shows few free inodes, ask the user before you delete files
+  that you did not create.

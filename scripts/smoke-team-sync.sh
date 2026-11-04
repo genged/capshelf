@@ -315,4 +315,4 @@ test "$(git hash-object "$MERGE_B/.agents/skills/merge-demo/line.txt")" = "$MERG
 test "$(git hash-object "$MERGE_B_DATA/skills/merge-demo/line.txt")" = "$MERGE_CONFLICT_UPSTREAM"
 test ! -e "$MERGE_C/.agents/skills/merge-demo/upstream.txt"
 
-echo "✓ smoke-team-sync ok ($TMP)"
+echo "✓ smoke-team-sync ok"

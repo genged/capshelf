@@ -72,4 +72,4 @@ git -C "$DATA" commit -qm 'make reviewer Claude only'
 test ! -e "$B/.codex/agents/reviewer.toml"
 test -f "$B/.claude/agents/reviewer.md"
 
-echo "✓ smoke-subagents ok ($TMP)"
+echo "✓ smoke-subagents ok"

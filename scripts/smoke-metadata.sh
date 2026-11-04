@@ -123,4 +123,4 @@ assert_fixed_contains 'Authored in the project.' "$DATA/skills/new-local/.capshe
 (cd "$A" && "${CLI[@]}" show skills/security-review --json) | python3 -m json.tool >/dev/null
 (cd "$A" && "${CLI[@]}" search security --json) | python3 -m json.tool >/dev/null
 
-echo "✓ smoke-metadata ok ($TMP)"
+echo "✓ smoke-metadata ok"

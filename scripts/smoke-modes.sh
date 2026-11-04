@@ -179,4 +179,4 @@ if (cd "$SHADOW" && "${CLI[@]}" promote skills/capshelf > "$TMP/promote-system.t
 fi
 assert_contains 'system item' "$TMP/promote-system.txt"
 
-echo "✓ smoke-modes ok ($TMP)"
+echo "✓ smoke-modes ok"

@@ -175,4 +175,4 @@ assert_contains 'no data lock entry exists' "$TMP/untracked-rm.txt"
 test -f "$A/.claude/skills/local-only/SKILL.md"
 cp "$TMP/manifest.bak" "$A/.capshelf/capshelf.json"
 
-echo "✓ smoke-skills ok ($TMP)"
+echo "✓ smoke-skills ok"

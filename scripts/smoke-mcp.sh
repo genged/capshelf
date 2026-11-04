@@ -117,4 +117,4 @@ TOML
 assert_contains '"action": "promoted"' "$TMP/mcp-promote.json"
 assert_fixed_contains 'github-mcp-v3' "$A/.codex/config.toml"
 
-echo "✓ smoke-mcp ok ($TMP)"
+echo "✓ smoke-mcp ok"
