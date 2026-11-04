@@ -34,6 +34,7 @@ import {
   hashWidthOf,
   itemTreeEntriesAtCommit,
   prefetchItemBlobs,
+  prefetchSourceCommits,
   sourcePinDigest,
 } from "../pin";
 import type { PinnedSource } from "../pin";
@@ -1686,6 +1687,18 @@ async function planUpdatePreflight(
   // Each item reads its blobs at its pin and at its new source commit. An item
   // path holds the same blobs at `HEAD` as at its last touching commit, so one
   // read at both commits covers every item.
+  if (ctx.dataRepo !== undefined && dataHead !== undefined) {
+    // One history walk selects the new source commit of every item.
+    await prefetchSourceCommits(
+      ctx.dataRepo,
+      dataHead,
+      targets.flatMap((target) => {
+        const parsed = parseLockKey(target.key);
+        return parsed.source === "data" ? [parsed] : [];
+      }),
+      ctx.memo,
+    );
+  }
   if (ctx.dataRepo !== undefined) {
     await prefetchItemBlobs(
       ctx.dataRepo,

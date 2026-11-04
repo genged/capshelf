@@ -33,6 +33,7 @@ import {
   commitExists,
   isGitWorkTreeRoot,
   headSha,
+  resolveCommit,
   repositoryObjectsDirectory,
   worktreeCleanSnapshot,
 } from "./git";
@@ -85,6 +86,7 @@ import {
   batchItemReads,
   itemTreeEntriesAtCommit,
   prefetchItemBlobs,
+  prefetchSourceCommits,
   type FilteredPath,
   type ItemAtCommit,
 } from "./pin";
@@ -273,6 +275,7 @@ export async function buildStatusReport(
     .map((target) => parseLockKey(target.key))
     .filter((parsed) => parsed.source === "data");
   let observedSidecars: Map<string, Buffer> | undefined;
+  let walkHead: string | undefined;
   // Rows that share a pinned commit share its tree and attribute reads.
   // Subagent and fragment rows also hash their pinned bytes, so one read
   // covers them all. A copy-directory row compares blob ids and reads no bytes.
@@ -287,6 +290,13 @@ export async function buildStatusReport(
         : [];
     });
     batchItemReads(dataRepo, pinned, memo);
+    // One history walk selects the upstream commit of every row. It starts at
+    // one `HEAD` read for the walk alone. If that read fails, each row walks
+    // from the live `HEAD` as before.
+    walkHead = (await resolveCommit(dataRepo, "HEAD")) ?? undefined;
+    if (walkHead !== undefined) {
+      await prefetchSourceCommits(dataRepo, walkHead, pinned, memo);
+    }
     await prefetchItemBlobs(
       dataRepo,
       pinned.filter((item) => !isCopyDirectoryItemKind(item.kind)),
@@ -420,6 +430,7 @@ export async function buildStatusReport(
           treeIdentity ? "tree" : "worktree",
           memo,
           isDataPathClean,
+          walkHead,
         );
         upstreamSha = upstream.upstreamSha;
         upstreamDirty = upstream.upstreamDirty;
