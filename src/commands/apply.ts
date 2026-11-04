@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { GitReadMemo } from "../git-read-memo";
+import { prefetchItemBlobs } from "../pin";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import {
   assertDestructivePlanUnchanged,
@@ -470,6 +471,7 @@ export function registerApply(program: Command): void {
                   key,
                   entry,
                   scope,
+                  memo,
                 }),
               ),
             );
@@ -676,6 +678,21 @@ async function planApplyPreflight(
   const fragmentTargets = new Set<FragmentTarget>();
   const fragmentItems = new Map<FragmentTarget, Set<string>>();
 
+  // Every data item reads its blobs at its pin. One read covers them all.
+  if (input.dataRepo !== undefined) {
+    await prefetchItemBlobs(
+      input.dataRepo,
+      input.targets.flatMap(({ scope, key }) => {
+        const entry = (scope === "local" ? input.localLock : input.projectLock)
+          .items[key];
+        if (entry?.source !== "data") return [];
+        const { kind, name } = parseLockKey(key);
+        return [{ kind, name, commit: entry.sourceCommit }];
+      }),
+      input.memo,
+    );
+  }
+
   for (const { scope, key } of input.targets) {
     const lock = scope === "local" ? input.localLock : input.projectLock;
     const parsed = parseLockKey(key);
@@ -815,6 +832,7 @@ async function planApplyPreflight(
           entry,
           scope,
           dryRun: true,
+          memo: input.memo,
         }),
       );
       results.push(materialized);
@@ -834,6 +852,7 @@ async function planApplyPreflight(
           currentEntry: entry,
           selectedEntry: entry,
           reviewCommand,
+          memo: input.memo,
         });
         changes.push(...planned.changes);
         snapshotParts.push(...planned.snapshotParts);

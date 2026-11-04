@@ -174,6 +174,12 @@ const REPOSITORY_SELECTING_ENV = [
   "GIT_DISCOVERY_ACROSS_FILESYSTEM",
   "GIT_PREFIX",
   "GIT_REPLACE_REF_BASE",
+  // These four change how Git reads every pathspec. capshelf writes its own
+  // `:(literal)` magic, so an ambient value would change which paths match.
+  "GIT_LITERAL_PATHSPECS",
+  "GIT_GLOB_PATHSPECS",
+  "GIT_NOGLOB_PATHSPECS",
+  "GIT_ICASE_PATHSPECS",
 ] as const;
 
 /** Command-line config injection and diff helper selection. */
@@ -800,8 +806,29 @@ export async function lsTreeEntriesForPathspecs(
   const key = gitObjectReadKey(repo, commit, args);
   const cached = key === undefined ? undefined : options.memo?.trees.get(key);
   if (cached !== undefined) return cached.map((entry) => ({ ...entry }));
-  const out = await sourceReadText(repo, args);
-  const entries = out
+  const literalPaths = literalPathsOf(pathspecs);
+  const batch =
+    key === undefined || options.memo === undefined || literalPaths === null
+      ? undefined
+      : await batchTreeAtCommit(repo, commit, options.memo, literalPaths);
+  const entries =
+    batch !== undefined && literalPaths !== null
+      ? entriesUnderLiteralPaths(
+          batch,
+          literalPaths,
+          options.includeTrees === true,
+        )
+      : parseLsTree(await sourceReadText(repo, args));
+  if (key !== undefined)
+    options.memo?.trees.set(
+      key,
+      entries.map((entry) => ({ ...entry })),
+    );
+  return entries;
+}
+
+function parseLsTree(out: string): GitTreeEntry[] {
+  return out
     .split("\0")
     .filter((s) => s.length > 0)
     .map((line) => {
@@ -814,11 +841,122 @@ export async function lsTreeEntriesForPathspecs(
         path: match[4]!,
       };
     });
-  if (key !== undefined)
-    options.memo?.trees.set(
-      key,
-      entries.map((entry) => ({ ...entry })),
+}
+
+/**
+ * The paths of a pathspec list in which every entry is `:(literal)<path>` with
+ * a normalized path, or null. Only these lists are answered from a batch
+ * listing. Any other magic or shape goes to Git itself.
+ */
+function literalPathsOf(pathspecs: readonly string[]): string[] | null {
+  const paths: string[] = [];
+  for (const pathspec of pathspecs) {
+    if (!pathspec.startsWith(":(literal)")) return null;
+    const path = pathspec.slice(":(literal)".length);
+    const segments = path.split("/");
+    if (
+      path.length === 0 ||
+      segments.some(
+        (segment) => segment === "" || segment === "." || segment === "..",
+      )
+    ) {
+      return null;
+    }
+    paths.push(path);
+  }
+  return paths;
+}
+
+/**
+ * The entries `ls-tree -r [-t] -- <literal paths>` prints, taken from an
+ * `ls-tree -r -t` listing of the same commit over paths that cover them. A
+ * literal path selects itself and everything under it. With `-t`, Git also
+ * prints each tree it enters on the way to a selected path. Each such tree is
+ * a parent of a covering path or lies under one, so the listing holds it. The
+ * listing is in tree order, and a filter keeps that order.
+ * tests/git-batch-reads.test.ts compares this with Git.
+ */
+function entriesUnderLiteralPaths(
+  whole: readonly GitTreeEntry[],
+  paths: readonly string[],
+  includeTrees: boolean,
+): GitTreeEntry[] {
+  const out: GitTreeEntry[] = [];
+  for (const entry of whole) {
+    const selected = paths.some(
+      (path) =>
+        entry.path === path ||
+        entry.path.startsWith(`${path}/`) ||
+        (entry.type === "tree" && path.startsWith(`${entry.path}/`)),
     );
+    if (!selected) continue;
+    if (entry.type === "tree" && !includeTrees) continue;
+    out.push({ ...entry });
+  }
+  return out;
+}
+
+function batchKey(repo: string, commit: string): string | undefined {
+  return gitObjectReadKey(repo, commit, ["batch"]);
+}
+
+function coveredBy(path: string, covering: readonly string[]): boolean {
+  return covering.some((root) => path === root || path.startsWith(`${root}/`));
+}
+
+/**
+ * Register the items a command will read at one commit. Later tree reads and
+ * attribute queries at that commit that stay inside these paths are answered
+ * from one Git process each. A path that is not literal and normalized is not
+ * registered, so a read of it goes to Git as before.
+ */
+export function registerBatchReads(
+  memo: GitReadMemo,
+  repo: string,
+  commit: string,
+  pathspecs: readonly string[],
+): void {
+  const key = batchKey(repo, commit);
+  const paths = literalPathsOf(pathspecs);
+  if (key === undefined || paths === null) return;
+  const registered = memo.batchPaths.get(key) ?? [];
+  const grown = [...new Set([...registered, ...paths])];
+  if (grown.length === registered.length) return;
+  memo.batchPaths.set(key, grown);
+  // The cached listing covers only the older path set.
+  memo.batchTrees.delete(key);
+}
+
+/**
+ * The one listing of every registered path at a commit, or undefined when the
+ * commit is not registered or the requested paths are not inside it. A failed
+ * read returns undefined and leaves nothing behind, so the caller asks Git
+ * with its own arguments and reports its own error.
+ */
+async function batchTreeAtCommit(
+  repo: string,
+  commit: string,
+  memo: GitReadMemo,
+  requested: readonly string[],
+): Promise<GitTreeEntry[] | undefined> {
+  const key = batchKey(repo, commit);
+  const registered = key === undefined ? undefined : memo.batchPaths.get(key);
+  if (key === undefined || registered === undefined) return undefined;
+  if (!requested.every((path) => coveredBy(path, registered))) return undefined;
+  const cached = memo.batchTrees.get(key);
+  if (cached !== undefined) return cached;
+  const result = await sourceRead(repo, [
+    "ls-tree",
+    "-r",
+    "-t",
+    "-z",
+    commit,
+    "--",
+    ...registered.map((path) => `:(literal)${path}`),
+  ]);
+  if (result.exitCode !== 0) return undefined;
+  const entries = parseLsTree(result.stdout.toString("utf-8"));
+  memo.batchTrees.set(key, entries);
   return entries;
 }
 
@@ -996,8 +1134,10 @@ export async function repositoryObjectsDirectory(
  * `memo` keeps a successful answer for the rest of the command. The query
  * reads only the commit's own `.gitattributes`: the shadow repository has no
  * `info/attributes`, and the system and global files are disabled. So the
- * answer for one full commit id, path list, and attribute list cannot change.
- * `update` asks the same question in each preflight pass.
+ * answer for one full commit id, path, and attribute list cannot change, and
+ * it does not depend on the other paths in the query. With a memo, a query at
+ * a registered commit therefore also asks for the files of every registered
+ * item, and later queries of those files need no Git process.
  */
 export async function checkAttrAtCommit(
   repo: string,
@@ -1021,12 +1161,97 @@ export async function checkAttrAtCommit(
   const cacheKey = gitObjectReadKey(repo, commit, [
     "check-attr",
     ...attributes,
-    "--",
-    ...paths,
   ]);
-  const cached =
-    cacheKey === undefined ? undefined : memo?.attributes.get(cacheKey);
-  if (cached !== undefined) return cached.map((result) => ({ ...result }));
+  if (
+    memo === undefined ||
+    cacheKey === undefined ||
+    new Set(attributes).size !== attributes.length
+  ) {
+    return await runCheckAttr(
+      repo,
+      commit,
+      paths,
+      attributes,
+      observeObjectsDir,
+    );
+  }
+  let byPath = memo.attributesByPath.get(cacheKey);
+  const own = new Set(paths.filter((path) => !byPath?.has(path)));
+  const wanted = new Set(own);
+  const registered = memo.batchPaths.get(batchKey(repo, commit) ?? "");
+  if (wanted.size > 0 && registered !== undefined) {
+    const batch = await batchTreeAtCommit(repo, commit, memo, registered);
+    for (const entry of batch ?? []) {
+      // A tree can hold entries named `.` or `..`, and Git refuses a path
+      // that climbs out of the repository. Such a path stays out of a batch.
+      if (
+        entry.type === "blob" &&
+        !byPath?.has(entry.path) &&
+        entry.path
+          .split("/")
+          .every((part) => part !== "" && part !== "." && part !== "..")
+      ) {
+        wanted.add(entry.path);
+      }
+    }
+  }
+  if (wanted.size > 0) {
+    // One objects-directory read serves the batch and a retry.
+    let objectsDir: string | undefined;
+    const observe = async (): Promise<string> =>
+      (objectsDir ??= await (observeObjectsDir
+        ? observeObjectsDir()
+        : repositoryObjectsDirectory(repo)));
+    await observe();
+    const query = [...wanted];
+    // The files of other items must not fail this caller's query. A failed
+    // batch is asked again with this caller's paths only, and its answer or
+    // error is the caller's own.
+    const results =
+      query.length > own.size
+        ? await runCheckAttr(repo, commit, query, attributes, observe).catch(
+            () => undefined,
+          )
+        : await runCheckAttr(repo, commit, query, attributes, observe);
+    if (results === undefined) {
+      return await runCheckAttr(repo, commit, paths, attributes, observe);
+    }
+    // Git prints one record per path and attribute, in input order. Any other
+    // shape is not split: the caller gets a direct answer, and nothing is kept.
+    const inOrder =
+      results.length === query.length * attributes.length &&
+      results.every(
+        (result, index) =>
+          result.path === query[Math.floor(index / attributes.length)] &&
+          result.attribute === attributes[index % attributes.length],
+      );
+    if (!inOrder) {
+      return await runCheckAttr(repo, commit, paths, attributes, observe);
+    }
+    byPath ??= new Map();
+    query.forEach((path, index) => {
+      byPath!.set(
+        path,
+        results.slice(
+          index * attributes.length,
+          (index + 1) * attributes.length,
+        ),
+      );
+    });
+    memo.attributesByPath.set(cacheKey, byPath);
+  }
+  return paths.flatMap((path) =>
+    (byPath?.get(path) ?? []).map((result) => ({ ...result })),
+  );
+}
+
+async function runCheckAttr(
+  repo: string,
+  commit: string,
+  paths: string[],
+  attributes: string[],
+  observeObjectsDir?: () => Promise<string>,
+): Promise<CheckAttrResult[]> {
   const objectsDir = await (observeObjectsDir
     ? observeObjectsDir()
     : repositoryObjectsDirectory(repo));
@@ -1081,12 +1306,6 @@ export async function checkAttrAtCommit(
         attribute: fields[index + 1]!,
         value: fields[index + 2]!,
       });
-    }
-    if (cacheKey !== undefined) {
-      memo?.attributes.set(
-        cacheKey,
-        results.map((result) => ({ ...result })),
-      );
     }
     return results;
   } finally {

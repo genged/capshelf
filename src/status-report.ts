@@ -82,8 +82,11 @@ import {
 } from "./status-core";
 import {
   filteredPathsAtCommit,
+  batchItemReads,
   itemTreeEntriesAtCommit,
+  prefetchItemBlobs,
   type FilteredPath,
+  type ItemAtCommit,
 } from "./pin";
 import { buildRemoteStatusRows } from "./remote-status";
 import type { RemotesLock } from "./remotes-lock";
@@ -270,6 +273,26 @@ export async function buildStatusReport(
     .map((target) => parseLockKey(target.key))
     .filter((parsed) => parsed.source === "data");
   let observedSidecars: Map<string, Buffer> | undefined;
+  // Rows that share a pinned commit share its tree and attribute reads.
+  // Subagent and fragment rows also hash their pinned bytes, so one read
+  // covers them all. A copy-directory row compares blob ids and reads no bytes.
+  if (dataRepo) {
+    const pinned: ItemAtCommit[] = targets.flatMap((target) => {
+      const entry = (target.scope === "local" ? localLock : projectLock).items[
+        target.key
+      ];
+      const { kind, name } = parseLockKey(target.key);
+      return entry?.source === "data"
+        ? [{ kind, name, commit: entry.sourceCommit }]
+        : [];
+    });
+    batchItemReads(dataRepo, pinned, memo);
+    await prefetchItemBlobs(
+      dataRepo,
+      pinned.filter((item) => !isCopyDirectoryItemKind(item.kind)),
+      memo,
+    );
+  }
   const rows: StatusRow[] = [];
   const fragmentStates = new Map<string, FragmentContributionState>();
   for (const target of targets) {
@@ -680,10 +703,9 @@ export async function collectStatusDiffs(
 }
 
 /**
- * PIN-9 for one item at one commit. `status` calls this per row rather than
- * grouping by commit: a project's items rarely share a source commit, so the
- * grouping the spec's cost table describes would save nothing here — the
- * saving is in a multi-item `update`, which pins them all at once.
+ * PIN-9 for one item at one commit. `status` calls this per row. The memo
+ * answers every row at one commit from one attribute query of that commit, so
+ * rows that share a commit share one Git process.
  */
 async function filteredPathsForEntry(
   source: GitTreeSource,
@@ -699,6 +721,7 @@ async function filteredPathsForEntry(
       source.commit,
       [{ kind, name, entries }],
       observeObjectsDir,
+      memo,
     );
   } catch {
     return [];

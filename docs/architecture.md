@@ -691,6 +691,22 @@ the live `HEAD`. The history from a fixed commit cannot change, so the memo
 keeps the answer of that walk. The next pass reads `HEAD` again, so a commit
 made while the consent prompt is open still changes the revalidation plan.
 
+Items that share a data-repo commit share its reads. Before the item loop,
+`status`, `apply`, and `update` register each commit that two or more items
+use, with the paths of those items. One `ls-tree` over those paths then answers
+the tree read of each item at that commit. One `check-attr` over their files
+answers each attribute query. The answer for one path does not depend on the
+other paths in the query. Only item paths are read, never a whole commit, so
+the cost follows the items and not the size of the repository. `update` reads
+every item at the one `HEAD` of its pass, so all its items share that commit.
+A pin is the last commit that touched its item, so pins are often different
+commits. An item at a commit of its own keeps its own reads. The command also
+reads the blobs of all items in one `cat-file` process. A blob id names its
+bytes, so that answer cannot change. The memo keeps those bytes until the
+command ends, so the peak memory of a command is about the size of its items. A failed batch read is not kept, and each
+item then asks Git with its own arguments and gets its own error. Remote clones
+are never registered.
+
 The status report adds narrower reuse of its own. It merges each shared
 fragment output once per report rather than once per item. It runs one
 `git status` of the data repo per report and answers the dirty check of each
