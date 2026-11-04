@@ -6,8 +6,20 @@ export class GitReadMemo {
   readonly commits = new Set<string>();
   readonly trees = new Map<string, GitTreeEntry[]>();
   readonly blobs = new Map<string, Buffer>();
-  /** `check-attr` answers from a commit's own attributes. */
-  readonly attributes = new Map<string, CheckAttrResult[]>();
+  /**
+   * The literal paths of the items that a command will read at one commit.
+   * A command registers a commit only when two or more items share it. Then
+   * one `ls-tree` over all their paths answers each item's tree read, and one
+   * `check-attr` over all their files answers each item's attribute query.
+   */
+  readonly batchPaths = new Map<string, string[]>();
+  /** The one `ls-tree -r -t -z` listing of the registered paths at a commit. */
+  readonly batchTrees = new Map<string, GitTreeEntry[]>();
+  /**
+   * `check-attr` answers from a commit's own attributes, by path. The answer
+   * for one path does not depend on the other paths in the query.
+   */
+  readonly attributesByPath = new Map<string, Map<string, CheckAttrResult[]>>();
   /** `log -1 <head> -- <pathspecs>` answers from a fixed `head`. */
   readonly lastTouching = new Map<string, string | null>();
 }

@@ -23,6 +23,7 @@ import type { ItemSource } from "./installed";
 import { isTreePinned } from "./install-identity";
 import { isGitTree, sameContentSource } from "./item-source";
 import type { ContentSource, GitTreeSource } from "./item-source";
+import type { GitReadMemo } from "./git-read-memo";
 import type { ItemKind, CopyDirectoryItemKind } from "./master";
 import {
   isCopyDirectoryItemKind,
@@ -125,6 +126,8 @@ export interface MaterializeOptions {
   ignoreLocal?: boolean;
   dryRun?: boolean;
   hooks?: MaterializeHooks;
+  /** The command's read memo. Content reads at a full commit id reuse it. */
+  memo?: GitReadMemo;
 }
 
 /**
@@ -204,6 +207,8 @@ export async function materializeLockEntry(
           kind,
           name,
           opts.manifest,
+          undefined,
+          opts.memo,
         ).catch(() => null),
       ),
       message: opts.entry.localReason,
@@ -240,6 +245,7 @@ export async function materializeLockEntry(
     previous,
     scope: opts.scope,
     hooks: opts.hooks,
+    memo: opts.memo,
   });
 
   // PIN-5: the installed identity is filesystem work over the *managed* path
@@ -265,6 +271,8 @@ export async function materializeLockEntry(
           kind,
           name,
           opts.manifest,
+          undefined,
+          opts.memo,
         ).catch(() => null),
   );
   const dataBeforeMatches = await installedFilesMatch(
@@ -404,6 +412,7 @@ export async function copyDirectoryReconciliationFiles(opts: {
   previous: SourcedEntry;
   scope: Scope;
   hooks?: MaterializeHooks;
+  memo?: GitReadMemo;
 }): Promise<CopyDirectoryReconciliationFiles> {
   const content = await itemContentForSource(
     opts.source,
@@ -411,6 +420,7 @@ export async function copyDirectoryReconciliationFiles(opts: {
     opts.name,
     opts.manifest,
     opts.hooks,
+    opts.memo,
   );
   const expected = content.files;
   // Only a data entry carries a retrieval to verify: its files are read back
@@ -464,6 +474,8 @@ export async function copyDirectoryReconciliationFiles(opts: {
         opts.kind,
         opts.name,
         opts.manifest,
+        undefined,
+        opts.memo,
       ).then(
         (content) => content.files,
         () => [],
@@ -667,6 +679,7 @@ async function readItemContentAtCommit(
   name: string,
   manifest?: Manifest,
   hooks?: MaterializeHooks,
+  memo?: GitReadMemo,
 ): Promise<CommitItemContent> {
   // The item root is part of the key, so a read at a root other than the
   // canonical one cannot collide with a canonical read of the same commit.
@@ -687,7 +700,7 @@ async function readItemContentAtCommit(
 
   let entries: PinTreeEntry[];
   try {
-    entries = await itemTreeEntriesAtCommit(source, kind);
+    entries = await itemTreeEntriesAtCommit(source, kind, memo);
   } catch (error) {
     if (error instanceof PreconditionError) throw error;
     throwMissingCommit(source.repo, manifest, source.commit, { kind, name });
@@ -702,7 +715,7 @@ async function readItemContentAtCommit(
   }
   let files: NamedFile[];
   try {
-    files = (await readEntryBytes(source.repo, entries)).map((file) => ({
+    files = (await readEntryBytes(source.repo, entries, memo)).map((file) => ({
       path: file.path,
       content: file.content,
       mode: file.mode,
@@ -807,9 +820,17 @@ async function itemContentForSource(
   name: string,
   manifest?: Manifest,
   hooks?: MaterializeHooks,
+  memo?: GitReadMemo,
 ): Promise<CommitItemContent> {
   if (isGitTree(source)) {
-    return await readItemContentAtCommit(source, kind, name, manifest, hooks);
+    return await readItemContentAtCommit(
+      source,
+      kind,
+      name,
+      manifest,
+      hooks,
+      memo,
+    );
   }
   const item = findSystemItem(name);
   if (!item || item.kind !== kind) {

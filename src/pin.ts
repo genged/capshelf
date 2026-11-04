@@ -12,6 +12,7 @@ import {
   checkAttrAtCommit,
   lastTouchingCommitForPaths,
   lastTouchingContentCommit,
+  registerBatchReads,
   resolveCommit,
 } from "./git";
 import type { GitTreeEntry, LastTouchingOptions } from "./git";
@@ -183,15 +184,10 @@ export async function itemTreeEntriesAtCommit(
   memo?: GitReadMemo,
 ): Promise<PinTreeEntry[]> {
   const itemRoot = source.itemRoot;
-  const pathspecs = isCopyDirectoryItemKind(kind)
-    ? [literalPathspec(itemRoot)]
-    : itemRelPathsWithinRoot(kind).map((rel) =>
-        literalPathspec(`${itemRoot}/${rel}`),
-      );
   const raw = await lsTreeEntriesForPathspecs(
     source.repo,
     source.commit,
-    pathspecs,
+    itemTreePathspecs(source, kind),
     { memo },
   );
   // Refuses gitlinks and symlinks before they can reach the digest, so a pin
@@ -212,6 +208,15 @@ export async function itemTreeEntriesAtCommit(
   return entries.sort((a, b) =>
     a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
   );
+}
+
+/** The pathspecs `itemTreeEntriesAtCommit` lists for one item. */
+function itemTreePathspecs(source: GitTreeSource, kind: ItemKind): string[] {
+  return isCopyDirectoryItemKind(kind)
+    ? [literalPathspec(source.itemRoot)]
+    : itemRelPathsWithinRoot(kind).map((rel) =>
+        literalPathspec(`${source.itemRoot}/${rel}`),
+      );
 }
 
 function itemRelativePath(
@@ -660,6 +665,80 @@ export async function readEntryBytes(
     }
     return { path: entry.path, mode: entry.mode, content };
   });
+}
+
+export interface ItemAtCommit {
+  kind: ItemKind;
+  name: string;
+  commit: string;
+}
+
+/**
+ * Register each commit that two or more of these items share, with the paths
+ * of those items. The tree reads and attribute queries of those items then
+ * share one Git process per commit. A commit that one item uses alone is not
+ * registered: its own reads are already one process each, and a batch would
+ * only read more. Only the paths of the items are read, never the whole
+ * commit, so the cost follows the items and not the size of the repository.
+ */
+export function batchItemReads(
+  dataRepo: string,
+  items: ReadonlyArray<ItemAtCommit>,
+  memo: GitReadMemo,
+): void {
+  const byCommit = new Map<string, ItemAtCommit[]>();
+  for (const item of items) {
+    const group = byCommit.get(item.commit) ?? [];
+    if (
+      !group.some(
+        (other) => other.kind === item.kind && other.name === item.name,
+      )
+    ) {
+      group.push(item);
+    }
+    byCommit.set(item.commit, group);
+  }
+  for (const [commit, group] of byCommit) {
+    if (group.length < 2) continue;
+    registerBatchReads(
+      memo,
+      dataRepo,
+      commit,
+      group.flatMap(({ kind, name }) =>
+        itemTreePathspecs(
+          gitTreeSource({ repo: dataRepo, kind, name, commit }),
+          kind,
+        ),
+      ),
+    );
+  }
+}
+
+/**
+ * Read the blobs of many data-repo items in one `cat-file --batch`, and keep
+ * them in `memo`. A later read of the same blob id in this command starts no
+ * Git process. A blob id names its bytes, so the answer cannot change.
+ *
+ * This only fills the memo. An item whose tree or blobs cannot be read is
+ * skipped, and its own read later reports its own error.
+ */
+export async function prefetchItemBlobs(
+  dataRepo: string,
+  items: ReadonlyArray<ItemAtCommit>,
+  memo: GitReadMemo,
+): Promise<void> {
+  batchItemReads(dataRepo, items, memo);
+  const ids = new Set<string>();
+  for (const { kind, name, commit } of items) {
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(commit)) continue;
+    const source = gitTreeSource({ repo: dataRepo, kind, name, commit });
+    const entries = await itemTreeEntriesAtCommit(source, kind, memo).catch(
+      () => [],
+    );
+    for (const entry of entries) ids.add(entry.blobId);
+  }
+  if (ids.size === 0) return;
+  await catFileBlobs(dataRepo, ids, memo).catch(() => undefined);
 }
 
 /* --------------------------------------------------------------- PIN-11 */

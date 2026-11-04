@@ -33,6 +33,7 @@ import {
   blobIdOf,
   hashWidthOf,
   itemTreeEntriesAtCommit,
+  prefetchItemBlobs,
   sourcePinDigest,
 } from "../pin";
 import type { PinnedSource } from "../pin";
@@ -1682,6 +1683,24 @@ async function planUpdatePreflight(
     dryRun: true,
     ...(dataHead !== undefined && { dataHead }),
   };
+  // Each item reads its blobs at its pin and at its new source commit. An item
+  // path holds the same blobs at `HEAD` as at its last touching commit, so one
+  // read at both commits covers every item.
+  if (ctx.dataRepo !== undefined) {
+    await prefetchItemBlobs(
+      ctx.dataRepo,
+      targets.flatMap((target) => {
+        const entry = (target.scope === "local" ? localLock : projectLock)
+          .items[target.key];
+        if (entry?.source !== "data") return [];
+        const { kind, name } = parseLockKey(target.key);
+        return [entry.sourceCommit, dataHead]
+          .filter((commit) => commit !== undefined)
+          .map((commit) => ({ kind, name, commit }));
+      }),
+      ctx.memo,
+    );
+  }
   const results: UpdateResult[] = [];
   const changes: DestructiveChange[] = [];
   const snapshotParts: string[] = [];
@@ -1756,6 +1775,7 @@ async function planUpdatePreflight(
           selectedEntry,
           reviewCommand,
           repairUnresolvableCurrent: true,
+          memo: ctx.memo,
         });
         changes.push(...planned.changes);
         snapshotParts.push(...planned.snapshotParts);
@@ -2453,6 +2473,7 @@ async function updateDataTarget(
           },
           scope,
           dryRun: ctx.dryRun,
+          memo: ctx.memo,
         });
   const runtimeWarnings = runtimeWarningsForItem(
     ctx.project,

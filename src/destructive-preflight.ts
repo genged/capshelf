@@ -66,6 +66,8 @@ export async function planCopyDirectoryDestruction(opts: {
    * target, so a failure to read it must reach the caller.
    */
   repairUnresolvableCurrent?: boolean;
+  /** The command's read memo, for the data-repo content reads. */
+  memo?: GitReadMemo;
 }): Promise<PlannedDestruction> {
   const readReconciliationFiles = async (
     entry: LockEntry,
@@ -84,6 +86,7 @@ export async function planCopyDirectoryDestruction(opts: {
       entry,
       previous: { entry, source },
       scope: opts.scope,
+      memo: opts.memo,
     });
   };
   const current =
