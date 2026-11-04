@@ -10,8 +10,10 @@ import {
   lsTreeEntriesForPathspecs,
   catFileBlobs,
   checkAttrAtCommit,
+  contentCommitPathspecs,
   lastTouchingCommitForPaths,
   lastTouchingContentCommit,
+  prefetchLastTouchingCommits,
   registerBatchReads,
   resolveCommit,
 } from "./git";
@@ -336,6 +338,30 @@ export async function currentSourceCommit(
     );
   }
   throw new Error(`no pin strategy for ${kind}/${name}`);
+}
+
+/**
+ * Select the source commit of many items from `head` with one history walk,
+ * and keep each answer in `memo`. `currentSourceCommit` with the same `head`
+ * and memo then needs no Git process. The pathspecs are the ones
+ * `currentSourceCommit` walks, so each answer is the one it would compute.
+ */
+export async function prefetchSourceCommits(
+  dataRepo: string,
+  head: string,
+  items: ReadonlyArray<{ kind: ItemKind; name: string }>,
+  memo: GitReadMemo,
+): Promise<void> {
+  const lists = items.flatMap(({ kind, name }) =>
+    isCopyDirectoryItemKind(kind)
+      ? [contentCommitPathspecs(itemRepoRelPath(kind, name))]
+      : isCopyTargetFileItemKind(kind) || isFragmentItemKind(kind)
+        ? [allCanonicalItemRelPaths(kind, name).map(literalPathspec)]
+        : [],
+  );
+  await prefetchLastTouchingCommits(dataRepo, head, lists, memo).catch(
+    () => undefined,
+  );
 }
 
 /**

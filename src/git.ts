@@ -611,11 +611,159 @@ export async function lastTouchingContentCommit(
 ): Promise<string> {
   const sha = await tryLastTouchingCommitForPathspecs(
     repo,
-    [literalPathspec(relPath), excludePathspec(`${relPath}/.capshelf.yml`)],
+    contentCommitPathspecs(relPath),
     options,
   );
   if (sha) return sha;
   return await lastTouchingCommit(repo, relPath, options);
+}
+
+/** The pathspecs `lastTouchingContentCommit` walks for one copy item. */
+export function contentCommitPathspecs(relPath: string): string[] {
+  return [
+    literalPathspec(relPath),
+    excludePathspec(`${relPath}/.capshelf.yml`),
+  ];
+}
+
+interface WalkRequest {
+  key: string;
+  include: string[];
+  exclude: string[];
+}
+
+/** A list of `:(literal)` and `:(literal,exclude)` paths, or null. */
+function walkRequestOf(
+  key: string,
+  pathspecs: readonly string[],
+): WalkRequest | null {
+  const include: string[] = [];
+  const exclude: string[] = [];
+  for (const pathspec of pathspecs) {
+    const excluded = pathspec.startsWith(":(literal,exclude)");
+    const paths = literalPathsOf([
+      excluded
+        ? `:(literal)${pathspec.slice(":(literal,exclude)".length)}`
+        : pathspec,
+    ]);
+    if (paths === null) return null;
+    (excluded ? exclude : include).push(paths[0]!);
+  }
+  return include.length === 0 ? null : { key, include, exclude };
+}
+
+/**
+ * Answer `log -1 <head> -- <pathspecs>` for many pathspec lists with one walk,
+ * and keep each answer in `memo`. Each item then needs no Git process to
+ * select its commit.
+ *
+ * One `log --name-only` over the union of the lists prints every commit that
+ * changes a path in the union, newest first, with the changed paths. The first
+ * commit that changes a path of one list, outside that list's exclusions, is
+ * the commit `log -1` selects for that list. This holds only for a linear
+ * history. At a merge, `log` follows one parent, and the parent it follows can
+ * depend on the paths. So a history with a merge commit fills nothing.
+ *
+ * Other limits keep the answers exact:
+ * - A list of one pathspec is skipped, because `log.follow` follows renames
+ *   only when one path is given.
+ * - A list whose paths fall under another list's exclusion is skipped, because
+ *   the union walk applies every exclusion to every path.
+ * - `--no-renames` lists a rename as a deletion and an addition, and `--root`
+ *   lists the files of the root commit. Neither depends on the configuration.
+ *
+ * A failed walk fills nothing, and each item then runs its own `log -1`.
+ */
+export async function prefetchLastTouchingCommits(
+  repo: string,
+  head: string,
+  pathspecLists: ReadonlyArray<readonly string[]>,
+  memo: GitReadMemo,
+): Promise<void> {
+  const candidates: WalkRequest[] = [];
+  for (const pathspecs of pathspecLists) {
+    if (pathspecs.length < 2) continue;
+    const key = gitObjectReadKey(repo, head, [...pathspecs]);
+    if (key === undefined || memo.lastTouching.has(key)) continue;
+    if (candidates.some((candidate) => candidate.key === key)) continue;
+    const request = walkRequestOf(key, pathspecs);
+    if (request !== null) candidates.push(request);
+  }
+  const overlaps = (paths: readonly string[], other: readonly string[]) =>
+    paths.some((path) =>
+      other.some(
+        (root) =>
+          path === root ||
+          path.startsWith(`${root}/`) ||
+          root.startsWith(`${path}/`),
+      ),
+    );
+  const requests = candidates.filter((request) =>
+    candidates.every(
+      (other) => other === request || !overlaps(request.include, other.exclude),
+    ),
+  );
+  if (requests.length < 2) return;
+
+  const merge = await sourceRead(repo, [
+    "rev-list",
+    "--min-parents=2",
+    "--max-count=1",
+    head,
+  ]);
+  if (merge.exitCode !== 0 || merge.stdout.toString("utf-8").trim() !== "") {
+    return;
+  }
+  const union = [
+    ...new Set(
+      requests.flatMap((request) => [
+        ...request.include.map((path) => `:(literal)${path}`),
+        ...request.exclude.map((path) => `:(literal,exclude)${path}`),
+      ]),
+    ),
+  ];
+  const walk = await sourceRead(repo, [
+    "log",
+    "-z",
+    "--no-renames",
+    "--name-only",
+    "--root",
+    "--no-relative",
+    "--no-show-signature",
+    "--format=%x00%H",
+    head,
+    "--",
+    ...union,
+  ]);
+  if (walk.exitCode !== 0) return;
+
+  const answers = new Map<string, string>();
+  const within = (path: string, roots: readonly string[]) =>
+    roots.some((root) => path === root || path.startsWith(`${root}/`));
+  // `%x00%H` with `-z` gives an empty field, then the commit id, then a field
+  // that starts with the newline before the first changed path. A changed
+  // path is never empty, so an empty field always starts a commit.
+  const fields = walk.stdout.toString("utf-8").split("\0");
+  let commit: string | undefined;
+  for (let index = 0; index < fields.length; index++) {
+    const field = fields[index]!;
+    if (field === "" && /^[0-9a-f]{40,64}$/.test(fields[index + 1] ?? "")) {
+      commit = fields[index + 1];
+      index += 1;
+      const first = fields[index + 1];
+      if (first?.startsWith("\n")) fields[index + 1] = first.slice(1);
+      continue;
+    }
+    if (field === "" || commit === undefined) continue;
+    // The union applies every exclusion, so an excluded path is never listed.
+    for (const request of requests) {
+      if (answers.has(request.key)) continue;
+      if (within(field, request.include)) answers.set(request.key, commit);
+    }
+  }
+  for (const request of requests) {
+    memo.lastTouching.set(request.key, answers.get(request.key) ?? null);
+  }
 }
 
 async function tryLastTouchingCommitForPathspecs(

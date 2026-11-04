@@ -65,6 +65,11 @@ export async function upstreamFactsForItem(
   identity: UpstreamIdentity = "worktree",
   memo?: GitReadMemo,
   isClean: PathCleanCheck = (relPath) => isPathClean(dataRepo, relPath),
+  /**
+   * The data-repo `HEAD` the caller read once. With it, the commit walk starts
+   * there instead of at the live `HEAD`, and `memo` can answer it.
+   */
+  head?: string,
 ): Promise<UpstreamFacts> {
   const masterItem = await findMasterItemByRef(dataRepo, { kind, name });
   if (!masterItem) {
@@ -72,9 +77,10 @@ export async function upstreamFactsForItem(
   }
   if (identity === "tree") {
     const upstreamDirty = await sourcePathsDirty(kind, name, isClean);
-    const sourceCommit = await currentSourceCommit(dataRepo, kind, name).catch(
-      () => null,
-    );
+    const sourceCommit = await currentSourceCommit(dataRepo, kind, name, {
+      head,
+      memo,
+    }).catch(() => null);
     return {
       upstreamSha:
         sourceCommit === null
