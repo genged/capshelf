@@ -695,8 +695,10 @@ One history walk selects the commit of every item. `log --name-only` over the
 paths of all items lists each commit that changes one of them, newest first.
 The first commit that changes a path of an item is the commit that item's own
 `log -1` selects. `status` reads `HEAD` once for this walk, and `update` uses
-the `HEAD` of its pass. The walk is used only on a linear history. At a merge,
-`log` follows one parent, and the path set can change which parent. An item
+the `HEAD` of its pass. The walk is used only when no merge lies between `HEAD` and
+the oldest commit it reads. At a merge, `log` follows one parent, and the path
+set can change which parent. An item with no commit makes the walk read the
+whole history, so then the whole history must have no merge. An item
 with one path is also left out, because `log.follow` applies to one path. In
 those cases, and when the walk fails, each item runs its own `log -1`. The walk
 lists gitlink changes even when a submodule `ignore` setting hides them. If

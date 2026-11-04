@@ -326,15 +326,25 @@ async function sourceReadUntil(
     stdin: "ignore",
   });
   let stopped = false;
+  let ended = false;
   const reader = proc.stdout.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (consume(Buffer.from(value))) {
-      stopped = true;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        ended = true;
+        break;
+      }
+      if (consume(Buffer.from(value))) {
+        stopped = true;
+        break;
+      }
+    }
+  } finally {
+    // Stopped on purpose, or `consume` threw: Git must not keep running.
+    if (!ended) {
       proc.kill();
       await reader.cancel();
-      break;
     }
   }
   const exitCode = await proc.exited;
@@ -746,15 +756,6 @@ export async function prefetchLastTouchingCommits(
   );
   if (requests.length < 2) return;
 
-  const merge = await sourceRead(repo, [
-    "rev-list",
-    "--min-parents=2",
-    "--max-count=1",
-    head,
-  ]);
-  if (merge.exitCode !== 0 || merge.stdout.toString("utf-8").trim() !== "") {
-    return;
-  }
   const union = [
     ...new Set(
       requests.flatMap((request) => [
@@ -772,6 +773,27 @@ export async function prefetchLastTouchingCommits(
   if (!complete) return;
   const answers = reader.finish();
   if (answers === null) return;
+  // The answers hold only when no merge lies between `head` and the oldest
+  // commit the walk read. When every list has its commit, only that range is
+  // checked, so a long history costs no full `rev-list`. A list with no
+  // commit depends on the whole history, so then all of it is checked. The
+  // oldest commit itself, if it is a merge, was listed with no path, and
+  // `finish` already refused the walk.
+  const oldest = reader.lastCommit();
+  const range =
+    [...answers.values()].every((commit) => commit !== null) &&
+    oldest !== undefined
+      ? [head, `^${oldest}`]
+      : [head];
+  const merge = await sourceRead(repo, [
+    "rev-list",
+    "--min-parents=2",
+    "--max-count=1",
+    ...range,
+  ]);
+  if (merge.exitCode !== 0 || merge.stdout.toString("utf-8").trim() !== "") {
+    return;
+  }
   for (const [key, commit] of answers) memo.lastTouching.set(key, commit);
 }
 
@@ -846,6 +868,11 @@ export class LogWalkReader {
       if (this.done()) return true;
     }
     return false;
+  }
+
+  /** The last commit id the reader took, which is the oldest one it read. */
+  lastCommit(): string | undefined {
+    return this.commit;
   }
 
   /** The answer of each request, or null when the walk cannot be trusted. */
@@ -1640,6 +1667,8 @@ export async function sourceVisibleFilesLister(
   const paths = [...new Set(relPaths.map(normalizeGitPath))].filter(
     (path) => path.length > 0,
   );
+  // A spawn that fails, for example on a very long argument list, falls back
+  // to one call per path.
   const result =
     paths.length < 2
       ? undefined
@@ -1651,7 +1680,7 @@ export async function sourceVisibleFilesLister(
           "--exclude-standard",
           "--",
           ...paths.map(literalPathspec),
-        ]);
+        ]).catch(() => undefined);
   const listed =
     result === undefined || result.exitCode !== 0
       ? undefined

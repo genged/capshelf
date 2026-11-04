@@ -307,6 +307,49 @@ test("a long history in many output chunks gives the same answers", async () => 
   }
 }, 120_000);
 
+test("a merge older than every answer does not stop the walk", async () => {
+  const { repo } = await randomHistory(13);
+  await $`git -C ${repo} checkout -q -b side HEAD~2`.quiet();
+  await mkdir(join(repo, "docs"), { recursive: true });
+  await writeFile(join(repo, "docs", "side.md"), "side\n");
+  await $`git -C ${repo} add -A`.quiet();
+  await $`git -C ${repo} commit -qm side`.quiet();
+  const branch = (
+    await $`git -C ${repo} rev-parse --abbrev-ref @{-1}`.text()
+  ).trim();
+  await $`git -C ${repo} checkout -q ${branch}`.quiet();
+  await $`git -C ${repo} merge -q --no-ff -m merge side`.quiet();
+  // After the merge, both items change, so their answers are newer.
+  for (const item of ["skills/a", "skills/ab"]) {
+    await mkdir(join(repo, item), { recursive: true });
+    await writeFile(join(repo, item, "SKILL.md"), `${item} after merge\n`);
+    await $`git -C ${repo} add -A`.quiet();
+    await $`git -C ${repo} commit -qm ${`after ${item}`}`.quiet();
+  }
+  const head = (await $`git -C ${repo} rev-parse HEAD`.text()).trim();
+  const recent = [
+    git.contentCommitPathspecs("skills/a"),
+    git.contentCommitPathspecs("skills/ab"),
+  ];
+  const memo = new GitReadMemo();
+  await git.prefetchLastTouchingCommits(repo, head, recent, memo);
+  expect(memo.lastTouching.size).toBe(2);
+  for (const pathspecs of recent) {
+    expect(memo.lastTouching.get(JSON.stringify([repo, head, pathspecs]))).toBe(
+      await direct(repo, head, pathspecs),
+    );
+  }
+  // An item last changed before the merge needs the walk to read past it.
+  const past = new GitReadMemo();
+  await git.prefetchLastTouchingCommits(
+    repo,
+    head,
+    [...recent, git.contentCommitPathspecs("skills/never")],
+    past,
+  );
+  expect(past.lastTouching.size).toBe(0);
+});
+
 test("a history with a merge commit is not walked", async () => {
   const { repo } = await randomHistory(11);
   await $`git -C ${repo} checkout -q -b side HEAD~3`.quiet();
