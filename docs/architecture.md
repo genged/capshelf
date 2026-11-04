@@ -716,6 +716,10 @@ command ends, so the peak memory of a command is about the size of its items. A 
 item then asks Git with its own arguments and gets its own error. Remote clones
 are never registered.
 
+`ls` hashes the working-tree files of each copy item. It lists the files of
+all items with one `ls-files`, and each item takes the files under its own
+path. If that call fails, each item lists its own files as before.
+
 The status report adds narrower reuse of its own. It merges each shared
 fragment output once per report rather than once per item. It runs one
 `git status` of the data repo per report and answers the dirty check of each
