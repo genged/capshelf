@@ -113,8 +113,7 @@ in both, and it must not be slower than the separate calls.
 
 ## Disk use
 
-The test suites leave many directories named `capshelf-*` in the temporary
-directory. A full `make check` can leave tens of thousands. The performance
-tools remove their own work directory unless `PERF_WORK` is set. If a machine
-runs out of inodes, remove old `capshelf-*` directories that no running test
-uses.
+The performance tools remove their own work directory unless `PERF_WORK` is
+set. The test suites remove their temporary files after a passing run, as
+[`docs/testing.md`](testing.md) describes. A failing smoke script keeps its
+files for inspection, so remove them after you read them.

@@ -135,4 +135,4 @@ cmp -s \
   "$PROJECT/.agents/skills/csv-report/template.csv" \
   "$LOCAL_PROJECT/.agents/skills/csv-report/template.csv"
 
-echo "✓ smoke-pins ok ($TMP)"
+echo "✓ smoke-pins ok"

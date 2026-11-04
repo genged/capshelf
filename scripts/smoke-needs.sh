@@ -78,4 +78,4 @@ assert after["items"][key]["needs"]["network"] == [
 assert after["version"] == 5
 PY
 
-echo "✓ smoke-needs ok ($TMP)"
+echo "✓ smoke-needs ok"

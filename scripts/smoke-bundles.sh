@@ -169,4 +169,4 @@ if [ "$BROKEN_EXIT" -ne 3 ]; then
 fi
 assert_fixed_contains 'invalid YAML' "$TMP/add-broken.txt"
 
-echo "✓ smoke-bundles ok ($TMP)"
+echo "✓ smoke-bundles ok"

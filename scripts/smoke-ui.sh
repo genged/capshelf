@@ -108,7 +108,8 @@ set +e
 wait "$UI_PID"
 UI_EXIT=$?
 set -e
-trap - EXIT
+# The server has stopped. Remove the scratch files again when the script passes.
+trap smoke_remove_tmp_on_success EXIT
 [ "$UI_EXIT" -eq 0 ] || {
   echo "capshelf ui exited $UI_EXIT after SIGTERM" >&2
   cat "$TMP/ui.err" >&2

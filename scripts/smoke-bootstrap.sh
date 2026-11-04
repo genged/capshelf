@@ -65,4 +65,4 @@ if git -C "$DATA" cat-file -e "$PROMOTE_COMMIT^{commit}" 2>/dev/null; then
 fi
 assert_fixed_contains 'hello v1' "$DATA/skills/hello/SKILL.md"
 
-echo "✓ smoke-bootstrap ok ($TMP)"
+echo "✓ smoke-bootstrap ok"

@@ -69,4 +69,4 @@ TOML
 assert_contains '"action": "promoted"' "$TMP/codex-promote.json"
 assert_fixed_contains 'model = "gpt-5.2"' "$A/.codex/config.toml"
 
-echo "✓ smoke-codex-config ok ($TMP)"
+echo "✓ smoke-codex-config ok"

@@ -197,4 +197,4 @@ test ! -e "$DATA/codex/generated/plugins/engineering"
 assert_fixed_contains '"engineering": null' "$DATA/.claude-plugin/marketplace.json"
 test -z "$(git -C "$DATA" status --porcelain)"
 
-echo "✓ smoke-marketplace ok ($TMP)"
+echo "✓ smoke-marketplace ok"

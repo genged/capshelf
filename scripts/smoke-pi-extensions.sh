@@ -85,4 +85,4 @@ assert_contains "promoted" "$C/.pi/extensions/path-guard/src/rules.ts"
 (cd "$C" && "${CLI[@]}" rm pi-extensions/path-guard --local >/dev/null)
 test ! -e "$C/.pi/extensions/path-guard"
 
-echo "✓ smoke-pi-extensions ok ($TMP)"
+echo "✓ smoke-pi-extensions ok"
