@@ -10,6 +10,7 @@ import { lstatOrNull } from "./fs-utils";
 import {
   projectVisibleFilesUnderPath,
   sourceVisibleFilesUnderPath,
+  type VisibleFilesLister,
 } from "./git";
 import { HOME_ENV, METADATA_SIDECAR, PRODUCT_NAME } from "./identity";
 import { PreconditionError } from "./errors";
@@ -290,10 +291,12 @@ export async function shaOfItem(itemPath: string): Promise<string> {
 export async function shaOfGitVisibleItem(
   repo: string,
   relPath: string,
+  listFiles: VisibleFilesLister = (path) =>
+    sourceVisibleFilesUnderPath(repo, path),
 ): Promise<string> {
   return shaOfItemFiles(
     join(repo, ...relPath.split("/")),
-    (await sourceVisibleFilesUnderPath(repo, relPath)).filter(
+    (await listFiles(relPath)).filter(
       (rel: string) => !isMetadataSidecarPath(rel),
     ),
   );

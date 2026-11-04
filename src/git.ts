@@ -1482,6 +1482,60 @@ export async function sourceVisibleFilesUnderPath(
   return await presentFilesRelativeTo(repo, normalized, out);
 }
 
+/** Lists the files `sourceVisibleFilesUnderPath` lists for one path. */
+export type VisibleFilesLister = (relPath: string) => Promise<string[]>;
+
+/**
+ * `sourceVisibleFilesUnderPath` for many paths with one `ls-files`. Each path
+ * takes the listed files that are equal to it or under it, which is what a
+ * literal pathspec of that path selects. The listing is taken once, so all
+ * paths see one state of the working tree.
+ *
+ * Each path still gets its own result or error. A path outside the list, or
+ * every path when the batched `ls-files` fails, runs its own call.
+ */
+export async function sourceVisibleFilesLister(
+  repo: string,
+  relPaths: readonly string[],
+): Promise<VisibleFilesLister> {
+  const paths = [...new Set(relPaths.map(normalizeGitPath))].filter(
+    (path) => path.length > 0,
+  );
+  const result =
+    paths.length < 2
+      ? undefined
+      : await sourceRead(repo, [
+          "ls-files",
+          "-z",
+          "--cached",
+          "--others",
+          "--exclude-standard",
+          "--",
+          ...paths.map(literalPathspec),
+        ]);
+  const listed =
+    result === undefined || result.exitCode !== 0
+      ? undefined
+      : result.stdout
+          .toString("utf-8")
+          .split("\0")
+          .filter((path) => path.length > 0);
+  return async (relPath) => {
+    const normalized = normalizeGitPath(relPath);
+    if (listed === undefined || !paths.includes(normalized)) {
+      return await sourceVisibleFilesUnderPath(repo, relPath);
+    }
+    const own = listed.filter(
+      (path) => path === normalized || path.startsWith(`${normalized}/`),
+    );
+    return await presentFilesRelativeTo(
+      repo,
+      normalized,
+      own.map((path) => `${path}\0`).join(""),
+    );
+  };
+}
+
 /** The same question, asked of the consuming project's own Git policy. */
 export async function projectVisibleFilesUnderPath(
   project: string,
