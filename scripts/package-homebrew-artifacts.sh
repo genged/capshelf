@@ -62,7 +62,10 @@ for target in "${targets[@]}"; do
   package_dir="$build_dir/capshelf-$version-$platform"
   tarball="$out_dir/capshelf-$version-$platform.tar.gz"
 
-  bun build --compile --minify --target="$bun_target" ./src/cli.ts --outfile="$binary"
+  # `--bytecode` stores precompiled code, so a command does not parse the
+  # bundle at startup. It needs `--format=esm` because `src/cli.ts` uses a
+  # top-level await. Keep these flags the same as the `build` script.
+  bun build --compile --minify --bytecode --format=esm --target="$bun_target" ./src/cli.ts --outfile="$binary"
   mkdir -p "$package_dir"
   cp "$binary" "$package_dir/capshelf"
   chmod +x "$package_dir/capshelf"
