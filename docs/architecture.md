@@ -720,6 +720,12 @@ command ends, so the peak memory of a command is about the size of its items. A 
 item then asks Git with its own arguments and gets its own error. Remote clones
 are never registered.
 
+`status --diff` renders its diffs in a second pass with a memo of its own. It
+registers the pinned commits of the rows and reads the bytes of every row with
+one `cat-file`, not one `git show` per file. `git show <commit>:<path>` prints
+a blob raw, with no textconv driver and no smudge filter, so the bytes are the
+same.
+
 `ls` hashes the working-tree files of each copy item. It lists the files of
 all items with one `ls-files`, and each item takes the files under its own
 path. If that call fails, each item lists its own files as before.

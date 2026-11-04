@@ -22,7 +22,7 @@ import type { RowSource } from "./status-core";
 import { remoteCacheState } from "./remote-cache";
 import { remoteTreeSource } from "./remote-discovery";
 import { contentSourceOrNull, gitTreeSource, isGitTree } from "./item-source";
-import type { ContentSource, GitTreeSource } from "./item-source";
+import type { ContentSource } from "./item-source";
 import { findSystemItem } from "./bundled";
 import {
   assertRegularBlobEntries,
@@ -31,10 +31,10 @@ import {
   sourceRead,
   sourceReadText,
   literalPathspec,
-  lsTreeEntriesAtCommit,
   lsTreeEntriesForPathspecs,
-  showAtCommit,
 } from "./git";
+import type { GitTreeEntry } from "./git";
+import type { GitReadMemo } from "./git-read-memo";
 import { hasIgnoredDotSegment } from "./dotfiles";
 import { missingSourceCommitMessage } from "./upstream-check";
 import { gitignoreVisibleFiles } from "./gitignore";
@@ -75,6 +75,8 @@ interface StatusDiffOptions {
   row: DiffableStatusRow;
   view?: StatusDiffView;
   fragmentPlanner?: typeof planFragmentOutput;
+  /** The read memo of the diff pass. Reads at a full commit id reuse it. */
+  memo?: GitReadMemo;
 }
 
 interface CopyDirectoryFilesOptions {
@@ -88,6 +90,7 @@ interface CopyDirectoryFilesOptions {
   manifest: Manifest;
   kind: CopyDirectoryItemKind;
   name: string;
+  memo?: GitReadMemo;
 }
 
 export interface StatusDiff {
@@ -217,6 +220,7 @@ export async function buildStatusDiff(
           manifest: opts.manifest,
           kind: row.kind,
           name: row.name,
+          memo: opts.memo,
         })) ?? new Map();
     } catch (error) {
       return {
@@ -279,6 +283,7 @@ export async function buildStatusDiff(
         oldLock: opts.lock,
         nextLock: opts.lock,
         target,
+        memo: opts.memo,
       });
       firstPath ||= plan.path;
       // locked is the baseline (---), current is the new side (+++), so a local
@@ -322,6 +327,7 @@ export async function buildStatusDiff(
       opts.dataRepo,
       row.name,
       row.sourceCommit,
+      opts.memo,
     );
     const parts: string[] = [];
     for (const source of sources) {
@@ -330,6 +336,7 @@ export async function buildStatusDiff(
         row.name,
         row.sourceCommit,
         source.relPath,
+        opts.memo,
       );
       const currentStat = lstatOrNull(source.outputPath);
       const current =
@@ -611,6 +618,7 @@ async function expectedFilesForRow(
     manifest: opts.manifest,
     kind: opts.row.kind,
     name: opts.row.name,
+    memo: opts.memo,
   });
 }
 
@@ -663,16 +671,30 @@ async function expectedFilesForCopyItem(
   const source = opts.source;
   const files = await expectedFileEntriesForCopyItem(opts);
   if (!files) return null;
+  // One `cat-file --batch` for the item. `git show <commit>:<path>` prints a
+  // blob raw: it runs a textconv driver only when `--textconv` is given, and
+  // no smudge filter. So the bytes are the same.
+  let blobs: Map<string, Buffer>;
+  try {
+    blobs = await catFileBlobs(
+      source.repo,
+      files.map((file) => file.object),
+      opts.memo,
+    );
+  } catch {
+    throw new Error(
+      missingSourceCommitMessage(source.repo, source.commit, opts.manifest),
+    );
+  }
   const out: FileMap = new Map();
   for (const expected of files) {
-    out.set(expected.rel, {
-      content: await showExpectedFile(
-        source,
-        opts.manifest,
-        posix.join(source.itemRoot, expected.rel),
-      ),
-      executable: expected.executable,
-    });
+    const content = blobs.get(expected.object);
+    if (content === undefined) {
+      throw new Error(
+        missingSourceCommitMessage(source.repo, source.commit, opts.manifest),
+      );
+    }
+    out.set(expected.rel, { content, executable: expected.executable });
   }
   return out;
 }
@@ -688,7 +710,7 @@ async function expectedFilePathsForCopyItem(
 
 async function expectedFileEntriesForCopyItem(
   opts: CopyDirectoryFilesOptions,
-): Promise<Array<{ rel: string; executable: boolean }> | null> {
+): Promise<Array<{ rel: string; executable: boolean; object: string }> | null> {
   if (opts.source === null) return null;
   if (!isGitTree(opts.source)) {
     const item = findSystemItem(opts.name);
@@ -696,13 +718,19 @@ async function expectedFileEntriesForCopyItem(
     return item.files.map((file) => ({
       rel: file.relPath,
       executable: false,
+      object: "",
     }));
   }
 
   const { repo, commit, itemRoot } = opts.source;
-  let entries: Awaited<ReturnType<typeof lsTreeEntriesAtCommit>>;
+  let entries: GitTreeEntry[];
   try {
-    entries = await lsTreeEntriesAtCommit(repo, commit, itemRoot);
+    entries = await lsTreeEntriesForPathspecs(
+      repo,
+      commit,
+      [literalPathspec(itemRoot)],
+      { memo: opts.memo },
+    );
   } catch {
     throw new Error(missingSourceCommitMessage(repo, commit, opts.manifest));
   }
@@ -711,6 +739,7 @@ async function expectedFileEntriesForCopyItem(
     .map((entry) => ({
       rel: posix.relative(itemRoot, entry.path),
       executable: entry.mode === "100755",
+      object: entry.object,
     }))
     .filter(
       ({ rel }) =>
@@ -730,20 +759,6 @@ async function expectedModesForCopyItem(
   return files === null
     ? null
     : new Map(files.map(({ rel, executable }) => [rel, executable]));
-}
-
-async function showExpectedFile(
-  source: GitTreeSource,
-  manifest: Manifest,
-  file: string,
-): Promise<Buffer> {
-  try {
-    return await showAtCommit(source.repo, source.commit, file);
-  } catch {
-    throw new Error(
-      missingSourceCommitMessage(source.repo, source.commit, manifest),
-    );
-  }
 }
 
 async function readInstalledFiles(
