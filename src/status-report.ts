@@ -292,10 +292,12 @@ export async function buildStatusReport(
     batchItemReads(dataRepo, pinned, memo);
     // One history walk selects the upstream commit of every row. It starts at
     // one `HEAD` read for the walk alone. If that read fails, each row walks
-    // from the live `HEAD` as before.
-    walkHead = (await resolveCommit(dataRepo, "HEAD")) ?? undefined;
-    if (walkHead !== undefined) {
-      await prefetchSourceCommits(dataRepo, walkHead, pinned, memo);
+    // from the live `HEAD` as before. One row has nothing to share.
+    if (pinned.length >= 2) {
+      walkHead = (await resolveCommit(dataRepo, "HEAD")) ?? undefined;
+      if (walkHead !== undefined) {
+        await prefetchSourceCommits(dataRepo, walkHead, pinned, memo);
+      }
     }
     await prefetchItemBlobs(
       dataRepo,

@@ -307,6 +307,42 @@ async function runGit(
   return { exitCode, stdout, stderr: stderr.trim() };
 }
 
+/**
+ * A `source-read` call whose output goes to `consume` as it arrives. When
+ * `consume` returns true, Git is stopped and the call counts as complete.
+ * Returns false when Git fails before that.
+ */
+async function sourceReadUntil(
+  repo: string,
+  args: string[],
+  consume: (chunk: Buffer) => boolean,
+): Promise<boolean> {
+  await assertGitAvailable();
+  const binding: GitBinding = { profile: "source-read", repo };
+  const proc = Bun.spawn(argvFor(binding, args), {
+    env: environmentFor(binding, {}),
+    stdout: "pipe",
+    stderr: "ignore",
+    stdin: "ignore",
+  });
+  let stopped = false;
+  const reader = proc.stdout.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (consume(Buffer.from(value))) {
+      stopped = true;
+      proc.kill();
+      await reader.cancel();
+      break;
+    }
+  }
+  const exitCode = await proc.exited;
+  const complete = stopped || exitCode === 0;
+  recordGitRead(args[0]!, repo, args, complete, true);
+  return complete;
+}
+
 function throwOnFailure(result: GitInvocation, args: string[]): Buffer {
   if (result.exitCode !== 0) {
     throw new Error(
@@ -671,8 +707,13 @@ function walkRequestOf(
  *   the union walk applies every exclusion to every path.
  * - `--no-renames` lists a rename as a deletion and an addition, and `--root`
  *   lists the files of the root commit. Neither depends on the configuration.
+ * - `--ignore-submodules=none` lists a gitlink change that a submodule
+ *   `ignore` setting would hide. A commit listed with no path still fills
+ *   nothing, in case another setting hides a change.
  *
- * A failed walk fills nothing, and each item then runs its own `log -1`.
+ * The walk stops when every list has its commit, so an active history costs
+ * about as much as the separate walks. A failed walk fills nothing, and each
+ * item then runs its own `log -1`.
  */
 export async function prefetchLastTouchingCommits(
   repo: string,
@@ -722,7 +763,21 @@ export async function prefetchLastTouchingCommits(
       ]),
     ),
   ];
-  const walk = await sourceRead(repo, [
+  const reader = new LogWalkReader(requests);
+  const complete = await sourceReadUntil(
+    repo,
+    logWalkArgs(head, union),
+    (chunk) => reader.feed(chunk),
+  );
+  if (!complete) return;
+  const answers = reader.finish();
+  if (answers === null) return;
+  for (const [key, commit] of answers) memo.lastTouching.set(key, commit);
+}
+
+/** The one `log` that `prefetchLastTouchingCommits` runs. */
+export function logWalkArgs(head: string, union: readonly string[]): string[] {
+  return [
     "log",
     "-z",
     "--no-renames",
@@ -730,39 +785,123 @@ export async function prefetchLastTouchingCommits(
     "--root",
     "--no-relative",
     "--no-show-signature",
+    // `diff.ignoreSubmodules` and a `.gitmodules` `ignore` setting hide a
+    // gitlink change from the listing, but not from the commit selection.
+    "--ignore-submodules=none",
     "--format=%x00%H",
     head,
     "--",
     ...union,
-  ]);
-  if (walk.exitCode !== 0) return;
+  ];
+}
 
-  const answers = new Map<string, string>();
-  const within = (path: string, roots: readonly string[]) =>
-    roots.some((root) => path === root || path.startsWith(`${root}/`));
-  // `%x00%H` with `-z` gives an empty field, then the commit id, then a field
-  // that starts with the newline before the first changed path. A changed
-  // path is never empty, so an empty field always starts a commit.
-  const fields = walk.stdout.toString("utf-8").split("\0");
-  let commit: string | undefined;
-  for (let index = 0; index < fields.length; index++) {
-    const field = fields[index]!;
-    if (field === "" && /^[0-9a-f]{40,64}$/.test(fields[index + 1] ?? "")) {
-      commit = fields[index + 1];
-      index += 1;
-      const first = fields[index + 1];
-      if (first?.startsWith("\n")) fields[index + 1] = first.slice(1);
-      continue;
-    }
-    if (field === "" || commit === undefined) continue;
-    // The union applies every exclusion, so an excluded path is never listed.
-    for (const request of requests) {
-      if (answers.has(request.key)) continue;
-      if (within(field, request.include)) answers.set(request.key, commit);
-    }
+/**
+ * Reads the output of `logWalkArgs` in chunks of any size, and finds the
+ * newest commit that changes a path of each request.
+ *
+ * `%x00%H` with `-z` gives an empty field, then the commit id, then a field
+ * that starts with the newline before the first changed path. A changed path
+ * is never empty, so an empty field always comes before a commit id.
+ */
+export class LogWalkReader {
+  private readonly requests: ReadonlyArray<{ key: string; include: string[] }>;
+  private readonly answers = new Map<string, string>();
+  private rest = Buffer.alloc(0);
+  private commit: string | undefined;
+  private names = 0;
+  private afterId = false;
+  private afterEmpty = false;
+  /**
+   * A commit that `log` selects but lists with no changed path means that
+   * the listing hid a change. Then no answer of this walk is trusted.
+   */
+  private hiddenChange = false;
+
+  constructor(requests: ReadonlyArray<{ key: string; include: string[] }>) {
+    this.requests = requests;
   }
-  for (const request of requests) {
-    memo.lastTouching.set(request.key, answers.get(request.key) ?? null);
+
+  /**
+   * True when every request has its commit. The walk is newest first, so an
+   * older commit cannot change an answer that is already found, and the
+   * caller can stop Git.
+   */
+  done(): boolean {
+    return this.hiddenChange || this.answers.size === this.requests.length;
+  }
+
+  feed(chunk: Buffer): boolean {
+    const buffer = Buffer.concat([this.rest, chunk]);
+    const last = buffer.lastIndexOf(0);
+    if (last === -1) {
+      this.rest = buffer;
+      return false;
+    }
+    this.rest = buffer.subarray(last + 1);
+    for (const field of buffer
+      .subarray(0, last)
+      .toString("utf-8")
+      .split("\0")) {
+      this.take(field);
+      if (this.done()) return true;
+    }
+    return false;
+  }
+
+  /** The answer of each request, or null when the walk cannot be trusted. */
+  finish(): Map<string, string | null> | null {
+    if (!this.done()) {
+      if (this.rest.length > 0) this.take(this.rest.toString("utf-8"));
+      if (this.commit !== undefined && this.names === 0) {
+        this.hiddenChange = true;
+      }
+    }
+    if (this.hiddenChange) return null;
+    return new Map(
+      this.requests.map((request) => [
+        request.key,
+        this.answers.get(request.key) ?? null,
+      ]),
+    );
+  }
+
+  private take(input: string): void {
+    let field = input;
+    if (this.afterEmpty) {
+      this.afterEmpty = false;
+      if (/^[0-9a-f]{40,64}$/.test(field)) {
+        if (this.commit !== undefined && this.names === 0) {
+          this.hiddenChange = true;
+        }
+        this.commit = field;
+        this.names = 0;
+        this.afterId = true;
+        return;
+      }
+    }
+    if (field === "") {
+      this.afterEmpty = true;
+      return;
+    }
+    if (this.afterId) {
+      this.afterId = false;
+      if (field.startsWith("\n")) field = field.slice(1);
+      if (field === "") return;
+    }
+    const commit = this.commit;
+    if (commit === undefined) return;
+    this.names += 1;
+    // The union applies every exclusion, so an excluded path is never listed.
+    for (const request of this.requests) {
+      if (this.answers.has(request.key)) continue;
+      if (
+        request.include.some(
+          (root) => field === root || field.startsWith(`${root}/`),
+        )
+      ) {
+        this.answers.set(request.key, commit);
+      }
+    }
   }
 }
 

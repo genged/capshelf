@@ -200,6 +200,113 @@ test("a file moved out of an item changes that item", async () => {
   }
 });
 
+test("a gitlink change under a submodule ignore setting selects its commit", async () => {
+  const repo = await tempRepo("capshelf-walk-gitlink-");
+  for (const file of ["skills/a/f", "skills/b/f"]) {
+    await mkdir(dirname(join(repo, file)), { recursive: true });
+    await writeFile(join(repo, file), "1\n");
+  }
+  await $`git -C ${repo} add -A`.quiet();
+  await $`git -C ${repo} commit -qm c1`.quiet();
+  const first = (await $`git -C ${repo} rev-parse HEAD`.text()).trim();
+  // The gitlink names any commit id; Git does not need the submodule.
+  await $`git -C ${repo} update-index --add --cacheinfo 160000,${first},skills/a/mod`.quiet();
+  await writeFile(
+    join(repo, ".gitmodules"),
+    '[submodule "m"]\n\tpath = skills/a/mod\n\turl = x\n\tignore = all\n',
+  );
+  await $`git -C ${repo} add .gitmodules`.quiet();
+  await $`git -C ${repo} commit -qm c2`.quiet();
+  await writeFile(join(repo, "skills/b/f"), "2\n");
+  // Not `commit -a`: the gitlink has no directory, so `-a` would delete it.
+  await $`git -C ${repo} add skills/b/f`.quiet();
+  await $`git -C ${repo} commit -qm c3`.quiet();
+  const third = (await $`git -C ${repo} rev-parse HEAD`.text()).trim();
+  await $`git -C ${repo} update-index --cacheinfo 160000,${third},skills/a/mod`.quiet();
+  await $`git -C ${repo} commit -qm c4`.quiet();
+  const head = (await $`git -C ${repo} rev-parse HEAD`.text()).trim();
+  // `.gitmodules` sets `ignore = all` for every round. The second round also
+  // sets `diff.ignoreSubmodules` in the repository configuration.
+  for (const setting of ["none", "all"]) {
+    await $`git -C ${repo} config --local diff.ignoreSubmodules ${setting}`.quiet();
+    const memo = new GitReadMemo();
+    const lists = [
+      git.contentCommitPathspecs("skills/a"),
+      git.contentCommitPathspecs("skills/b"),
+    ];
+    await git.prefetchLastTouchingCommits(repo, head, lists, memo);
+    for (const pathspecs of lists) {
+      expect(
+        memo.lastTouching.get(JSON.stringify([repo, head, pathspecs])),
+      ).toBe(await direct(repo, head, pathspecs));
+    }
+  }
+});
+
+test("a long history in many output chunks gives the same answers", async () => {
+  const repo = await tempRepo("capshelf-walk-long-");
+  // fast-import writes 3,000 commits quickly. Each touches one of 40 items,
+  // and five items are touched only in the first commit.
+  const items = Array.from({ length: 40 }, (_, i) => `skills/item-${i}`);
+  const lines: string[] = [];
+  for (let n = 0; n < 3000; n++) {
+    lines.push(
+      "commit refs/heads/main",
+      `committer a <a@b> ${1_700_000_000 + n} +0000`,
+      "data 1",
+      "x",
+    );
+    const touched = n === 0 ? items : [items[5 + ((n * 7) % 35)]!];
+    for (const item of touched) {
+      const body = `${item} ${n} ${"long line ".repeat(8)}`;
+      lines.push(
+        `M 100644 inline ${item}/SKILL.md`,
+        `data ${Buffer.byteLength(body)}`,
+        body,
+      );
+    }
+  }
+  await $`git -C ${repo} fast-import --quiet < ${new Response(`${lines.join("\n")}\n`)}`.quiet();
+  const head = (
+    await $`git -C ${repo} rev-parse refs/heads/main`.text()
+  ).trim();
+  const memo = new GitReadMemo();
+  const lists = items.map((item) => git.contentCommitPathspecs(item));
+  await git.prefetchLastTouchingCommits(repo, head, lists, memo);
+  const expected = new Map<string, string | null>();
+  for (const pathspecs of lists) {
+    const key = JSON.stringify([repo, head, pathspecs]);
+    expected.set(key, await direct(repo, head, pathspecs));
+    expect(memo.lastTouching.get(key)).toBe(expected.get(key)!);
+  }
+
+  // The reader gives the same answers for any chunk boundaries.
+  const requests = items.map((item) => ({
+    key: JSON.stringify([repo, head, git.contentCommitPathspecs(item)]),
+    include: [item],
+  }));
+  const union = lists.flat();
+  const proc = Bun.spawn(["git", "-C", repo, ...git.logWalkArgs(head, union)], {
+    stdout: "pipe",
+  });
+  const output = Buffer.from(await new Response(proc.stdout).arrayBuffer());
+  expect(await proc.exited).toBe(0);
+  const next = random(5);
+  for (const most of [1, 3, 7, 64]) {
+    const reader = new git.LogWalkReader(requests);
+    let offset = 0;
+    while (offset < output.length) {
+      const size = 1 + Math.floor(next() * most);
+      if (reader.feed(output.subarray(offset, offset + size))) break;
+      offset += size;
+    }
+    expect({ most, answers: reader.finish() }).toEqual({
+      most,
+      answers: expected,
+    });
+  }
+}, 120_000);
+
 test("a history with a merge commit is not walked", async () => {
   const { repo } = await randomHistory(11);
   await $`git -C ${repo} checkout -q -b side HEAD~3`.quiet();
