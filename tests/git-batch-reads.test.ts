@@ -424,3 +424,28 @@ test("registering more paths after a batch read lists them too", async () => {
     ),
   ).toEqual(direct);
 });
+
+test("git show of a committed file prints the blob bytes cat-file reads", async () => {
+  const repo = await tempRepo("capshelf-show-bytes-");
+  await mkdir(join(repo, "skills", "a"), { recursive: true });
+  await writeFile(join(repo, "skills", "a", "SKILL.md"), "lower case text\n");
+  await writeFile(
+    join(repo, ".gitattributes"),
+    "*.md diff=upper filter=upper\n",
+  );
+  await commitAll(repo, "item");
+  // A textconv driver and a smudge filter that would both change the bytes.
+  await gitOut(repo, ["config", "diff.upper.textconv", "tr a-z A-Z <"]);
+  await gitOut(repo, ["config", "filter.upper.smudge", "tr a-z A-Z"]);
+  const commit = await gitOut(repo, ["rev-parse", "HEAD"]);
+  const shown = await git.sourceReadBuffer(repo, [
+    "show",
+    `${commit}:skills/a/SKILL.md`,
+  ]);
+  const [entry] = await git.lsTreeEntriesForPathspecs(repo, commit, [
+    git.literalPathspec("skills/a/SKILL.md"),
+  ]);
+  const blobs = await git.catFileBlobs(repo, [entry!.object]);
+  expect(shown.toString()).toBe("lower case text\n");
+  expect(blobs.get(entry!.object)).toEqual(shown);
+});

@@ -688,6 +688,17 @@ export async function collectStatusDiffs(
     plansByTarget.set(opts.target, plan);
     return plan;
   };
+  // One memo for the diff pass. Rows that share a pinned commit share its
+  // tree reads, and one `cat-file` reads the bytes of every data row.
+  const memo = new GitReadMemo();
+  if (input.dataRepo) {
+    const pinned: ItemAtCommit[] = input.rows.flatMap((row) =>
+      row.source === "data" && row.sourceCommit !== undefined
+        ? [{ kind: row.kind, name: row.name, commit: row.sourceCommit }]
+        : [],
+    );
+    await prefetchItemBlobs(input.dataRepo, pinned, memo);
+  }
   for (const row of input.rows) {
     const rowLock = row.scope === "local" ? input.localLock : input.projectLock;
     const views =
@@ -703,6 +714,7 @@ export async function collectStatusDiffs(
         row,
         view,
         fragmentPlanner,
+        memo,
       });
       const identity = diff
         ? `${row.scope}:${diff.item}:${diff.path}:${diff.view}`
