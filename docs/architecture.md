@@ -698,7 +698,11 @@ The first commit that changes a path of an item is the commit that item's own
 the `HEAD` of its pass. The walk is used only on a linear history. At a merge,
 `log` follows one parent, and the path set can change which parent. An item
 with one path is also left out, because `log.follow` applies to one path. In
-those cases, and when the walk fails, each item runs its own `log -1`.
+those cases, and when the walk fails, each item runs its own `log -1`. The walk
+lists gitlink changes even when a submodule `ignore` setting hides them. If
+the walk shows a commit with no listed path, no answer of the walk is used.
+The walk stops when every item has its commit, so a long, active history costs
+no more than the separate walks.
 
 Items that share a data-repo commit share its reads. Before the item loop,
 `status`, `apply`, and `update` register each commit that two or more items
