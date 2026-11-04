@@ -460,6 +460,34 @@ test("a prefetch above the byte budget reads no blob", async () => {
   }
 });
 
+test("a memo keeps no blob above the size limit", async () => {
+  const repo = await tempRepo("capshelf-memo-limit-");
+  await mkdir(join(repo, "skills", "big"), { recursive: true });
+  await writeFile(join(repo, "skills", "big", "SKILL.md"), "small\n");
+  await writeFile(
+    join(repo, "skills", "big", "asset.bin"),
+    Buffer.alloc(git.MEMO_BLOB_LIMIT + 1, 7),
+  );
+  await commitAll(repo, "item");
+  const commit = await gitOut(repo, ["rev-parse", "HEAD"]);
+  const entries = await git.lsTreeEntriesForPathspecs(repo, commit, [
+    git.literalPathspec("skills/big"),
+  ]);
+  const memo = new GitReadMemo();
+  const blobs = await git.catFileBlobs(
+    repo,
+    entries.map((entry) => entry.object),
+    memo,
+  );
+  expect(blobs.size).toBe(2);
+  expect(
+    [...blobs.values()]
+      .map((content) => content.length)
+      .toSorted((a, b) => a - b),
+  ).toEqual([6, git.MEMO_BLOB_LIMIT + 1]);
+  expect(memo.blobs.size).toBe(1);
+});
+
 test("git show of a committed file prints the blob bytes cat-file reads", async () => {
   const repo = await tempRepo("capshelf-show-bytes-");
   await mkdir(join(repo, "skills", "a"), { recursive: true });

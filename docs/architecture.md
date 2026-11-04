@@ -718,9 +718,10 @@ A pin is the last commit that touched its item, so pins are often different
 commits. An item at a commit of its own keeps its own reads. The command also
 reads the blobs of all items in one `cat-file` process. A blob id names its
 bytes, so that answer cannot change. The memo keeps those bytes until the
-command ends. So the prefetch first reads the blob sizes, and it reads nothing
-when they come to more than 32 MiB. Then each item reads its own bytes, as
-before, and peak memory follows the largest item. A failed batch read is not kept, and each
+command ends, so it keeps no blob larger than 1 MiB. A larger blob, such as an
+image in a skill, is read again when a command needs it twice. The prefetch
+reads the blob sizes first and leaves out the large blobs. It reads nothing
+when the small ones come to more than 32 MiB. A failed batch read is not kept, and each
 item then asks Git with its own arguments and gets its own error. Remote clones
 are never registered.
 
