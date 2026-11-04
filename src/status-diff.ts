@@ -676,10 +676,13 @@ async function expectedFilesForCopyItem(
   // no smudge filter. So the bytes are the same.
   let blobs: Map<string, Buffer>;
   try {
+    // The diff pass reads each item once, so it keeps no bytes it reads
+    // itself. Peak memory then follows the largest item.
     blobs = await catFileBlobs(
       source.repo,
       files.map((file) => file.object),
       opts.memo,
+      false,
     );
   } catch {
     throw new Error(

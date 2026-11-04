@@ -1,4 +1,4 @@
-import type { GitReadMemo } from "./git-read-memo";
+import { gitObjectReadKey, type GitReadMemo } from "./git-read-memo";
 import { constants } from "node:fs";
 import { mkdtemp, open, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
@@ -9,6 +9,7 @@ import {
   literalPathspec,
   lsTreeEntriesForPathspecs,
   catFileBlobs,
+  catFileSizes,
   checkAttrAtCommit,
   contentCommitPathspecs,
   lastTouchingCommitForPaths,
@@ -748,10 +749,18 @@ export function batchItemReads(
  * This only fills the memo. An item whose tree or blobs cannot be read is
  * skipped, and its own read later reports its own error.
  */
+/**
+ * The most bytes one prefetch reads. The batch is one buffer, and the memo
+ * keeps a copy of each blob until the command ends. Above this size, each
+ * item reads its own bytes, so peak memory follows the largest item.
+ */
+export const PREFETCH_BYTE_BUDGET = 32 * 1024 * 1024;
+
 export async function prefetchItemBlobs(
   dataRepo: string,
   items: ReadonlyArray<ItemAtCommit>,
   memo: GitReadMemo,
+  budget = PREFETCH_BYTE_BUDGET,
 ): Promise<void> {
   batchItemReads(dataRepo, items, memo);
   const ids = new Set<string>();
@@ -763,7 +772,19 @@ export async function prefetchItemBlobs(
     );
     for (const entry of entries) ids.add(entry.blobId);
   }
-  if (ids.size === 0) return;
+  // A blob already in the memo needs no read, and one item alone gains
+  // nothing from a batch: its own read is one process too.
+  for (const id of ids) {
+    const key = gitObjectReadKey(dataRepo, id);
+    if (key !== undefined && memo.blobs.has(key)) ids.delete(id);
+  }
+  const distinct = new Set(items.map((item) => `${item.kind}/${item.name}`));
+  if (ids.size === 0 || distinct.size < 2) return;
+  const sizes = await catFileSizes(dataRepo, ids).catch(() => undefined);
+  if (sizes === undefined) return;
+  let total = 0;
+  for (const size of sizes.values()) total += size;
+  if (total > budget) return;
   await catFileBlobs(dataRepo, ids, memo).catch(() => undefined);
 }
 
