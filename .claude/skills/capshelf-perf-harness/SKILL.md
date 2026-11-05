@@ -1,9 +1,9 @@
 ---
-name: perf-harness
+name: capshelf-perf-harness
 description: Measure capshelf latency and Git process counts, and prove that two capshelf binaries give the same results. Use for any change that moves a Git read, batches reads, or changes startup, and to compare a branch with a release.
 ---
 
-# perf-harness
+# capshelf-perf-harness
 
 The tools are in `tools/perf/`. `docs/performance.md` explains each one and
 how to read the numbers. Read it before you report a result.
