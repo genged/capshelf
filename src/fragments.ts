@@ -11,6 +11,7 @@ import {
   isPlainConfigObject,
   mergeConfigObject,
   mergeConfigObjects,
+  overlayManagedConfig,
   removeManagedValue,
   shaOfConfig,
   stableStringifyConfig,
@@ -547,17 +548,15 @@ export async function planFragmentOutput(
     target: opts.target,
     memo: opts.memo,
   });
-  const rawNextManaged = mergeConfigObjects(
-    nextFragments.map((fragment) => fragment.value),
+  const planned = spec.normalizeOutput(
+    reconcileFragmentValues({
+      outputPath: path,
+      current,
+      oldManaged,
+      nextFragments,
+      isSyntheticOnly: spec.isSyntheticOnly,
+    }),
   );
-
-  const baseValue = removeManagedValue(current, oldManaged) ?? {};
-  let base = isPlainConfigObject(baseValue) ? baseValue : {};
-  if (spec.isSyntheticOnly(base)) base = {};
-  assertNoFragmentConflicts(path, nextFragments);
-  assertNoUnmanagedCollisions(path, base, nextFragments);
-
-  const planned = spec.normalizeOutput(mergeConfigObject(base, rawNextManaged));
   const plannedText = spec.isSyntheticOnly(planned)
     ? null
     : spec.stringify(planned);
@@ -586,6 +585,34 @@ export async function planFragmentOutput(
     commentLoss,
     commentPolicy: commentLossPolicy(spec.format),
   };
+}
+
+/**
+ * The value part of fragment reconciliation, with no I/O.
+ *
+ * It removes the old managed contribution from the current output, refuses
+ * conflicts, and puts the next managed contribution on top. Removal cannot
+ * tell a local value from a managed value that is equal to it, so it removes
+ * both. `tests/fragment-merge-properties.test.ts` checks the rules that this
+ * function must keep.
+ */
+export function reconcileFragmentValues(input: {
+  outputPath: string;
+  current: ConfigObject;
+  oldManaged: ConfigObject;
+  nextFragments: FragmentValue[];
+  isSyntheticOnly: (value: ConfigObject) => boolean;
+}): ConfigObject {
+  const { outputPath, current, oldManaged, nextFragments } = input;
+  const baseValue = removeManagedValue(current, oldManaged) ?? {};
+  let base = isPlainConfigObject(baseValue) ? baseValue : {};
+  if (input.isSyntheticOnly(base)) base = {};
+  assertNoFragmentConflicts(outputPath, nextFragments);
+  assertNoUnmanagedCollisions(outputPath, base, nextFragments);
+  return overlayManagedConfig(
+    base,
+    mergeConfigObjects(nextFragments.map((fragment) => fragment.value)),
+  );
 }
 
 export async function applyFragmentOutput(

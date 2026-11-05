@@ -68,6 +68,54 @@ export function mergeConfigValues(
   return cloneConfig(overlay);
 }
 
+/**
+ * Put the managed contribution on top of the local base of a generated output.
+ *
+ * This differs from `mergeConfigObject` only for arrays. A local element that
+ * equals a managed element is dropped, and the managed elements follow the
+ * local ones. Other local elements keep their order and their duplicates. So
+ * the output has one canonical order, and `removeManagedValue` followed by this
+ * function gives the same output again: a second `apply` writes nothing.
+ * Fragment-to-fragment merging keeps `mergeConfigValues`, so the documented
+ * manifest order of managed elements does not change.
+ */
+export function overlayManagedConfig(
+  base: ConfigObject,
+  managed: ConfigObject,
+): ConfigObject {
+  const out = cloneConfigObject(base);
+  for (const [key, value] of Object.entries(managed)) {
+    defineConfigProperty(
+      out,
+      key,
+      Object.hasOwn(out, key)
+        ? overlayManagedValue(out[key], value)
+        : cloneConfig(value),
+    );
+  }
+  return out;
+}
+
+function overlayManagedValue(
+  base: ConfigValue | undefined,
+  managed: ConfigValue,
+): ConfigValue {
+  if (Array.isArray(base) && Array.isArray(managed)) {
+    const managedKeys = new Set(managed.map(stableStringifyConfig));
+    const localOnly = base.filter(
+      (value) => !managedKeys.has(stableStringifyConfig(value)),
+    );
+    return [
+      ...localOnly.map((value) => cloneConfig(value)),
+      ...dedupeArray(managed),
+    ];
+  }
+  if (isConfigObject(base) && isConfigObject(managed)) {
+    return overlayManagedConfig(base, managed);
+  }
+  return cloneConfig(managed);
+}
+
 export function removeManagedValue(
   current: ConfigValue | undefined,
   managed: ConfigValue | undefined,
