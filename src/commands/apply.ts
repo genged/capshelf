@@ -27,6 +27,7 @@ import { PreconditionError, ResultExitError } from "../errors";
 import { parseItemRef } from "../item-ref";
 import {
   assertRefNotSplitAcrossPopulations,
+  pinnedDataItems,
   resolveTrackedTarget,
 } from "../targets";
 import type { ScopedTarget } from "../targets";
@@ -682,13 +683,7 @@ async function planApplyPreflight(
   if (input.dataRepo !== undefined) {
     await prefetchItemBlobs(
       input.dataRepo,
-      input.targets.flatMap(({ scope, key }) => {
-        const entry = (scope === "local" ? input.localLock : input.projectLock)
-          .items[key];
-        if (entry?.source !== "data") return [];
-        const { kind, name } = parseLockKey(key);
-        return [{ kind, name, commit: entry.sourceCommit }];
-      }),
+      pinnedDataItems(input.targets, input.projectLock, input.localLock),
       input.memo,
     );
   }

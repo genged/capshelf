@@ -38,6 +38,7 @@ import {
 } from "./git";
 import type { PathCleanCheck } from "./git";
 import { upstreamFactsForItem } from "./upstream-facts";
+import { pinnedDataItems } from "./targets";
 import {
   listClaudePlugins,
   listSkillsShSkills,
@@ -286,15 +287,7 @@ export async function buildStatusReport(
   // Subagent and fragment rows also hash their pinned bytes, so one read
   // covers them all. A copy-directory row compares blob ids and reads no bytes.
   if (dataRepo) {
-    const pinned: ItemAtCommit[] = targets.flatMap((target) => {
-      const entry = (target.scope === "local" ? localLock : projectLock).items[
-        target.key
-      ];
-      const { kind, name } = parseLockKey(target.key);
-      return entry?.source === "data"
-        ? [{ kind, name, commit: entry.sourceCommit }]
-        : [];
-    });
+    const pinned = pinnedDataItems(targets, projectLock, localLock);
     batchItemReads(dataRepo, pinned, memo);
     // One history walk selects the upstream commit of every row. If the
     // `HEAD` read fails, each row walks from the live `HEAD` as before. One
@@ -436,9 +429,7 @@ export async function buildStatusReport(
           kind,
           itemName,
           treeIdentity ? "tree" : "worktree",
-          memo,
-          isDataPathClean,
-          walkHead,
+          { memo, isClean: isDataPathClean, head: walkHead },
         );
         upstreamSha = upstream.upstreamSha;
         upstreamDirty = upstream.upstreamDirty;
