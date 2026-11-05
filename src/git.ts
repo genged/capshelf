@@ -1167,18 +1167,21 @@ function literalPathsOf(pathspecs: readonly string[]): string[] | null {
   for (const pathspec of pathspecs) {
     if (!pathspec.startsWith(":(literal)")) return null;
     const path = pathspec.slice(":(literal)".length);
-    const segments = path.split("/");
-    if (
-      path.length === 0 ||
-      segments.some(
-        (segment) => segment === "" || segment === "." || segment === "..",
-      )
-    ) {
-      return null;
-    }
+    if (!isNormalRelPath(path)) return null;
     paths.push(path);
   }
   return paths;
+}
+
+/**
+ * A relative path with no empty, `.`, or `..` segment. A tree can hold
+ * entries named `.` or `..`, and Git refuses a path that climbs out of the
+ * repository, so only these paths go into a batch.
+ */
+function isNormalRelPath(path: string): boolean {
+  return path
+    .split("/")
+    .every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
 /**
@@ -1500,71 +1503,73 @@ export async function checkAttrAtCommit(
       observeObjectsDir,
     );
   }
-  let byPath = memo.attributesByPath.get(cacheKey);
+  const byPath = memo.attributesByPath.get(cacheKey);
   const own = new Set(paths.filter((path) => !byPath?.has(path)));
   const wanted = new Set(own);
   const registered = memo.batchPaths.get(batchKey(repo, commit) ?? "");
   if (wanted.size > 0 && registered !== undefined) {
     const batch = await batchTreeAtCommit(repo, commit, memo, registered);
     for (const entry of batch ?? []) {
-      // A tree can hold entries named `.` or `..`, and Git refuses a path
-      // that climbs out of the repository. Such a path stays out of a batch.
       if (
         entry.type === "blob" &&
         !byPath?.has(entry.path) &&
-        entry.path
-          .split("/")
-          .every((part) => part !== "" && part !== "." && part !== "..")
+        isNormalRelPath(entry.path)
       ) {
         wanted.add(entry.path);
       }
     }
   }
-  if (wanted.size > 0) {
-    // One objects-directory read serves the batch and a retry.
-    let objectsDir: string | undefined;
-    const observe = async (): Promise<string> =>
-      (objectsDir ??= await (observeObjectsDir
-        ? observeObjectsDir()
-        : repositoryObjectsDirectory(repo)));
-    await observe();
-    const query = [...wanted];
-    // The files of other items must not fail this caller's query. A failed
-    // batch is asked again with this caller's paths only, and its answer or
-    // error is the caller's own.
-    const results =
-      query.length > own.size
-        ? await runCheckAttr(repo, commit, query, attributes, observe).catch(
-            () => undefined,
-          )
-        : await runCheckAttr(repo, commit, query, attributes, observe);
-    if (results === undefined) {
-      return await runCheckAttr(repo, commit, paths, attributes, observe);
-    }
-    // Git prints one record per path and attribute, in input order. Any other
-    // shape is not split: the caller gets a direct answer, and nothing is kept.
-    const inOrder =
-      results.length === query.length * attributes.length &&
-      results.every(
-        (result, index) =>
-          result.path === query[Math.floor(index / attributes.length)] &&
-          result.attribute === attributes[index % attributes.length],
-      );
-    if (!inOrder) {
-      return await runCheckAttr(repo, commit, paths, attributes, observe);
-    }
-    byPath ??= new Map();
-    query.forEach((path, index) => {
-      byPath!.set(
-        path,
-        results.slice(
-          index * attributes.length,
-          (index + 1) * attributes.length,
-        ),
-      );
-    });
-    memo.attributesByPath.set(cacheKey, byPath);
+  if (wanted.size === 0) return answersFor(byPath, paths);
+  // One objects-directory read serves the batch and a retry.
+  let objectsDir: string | undefined;
+  const observe = async (): Promise<string> =>
+    (objectsDir ??= await (observeObjectsDir
+      ? observeObjectsDir()
+      : repositoryObjectsDirectory(repo)));
+  await observe();
+  const query = [...wanted];
+  // The files of other items must not fail this caller's query. A failed
+  // batch keeps nothing, and the retry below gives the caller its own error.
+  const results = await runCheckAttr(
+    repo,
+    commit,
+    query,
+    attributes,
+    observe,
+  ).catch((error: unknown) => {
+    if (query.length === own.size) throw error;
+    return [];
+  });
+  // A path is kept only when Git answered every attribute for it, in the
+  // order asked. A path Git did not answer that way is not kept.
+  const answered = new Map<string, CheckAttrResult[]>();
+  for (const result of results) {
+    const list = answered.get(result.path) ?? [];
+    list.push(result);
+    answered.set(result.path, list);
   }
+  const kept = byPath ?? new Map<string, CheckAttrResult[]>();
+  for (const path of query) {
+    const list = answered.get(path);
+    if (
+      list !== undefined &&
+      list.length === attributes.length &&
+      list.every((result, index) => result.attribute === attributes[index])
+    ) {
+      kept.set(path, list);
+    }
+  }
+  memo.attributesByPath.set(cacheKey, kept);
+  if (!paths.every((path) => kept.has(path))) {
+    return await runCheckAttr(repo, commit, paths, attributes, observe);
+  }
+  return answersFor(kept, paths);
+}
+
+function answersFor(
+  byPath: ReadonlyMap<string, CheckAttrResult[]> | undefined,
+  paths: readonly string[],
+): CheckAttrResult[] {
   return paths.flatMap((path) =>
     (byPath?.get(path) ?? []).map((result) => ({ ...result })),
   );
