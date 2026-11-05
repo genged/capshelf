@@ -4,7 +4,6 @@ import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { z } from "zod";
 import { CLI_VERSION } from "./bundled";
-import type { ConfigValue } from "./config-values";
 import { atomicWriteFile, isErrno } from "./fs-utils";
 
 const HOMEBREW_FORMULA = "genged/tap/capshelf";
@@ -506,6 +505,9 @@ const FailedCheckCacheSchema = z.object({
   failed: z.literal(true),
 });
 
+/** A cache file holds the status of a check, or the record of a failed one. */
+const CacheRecordSchema = z.union([CacheSchema, FailedCheckCacheSchema]);
+
 function failedCheckRecord(context: SelfUpdateContext): FailedCheckRecord {
   return { checkedAt: context.now().toISOString(), failed: true };
 }
@@ -521,31 +523,21 @@ async function readStartupCache(
     return { kind: "unusable" };
   }
 
-  let json: ConfigValue;
+  let parsed: z.infer<typeof CacheRecordSchema>;
   try {
-    json = JSON.parse(raw);
+    parsed = CacheRecordSchema.parse(JSON.parse(raw));
   } catch {
     return { kind: "stale" };
   }
-  const status = CacheSchema.safeParse(json);
-  const failure = status.success
-    ? undefined
-    : FailedCheckCacheSchema.safeParse(json);
-  const checkedAt = status.success
-    ? status.data.checkedAt
-    : failure?.success
-      ? failure.data.checkedAt
-      : undefined;
-  if (checkedAt === undefined) return { kind: "stale" };
 
-  const checkedAtMs = Date.parse(checkedAt);
+  const checkedAtMs = Date.parse(parsed.checkedAt);
   if (!Number.isFinite(checkedAtMs)) return { kind: "stale" };
   if (context.now().getTime() - checkedAtMs >= context.startupCheckIntervalMs) {
     return { kind: "stale" };
   }
-  return status.success
-    ? { kind: "fresh", status: status.data }
-    : { kind: "failed-recently" };
+  return "failed" in parsed
+    ? { kind: "failed-recently" }
+    : { kind: "fresh", status: parsed };
 }
 
 async function writeStartupCache(
