@@ -33,7 +33,6 @@ import {
   commitExists,
   isGitWorkTreeRoot,
   headSha,
-  resolveCommit,
   repositoryObjectsDirectory,
   worktreeCleanSnapshot,
 } from "./git";
@@ -257,7 +256,14 @@ export async function buildStatusReport(
   const externalSkillNames = new Set(external.map((skill) => skill.name));
 
   const memo = new GitReadMemo();
+  // One `HEAD` read serves the history walk and the sidecar reads of every
+  // row, so both see one commit. A failed read is not kept: the walk is then
+  // skipped, and the next row reads `HEAD` again.
   let observedHead: string | undefined;
+  const observeHead = async (): Promise<string | undefined> => {
+    observedHead ??= await headSha(dataRepo!).catch(() => undefined);
+    return observedHead;
+  };
   let observedObjectsDir: string | undefined;
   const observeObjectsDir = async (): Promise<string> => {
     observedObjectsDir ??= await repositoryObjectsDirectory(dataRepo!);
@@ -290,11 +296,11 @@ export async function buildStatusReport(
         : [];
     });
     batchItemReads(dataRepo, pinned, memo);
-    // One history walk selects the upstream commit of every row. It starts at
-    // one `HEAD` read for the walk alone. If that read fails, each row walks
-    // from the live `HEAD` as before. One row has nothing to share.
+    // One history walk selects the upstream commit of every row. If the
+    // `HEAD` read fails, each row walks from the live `HEAD` as before. One
+    // row has nothing to share.
     if (pinned.length >= 2) {
-      walkHead = (await resolveCommit(dataRepo, "HEAD")) ?? undefined;
+      walkHead = await observeHead();
       if (walkHead !== undefined) {
         await prefetchSourceCommits(dataRepo, walkHead, pinned, memo);
       }
@@ -442,24 +448,28 @@ export async function buildStatusReport(
             upstream.sourceCommit !== null &&
             upstream.sourceCommit !== entry.sourceCommit);
         if (upstreamSha !== null || upstreamDirty) {
-          try {
-            observedHead ??= await headSha(dataRepo);
-            const item = { kind, name: itemName };
-            observedSidecars ??= await committedSidecarsAtCommit(
-              dataRepo,
-              dataItems,
-              observedHead,
-              memo,
-            ).catch(() => undefined);
-            // A failed batch read falls back to this row's own read, which
-            // reports no needs when Git cannot read the sidecar.
-            currentNeeds = (
-              observedSidecars === undefined
-                ? await loadCommittedItemNeeds(dataRepo, item, observedHead)
-                : committedItemNeedsFromSidecar(item, observedSidecars)
-            ).needs;
-          } catch {
-            currentNeeds = undefined;
+          const head = await observeHead();
+          // A sidecar that does not parse leaves the needs unknown, as a
+          // failed `HEAD` read does.
+          if (head !== undefined) {
+            try {
+              const item = { kind, name: itemName };
+              observedSidecars ??= await committedSidecarsAtCommit(
+                dataRepo,
+                dataItems,
+                head,
+                memo,
+              ).catch(() => undefined);
+              // A failed batch read falls back to this row's own read, which
+              // reports no needs when Git cannot read the sidecar.
+              currentNeeds = (
+                observedSidecars === undefined
+                  ? await loadCommittedItemNeeds(dataRepo, item, head)
+                  : committedItemNeedsFromSidecar(item, observedSidecars)
+              ).needs;
+            } catch {
+              currentNeeds = undefined;
+            }
           }
         }
       }
