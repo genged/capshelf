@@ -1529,16 +1529,13 @@ export async function checkAttrAtCommit(
   const query = [...wanted];
   // The files of other items must not fail this caller's query. A failed
   // batch keeps nothing, and the retry below gives the caller its own error.
-  const results = await runCheckAttr(
-    repo,
-    commit,
-    query,
-    attributes,
-    observe,
-  ).catch((error: unknown) => {
-    if (query.length === own.size) throw error;
-    return [];
-  });
+  // A query of only the caller's paths has nothing to retry.
+  const results =
+    query.length === own.size
+      ? await runCheckAttr(repo, commit, query, attributes, observe)
+      : await runCheckAttr(repo, commit, query, attributes, observe).catch(
+          () => [],
+        );
   // A path is kept only when Git answered every attribute for it, in the
   // order asked. A path Git did not answer that way is not kept.
   const answered = new Map<string, CheckAttrResult[]>();
