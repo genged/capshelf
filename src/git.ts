@@ -742,12 +742,7 @@ export async function prefetchLastTouchingCommits(
   }
   const overlaps = (paths: readonly string[], other: readonly string[]) =>
     paths.some((path) =>
-      other.some(
-        (root) =>
-          path === root ||
-          path.startsWith(`${root}/`) ||
-          root.startsWith(`${path}/`),
-      ),
+      other.some((root) => isAtOrUnder(path, root) || isAtOrUnder(root, path)),
     );
   const requests = candidates.filter((request) =>
     candidates.every(
@@ -921,11 +916,7 @@ export class LogWalkReader {
     // The union applies every exclusion, so an excluded path is never listed.
     for (const request of this.requests) {
       if (this.answers.has(request.key)) continue;
-      if (
-        request.include.some(
-          (root) => field === root || field.startsWith(`${root}/`),
-        )
-      ) {
+      if (request.include.some((root) => isAtOrUnder(field, root))) {
         this.answers.set(request.key, commit);
       }
     }
@@ -1202,9 +1193,8 @@ function entriesUnderLiteralPaths(
   for (const entry of whole) {
     const selected = paths.some(
       (path) =>
-        entry.path === path ||
-        entry.path.startsWith(`${path}/`) ||
-        (entry.type === "tree" && path.startsWith(`${entry.path}/`)),
+        isAtOrUnder(entry.path, path) ||
+        (entry.type === "tree" && isAtOrUnder(path, entry.path)),
     );
     if (!selected) continue;
     if (entry.type === "tree" && !includeTrees) continue;
@@ -1217,8 +1207,12 @@ function batchKey(repo: string, commit: string): string | undefined {
   return gitObjectReadKey(repo, commit, ["batch"]);
 }
 
-function coveredBy(path: string, covering: readonly string[]): boolean {
-  return covering.some((root) => path === root || path.startsWith(`${root}/`));
+/**
+ * Whether `path` is `root` or lies under it. This is what a literal pathspec
+ * of `root` selects.
+ */
+function isAtOrUnder(path: string, root: string): boolean {
+  return path === root || path.startsWith(`${root}/`);
 }
 
 /**
@@ -1259,7 +1253,12 @@ async function batchTreeAtCommit(
   const key = batchKey(repo, commit);
   const registered = key === undefined ? undefined : memo.batchPaths.get(key);
   if (key === undefined || registered === undefined) return undefined;
-  if (!requested.every((path) => coveredBy(path, registered))) return undefined;
+  if (
+    !requested.every((path) =>
+      registered.some((root) => isAtOrUnder(path, root)),
+    )
+  )
+    return undefined;
   const cached = memo.batchTrees.get(key);
   if (cached !== undefined) return cached;
   const result = await sourceRead(repo, [
@@ -1709,9 +1708,7 @@ export async function sourceVisibleFilesLister(
     if (listed === undefined || !paths.includes(normalized)) {
       return await sourceVisibleFilesUnderPath(repo, relPath);
     }
-    const own = listed.filter(
-      (path) => path === normalized || path.startsWith(`${normalized}/`),
-    );
+    const own = listed.filter((path) => isAtOrUnder(path, normalized));
     return await presentFilesRelativeTo(
       repo,
       normalized,
@@ -2070,8 +2067,7 @@ export async function worktreeCleanSnapshot(
       ? [record.path]
       : [record.path, record.origPath],
   );
-  return async (relPath) =>
-    !changed.some((path) => path === relPath || path.startsWith(`${relPath}/`));
+  return async (relPath) => !changed.some((path) => isAtOrUnder(path, relPath));
 }
 
 /**
