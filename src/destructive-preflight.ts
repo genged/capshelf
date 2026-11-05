@@ -10,7 +10,7 @@ import type {
   FragmentOutputPlan,
   FragmentTarget,
 } from "./fragments";
-import { showAtCommit } from "./git";
+import type { GitReadMemo } from "./git-read-memo";
 import { inventoryLocalTree } from "./gitignore";
 import { installedPath } from "./installed";
 import { isBundled, requireContentSource } from "./item-source";
@@ -25,7 +25,11 @@ import {
 import type { NamedFile } from "./merge-tree";
 import type { CopyDirectoryItemKind } from "./master";
 import type { Scope } from "./promote-core";
-import { materializeSubagent, subagentSourcesAtCommit } from "./subagents";
+import {
+  materializeSubagent,
+  subagentSourceAtCommit,
+  subagentSourcesAtCommit,
+} from "./subagents";
 
 export interface PlannedDestruction {
   changes: DestructiveChange[];
@@ -62,6 +66,8 @@ export async function planCopyDirectoryDestruction(opts: {
    * target, so a failure to read it must reach the caller.
    */
   repairUnresolvableCurrent?: boolean;
+  /** The command's read memo, for the data-repo content reads. */
+  memo?: GitReadMemo;
 }): Promise<PlannedDestruction> {
   const readReconciliationFiles = async (
     entry: LockEntry,
@@ -80,6 +86,7 @@ export async function planCopyDirectoryDestruction(opts: {
       entry,
       previous: { entry, source },
       scope: opts.scope,
+      memo: opts.memo,
     });
   };
   const current =
@@ -363,6 +370,8 @@ export async function planSubagentDestruction(opts: {
   reviewCommand: string;
   /** PIN-8, as in `planCopyDirectoryDestruction`. */
   repairUnresolvableCurrent?: boolean;
+  /** The calling command's memo for reads at a full commit id. */
+  memo?: GitReadMemo;
 }): Promise<PlannedDestruction> {
   const repairable =
     opts.repairUnresolvableCurrent === true &&
@@ -374,6 +383,7 @@ export async function planSubagentDestruction(opts: {
     entry: opts.selectedEntry,
     previousEntry: opts.currentEntry,
     dryRun: true,
+    memo: opts.memo,
   });
   // The commit the installed bytes are compared against. Normally the previous
   // pin, because that is what capshelf last wrote; when that pin cannot be
@@ -386,6 +396,7 @@ export async function planSubagentDestruction(opts: {
         opts.dataRepo,
         opts.name,
         opts.currentEntry.sourceCommit,
+        opts.memo,
       ).then(
         () => opts.currentEntry,
         () => opts.selectedEntry,
@@ -398,6 +409,7 @@ export async function planSubagentDestruction(opts: {
     opts.dataRepo,
     opts.name,
     basisEntry.sourceCommit,
+    opts.memo,
   )) {
     if (!existsSync(source.outputPath)) {
       snapshotParts.push(`subagent:${source.outputPath}:missing`);
@@ -411,7 +423,13 @@ export async function planSubagentDestruction(opts: {
     }
     const [current, expected] = await Promise.all([
       readFile(source.outputPath),
-      showAtCommit(opts.dataRepo, basisEntry.sourceCommit, source.relPath),
+      subagentSourceAtCommit(
+        opts.dataRepo,
+        opts.name,
+        basisEntry.sourceCommit,
+        source.relPath,
+        opts.memo,
+      ),
     ]);
     snapshotParts.push(
       `subagent:${source.outputPath}:${contentDigest(current)}`,

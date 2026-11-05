@@ -21,6 +21,33 @@ export GIT_CONFIG_NOSYSTEM=1
 # behavior that only the end-to-end pseudo-terminal cells can prove.
 exec < /dev/null
 
+# Each script keeps its scratch files in `$TMP`, which `smoke_make_tmp`
+# creates. A passing script removes that directory, because a full run
+# otherwise leaves thousands of files in the temporary directory. A failing
+# script keeps it for inspection and prints its path.
+# `CAPSHELF_KEEP_SMOKE_TMP=1` keeps it always. A script that sets its own
+# EXIT handler sets this one again when its handler is no longer needed.
+#
+# The handler removes only the directory that `smoke_make_tmp` created. A
+# `TMP` that the caller's shell exported is never removed.
+SMOKE_OWNED_TMP=""
+smoke_make_tmp() {
+  SMOKE_OWNED_TMP="$(mktemp -d)"
+  TMP="$SMOKE_OWNED_TMP"
+}
+smoke_remove_tmp_on_success() {
+  local status=$?
+  if [ -n "$SMOKE_OWNED_TMP" ]; then
+    if [ "$status" = 0 ] && [ "${CAPSHELF_KEEP_SMOKE_TMP:-}" != 1 ]; then
+      rm -rf "$SMOKE_OWNED_TMP"
+    else
+      echo "kept smoke files: $SMOKE_OWNED_TMP" >&2
+    fi
+  fi
+  return "$status"
+}
+trap smoke_remove_tmp_on_success EXIT
+
 init_git_repo() {
   local repo="$1"
   git -C "$repo" init -q

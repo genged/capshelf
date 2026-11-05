@@ -1,4 +1,4 @@
-import type { GitReadMemo } from "./git-read-memo";
+import { gitObjectReadKey, type GitReadMemo } from "./git-read-memo";
 import { constants } from "node:fs";
 import { mkdtemp, open, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
@@ -9,12 +9,17 @@ import {
   literalPathspec,
   lsTreeEntriesForPathspecs,
   catFileBlobs,
+  catFileSizes,
+  MEMO_BLOB_LIMIT,
   checkAttrAtCommit,
+  contentCommitPathspecs,
   lastTouchingCommitForPaths,
   lastTouchingContentCommit,
+  prefetchLastTouchingCommits,
+  registerBatchReads,
   resolveCommit,
 } from "./git";
-import type { GitTreeEntry } from "./git";
+import type { GitTreeEntry, LastTouchingOptions } from "./git";
 import { PRODUCT_NAME } from "./identity";
 import {
   allCanonicalItemRelPaths,
@@ -183,15 +188,10 @@ export async function itemTreeEntriesAtCommit(
   memo?: GitReadMemo,
 ): Promise<PinTreeEntry[]> {
   const itemRoot = source.itemRoot;
-  const pathspecs = isCopyDirectoryItemKind(kind)
-    ? [literalPathspec(itemRoot)]
-    : itemRelPathsWithinRoot(kind).map((rel) =>
-        literalPathspec(`${itemRoot}/${rel}`),
-      );
   const raw = await lsTreeEntriesForPathspecs(
     source.repo,
     source.commit,
-    pathspecs,
+    itemTreePathspecs(source, kind),
     { memo },
   );
   // Refuses gitlinks and symlinks before they can reach the digest, so a pin
@@ -212,6 +212,15 @@ export async function itemTreeEntriesAtCommit(
   return entries.sort((a, b) =>
     a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
   );
+}
+
+/** The pathspecs `itemTreeEntriesAtCommit` lists for one item. */
+function itemTreePathspecs(source: GitTreeSource, kind: ItemKind): string[] {
+  return isCopyDirectoryItemKind(kind)
+    ? [literalPathspec(source.itemRoot)]
+    : itemRelPathsWithinRoot(kind).map((rel) =>
+        literalPathspec(`${source.itemRoot}/${rel}`),
+      );
 }
 
 function itemRelativePath(
@@ -250,6 +259,11 @@ export interface PinOptions {
   /** Skip PIN-9. Only the one-time `lock migrate` audit path sets this. */
   skipFilterCheck?: boolean;
   memo?: GitReadMemo;
+  /**
+   * A data-repo `HEAD` the caller already read. `pinCurrentSource` selects
+   * the commit from that history instead of the live `HEAD`.
+   */
+  head?: string;
 }
 
 /**
@@ -268,6 +282,17 @@ export async function pinItemAtCommit(
       `data repo at ${source.repo} does not contain commit ${source.commit}`,
     );
   }
+  return await pinResolvedCommit(source, resolved, kind, name, options);
+}
+
+/** `pinItemAtCommit` after Git resolved `source.commit` to `resolved`. */
+async function pinResolvedCommit(
+  source: GitTreeSource,
+  resolved: string,
+  kind: ItemKind,
+  name: string,
+  options: PinOptions,
+): Promise<PinnedSource> {
   const entries = await itemTreeEntriesAtCommit(
     { ...source, commit: resolved },
     kind,
@@ -279,9 +304,12 @@ export async function pinItemAtCommit(
     );
   }
   if (options.skipFilterCheck !== true) {
-    await assertNoExternalFilterDrivers(source.repo, resolved, [
-      { kind, name, entries },
-    ]);
+    await assertNoExternalFilterDrivers(
+      source.repo,
+      resolved,
+      [{ kind, name, entries }],
+      options.memo,
+    );
   }
   return brandPin(resolved, entries);
 }
@@ -295,26 +323,56 @@ export async function currentSourceCommit(
   dataRepo: string,
   kind: ItemKind,
   name: string,
+  options: LastTouchingOptions = {},
 ): Promise<string> {
   if (isCopyDirectoryItemKind(kind)) {
     return await lastTouchingContentCommit(
       dataRepo,
       itemRepoRelPath(kind, name),
+      options,
     );
   }
   if (isCopyTargetFileItemKind(kind) || isFragmentItemKind(kind)) {
     return await lastTouchingCommitForPaths(
       dataRepo,
       allCanonicalItemRelPaths(kind, name),
+      options,
     );
   }
   throw new Error(`no pin strategy for ${kind}/${name}`);
 }
 
 /**
+ * Select the source commit of many items from `head` with one history walk,
+ * and keep each answer in `memo`. `currentSourceCommit` with the same `head`
+ * and memo then needs no Git process. The pathspecs are the ones
+ * `currentSourceCommit` walks, so each answer is the one it would compute.
+ */
+export async function prefetchSourceCommits(
+  dataRepo: string,
+  head: string,
+  items: ReadonlyArray<{ kind: ItemKind; name: string }>,
+  memo: GitReadMemo,
+): Promise<void> {
+  const lists = items.flatMap(({ kind, name }) =>
+    isCopyDirectoryItemKind(kind)
+      ? [contentCommitPathspecs(itemRepoRelPath(kind, name))]
+      : isCopyTargetFileItemKind(kind) || isFragmentItemKind(kind)
+        ? [allCanonicalItemRelPaths(kind, name).map(literalPathspec)]
+        : [],
+  );
+  await prefetchLastTouchingCommits(dataRepo, head, lists, memo).catch(
+    () => undefined,
+  );
+}
+
+/**
  * `currentSourceCommit` followed by `pinItemAtCommit`. It reads the shelf's
  * own working tree to select the commit, so it takes a repository rather than
  * a content source.
+ *
+ * `git log --format=%H` prints only the full id of a commit it walked, so the
+ * selected commit needs no second `rev-parse --verify`.
  */
 export async function pinCurrentSource(
   dataRepo: string,
@@ -322,13 +380,13 @@ export async function pinCurrentSource(
   name: string,
   options: PinOptions = {},
 ): Promise<PinnedSource> {
-  return await pinItemAtCommit(
-    gitTreeSource({
-      repo: dataRepo,
-      kind,
-      name,
-      commit: await currentSourceCommit(dataRepo, kind, name),
-    }),
+  const commit = await currentSourceCommit(dataRepo, kind, name, {
+    head: options.head,
+    memo: options.memo,
+  });
+  return await pinResolvedCommit(
+    gitTreeSource({ repo: dataRepo, kind, name, commit }),
+    commit,
     kind,
     name,
     options,
@@ -374,6 +432,7 @@ export async function filteredPathsAtCommit(
   commit: string,
   subjects: readonly FilterCheckSubject[],
   observeObjectsDir?: () => Promise<string>,
+  memo?: GitReadMemo,
 ): Promise<FilteredPath[]> {
   const paths: string[] = [];
   const owner = new Map<string, string>();
@@ -390,6 +449,7 @@ export async function filteredPathsAtCommit(
     paths,
     ["filter"],
     observeObjectsDir,
+    memo,
   );
   const filtered: FilteredPath[] = [];
   for (const result of results) {
@@ -416,8 +476,15 @@ export async function assertNoExternalFilterDrivers(
   dataRepo: string,
   commit: string,
   subjects: readonly FilterCheckSubject[],
+  memo?: GitReadMemo,
 ): Promise<void> {
-  const filtered = await filteredPathsAtCommit(dataRepo, commit, subjects);
+  const filtered = await filteredPathsAtCommit(
+    dataRepo,
+    commit,
+    subjects,
+    undefined,
+    memo,
+  );
   if (filtered.length === 0) return;
   throw new PreconditionError(filterRefusalMessage(filtered));
 }
@@ -626,6 +693,106 @@ export async function readEntryBytes(
     }
     return { path: entry.path, mode: entry.mode, content };
   });
+}
+
+export interface ItemAtCommit {
+  kind: ItemKind;
+  name: string;
+  commit: string;
+}
+
+/**
+ * Register each commit that two or more of these items share, with the paths
+ * of those items. The tree reads and attribute queries of those items then
+ * share one Git process per commit. A commit that one item uses alone is not
+ * registered: its own reads are already one process each, and a batch would
+ * only read more. Only the paths of the items are read, never the whole
+ * commit, so the cost follows the items and not the size of the repository.
+ */
+export function batchItemReads(
+  dataRepo: string,
+  items: ReadonlyArray<ItemAtCommit>,
+  memo: GitReadMemo,
+): void {
+  const byCommit = new Map<string, ItemAtCommit[]>();
+  for (const item of items) {
+    const group = byCommit.get(item.commit) ?? [];
+    if (
+      !group.some(
+        (other) => other.kind === item.kind && other.name === item.name,
+      )
+    ) {
+      group.push(item);
+    }
+    byCommit.set(item.commit, group);
+  }
+  for (const [commit, group] of byCommit) {
+    if (group.length < 2) continue;
+    registerBatchReads(
+      memo,
+      dataRepo,
+      commit,
+      group.flatMap(({ kind, name }) =>
+        itemTreePathspecs(
+          gitTreeSource({ repo: dataRepo, kind, name, commit }),
+          kind,
+        ),
+      ),
+    );
+  }
+}
+
+/**
+ * The most bytes one prefetch reads. The batch is one buffer, and the memo
+ * keeps a copy of each small blob until the command ends. Above this size,
+ * each item reads its own bytes.
+ */
+export const PREFETCH_BYTE_BUDGET = 32 * 1024 * 1024;
+
+/**
+ * Read the blobs of many data-repo items in one `cat-file --batch`, and keep
+ * them in `memo`. A later read of the same blob id in this command starts no
+ * Git process. A blob id names its bytes, so the answer cannot change.
+ *
+ * This only fills the memo. An item whose tree or blobs cannot be read is
+ * skipped, and its own read later reports its own error.
+ */
+export async function prefetchItemBlobs(
+  dataRepo: string,
+  items: ReadonlyArray<ItemAtCommit>,
+  memo: GitReadMemo,
+  budget = PREFETCH_BYTE_BUDGET,
+): Promise<void> {
+  batchItemReads(dataRepo, items, memo);
+  const ids = new Set<string>();
+  for (const { kind, name, commit } of items) {
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(commit)) continue;
+    const source = gitTreeSource({ repo: dataRepo, kind, name, commit });
+    const entries = await itemTreeEntriesAtCommit(source, kind, memo).catch(
+      () => [],
+    );
+    for (const entry of entries) ids.add(entry.blobId);
+  }
+  // A blob already in the memo needs no read, and one item alone gains
+  // nothing from a batch: its own read is one process too.
+  for (const id of ids) {
+    const key = gitObjectReadKey(dataRepo, id);
+    if (key !== undefined && memo.blobs.has(key)) ids.delete(id);
+  }
+  const distinct = new Set(items.map((item) => `${item.kind}/${item.name}`));
+  if (ids.size === 0 || distinct.size < 2) return;
+  const sizes = await catFileSizes(dataRepo, ids).catch(() => undefined);
+  if (sizes === undefined) return;
+  // The memo keeps no large blob, so a prefetch does not read one. Its item
+  // reads it when it needs it.
+  const small = [...sizes].filter(([, size]) => size <= MEMO_BLOB_LIMIT);
+  const total = small.reduce((sum, [, size]) => sum + size, 0);
+  if (small.length === 0 || total > budget) return;
+  await catFileBlobs(
+    dataRepo,
+    small.map(([id]) => id),
+    memo,
+  ).catch(() => undefined);
 }
 
 /* --------------------------------------------------------------- PIN-11 */

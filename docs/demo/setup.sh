@@ -26,7 +26,7 @@ mkdir -p "$SANDBOX/bin" "$CODE" "$HOME_DIR/.local/bin"
 if [[ -n "${CAPSHELF_DEMO_BIN:-}" ]]; then
   cp "$CAPSHELF_DEMO_BIN" "$SANDBOX/bin/capshelf"
 else
-  (cd "$ROOT" && bun build --compile --minify --target=bun ./src/cli.ts \
+  (cd "$ROOT" && bun build --compile --minify --bytecode --format=esm --target=bun ./src/cli.ts \
     --outfile="$SANDBOX/bin/capshelf" >/dev/null)
 fi
 chmod +x "$SANDBOX/bin/capshelf"

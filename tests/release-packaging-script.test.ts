@@ -8,6 +8,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
+import { z } from "zod";
 import { tempDir } from "./cli-fixtures";
 
 const SCRIPTS = join(import.meta.dir, "..", "scripts");
@@ -35,6 +36,7 @@ if [ "\${1:-}" = "build" ]; then
     exit 1
   fi
   printf 'stub binary\\n' > "$outfile"
+  printf '%s\\n' "$*" >> "$BUILD_ARGS_LOG"
   exit 0
 fi
 exec "$REAL_BUN" "$@"
@@ -74,6 +76,7 @@ async function run(
       PATH: `${bin}:${process.env.PATH ?? ""}`,
       REAL_BUN: Bun.which("bun") ?? "bun",
       VERSION: version,
+      BUILD_ARGS_LOG: join(root, "build-args.log"),
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -91,6 +94,19 @@ interface PlatformRow {
   platform: string;
   bunTarget: string;
   runner: string;
+}
+
+/** The flags of one `bun build` call, without the per-call target and output. */
+function sharedBuildFlags(argv: string): string[] {
+  return argv
+    .split(/\s+/)
+    .filter(
+      (arg) =>
+        arg.startsWith("--") &&
+        !arg.startsWith("--target=") &&
+        !arg.startsWith("--outfile="),
+    )
+    .toSorted();
 }
 
 function platform(name: string): PlatformRow {
@@ -122,6 +138,29 @@ describe("package-homebrew-artifacts.sh", () => {
     for (const name of names) {
       expect(manifest).toContain(`  capshelf-9.9.9-${name}.tar.gz`);
     }
+  });
+
+  test("compiles each release binary with the flags of the build script", async () => {
+    // Release binaries and `bun run build` must start the same way. Bytecode
+    // in particular changes only startup time, so no other test notices drift.
+    const { root, exitCode } = await run([platform("linux-x64")]);
+    expect(exitCode).toBe(0);
+
+    const pkg = z
+      .object({ scripts: z.object({ build: z.string() }) })
+      .parse(
+        JSON.parse(await readFile(join(SCRIPTS, "..", "package.json"), "utf8")),
+      );
+    const buildScript = pkg.scripts.build.split("&&").at(-1) ?? "";
+    expect(buildScript).toContain("bun build --compile");
+    const expected = sharedBuildFlags(buildScript);
+    expect(expected).toContain("--bytecode");
+
+    const calls = (await readFile(join(root, "build-args.log"), "utf8"))
+      .split("\n")
+      .filter((line) => line.length > 0);
+    expect(calls.length).toBe(1);
+    expect(sharedBuildFlags(calls[0]!)).toEqual(expected);
   });
 
   test("refuses an empty platform list", async () => {

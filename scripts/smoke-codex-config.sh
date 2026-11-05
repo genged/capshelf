@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/smoke-lib.sh"
 
-TMP="$(mktemp -d)"
+smoke_make_tmp
 export HOME="$TMP/home"
 DATA="$TMP/data"
 A="$TMP/project-a"
@@ -69,4 +69,4 @@ TOML
 assert_contains '"action": "promoted"' "$TMP/codex-promote.json"
 assert_fixed_contains 'model = "gpt-5.2"' "$A/.codex/config.toml"
 
-echo "✓ smoke-codex-config ok ($TMP)"
+echo "✓ smoke-codex-config ok"

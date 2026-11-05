@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/smoke-lib.sh"
 
-TMP="$(mktemp -d)"
+smoke_make_tmp
 export HOME="$TMP/home"
 DATA="$TMP/data"
 
@@ -179,4 +179,4 @@ if (cd "$SHADOW" && "${CLI[@]}" promote skills/capshelf > "$TMP/promote-system.t
 fi
 assert_contains 'system item' "$TMP/promote-system.txt"
 
-echo "✓ smoke-modes ok ($TMP)"
+echo "✓ smoke-modes ok"

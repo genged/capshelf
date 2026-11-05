@@ -16,6 +16,7 @@ import {
 import { gitTreeSource } from "./item-source";
 import type { FragmentItemKind, ItemKind } from "./master";
 import { isPathClean, lastTouchingContentCommit } from "./git";
+import type { PathCleanCheck } from "./git";
 import {
   allCanonicalFragmentRelPaths,
   lastTouchingFragmentCommit,
@@ -51,6 +52,18 @@ export interface UpstreamFacts {
  */
 export type UpstreamIdentity = "tree" | "worktree";
 
+export interface UpstreamFactsOptions {
+  /** The calling command's memo for reads at a full commit id. */
+  memo?: GitReadMemo;
+  /** The dirty check of a data-repo path. Default: one `git status` per path. */
+  isClean?: PathCleanCheck;
+  /**
+   * The data-repo `HEAD` the caller read once. With it, the commit walk starts
+   * there instead of at the live `HEAD`, and `memo` can answer it.
+   */
+  head?: string;
+}
+
 /**
  * The per-item upstream facts the status state machine consumes, shared with
  * promote's stale guard so the two can never disagree (extracted verbatim
@@ -62,17 +75,23 @@ export async function upstreamFactsForItem(
   kind: ItemKind,
   name: string,
   identity: UpstreamIdentity = "worktree",
-  memo?: GitReadMemo,
+  options: UpstreamFactsOptions = {},
 ): Promise<UpstreamFacts> {
+  const {
+    memo,
+    isClean = (relPath) => isPathClean(dataRepo, relPath),
+    head,
+  } = options;
   const masterItem = await findMasterItemByRef(dataRepo, { kind, name });
   if (!masterItem) {
     return { upstreamSha: null, upstreamDirty: false, sourceCommit: null };
   }
   if (identity === "tree") {
-    const upstreamDirty = await sourcePathsDirty(dataRepo, kind, name);
-    const sourceCommit = await currentSourceCommit(dataRepo, kind, name).catch(
-      () => null,
-    );
+    const upstreamDirty = await sourcePathsDirty(kind, name, isClean);
+    const sourceCommit = await currentSourceCommit(dataRepo, kind, name, {
+      head,
+      memo,
+    }).catch(() => null);
     return {
       upstreamSha:
         sourceCommit === null
@@ -94,7 +113,7 @@ export async function upstreamFactsForItem(
     };
   }
   if (isFragmentItemKind(kind)) {
-    const upstreamDirty = await fragmentSourceDirty(dataRepo, kind, name);
+    const upstreamDirty = await fragmentSourceDirty(kind, name, isClean);
     return {
       upstreamSha: upstreamDirty
         ? null
@@ -106,10 +125,7 @@ export async function upstreamFactsForItem(
     };
   }
   if (isCopyDirectoryItemKind(kind)) {
-    const upstreamDirty = !(await isPathClean(
-      dataRepo,
-      masterItem.repoRelPath,
-    ));
+    const upstreamDirty = !(await isClean(masterItem.repoRelPath));
     return {
       upstreamSha: upstreamDirty
         ? null
@@ -123,9 +139,7 @@ export async function upstreamFactsForItem(
   if (isCopyTargetFileItemKind(kind)) {
     const sources = subagentSourceCandidates("", name);
     const upstreamDirty = (
-      await Promise.all(
-        sources.map((source) => isPathClean(dataRepo, source.relPath)),
-      )
+      await Promise.all(sources.map((source) => isClean(source.relPath)))
     ).some((clean) => !clean);
     return {
       upstreamSha: upstreamDirty
@@ -142,29 +156,29 @@ export async function upstreamFactsForItem(
 
 /** Whichever paths define this kind's source, checked for uncommitted change. */
 async function sourcePathsDirty(
-  dataRepo: string,
   kind: ItemKind,
   name: string,
+  isClean: PathCleanCheck,
 ): Promise<boolean> {
   if (isFragmentItemKind(kind)) {
-    return await fragmentSourceDirty(dataRepo, kind, name);
+    return await fragmentSourceDirty(kind, name, isClean);
   }
   if (isCopyDirectoryItemKind(kind)) {
-    return !(await isPathClean(dataRepo, itemRepoRelPath(kind, name)));
+    return !(await isClean(itemRepoRelPath(kind, name)));
   }
   for (const relPath of allCanonicalItemRelPaths(kind, name)) {
-    if (!(await isPathClean(dataRepo, relPath))) return true;
+    if (!(await isClean(relPath))) return true;
   }
   return false;
 }
 
 export async function fragmentSourceDirty(
-  dataRepo: string,
   kind: FragmentItemKind,
   name: string,
+  isClean: PathCleanCheck,
 ): Promise<boolean> {
   for (const relPath of allCanonicalFragmentRelPaths(kind, name)) {
-    if (!(await isPathClean(dataRepo, relPath))) return true;
+    if (!(await isClean(relPath))) return true;
   }
   return false;
 }

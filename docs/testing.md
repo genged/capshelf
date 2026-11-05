@@ -16,6 +16,18 @@ again before they run. `scripts/smoke-ui.sh` and `e2e/scenarios/ui.test.ts`
 cover `capshelf ui` with a headless fetch, which proves the served bytes and
 the API, not the rendering.
 
+No layer leaves files in the temporary directory after it passes:
+
+- The test preload, `tests/setup.ts`, gives each test file one run
+  directory and points `TMPDIR` at it. So the fixtures of the tests and the
+  files of the CLI and Git processes they start go there. The directory is
+  removed after the file. Set `CAPSHELF_KEEP_TEST_TMP=1` to keep it.
+  `KEEP_E2E_TMP=1` keeps it too, because an E2E world lives in it.
+- `scripts/smoke-lib.sh` removes the `$TMP` of a smoke script that passes.
+  A failing script keeps it and prints its path. Set
+  `CAPSHELF_KEEP_SMOKE_TMP=1` to keep it always.
+- An E2E world is removed after its test, as described below.
+
 The first three layers run from source. They are fast, and they can inject a
 fault at any boundary. They cannot find a build, entry-point, or packaging
 fault, because they never run the file the package installs. That is the gap
@@ -54,6 +66,11 @@ command reported the wrong thing.
 
 Add to these when you move a reuse boundary. The boundary itself is described
 in [`docs/architecture.md`](architecture.md).
+
+`tests/git-batch-reads.test.ts` and `tests/git-history-walk.test.ts` compare
+each batched read with the read it replaces, on random trees and histories.
+To measure a change and to compare the results of two binaries, use the tools
+that [`docs/performance.md`](performance.md) describes.
 
 ## The end-to-end layer
 

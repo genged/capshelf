@@ -28,7 +28,7 @@ import {
 import { gitTreeSource } from "./item-source";
 import { unifiedDiffBytes } from "./status-diff";
 import { lstatOrNull } from "./fs-utils";
-import { subagentSourcesAtCommit } from "./subagents";
+import { subagentSourceAtCommit, subagentSourcesAtCommit } from "./subagents";
 import type { Scope } from "./promote-core";
 import { sanitizeDisplayText } from "./pick-core";
 
@@ -164,7 +164,12 @@ async function subagentCandidateFiles(
       );
     }
     const raw = await readFile(source.outputPath);
-    const locked = await showAtCommit(dataRepo, lockedCommit, source.relPath);
+    const locked = await subagentSourceAtCommit(
+      dataRepo,
+      name,
+      lockedCommit,
+      source.relPath,
+    );
     if (!raw.equals(locked)) pending.push({ relPath: source.relPath, raw });
   }
   return await promotedSubagentFiles(project, dataRepo, name, pending);

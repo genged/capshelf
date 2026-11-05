@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/smoke-lib.sh"
 
-TMP="$(mktemp -d)"
+smoke_make_tmp
 export HOME="$TMP/home"
 ORIGIN="$TMP/origin.git"
 SEED="$TMP/seed"
@@ -315,4 +315,4 @@ test "$(git hash-object "$MERGE_B/.agents/skills/merge-demo/line.txt")" = "$MERG
 test "$(git hash-object "$MERGE_B_DATA/skills/merge-demo/line.txt")" = "$MERGE_CONFLICT_UPSTREAM"
 test ! -e "$MERGE_C/.agents/skills/merge-demo/upstream.txt"
 
-echo "✓ smoke-team-sync ok ($TMP)"
+echo "✓ smoke-team-sync ok"

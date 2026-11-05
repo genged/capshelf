@@ -37,7 +37,11 @@ import { shortIdentity } from "../pin";
 import { parseLockKey } from "../installed";
 import { contentSourceOrNull, isBundled } from "../item-source";
 import type { ContentSource } from "../item-source";
-import { assertIsGitRepo } from "../git";
+import {
+  assertIsGitRepo,
+  sourceVisibleFilesLister,
+  type VisibleFilesLister,
+} from "../git";
 import { globalOpts } from "../global-options";
 import { shaOfFragmentItem } from "../fragments";
 import {
@@ -209,6 +213,13 @@ async function lsAvailable(
       })),
     )
   ).filter(({ meta }) => matchesTagFilter(meta, tags));
+  // One `ls-files` lists the working-tree files of every copy item shown.
+  const listFiles = await sourceVisibleFilesLister(
+    dataRepo,
+    dataRows
+      .filter(({ item }) => isCopyDirectoryItemKind(item.kind))
+      .map(({ item }) => item.repoRelPath),
+  );
   for (const { meta } of [...systemRows, ...dataRows]) {
     printMetadataWarnings(meta);
   }
@@ -250,7 +261,7 @@ async function lsAvailable(
           source: "data" as const,
           kind: item.kind,
           name: item.name,
-          sha: await shaOfDataItem(dataRepo, item),
+          sha: await shaOfDataItem(dataRepo, item, listFiles),
           path: item.path,
           ...metadataJsonFields(meta),
           ...(shared && { sharesTargetWith: shared }),
@@ -310,7 +321,7 @@ async function lsAvailable(
     const list = byKind.get(k);
     if (!list || list.length === 0) continue;
     for (const { item, meta } of list) {
-      const sha = await shaOfDataItem(dataRepo, item);
+      const sha = await shaOfDataItem(dataRepo, item, listFiles);
       console.log(
         `  ${item.kind}/${item.name.padEnd(26)} ${sha}${metadataLineSuffix(meta)}`,
       );
@@ -422,12 +433,13 @@ function metadataJsonFields(meta: ItemMetadata): MetadataJsonFields {
 async function shaOfDataItem(
   dataRepo: string,
   item: { kind: ItemKind; name: string; repoRelPath: string },
+  listFiles?: VisibleFilesLister,
 ): Promise<string> {
   if (isFragmentItemKind(item.kind)) {
     return await shaOfFragmentItem(dataRepo, item.kind, item.name);
   }
   if (isCopyDirectoryItemKind(item.kind)) {
-    return await shaOfGitVisibleItem(dataRepo, item.repoRelPath);
+    return await shaOfGitVisibleItem(dataRepo, item.repoRelPath, listFiles);
   }
   if (isCopyTargetFileItemKind(item.kind)) {
     return await shaOfCurrentSubagent("", dataRepo, item.name);

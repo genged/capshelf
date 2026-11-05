@@ -174,6 +174,12 @@ const REPOSITORY_SELECTING_ENV = [
   "GIT_DISCOVERY_ACROSS_FILESYSTEM",
   "GIT_PREFIX",
   "GIT_REPLACE_REF_BASE",
+  // These four change how Git reads every pathspec. capshelf writes its own
+  // `:(literal)` magic, so an ambient value would change which paths match.
+  "GIT_LITERAL_PATHSPECS",
+  "GIT_GLOB_PATHSPECS",
+  "GIT_NOGLOB_PATHSPECS",
+  "GIT_ICASE_PATHSPECS",
 ] as const;
 
 /** Command-line config injection and diff helper selection. */
@@ -299,6 +305,52 @@ async function runGit(
     true,
   );
   return { exitCode, stdout, stderr: stderr.trim() };
+}
+
+/**
+ * A `source-read` call whose output goes to `consume` as it arrives. When
+ * `consume` returns true, Git is stopped and the call counts as complete.
+ * Returns false when Git fails before that.
+ */
+async function sourceReadUntil(
+  repo: string,
+  args: string[],
+  consume: (chunk: Buffer) => boolean,
+): Promise<boolean> {
+  await assertGitAvailable();
+  const binding: GitBinding = { profile: "source-read", repo };
+  const proc = Bun.spawn(argvFor(binding, args), {
+    env: environmentFor(binding, {}),
+    stdout: "pipe",
+    stderr: "ignore",
+    stdin: "ignore",
+  });
+  let stopped = false;
+  let ended = false;
+  const reader = proc.stdout.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) {
+        ended = true;
+        break;
+      }
+      if (consume(Buffer.from(value))) {
+        stopped = true;
+        break;
+      }
+    }
+  } finally {
+    // Stopped on purpose, or `consume` threw: Git must not keep running.
+    if (!ended) {
+      proc.kill();
+      await reader.cancel();
+    }
+  }
+  const exitCode = await proc.exited;
+  const complete = stopped || exitCode === 0;
+  recordGitRead(args[0]!, repo, args, complete, true);
+  return complete;
 }
 
 function throwOnFailure(result: GitInvocation, args: string[]): Buffer {
@@ -550,20 +602,35 @@ async function projectWorkTreeRoot(project: string): Promise<string | null> {
  * The commit whose tree at `relPath` matches the current HEAD content.
  * Used as the `sourceCommit` recorded in lock entries.
  */
+/**
+ * Where a last-touching-commit walk starts. `head` is a commit the caller
+ * already read as `HEAD`. When it is given, the walk starts there instead of
+ * at the live `HEAD`, so one command pass that reads `HEAD` once sees one
+ * history for all of its items. The history from a full commit id cannot
+ * change, so `memo` keeps that answer for the rest of the command.
+ */
+export interface LastTouchingOptions {
+  head?: string;
+  memo?: GitReadMemo;
+}
+
 export async function lastTouchingCommit(
   repo: string,
   relPath: string,
+  options: LastTouchingOptions = {},
 ): Promise<string> {
-  return await lastTouchingCommitForPaths(repo, [relPath]);
+  return await lastTouchingCommitForPaths(repo, [relPath], options);
 }
 
 export async function lastTouchingCommitForPaths(
   repo: string,
   relPaths: string[],
+  options: LastTouchingOptions = {},
 ): Promise<string> {
   const sha = await tryLastTouchingCommitForPathspecs(
     repo,
     relPaths.map(literalPathspec),
+    options,
   );
   if (!sha) {
     const relPathLabel = relPaths.join(", ");
@@ -586,33 +653,306 @@ export async function lastTouchingCommitForPaths(
 export async function lastTouchingContentCommit(
   repo: string,
   relPath: string,
+  options: LastTouchingOptions = {},
 ): Promise<string> {
-  const sha = await tryLastTouchingCommitForPathspecs(repo, [
+  const sha = await tryLastTouchingCommitForPathspecs(
+    repo,
+    contentCommitPathspecs(relPath),
+    options,
+  );
+  if (sha) return sha;
+  return await lastTouchingCommit(repo, relPath, options);
+}
+
+/** The pathspecs `lastTouchingContentCommit` walks for one copy item. */
+export function contentCommitPathspecs(relPath: string): string[] {
+  return [
     literalPathspec(relPath),
     excludePathspec(`${relPath}/.capshelf.yml`),
+  ];
+}
+
+interface WalkRequest {
+  key: string;
+  include: string[];
+  exclude: string[];
+}
+
+/** A list of `:(literal)` and `:(literal,exclude)` paths, or null. */
+function walkRequestOf(
+  key: string,
+  pathspecs: readonly string[],
+): WalkRequest | null {
+  const include: string[] = [];
+  const exclude: string[] = [];
+  for (const pathspec of pathspecs) {
+    const excluded = pathspec.startsWith(":(literal,exclude)");
+    const paths = literalPathsOf([
+      excluded
+        ? `:(literal)${pathspec.slice(":(literal,exclude)".length)}`
+        : pathspec,
+    ]);
+    if (paths === null) return null;
+    (excluded ? exclude : include).push(paths[0]!);
+  }
+  return include.length === 0 ? null : { key, include, exclude };
+}
+
+/**
+ * Answer `log -1 <head> -- <pathspecs>` for many pathspec lists with one walk,
+ * and keep each answer in `memo`. Each item then needs no Git process to
+ * select its commit.
+ *
+ * One `log --name-only` over the union of the lists prints every commit that
+ * changes a path in the union, newest first, with the changed paths. The first
+ * commit that changes a path of one list, outside that list's exclusions, is
+ * the commit `log -1` selects for that list. This holds only for a linear
+ * history. At a merge, `log` follows one parent, and the parent it follows can
+ * depend on the paths. So a history with a merge commit fills nothing.
+ *
+ * Other limits keep the answers exact:
+ * - A list of one pathspec is skipped, because `log.follow` follows renames
+ *   only when one path is given.
+ * - A list whose paths fall under another list's exclusion is skipped, because
+ *   the union walk applies every exclusion to every path.
+ * - `--no-renames` lists a rename as a deletion and an addition, and `--root`
+ *   lists the files of the root commit. Neither depends on the configuration.
+ * - `--ignore-submodules=none` lists a gitlink change that a submodule
+ *   `ignore` setting would hide. A commit listed with no path still fills
+ *   nothing, in case another setting hides a change.
+ *
+ * The walk stops when every list has its commit, so an active history costs
+ * about as much as the separate walks. A failed walk fills nothing, and each
+ * item then runs its own `log -1`.
+ */
+export async function prefetchLastTouchingCommits(
+  repo: string,
+  head: string,
+  pathspecLists: ReadonlyArray<readonly string[]>,
+  memo: GitReadMemo,
+): Promise<void> {
+  const candidates: WalkRequest[] = [];
+  for (const pathspecs of pathspecLists) {
+    if (pathspecs.length < 2) continue;
+    const key = gitObjectReadKey(repo, head, [...pathspecs]);
+    if (key === undefined || memo.lastTouching.has(key)) continue;
+    if (candidates.some((candidate) => candidate.key === key)) continue;
+    const request = walkRequestOf(key, pathspecs);
+    if (request !== null) candidates.push(request);
+  }
+  const overlaps = (paths: readonly string[], other: readonly string[]) =>
+    paths.some((path) =>
+      other.some((root) => isAtOrUnder(path, root) || isAtOrUnder(root, path)),
+    );
+  const requests = candidates.filter((request) =>
+    candidates.every(
+      (other) => other === request || !overlaps(request.include, other.exclude),
+    ),
+  );
+  if (requests.length < 2) return;
+
+  const union = [
+    ...new Set(
+      requests.flatMap((request) => [
+        ...request.include.map((path) => `:(literal)${path}`),
+        ...request.exclude.map((path) => `:(literal,exclude)${path}`),
+      ]),
+    ),
+  ];
+  const reader = new LogWalkReader(requests);
+  const complete = await sourceReadUntil(
+    repo,
+    logWalkArgs(head, union),
+    (chunk) => reader.feed(chunk),
+  );
+  if (!complete) return;
+  const answers = reader.finish();
+  if (answers === null) return;
+  // The answers hold only when no merge lies between `head` and the oldest
+  // commit the walk read. When every list has its commit, only that range is
+  // checked, so a long history costs no full `rev-list`. A list with no
+  // commit depends on the whole history, so then all of it is checked. The
+  // oldest commit itself, if it is a merge, was listed with no path, and
+  // `finish` already refused the walk.
+  const oldest = reader.lastCommit();
+  const range =
+    [...answers.values()].every((commit) => commit !== null) &&
+    oldest !== undefined
+      ? [head, `^${oldest}`]
+      : [head];
+  const merge = await sourceRead(repo, [
+    "rev-list",
+    "--min-parents=2",
+    "--max-count=1",
+    ...range,
   ]);
-  if (sha) return sha;
-  return await lastTouchingCommit(repo, relPath);
+  if (merge.exitCode !== 0 || merge.stdout.toString("utf-8").trim() !== "") {
+    return;
+  }
+  for (const [key, commit] of answers) memo.lastTouching.set(key, commit);
+}
+
+/** The one `log` that `prefetchLastTouchingCommits` runs. */
+export function logWalkArgs(head: string, union: readonly string[]): string[] {
+  return [
+    "log",
+    "-z",
+    "--no-renames",
+    "--name-only",
+    "--root",
+    "--no-relative",
+    "--no-show-signature",
+    // `diff.ignoreSubmodules` and a `.gitmodules` `ignore` setting hide a
+    // gitlink change from the listing, but not from the commit selection.
+    "--ignore-submodules=none",
+    "--format=%x00%H",
+    head,
+    "--",
+    ...union,
+  ];
+}
+
+/**
+ * Reads the output of `logWalkArgs` in chunks of any size, and finds the
+ * newest commit that changes a path of each request.
+ *
+ * `%x00%H` with `-z` gives an empty field, then the commit id, then a field
+ * that starts with the newline before the first changed path. A changed path
+ * is never empty, so an empty field always comes before a commit id.
+ */
+export class LogWalkReader {
+  private readonly requests: ReadonlyArray<{ key: string; include: string[] }>;
+  private readonly answers = new Map<string, string>();
+  private rest = Buffer.alloc(0);
+  private commit: string | undefined;
+  private names = 0;
+  private afterId = false;
+  private afterEmpty = false;
+  /**
+   * A commit that `log` selects but lists with no changed path means that
+   * the listing hid a change. Then no answer of this walk is trusted.
+   */
+  private hiddenChange = false;
+
+  constructor(requests: ReadonlyArray<{ key: string; include: string[] }>) {
+    this.requests = requests;
+  }
+
+  /**
+   * True when every request has its commit. The walk is newest first, so an
+   * older commit cannot change an answer that is already found, and the
+   * caller can stop Git.
+   */
+  done(): boolean {
+    return this.hiddenChange || this.answers.size === this.requests.length;
+  }
+
+  feed(chunk: Buffer): boolean {
+    const buffer = Buffer.concat([this.rest, chunk]);
+    const last = buffer.lastIndexOf(0);
+    if (last === -1) {
+      this.rest = buffer;
+      return false;
+    }
+    this.rest = buffer.subarray(last + 1);
+    for (const field of buffer
+      .subarray(0, last)
+      .toString("utf-8")
+      .split("\0")) {
+      this.take(field);
+      if (this.done()) return true;
+    }
+    return false;
+  }
+
+  /** The last commit id the reader took, which is the oldest one it read. */
+  lastCommit(): string | undefined {
+    return this.commit;
+  }
+
+  /** The answer of each request, or null when the walk cannot be trusted. */
+  finish(): Map<string, string | null> | null {
+    if (!this.done()) {
+      if (this.rest.length > 0) this.take(this.rest.toString("utf-8"));
+      if (this.commit !== undefined && this.names === 0) {
+        this.hiddenChange = true;
+      }
+    }
+    if (this.hiddenChange) return null;
+    return new Map(
+      this.requests.map((request) => [
+        request.key,
+        this.answers.get(request.key) ?? null,
+      ]),
+    );
+  }
+
+  private take(input: string): void {
+    let field = input;
+    if (this.afterEmpty) {
+      this.afterEmpty = false;
+      if (/^[0-9a-f]{40,64}$/.test(field)) {
+        if (this.commit !== undefined && this.names === 0) {
+          this.hiddenChange = true;
+        }
+        this.commit = field;
+        this.names = 0;
+        this.afterId = true;
+        return;
+      }
+    }
+    if (field === "") {
+      this.afterEmpty = true;
+      return;
+    }
+    if (this.afterId) {
+      this.afterId = false;
+      if (field.startsWith("\n")) field = field.slice(1);
+      if (field === "") return;
+    }
+    const commit = this.commit;
+    if (commit === undefined) return;
+    this.names += 1;
+    // The union applies every exclusion, so an excluded path is never listed.
+    for (const request of this.requests) {
+      if (this.answers.has(request.key)) continue;
+      if (request.include.some((root) => isAtOrUnder(field, root))) {
+        this.answers.set(request.key, commit);
+      }
+    }
+  }
 }
 
 async function tryLastTouchingCommitForPathspecs(
   repo: string,
   pathspecs: string[],
+  { head, memo }: LastTouchingOptions,
 ): Promise<string | null> {
   if (pathspecs.length === 0) {
     throw new Error(
       "cannot compute last touching commit for an empty path list",
     );
   }
+  const key =
+    head === undefined ? undefined : gitObjectReadKey(repo, head, pathspecs);
+  if (head !== undefined && key === undefined) {
+    throw new Error(`last touching commit needs a full commit id, got ${head}`);
+  }
+  // A walk from the live `HEAD` has no key and is never reused.
+  const cached = key === undefined ? undefined : memo?.lastTouching.get(key);
+  if (cached !== undefined) return cached;
   const result = await sourceRead(repo, [
     "log",
     "-1",
     "--format=%H",
+    ...(head === undefined ? [] : [head]),
     "--",
     ...pathspecs,
   ]);
   if (result.exitCode !== 0) return null;
-  return result.stdout.toString("utf-8").trim() || null;
+  const sha = result.stdout.toString("utf-8").trim() || null;
+  if (key !== undefined) memo?.lastTouching.set(key, sha);
+  return sha;
 }
 
 export async function showAtCommit(
@@ -771,8 +1111,29 @@ export async function lsTreeEntriesForPathspecs(
   const key = gitObjectReadKey(repo, commit, args);
   const cached = key === undefined ? undefined : options.memo?.trees.get(key);
   if (cached !== undefined) return cached.map((entry) => ({ ...entry }));
-  const out = await sourceReadText(repo, args);
-  const entries = out
+  const literalPaths = literalPathsOf(pathspecs);
+  const batch =
+    key === undefined || options.memo === undefined || literalPaths === null
+      ? undefined
+      : await batchTreeAtCommit(repo, commit, options.memo, literalPaths);
+  const entries =
+    batch !== undefined && literalPaths !== null
+      ? entriesUnderLiteralPaths(
+          batch,
+          literalPaths,
+          options.includeTrees === true,
+        )
+      : parseLsTree(await sourceReadText(repo, args));
+  if (key !== undefined)
+    options.memo?.trees.set(
+      key,
+      entries.map((entry) => ({ ...entry })),
+    );
+  return entries;
+}
+
+function parseLsTree(out: string): GitTreeEntry[] {
+  return out
     .split("\0")
     .filter((s) => s.length > 0)
     .map((line) => {
@@ -785,11 +1146,133 @@ export async function lsTreeEntriesForPathspecs(
         path: match[4]!,
       };
     });
-  if (key !== undefined)
-    options.memo?.trees.set(
-      key,
-      entries.map((entry) => ({ ...entry })),
+}
+
+/**
+ * The paths of a pathspec list in which every entry is `:(literal)<path>` with
+ * a normalized path, or null. Only these lists are answered from a batch
+ * listing. Any other magic or shape goes to Git itself.
+ */
+function literalPathsOf(pathspecs: readonly string[]): string[] | null {
+  const paths: string[] = [];
+  for (const pathspec of pathspecs) {
+    if (!pathspec.startsWith(":(literal)")) return null;
+    const path = pathspec.slice(":(literal)".length);
+    if (!isNormalRelPath(path)) return null;
+    paths.push(path);
+  }
+  return paths;
+}
+
+/**
+ * A relative path with no empty, `.`, or `..` segment. A tree can hold
+ * entries named `.` or `..`, and Git refuses a path that climbs out of the
+ * repository, so only these paths go into a batch.
+ */
+function isNormalRelPath(path: string): boolean {
+  return path
+    .split("/")
+    .every((segment) => segment !== "" && segment !== "." && segment !== "..");
+}
+
+/**
+ * The entries `ls-tree -r [-t] -- <literal paths>` prints, taken from an
+ * `ls-tree -r -t` listing of the same commit over paths that cover them. A
+ * literal path selects itself and everything under it. With `-t`, Git also
+ * prints each tree it enters on the way to a selected path. Each such tree is
+ * a parent of a covering path or lies under one, so the listing holds it. The
+ * listing is in tree order, and a filter keeps that order.
+ * tests/git-batch-reads.test.ts compares this with Git.
+ */
+function entriesUnderLiteralPaths(
+  whole: readonly GitTreeEntry[],
+  paths: readonly string[],
+  includeTrees: boolean,
+): GitTreeEntry[] {
+  const out: GitTreeEntry[] = [];
+  for (const entry of whole) {
+    const selected = paths.some(
+      (path) =>
+        isAtOrUnder(entry.path, path) ||
+        (entry.type === "tree" && isAtOrUnder(path, entry.path)),
     );
+    if (!selected) continue;
+    if (entry.type === "tree" && !includeTrees) continue;
+    out.push({ ...entry });
+  }
+  return out;
+}
+
+function batchKey(repo: string, commit: string): string | undefined {
+  return gitObjectReadKey(repo, commit, ["batch"]);
+}
+
+/**
+ * Whether `path` is `root` or lies under it. This is what a literal pathspec
+ * of `root` selects.
+ */
+function isAtOrUnder(path: string, root: string): boolean {
+  return path === root || path.startsWith(`${root}/`);
+}
+
+/**
+ * Register the items a command will read at one commit. Later tree reads and
+ * attribute queries at that commit that stay inside these paths are answered
+ * from one Git process each. A path that is not literal and normalized is not
+ * registered, so a read of it goes to Git as before.
+ */
+export function registerBatchReads(
+  memo: GitReadMemo,
+  repo: string,
+  commit: string,
+  pathspecs: readonly string[],
+): void {
+  const key = batchKey(repo, commit);
+  const paths = literalPathsOf(pathspecs);
+  if (key === undefined || paths === null) return;
+  const registered = memo.batchPaths.get(key) ?? [];
+  const grown = [...new Set([...registered, ...paths])];
+  if (grown.length === registered.length) return;
+  memo.batchPaths.set(key, grown);
+  // The cached listing covers only the older path set.
+  memo.batchTrees.delete(key);
+}
+
+/**
+ * The one listing of every registered path at a commit, or undefined when the
+ * commit is not registered or the requested paths are not inside it. A failed
+ * read returns undefined and leaves nothing behind, so the caller asks Git
+ * with its own arguments and reports its own error.
+ */
+async function batchTreeAtCommit(
+  repo: string,
+  commit: string,
+  memo: GitReadMemo,
+  requested: readonly string[],
+): Promise<GitTreeEntry[] | undefined> {
+  const key = batchKey(repo, commit);
+  const registered = key === undefined ? undefined : memo.batchPaths.get(key);
+  if (key === undefined || registered === undefined) return undefined;
+  if (
+    !requested.every((path) =>
+      registered.some((root) => isAtOrUnder(path, root)),
+    )
+  )
+    return undefined;
+  const cached = memo.batchTrees.get(key);
+  if (cached !== undefined) return cached;
+  const result = await sourceRead(repo, [
+    "ls-tree",
+    "-r",
+    "-t",
+    "-z",
+    commit,
+    "--",
+    ...registered.map((path) => `:(literal)${path}`),
+  ]);
+  if (result.exitCode !== 0) return undefined;
+  const entries = parseLsTree(result.stdout.toString("utf-8"));
+  memo.batchTrees.set(key, entries);
   return entries;
 }
 
@@ -820,10 +1303,19 @@ function assertValidObjectNames(ids: readonly string[]): void {
   }
 }
 
+/**
+ * The largest blob a memo keeps. Managed config files are far smaller. A
+ * larger blob, such as an image in a skill, is read again when a command needs
+ * it twice, so the memo never holds a second copy of large content.
+ */
+export const MEMO_BLOB_LIMIT = 1024 * 1024;
+
 export async function catFileBlobs(
   repo: string,
   blobIds: Iterable<string>,
   memo?: GitReadMemo,
+  /** False reads from `memo` but adds nothing to it. */
+  keep = true,
 ): Promise<Map<string, Buffer>> {
   const requestedIds = [...blobIds];
   const out = new Map<string, Buffer>();
@@ -876,7 +1368,9 @@ export async function catFileBlobs(
       const content = stdout.subarray(start, end);
       out.set(match[1]!, content);
       const key = gitObjectReadKey(repo, requested);
-      if (key !== undefined) memo?.blobs.set(key, Buffer.from(content));
+      if (keep && key !== undefined && content.length <= MEMO_BLOB_LIMIT) {
+        memo?.blobs.set(key, Buffer.from(content));
+      }
       // Git writes a single LF after each object's contents.
       offset = end + 1;
     }
@@ -963,12 +1457,22 @@ export async function repositoryObjectsDirectory(
   );
 }
 
+/**
+ * `memo` keeps a successful answer for the rest of the command. The query
+ * reads only the commit's own `.gitattributes`: the shadow repository has no
+ * `info/attributes`, and the system and global files are disabled. So the
+ * answer for one full commit id, path, and attribute list cannot change, and
+ * it does not depend on the other paths in the query. With a memo, a query at
+ * a registered commit therefore also asks for the files of every registered
+ * item, and later queries of those files need no Git process.
+ */
 export async function checkAttrAtCommit(
   repo: string,
   commit: string,
   paths: string[],
   attributes: string[],
   observeObjectsDir?: () => Promise<string>,
+  memo?: GitReadMemo,
 ): Promise<CheckAttrResult[]> {
   if (paths.length === 0 || attributes.length === 0) return [];
   for (const path of paths) {
@@ -981,6 +1485,99 @@ export async function checkAttrAtCommit(
       `checkAttrAtCommit needs a full object name, got ${commit}`,
     );
   }
+  const cacheKey = gitObjectReadKey(repo, commit, [
+    "check-attr",
+    ...attributes,
+  ]);
+  if (
+    memo === undefined ||
+    cacheKey === undefined ||
+    new Set(attributes).size !== attributes.length
+  ) {
+    return await runCheckAttr(
+      repo,
+      commit,
+      paths,
+      attributes,
+      observeObjectsDir,
+    );
+  }
+  const byPath = memo.attributesByPath.get(cacheKey);
+  const own = new Set(paths.filter((path) => !byPath?.has(path)));
+  const wanted = new Set(own);
+  const registered = memo.batchPaths.get(batchKey(repo, commit) ?? "");
+  if (wanted.size > 0 && registered !== undefined) {
+    const batch = await batchTreeAtCommit(repo, commit, memo, registered);
+    for (const entry of batch ?? []) {
+      if (
+        entry.type === "blob" &&
+        !byPath?.has(entry.path) &&
+        isNormalRelPath(entry.path)
+      ) {
+        wanted.add(entry.path);
+      }
+    }
+  }
+  if (wanted.size === 0) return answersFor(byPath, paths);
+  // One objects-directory read serves the batch and a retry.
+  let objectsDir: string | undefined;
+  const observe = async (): Promise<string> =>
+    (objectsDir ??= await (observeObjectsDir
+      ? observeObjectsDir()
+      : repositoryObjectsDirectory(repo)));
+  await observe();
+  const query = [...wanted];
+  // The files of other items must not fail this caller's query. A failed
+  // batch keeps nothing, and the retry below gives the caller its own error.
+  // A query of only the caller's paths has nothing to retry.
+  const results =
+    query.length === own.size
+      ? await runCheckAttr(repo, commit, query, attributes, observe)
+      : await runCheckAttr(repo, commit, query, attributes, observe).catch(
+          () => [],
+        );
+  // A path is kept only when Git answered every attribute for it, in the
+  // order asked. A path Git did not answer that way is not kept.
+  const answered = new Map<string, CheckAttrResult[]>();
+  for (const result of results) {
+    const list = answered.get(result.path) ?? [];
+    list.push(result);
+    answered.set(result.path, list);
+  }
+  const kept = byPath ?? new Map<string, CheckAttrResult[]>();
+  for (const path of query) {
+    const list = answered.get(path);
+    if (
+      list !== undefined &&
+      list.length === attributes.length &&
+      list.every((result, index) => result.attribute === attributes[index])
+    ) {
+      kept.set(path, list);
+    }
+  }
+  memo.attributesByPath.set(cacheKey, kept);
+  if (!paths.every((path) => kept.has(path))) {
+    return await runCheckAttr(repo, commit, paths, attributes, observe);
+  }
+  return answersFor(kept, paths);
+}
+
+function answersFor(
+  byPath: ReadonlyMap<string, CheckAttrResult[]> | undefined,
+  paths: readonly string[],
+): CheckAttrResult[] {
+  return paths.flatMap((path) =>
+    (byPath?.get(path) ?? []).map((result) => ({ ...result })),
+  );
+}
+
+async function runCheckAttr(
+  repo: string,
+  commit: string,
+  paths: string[],
+  attributes: string[],
+  observeObjectsDir?: () => Promise<string>,
+): Promise<CheckAttrResult[]> {
   const objectsDir = await (observeObjectsDir
     ? observeObjectsDir()
     : repositoryObjectsDirectory(repo));
@@ -1061,6 +1658,60 @@ export async function sourceVisibleFilesUnderPath(
     literalPathspec(normalized),
   ]);
   return await presentFilesRelativeTo(repo, normalized, out);
+}
+
+/** Lists the files `sourceVisibleFilesUnderPath` lists for one path. */
+export type VisibleFilesLister = (relPath: string) => Promise<string[]>;
+
+/**
+ * `sourceVisibleFilesUnderPath` for many paths with one `ls-files`. Each path
+ * takes the listed files that are equal to it or under it, which is what a
+ * literal pathspec of that path selects. The listing is taken once, so all
+ * paths see one state of the working tree.
+ *
+ * Each path still gets its own result or error. A path outside the list, or
+ * every path when the batched `ls-files` fails, runs its own call.
+ */
+export async function sourceVisibleFilesLister(
+  repo: string,
+  relPaths: readonly string[],
+): Promise<VisibleFilesLister> {
+  const paths = [...new Set(relPaths.map(normalizeGitPath))].filter(
+    (path) => path.length > 0,
+  );
+  // A spawn that fails, for example on a very long argument list, falls back
+  // to one call per path.
+  const result =
+    paths.length < 2
+      ? undefined
+      : await sourceRead(repo, [
+          "ls-files",
+          "-z",
+          "--cached",
+          "--others",
+          "--exclude-standard",
+          "--",
+          ...paths.map(literalPathspec),
+        ]).catch(() => undefined);
+  const listed =
+    result === undefined || result.exitCode !== 0
+      ? undefined
+      : result.stdout
+          .toString("utf-8")
+          .split("\0")
+          .filter((path) => path.length > 0);
+  return async (relPath) => {
+    const normalized = normalizeGitPath(relPath);
+    if (listed === undefined || !paths.includes(normalized)) {
+      return await sourceVisibleFilesUnderPath(repo, relPath);
+    }
+    const own = listed.filter((path) => isAtOrUnder(path, normalized));
+    return await presentFilesRelativeTo(
+      repo,
+      normalized,
+      own.map((path) => `${path}\0`).join(""),
+    );
+  };
 }
 
 /** The same question, asked of the consuming project's own Git policy. */
@@ -1387,6 +2038,33 @@ export async function isPathClean(
 ): Promise<boolean> {
   const out = await statusPorcelain(repo, relPath);
   return out.trim().length === 0;
+}
+
+/** Whether a repository-relative path has no uncommitted change. */
+export type PathCleanCheck = (relPath: string) => Promise<boolean>;
+
+/**
+ * `isPathClean` for many paths from one `git status` of the whole repository.
+ *
+ * A path is dirty when a record, or the original path of a rename, is the
+ * path itself or lies under it. That is what `git status -- <path>` reports.
+ * `--untracked-files=all` lists each untracked file, so a collapsed untracked
+ * parent directory cannot make a path dirty that holds no file. The snapshot
+ * is one observation: a caller takes it once for one report, never for a
+ * plan that a later pass revalidates.
+ */
+export async function worktreeCleanSnapshot(
+  repo: string,
+): Promise<PathCleanCheck> {
+  const records = await statusPorcelainRecords(repo, [], {
+    untrackedFiles: "all",
+  });
+  const changed = records.flatMap((record) =>
+    record.origPath === undefined
+      ? [record.path]
+      : [record.path, record.origPath],
+  );
+  return async (relPath) => !changed.some((path) => isAtOrUnder(path, relPath));
 }
 
 /**

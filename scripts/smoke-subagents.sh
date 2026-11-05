@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/smoke-lib.sh"
 
-TMP="$(mktemp -d)"
+smoke_make_tmp
 export HOME="$TMP/home"
 DATA="$TMP/data"
 A="$TMP/project-a"
@@ -72,4 +72,4 @@ git -C "$DATA" commit -qm 'make reviewer Claude only'
 test ! -e "$B/.codex/agents/reviewer.toml"
 test -f "$B/.claude/agents/reviewer.md"
 
-echo "✓ smoke-subagents ok ($TMP)"
+echo "✓ smoke-subagents ok"

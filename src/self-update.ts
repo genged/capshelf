@@ -171,17 +171,24 @@ export async function runStartupSelfUpdate(
   if (!shouldRunStartupSelfUpdate(argv, context)) return null;
 
   const cache = await readStartupCache(context);
-  if (cache.kind === "fresh" || cache.kind === "unusable") return null;
+  if (cache.kind !== "stale") return null;
 
+  // A failed check is cached for the same interval as a successful one.
+  // Each Homebrew call can wait for its whole timeout, so an uncached failure
+  // made every interactive command wait again.
   let fresh: FreshCheckResult;
   try {
     fresh = await checkSelfUpdateFresh(context, {
       timeoutMs: context.startupCommandTimeoutMs,
     });
   } catch {
+    await writeStartupCache(context, failedCheckRecord(context));
     return null;
   }
-  if (!fresh.ok) return null;
+  if (!fresh.ok) {
+    await writeStartupCache(context, failedCheckRecord(context));
+    return null;
+  }
 
   await writeStartupCache(context, fresh.status);
   if (fresh.status.installer !== "homebrew" || !fresh.status.updateAvailable) {
@@ -483,8 +490,27 @@ async function runBrewCapture(
 
 type StartupCacheRead =
   | { kind: "fresh"; status: SelfUpdateStatus }
+  | { kind: "failed-recently" }
   | { kind: "stale" }
   | { kind: "unusable" };
+
+/** The cache record of a startup check that failed. */
+interface FailedCheckRecord {
+  checkedAt: string;
+  failed: true;
+}
+
+const FailedCheckCacheSchema = z.object({
+  checkedAt: z.string(),
+  failed: z.literal(true),
+});
+
+/** A cache file holds the status of a check, or the record of a failed one. */
+const CacheRecordSchema = z.union([CacheSchema, FailedCheckCacheSchema]);
+
+function failedCheckRecord(context: SelfUpdateContext): FailedCheckRecord {
+  return { checkedAt: context.now().toISOString(), failed: true };
+}
 
 async function readStartupCache(
   context: SelfUpdateContext,
@@ -497,9 +523,9 @@ async function readStartupCache(
     return { kind: "unusable" };
   }
 
-  let parsed: z.infer<typeof CacheSchema>;
+  let parsed: z.infer<typeof CacheRecordSchema>;
   try {
-    parsed = CacheSchema.parse(JSON.parse(raw));
+    parsed = CacheRecordSchema.parse(JSON.parse(raw));
   } catch {
     return { kind: "stale" };
   }
@@ -509,18 +535,20 @@ async function readStartupCache(
   if (context.now().getTime() - checkedAtMs >= context.startupCheckIntervalMs) {
     return { kind: "stale" };
   }
-  return { kind: "fresh", status: parsed };
+  return "failed" in parsed
+    ? { kind: "failed-recently" }
+    : { kind: "fresh", status: parsed };
 }
 
 async function writeStartupCache(
   context: SelfUpdateContext,
-  status: SelfUpdateStatus,
+  record: SelfUpdateStatus | FailedCheckRecord,
 ): Promise<void> {
   try {
     await mkdir(dirname(context.cachePath), { recursive: true });
     await atomicWriteFile(
       context.cachePath,
-      `${JSON.stringify(status, null, 2)}\n`,
+      `${JSON.stringify(record, null, 2)}\n`,
     );
   } catch {
     // Cache writes are best-effort and must not affect command execution.
