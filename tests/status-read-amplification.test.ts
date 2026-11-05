@@ -183,7 +183,11 @@ test(
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
 
-for (const failure of ["none", "first", "all"] as const) {
+// The report reads `HEAD` once for the history walk and the needs of every
+// row. Only a successful read is kept. "first-two" fails the walk's read and
+// the first row's read, so the walk is skipped, the first row's needs are
+// unavailable, and the second row reads `HEAD` again.
+for (const failure of ["none", "first-two", "all"] as const) {
   test(
     `report HEAD observations: ${failure} failures`,
     async () => {
@@ -192,7 +196,7 @@ for (const failure of ["none", "first", "all"] as const) {
       let reads = 0;
       const read = spyOn(git, "headSha").mockImplementation(async (repo) => {
         reads += 1;
-        if (failure === "all" || (failure === "first" && reads === 1))
+        if (failure === "all" || (failure === "first-two" && reads <= 2))
           throw new Error("injected HEAD failure");
         return await original(repo);
       });
@@ -200,12 +204,12 @@ for (const failure of ["none", "first", "all"] as const) {
         const report = await buildStatusReport(input);
         const rows = report.rows.filter((row) => row.kind === "settings");
         expect(reads).toBe(
-          failure === "none" ? 1 : failure === "first" ? 2 : 3,
+          failure === "none" ? 1 : failure === "first-two" ? 3 : 4,
         );
         expect(rows.map((row) => row.needsState)).toEqual(
           failure === "all"
             ? ["unavailable", "unavailable", "unavailable"]
-            : failure === "first"
+            : failure === "first-two"
               ? ["unavailable", "current", "current"]
               : ["current", "current", "current"],
         );
