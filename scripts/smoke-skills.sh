@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/smoke-lib.sh"
 
-TMP="$(mktemp -d)"
+smoke_make_tmp
 export HOME="$TMP/home"
 DATA="$TMP/data"
 A="$TMP/project-a"
@@ -175,4 +175,4 @@ assert_contains 'no data lock entry exists' "$TMP/untracked-rm.txt"
 test -f "$A/.claude/skills/local-only/SKILL.md"
 cp "$TMP/manifest.bak" "$A/.capshelf/capshelf.json"
 
-echo "✓ smoke-skills ok ($TMP)"
+echo "✓ smoke-skills ok"

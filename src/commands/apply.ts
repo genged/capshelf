@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { GitReadMemo } from "../git-read-memo";
+import { prefetchItemBlobs } from "../pin";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import {
   assertDestructivePlanUnchanged,
@@ -26,6 +27,7 @@ import { PreconditionError, ResultExitError } from "../errors";
 import { parseItemRef } from "../item-ref";
 import {
   assertRefNotSplitAcrossPopulations,
+  pinnedDataItems,
   resolveTrackedTarget,
 } from "../targets";
 import type { ScopedTarget } from "../targets";
@@ -434,6 +436,7 @@ export function registerApply(program: Command): void {
                 dataRepo,
                 name: parsed.name,
                 entry,
+                memo,
               });
               for (const warning of applied.warnings) {
                 console.error(`⚠ ${warning}`);
@@ -469,6 +472,7 @@ export function registerApply(program: Command): void {
                   key,
                   entry,
                   scope,
+                  memo,
                 }),
               ),
             );
@@ -675,6 +679,15 @@ async function planApplyPreflight(
   const fragmentTargets = new Set<FragmentTarget>();
   const fragmentItems = new Map<FragmentTarget, Set<string>>();
 
+  // Every data item reads its blobs at its pin. One read covers them all.
+  if (input.dataRepo !== undefined) {
+    await prefetchItemBlobs(
+      input.dataRepo,
+      pinnedDataItems(input.targets, input.projectLock, input.localLock),
+      input.memo,
+    );
+  }
+
   for (const { scope, key } of input.targets) {
     const lock = scope === "local" ? input.localLock : input.projectLock;
     const parsed = parseLockKey(key);
@@ -747,6 +760,7 @@ async function planApplyPreflight(
           input.dataRepo,
           parsed.name,
           entry.sourceCommit,
+          input.memo,
         );
         const applied = await materializeSubagent({
           project: input.project,
@@ -754,6 +768,7 @@ async function planApplyPreflight(
           name: parsed.name,
           entry,
           dryRun: true,
+          memo: input.memo,
         });
         results.push(
           addScope(scope, {
@@ -787,6 +802,7 @@ async function planApplyPreflight(
           currentEntry: entry,
           selectedEntry: entry,
           reviewCommand,
+          memo: input.memo,
         });
         changes.push(...planned.changes);
         snapshotParts.push(...planned.snapshotParts);
@@ -811,6 +827,7 @@ async function planApplyPreflight(
           entry,
           scope,
           dryRun: true,
+          memo: input.memo,
         }),
       );
       results.push(materialized);
@@ -830,6 +847,7 @@ async function planApplyPreflight(
           currentEntry: entry,
           selectedEntry: entry,
           reviewCommand,
+          memo: input.memo,
         });
         changes.push(...planned.changes);
         snapshotParts.push(...planned.snapshotParts);

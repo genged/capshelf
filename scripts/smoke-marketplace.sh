@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/smoke-lib.sh"
 
-TMP="$(mktemp -d)"
+smoke_make_tmp
 export HOME="$TMP/home"
 DATA="$TMP/data"
 OUT="$TMP/artifacts"
@@ -197,4 +197,4 @@ test ! -e "$DATA/codex/generated/plugins/engineering"
 assert_fixed_contains '"engineering": null' "$DATA/.claude-plugin/marketplace.json"
 test -z "$(git -C "$DATA" status --porcelain)"
 
-echo "✓ smoke-marketplace ok ($TMP)"
+echo "✓ smoke-marketplace ok"

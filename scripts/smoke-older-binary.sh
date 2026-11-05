@@ -29,8 +29,7 @@ if ! git -C "$ROOT" rev-parse -q --verify 'v0.13.0^{commit}' >/dev/null; then
   exit 0
 fi
 
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+smoke_make_tmp
 export HOME="$TMP/home"
 export XDG_DATA_HOME="$TMP/xdg"
 export XDG_CONFIG_HOME="$TMP/config"

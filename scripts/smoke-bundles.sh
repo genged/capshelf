@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/smoke-lib.sh"
 
-TMP="$(mktemp -d)"
+smoke_make_tmp
 export HOME="$TMP/home"
 DATA="$TMP/data"
 A="$TMP/project-a"
@@ -169,4 +169,4 @@ if [ "$BROKEN_EXIT" -ne 3 ]; then
 fi
 assert_fixed_contains 'invalid YAML' "$TMP/add-broken.txt"
 
-echo "✓ smoke-bundles ok ($TMP)"
+echo "✓ smoke-bundles ok"

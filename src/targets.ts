@@ -3,7 +3,9 @@ import { PRODUCT_NAME } from "./identity";
 import { findSkillsShSkill, skillsShConflictMessage } from "./external";
 import type { ItemRef } from "./item-ref";
 import { lockKeysForRef, parseItemRef } from "./item-ref";
+import { parseLockKey } from "./installed";
 import type { Lock } from "./lock";
+import type { ItemAtCommit } from "./pin";
 import { installsAtSkillTarget } from "./master";
 import { parseRemoteKey } from "./remotes-lock";
 
@@ -17,6 +19,23 @@ export interface ScopeFilter {
   project?: boolean;
   /** Restrict to local scope. */
   local?: boolean;
+}
+
+/**
+ * The data-repo item of each target and the commit its lock entry pins. A
+ * target with no data entry is left out.
+ */
+export function pinnedDataItems(
+  targets: readonly ScopedTarget[],
+  projectLock: Lock,
+  localLock: Lock,
+): ItemAtCommit[] {
+  return targets.flatMap(({ scope, key }) => {
+    const entry = (scope === "local" ? localLock : projectLock).items[key];
+    if (entry?.source !== "data") return [];
+    const { kind, name } = parseLockKey(key);
+    return [{ kind, name, commit: entry.sourceCommit }];
+  });
 }
 
 /**

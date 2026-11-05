@@ -18,7 +18,13 @@ import { z } from "zod";
 import type { SystemItem } from "./bundled";
 import { isConfigObject } from "./config-values";
 import type { ConfigObject } from "./config-values";
-import { headSha, sourceRead } from "./git";
+import {
+  catFileBlobs,
+  headSha,
+  literalPathspec,
+  lsTreeEntriesForPathspecs,
+} from "./git";
+import type { GitReadMemo } from "./git-read-memo";
 import { isItemKind, itemRepoRelPath } from "./master";
 import type { MasterItem } from "./master";
 import { parseYamlDocument, setYamlFields } from "./yaml-document";
@@ -206,23 +212,85 @@ export async function loadCommittedItemNeeds(
   dataRepo: string,
   item: Pick<MasterItem, "kind" | "name">,
   commit: string,
+  memo?: GitReadMemo,
 ): Promise<ItemMetadata> {
-  const label = `${item.kind}/${item.name}`;
-  const relPath = `${itemRepoRelPath(item.kind, item.name)}/${METADATA_SIDECAR}`;
-  const result = await sourceRead(dataRepo, ["show", `${commit}:${relPath}`]);
-  if (result.exitCode !== 0) return emptyMetadata();
-  return parseSidecar(result.stdout.toString("utf-8"), label, item.name);
+  // Any Git failure means no needs, as it did when this was one `git show`.
+  let sidecars: Map<string, Buffer>;
+  try {
+    sidecars = await committedSidecarsAtCommit(dataRepo, [item], commit, memo);
+  } catch {
+    return emptyMetadata();
+  }
+  return committedItemNeedsFromSidecar(item, sidecars);
 }
 
+/**
+ * The committed sidecar bytes of each item that has one at `commit`, keyed by
+ * `<kind>/<name>`, from one `ls-tree` and one `cat-file --batch`. An item with
+ * no sidecar has no entry. A listing that finds no sidecar is a successful
+ * read, so `memo` keeps "no sidecar" as well as the bytes.
+ */
+export async function committedSidecarsAtCommit(
+  dataRepo: string,
+  items: ReadonlyArray<Pick<MasterItem, "kind" | "name">>,
+  commit: string,
+  memo?: GitReadMemo,
+): Promise<Map<string, Buffer>> {
+  const refBySidecar = new Map(
+    items.map((item) => [
+      `${itemRepoRelPath(item.kind, item.name)}/${METADATA_SIDECAR}`,
+      `${item.kind}/${item.name}`,
+    ]),
+  );
+  const sidecars = new Map<string, Buffer>();
+  if (refBySidecar.size === 0) return sidecars;
+  const blobIdByRef = new Map<string, string>();
+  for (const entry of await lsTreeEntriesForPathspecs(
+    dataRepo,
+    commit,
+    [...refBySidecar.keys()].map(literalPathspec),
+    { memo },
+  )) {
+    const ref = refBySidecar.get(entry.path);
+    if (ref !== undefined && entry.type === "blob") {
+      blobIdByRef.set(ref, entry.object);
+    }
+  }
+  if (blobIdByRef.size === 0) return sidecars;
+  const blobs = await catFileBlobs(dataRepo, blobIdByRef.values(), memo);
+  for (const [ref, blobId] of blobIdByRef) {
+    const bytes = blobs.get(blobId);
+    if (bytes !== undefined) sidecars.set(ref, bytes);
+  }
+  return sidecars;
+}
+
+/** The needs of one item from `committedSidecarsAtCommit` output. */
+export function committedItemNeedsFromSidecar(
+  item: Pick<MasterItem, "kind" | "name">,
+  sidecars: ReadonlyMap<string, Buffer>,
+): ItemMetadata {
+  const label = `${item.kind}/${item.name}`;
+  const bytes = sidecars.get(label);
+  if (bytes === undefined) return emptyMetadata();
+  return parseSidecar(bytes.toString("utf-8"), label, item.name);
+}
+
+/**
+ * `head` is a data-repo `HEAD` the caller already read. `memo` is the calling
+ * command's memo for reads at a full commit id.
+ */
 export async function captureCommittedItemNeeds(
   dataRepo: string,
   item: Pick<MasterItem, "kind" | "name">,
+  options: { head?: string; memo?: GitReadMemo } = {},
 ): Promise<{ needs: ItemNeeds; needsSourceCommit: string }> {
-  const needsSourceCommit = await headSha(dataRepo);
+  const needsSourceCommit = options.head ?? (await headSha(dataRepo));
   const metadata = await loadCommittedItemNeeds(
     dataRepo,
     item,
     needsSourceCommit,
+    options.memo,
   );
   return { needs: metadata.needs, needsSourceCommit };
 }

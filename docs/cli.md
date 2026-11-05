@@ -1737,7 +1737,9 @@ the Homebrew-managed `capshelf` binary.
 
 The check runs `brew outdated`. Homebrew can update its own data over the
 network before that command answers. So the check can reach the network on
-any command. A failed check writes no cache, so the next command tries again.
+any command. A failed check is also cached for 24 hours. Each Homebrew call
+can wait up to 3 seconds, so a slow or failing Homebrew delays at most one
+command per day.
 
 Source installs are not upgraded automatically. Update them manually:
 

@@ -102,8 +102,8 @@ that boundary:
   open a connection, whatever the project holds. The exception is the startup
   update check of an interactive Homebrew install. Any command can first run
   `brew outdated` to offer an update, and Homebrew can update its own data
-  over the network before it answers. A successful check is cached for 24
-  hours. A failed check runs again on the next command. `CI`, `--json`, and
+  over the network before it answers. A check is cached for 24 hours, also
+  when it fails. `CI`, `--json`, and
   `CAPSHELF_NO_SELF_UPDATE=1` turn the check off.
 - **A remote skill or plugin carries no review.** `capshelf add <url>`
   installs code from a repository nobody on your team reviewed. There is no registry, no signing,

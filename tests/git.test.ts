@@ -38,6 +38,7 @@ import {
   statusPorcelainOutsidePath,
   statusPorcelainRecords,
   trackingRef,
+  worktreeCleanSnapshot,
 } from "../src/git";
 import { rejection } from "./cli-fixtures";
 import { initRepo, setTestIdentity } from "./git-fixtures";
@@ -92,6 +93,44 @@ describe("git cleanliness helpers", () => {
       /under skills\/hello/,
     );
     await expect(assertRepoClean(repo)).rejects.toThrow(/uncommitted changes/);
+  });
+
+  test("one worktree snapshot agrees with isPathClean for every path", async () => {
+    const repo = await tempRepo();
+    for (const name of ["edited", "untracked", "nested", "renamed", "clean"]) {
+      await mkdir(join(repo, "skills", name), { recursive: true });
+      await writeFile(join(repo, "skills", name, "SKILL.md"), `${name}\n`);
+    }
+    await writeFile(join(repo, "skills", "cleaner"), "sibling\n");
+    await commitAll(repo, "baseline");
+
+    await writeFile(join(repo, "skills", "edited", "SKILL.md"), "dirty\n");
+    await writeFile(join(repo, "skills", "untracked", "new.md"), "new\n");
+    await mkdir(join(repo, "skills", "nested", "a", "b"), { recursive: true });
+    await writeFile(join(repo, "skills", "nested", "a", "b", "f.md"), "f\n");
+    await $`git -C ${repo} mv skills/renamed/SKILL.md moved.md`.quiet();
+    await mkdir(join(repo, "skills", "fresh"), { recursive: true });
+    await writeFile(join(repo, "skills", "fresh", "SKILL.md"), "fresh\n");
+    await writeFile(join(repo, "skills", "clean-x"), "prefix sibling\n");
+
+    const snapshot = await worktreeCleanSnapshot(repo);
+    const paths = [
+      "skills/edited",
+      "skills/untracked",
+      "skills/nested",
+      "skills/renamed",
+      "skills/clean",
+      "skills/fresh",
+      "skills/absent",
+      "skills/clean/SKILL.md",
+      "skills/cleaner",
+      "moved.md",
+    ];
+    for (const path of paths) {
+      expect(await snapshot(path), path).toBe(await isPathClean(repo, path));
+    }
+    expect(await snapshot("skills/clean")).toBe(true);
+    expect(await snapshot("skills/renamed")).toBe(false);
   });
 
   test("allows unrelated dirty files inside the promoted path", async () => {

@@ -1,5 +1,5 @@
 import { $, file } from "bun";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { lstat, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -8,8 +8,12 @@ import {
   lastTouchingSubagentCommit,
   materializeSubagent,
   shaOfCurrentSubagent,
+  subagentSourceAtCommit,
+  subagentSourcesAtCommit,
   validateSubagentSource,
 } from "../src/subagents";
+import * as gitMeasure from "../src/git-measure";
+import { GitReadMemo } from "../src/git-read-memo";
 import { assertWritableLock, createDataLockEntry, loadLock } from "../src/lock";
 import { gitTreeSource } from "../src/item-source";
 import { pinItemAtCommit } from "../src/pin";
@@ -213,6 +217,85 @@ describe("subagent validation and identity", () => {
     ).toBe(CLAUDE);
     expect(
       await file(join(project, ".codex", "agents", "reviewer.toml")).text(),
+    ).toBe(CODEX);
+  });
+
+  test("reads a pinned subagent commit from Git once per command memo", async () => {
+    const project = await tempRepo("capshelf-subagent-reads-project-");
+    const dataRepo = await tempRepo("capshelf-subagent-reads-data-");
+    await writeSubagent(dataRepo);
+    await commitAll(dataRepo, "reviewer v1");
+    const commit = await lastTouchingSubagentCommit(
+      project,
+      dataRepo,
+      "reviewer",
+    );
+    const entry = createDataLockEntry({
+      pin: await reviewerPin(dataRepo, commit),
+      needs: emptyNeeds(),
+      needsSourceCommit: commit,
+    });
+    const memo = new GitReadMemo();
+    const options = {
+      project,
+      dataRepo,
+      name: "reviewer",
+      entry,
+      previousEntry: entry,
+      dryRun: true,
+      memo,
+    };
+    const reads = spyOn(gitMeasure, "recordGitRead");
+    const spawns = () => reads.mock.calls.filter((call) => call[4]).length;
+    try {
+      await materializeSubagent(options);
+      // One ls-tree for target presence and the pin digest, which list the
+      // same two paths, and one cat-file --batch for the bytes.
+      expect(spawns()).toBe(2);
+      reads.mockClear();
+      await materializeSubagent(options);
+      await subagentSourcesAtCommit(
+        project,
+        dataRepo,
+        "reviewer",
+        commit,
+        memo,
+      );
+      expect(spawns()).toBe(0);
+      // A later command starts with an empty memo and asks Git again.
+      await materializeSubagent({ ...options, memo: new GitReadMemo() });
+      expect(spawns()).toBe(2);
+    } finally {
+      reads.mockRestore();
+    }
+  });
+
+  test("a tree at a target path is not a present target", async () => {
+    const dataRepo = await tempRepo("capshelf-subagent-tree-target-");
+    await writeSubagent(dataRepo, { codex: CODEX });
+    await mkdir(join(dataRepo, "subagents", "reviewer", "claude.md"));
+    await writeFile(
+      join(dataRepo, "subagents", "reviewer", "claude.md", "nested.md"),
+      CLAUDE,
+    );
+    await commitAll(dataRepo, "claude.md is a directory");
+    const commit = (await $`git -C ${dataRepo} rev-parse HEAD`.text()).trim();
+    const sources = await subagentSourcesAtCommit(
+      "",
+      dataRepo,
+      "reviewer",
+      commit,
+    );
+    expect(sources.map((source) => source.target)).toEqual(["codex"]);
+    expect(
+      (
+        await subagentSourceAtCommit(
+          dataRepo,
+          "reviewer",
+          commit,
+          "subagents/reviewer/codex.toml",
+        )
+      ).toString("utf-8"),
     ).toBe(CODEX);
   });
 

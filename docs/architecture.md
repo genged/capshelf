@@ -685,9 +685,63 @@ answer. Four rules hold it:
   again before the first write, and installed bytes before a copy transaction
   commits are all read live, every time.
 
-The status report adds one narrower reuse of its own: it merges each shared
-fragment output once per report rather than once per item. A failed repository
-observation leaves its slot empty, so later rows retry it.
+`update` reads data-repo `HEAD` once at the start of each preflight pass. Every
+item in that pass selects its commit with a walk from that commit id, not from
+the live `HEAD`. The history from a fixed commit cannot change, so the memo
+keeps the answer of that walk. The next pass reads `HEAD` again, so a commit
+made while the consent prompt is open still changes the revalidation plan.
+
+One history walk selects the commit of every item. `log --name-only` over the
+paths of all items lists each commit that changes one of them, newest first.
+The first commit that changes a path of an item is the commit that item's own
+`log -1` selects. `status` reads `HEAD` once for this walk, and `update` uses
+the `HEAD` of its pass. The walk is used only when no merge lies between `HEAD` and
+the oldest commit it reads. At a merge, `log` follows one parent, and the path
+set can change which parent. An item with no commit makes the walk read the
+whole history, so then the whole history must have no merge. An item
+with one path is also left out, because `log.follow` applies to one path. In
+those cases, and when the walk fails, each item runs its own `log -1`. The walk
+lists gitlink changes even when a submodule `ignore` setting hides them. If
+the walk shows a commit with no listed path, no answer of the walk is used.
+The walk stops when every item has its commit, so a long, active history costs
+no more than the separate walks.
+
+Items that share a data-repo commit share its reads. Before the item loop,
+`status`, `apply`, and `update` register each commit that two or more items
+use, with the paths of those items. One `ls-tree` over those paths then answers
+the tree read of each item at that commit. One `check-attr` over their files
+answers each attribute query. The answer for one path does not depend on the
+other paths in the query. Only item paths are read, never a whole commit, so
+the cost follows the items and not the size of the repository. `update` reads
+every item at the one `HEAD` of its pass, so all its items share that commit.
+A pin is the last commit that touched its item, so pins are often different
+commits. An item at a commit of its own keeps its own reads. The command also
+reads the blobs of all items in one `cat-file` process. A blob id names its
+bytes, so that answer cannot change. The memo keeps those bytes until the
+command ends, so it keeps no blob larger than 1 MiB. A larger blob, such as an
+image in a skill, is read again when a command needs it twice. The prefetch
+reads the blob sizes first and leaves out the large blobs. It reads nothing
+when the small ones come to more than 32 MiB. A failed batch read is not kept, and each
+item then asks Git with its own arguments and gets its own error. Remote clones
+are never registered.
+
+`status --diff` renders its diffs in a second pass with a memo of its own. It
+registers the pinned commits of the rows and reads the bytes of every row with
+one `cat-file`, not one `git show` per file. Bytes that a row reads itself are
+not kept, because each row is read once. `git show <commit>:<path>` prints
+a blob raw, with no textconv driver and no smudge filter, so the bytes are the
+same.
+
+`ls` hashes the working-tree files of each copy item. It lists the files of
+all items with one `ls-files`, and each item takes the files under its own
+path. If that call fails, each item lists its own files as before.
+
+The status report adds narrower reuse of its own. It merges each shared
+fragment output once per report rather than once per item. It runs one
+`git status` of the data repo per report and answers the dirty check of each
+row from it. It reads the committed sidecars of all rows with one listing at
+the observed `HEAD`. A failed repository observation leaves its slot empty, so
+later rows retry it.
 
 ### The object model
 

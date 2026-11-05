@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/smoke-lib.sh"
 
-TMP="$(mktemp -d)"
+smoke_make_tmp
 export HOME="$TMP/home"
 DATA="$TMP/data"
 PROJECT="$TMP/project"
@@ -78,4 +78,4 @@ assert after["items"][key]["needs"]["network"] == [
 assert after["version"] == 5
 PY
 
-echo "✓ smoke-needs ok ($TMP)"
+echo "✓ smoke-needs ok"

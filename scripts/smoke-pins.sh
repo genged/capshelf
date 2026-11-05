@@ -8,7 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/smoke-lib.sh"
 
-TMP="$(mktemp -d)"
+smoke_make_tmp
 export HOME="$TMP/home"
 DATA="$TMP/data"
 PROJECT="$TMP/project"
@@ -135,4 +135,4 @@ cmp -s \
   "$PROJECT/.agents/skills/csv-report/template.csv" \
   "$LOCAL_PROJECT/.agents/skills/csv-report/template.csv"
 
-echo "✓ smoke-pins ok ($TMP)"
+echo "✓ smoke-pins ok"

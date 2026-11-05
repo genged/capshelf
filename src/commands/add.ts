@@ -582,7 +582,7 @@ async function planStandaloneFragmentAdd(
   await assertFragmentSourcesClean(ctx.dataRepo, item.kind, item.name);
   const [pin, snapshot] = await Promise.all([
     pinCurrentSource(ctx.dataRepo, item.kind, item.name, { memo: ctx.memo }),
-    captureCommittedItemNeeds(ctx.dataRepo, item),
+    captureCommittedItemNeeds(ctx.dataRepo, item, { memo: ctx.memo }),
   ]);
   const nextManifest = structuredClone(ctx.manifest);
   addToManifest(nextManifest, item);
@@ -882,7 +882,7 @@ export async function installDataItem(
     );
   }
   const snapshot =
-    opts.needs ?? (await captureCommittedItemNeeds(dataRepo, item));
+    opts.needs ?? (await captureCommittedItemNeeds(dataRepo, item, { memo }));
   let adoptMatchingInstall = false;
   if (!alreadyInLock && conflict) {
     if (isCopyDirectoryItemKind(item.kind)) {
@@ -966,6 +966,7 @@ export async function installDataItem(
       name: item.name,
       entry,
       ...(previousEntry?.source === "data" && { previousEntry }),
+      memo,
     });
     for (const warning of result.warnings) console.error(`⚠ ${warning}`);
   } else {
@@ -1107,7 +1108,9 @@ async function addBundle(
     });
     inspectedPins.set(member.ref, {
       pin,
-      needs: await captureCommittedItemNeeds(ctx.dataRepo, member),
+      needs: await captureCommittedItemNeeds(ctx.dataRepo, member, {
+        memo: ctx.memo,
+      }),
     });
     const runs = await addPluginRuns(ctx, member.kind, member.name, pin);
     if (runs === null) continue;
@@ -1473,7 +1476,9 @@ async function approveAddPin(
     const pin = await pinCurrentSource(ctx.dataRepo, item.kind, item.name, {
       memo: ctx.memo,
     });
-    const needs = await captureCommittedItemNeeds(ctx.dataRepo, item);
+    const needs = await captureCommittedItemNeeds(ctx.dataRepo, item, {
+      memo: ctx.memo,
+    });
     const runs = await addPluginRuns(ctx, item.kind, item.name, pin);
     if (runs === null) return { proceed: true, pin, needs };
     const points = shelfPluginAddPoints(

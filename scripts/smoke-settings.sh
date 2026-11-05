@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/smoke-lib.sh"
 
-TMP="$(mktemp -d)"
+smoke_make_tmp
 export HOME="$TMP/home"
 DATA="$TMP/data"
 A="$TMP/project-a"
@@ -86,4 +86,4 @@ assert_fixed_contains 'Bash(fetch *)' "$A/.claude/settings.json"
 assert_fixed_not_contains 'Bash(wget *)' "$A/.claude/settings.json"
 assert_fixed_contains 'tighten settings' <(git -C "$DATA" log -1 --format=%s)
 
-echo "✓ smoke-settings ok ($TMP)"
+echo "✓ smoke-settings ok"

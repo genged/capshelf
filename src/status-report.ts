@@ -34,8 +34,11 @@ import {
   isGitWorkTreeRoot,
   headSha,
   repositoryObjectsDirectory,
+  worktreeCleanSnapshot,
 } from "./git";
+import type { PathCleanCheck } from "./git";
 import { upstreamFactsForItem } from "./upstream-facts";
+import { pinnedDataItems } from "./targets";
 import {
   listClaudePlugins,
   listSkillsShSkills,
@@ -80,14 +83,22 @@ import {
 } from "./status-core";
 import {
   filteredPathsAtCommit,
+  batchItemReads,
   itemTreeEntriesAtCommit,
+  prefetchItemBlobs,
+  prefetchSourceCommits,
   type FilteredPath,
+  type ItemAtCommit,
 } from "./pin";
 import { buildRemoteStatusRows } from "./remote-status";
 import type { RemotesLock } from "./remotes-lock";
 import { contentSourceOrNull, isBundled, isGitTree } from "./item-source";
 import type { GitTreeSource } from "./item-source";
-import { loadCommittedItemNeeds } from "./metadata";
+import {
+  committedItemNeedsFromSidecar,
+  committedSidecarsAtCommit,
+  loadCommittedItemNeeds,
+} from "./metadata";
 import type { ItemNeeds } from "./metadata";
 import {
   shaOfInstalledSubagent,
@@ -246,12 +257,53 @@ export async function buildStatusReport(
   const externalSkillNames = new Set(external.map((skill) => skill.name));
 
   const memo = new GitReadMemo();
+  // One `HEAD` read serves the history walk and the sidecar reads of every
+  // row, so both see one commit. A failed read is not kept: the walk is then
+  // skipped, and the next row reads `HEAD` again.
   let observedHead: string | undefined;
+  const observeHead = async (): Promise<string | undefined> => {
+    observedHead ??= await headSha(dataRepo!).catch(() => undefined);
+    return observedHead;
+  };
   let observedObjectsDir: string | undefined;
   const observeObjectsDir = async (): Promise<string> => {
     observedObjectsDir ??= await repositoryObjectsDirectory(dataRepo!);
     return observedObjectsDir;
   };
+  // One `git status` of the data repo answers every row's dirty check, in
+  // place of one `git status -- <path>` per row.
+  let observedClean: PathCleanCheck | undefined;
+  const isDataPathClean: PathCleanCheck = async (relPath) => {
+    observedClean ??= await worktreeCleanSnapshot(dataRepo!);
+    return await observedClean(relPath);
+  };
+  // One listing reads the committed sidecar of every data row at `HEAD`.
+  const dataItems = targets
+    .map((target) => parseLockKey(target.key))
+    .filter((parsed) => parsed.source === "data");
+  let observedSidecars: Map<string, Buffer> | undefined;
+  let walkHead: string | undefined;
+  // Rows that share a pinned commit share its tree and attribute reads.
+  // Subagent and fragment rows also hash their pinned bytes, so one read
+  // covers them all. A copy-directory row compares blob ids and reads no bytes.
+  if (dataRepo) {
+    const pinned = pinnedDataItems(targets, projectLock, localLock);
+    batchItemReads(dataRepo, pinned, memo);
+    // One history walk selects the upstream commit of every row. If the
+    // `HEAD` read fails, each row walks from the live `HEAD` as before. One
+    // row has nothing to share.
+    if (pinned.length >= 2) {
+      walkHead = await observeHead();
+      if (walkHead !== undefined) {
+        await prefetchSourceCommits(dataRepo, walkHead, pinned, memo);
+      }
+    }
+    await prefetchItemBlobs(
+      dataRepo,
+      pinned.filter((item) => !isCopyDirectoryItemKind(item.kind)),
+      memo,
+    );
+  }
   const rows: StatusRow[] = [];
   const fragmentStates = new Map<string, FragmentContributionState>();
   for (const target of targets) {
@@ -330,6 +382,7 @@ export async function buildStatusReport(
               tree.repo,
               itemName,
               tree.commit,
+              memo,
             )
           : entryIdentity(entry);
     } else {
@@ -376,7 +429,7 @@ export async function buildStatusReport(
           kind,
           itemName,
           treeIdentity ? "tree" : "worktree",
-          memo,
+          { memo, isClean: isDataPathClean, head: walkHead },
         );
         upstreamSha = upstream.upstreamSha;
         upstreamDirty = upstream.upstreamDirty;
@@ -386,17 +439,28 @@ export async function buildStatusReport(
             upstream.sourceCommit !== null &&
             upstream.sourceCommit !== entry.sourceCommit);
         if (upstreamSha !== null || upstreamDirty) {
-          try {
-            observedHead ??= await headSha(dataRepo);
-            currentNeeds = (
-              await loadCommittedItemNeeds(
+          const head = await observeHead();
+          // A sidecar that does not parse leaves the needs unknown, as a
+          // failed `HEAD` read does.
+          if (head !== undefined) {
+            try {
+              const item = { kind, name: itemName };
+              observedSidecars ??= await committedSidecarsAtCommit(
                 dataRepo,
-                { kind, name: itemName },
-                observedHead,
-              )
-            ).needs;
-          } catch {
-            currentNeeds = undefined;
+                dataItems,
+                head,
+                memo,
+              ).catch(() => undefined);
+              // A failed batch read falls back to this row's own read, which
+              // reports no needs when Git cannot read the sidecar.
+              currentNeeds = (
+                observedSidecars === undefined
+                  ? await loadCommittedItemNeeds(dataRepo, item, head)
+                  : committedItemNeedsFromSidecar(item, observedSidecars)
+              ).needs;
+            } catch {
+              currentNeeds = undefined;
+            }
           }
         }
       }
@@ -625,6 +689,17 @@ export async function collectStatusDiffs(
     plansByTarget.set(opts.target, plan);
     return plan;
   };
+  // One memo for the diff pass. Rows that share a pinned commit share its
+  // tree reads, and one `cat-file` reads the bytes of every data row.
+  const memo = new GitReadMemo();
+  if (input.dataRepo) {
+    const pinned: ItemAtCommit[] = input.rows.flatMap((row) =>
+      row.source === "data" && row.sourceCommit !== undefined
+        ? [{ kind: row.kind, name: row.name, commit: row.sourceCommit }]
+        : [],
+    );
+    await prefetchItemBlobs(input.dataRepo, pinned, memo);
+  }
   for (const row of input.rows) {
     const rowLock = row.scope === "local" ? input.localLock : input.projectLock;
     const views =
@@ -640,6 +715,7 @@ export async function collectStatusDiffs(
         row,
         view,
         fragmentPlanner,
+        memo,
       });
       const identity = diff
         ? `${row.scope}:${diff.item}:${diff.path}:${diff.view}`
@@ -653,10 +729,9 @@ export async function collectStatusDiffs(
 }
 
 /**
- * PIN-9 for one item at one commit. `status` calls this per row rather than
- * grouping by commit: a project's items rarely share a source commit, so the
- * grouping the spec's cost table describes would save nothing here — the
- * saving is in a multi-item `update`, which pins them all at once.
+ * PIN-9 for one item at one commit. `status` calls this per row. The memo
+ * answers every row at one commit from one attribute query of that commit, so
+ * rows that share a commit share one Git process.
  */
 async function filteredPathsForEntry(
   source: GitTreeSource,
@@ -672,6 +747,7 @@ async function filteredPathsForEntry(
       source.commit,
       [{ kind, name, entries }],
       observeObjectsDir,
+      memo,
     );
   } catch {
     return [];

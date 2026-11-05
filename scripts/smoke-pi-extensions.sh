@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/smoke-lib.sh"
 
-TMP="$(mktemp -d)"
+smoke_make_tmp
 export HOME="$TMP/home"
 DATA="$TMP/data"
 A="$TMP/project-a"
@@ -85,4 +85,4 @@ assert_contains "promoted" "$C/.pi/extensions/path-guard/src/rules.ts"
 (cd "$C" && "${CLI[@]}" rm pi-extensions/path-guard --local >/dev/null)
 test ! -e "$C/.pi/extensions/path-guard"
 
-echo "✓ smoke-pi-extensions ok ($TMP)"
+echo "✓ smoke-pi-extensions ok"

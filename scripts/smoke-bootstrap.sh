@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/smoke-lib.sh"
 
-TMP="$(mktemp -d)"
+smoke_make_tmp
 export HOME="$TMP/home"
 export XDG_DATA_HOME="$TMP/xdg"
 DATA="$TMP/data"
@@ -65,4 +65,4 @@ if git -C "$DATA" cat-file -e "$PROMOTE_COMMIT^{commit}" 2>/dev/null; then
 fi
 assert_fixed_contains 'hello v1' "$DATA/skills/hello/SKILL.md"
 
-echo "✓ smoke-bootstrap ok ($TMP)"
+echo "✓ smoke-bootstrap ok"
