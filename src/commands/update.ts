@@ -80,6 +80,7 @@ import { assertLocalScopeSupported } from "../local-config";
 import { findMasterItemByRef, parseItemRef } from "../item-ref";
 import {
   assertRefNotSplitAcrossPopulations,
+  pinnedDataItems,
   resolveTrackedTarget,
 } from "../targets";
 import type { ScopedTarget } from "../targets";
@@ -1702,15 +1703,9 @@ async function planUpdatePreflight(
   if (ctx.dataRepo !== undefined) {
     await prefetchItemBlobs(
       ctx.dataRepo,
-      targets.flatMap((target) => {
-        const entry = (target.scope === "local" ? localLock : projectLock)
-          .items[target.key];
-        if (entry?.source !== "data") return [];
-        const { kind, name } = parseLockKey(target.key);
-        return [entry.sourceCommit, dataHead]
-          .filter((commit) => commit !== undefined)
-          .map((commit) => ({ kind, name, commit }));
-      }),
+      pinnedDataItems(targets, projectLock, localLock).flatMap((item) =>
+        dataHead === undefined ? [item] : [item, { ...item, commit: dataHead }],
+      ),
       ctx.memo,
     );
   }

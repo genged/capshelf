@@ -52,6 +52,18 @@ export interface UpstreamFacts {
  */
 export type UpstreamIdentity = "tree" | "worktree";
 
+export interface UpstreamFactsOptions {
+  /** The calling command's memo for reads at a full commit id. */
+  memo?: GitReadMemo;
+  /** The dirty check of a data-repo path. Default: one `git status` per path. */
+  isClean?: PathCleanCheck;
+  /**
+   * The data-repo `HEAD` the caller read once. With it, the commit walk starts
+   * there instead of at the live `HEAD`, and `memo` can answer it.
+   */
+  head?: string;
+}
+
 /**
  * The per-item upstream facts the status state machine consumes, shared with
  * promote's stale guard so the two can never disagree (extracted verbatim
@@ -63,14 +75,13 @@ export async function upstreamFactsForItem(
   kind: ItemKind,
   name: string,
   identity: UpstreamIdentity = "worktree",
-  memo?: GitReadMemo,
-  isClean: PathCleanCheck = (relPath) => isPathClean(dataRepo, relPath),
-  /**
-   * The data-repo `HEAD` the caller read once. With it, the commit walk starts
-   * there instead of at the live `HEAD`, and `memo` can answer it.
-   */
-  head?: string,
+  options: UpstreamFactsOptions = {},
 ): Promise<UpstreamFacts> {
+  const {
+    memo,
+    isClean = (relPath) => isPathClean(dataRepo, relPath),
+    head,
+  } = options;
   const masterItem = await findMasterItemByRef(dataRepo, { kind, name });
   if (!masterItem) {
     return { upstreamSha: null, upstreamDirty: false, sourceCommit: null };
@@ -102,12 +113,7 @@ export async function upstreamFactsForItem(
     };
   }
   if (isFragmentItemKind(kind)) {
-    const upstreamDirty = await fragmentSourceDirty(
-      dataRepo,
-      kind,
-      name,
-      isClean,
-    );
+    const upstreamDirty = await fragmentSourceDirty(kind, name, isClean);
     return {
       upstreamSha: upstreamDirty
         ? null
@@ -155,10 +161,7 @@ async function sourcePathsDirty(
   isClean: PathCleanCheck,
 ): Promise<boolean> {
   if (isFragmentItemKind(kind)) {
-    for (const relPath of allCanonicalFragmentRelPaths(kind, name)) {
-      if (!(await isClean(relPath))) return true;
-    }
-    return false;
+    return await fragmentSourceDirty(kind, name, isClean);
   }
   if (isCopyDirectoryItemKind(kind)) {
     return !(await isClean(itemRepoRelPath(kind, name)));
@@ -170,10 +173,9 @@ async function sourcePathsDirty(
 }
 
 export async function fragmentSourceDirty(
-  dataRepo: string,
   kind: FragmentItemKind,
   name: string,
-  isClean: PathCleanCheck = (relPath) => isPathClean(dataRepo, relPath),
+  isClean: PathCleanCheck,
 ): Promise<boolean> {
   for (const relPath of allCanonicalFragmentRelPaths(kind, name)) {
     if (!(await isClean(relPath))) return true;
