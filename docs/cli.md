@@ -1182,7 +1182,8 @@ rule says `git is not watching <paths>`. The index bits it detects are
 `--assume-unchanged` and `--skip-worktree`, every hidden path is joined by
 commas, and the row is disabled in every state, even one that could
 otherwise promote. The check runs again per marked item after the prompt
-closes. The detail for a promotable item names
+closes. `capshelf promote <item>` runs the same check before it writes and
+refuses with the same message. The detail for a promotable item names
 the file that changed: the installed path for a local edit, or the data-repo
 canonical file for a dirty source. Each marked item promotes independently.
 The commit message is `-m` when given, and the default `promote` message
