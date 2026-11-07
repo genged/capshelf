@@ -19,7 +19,7 @@ import {
   registerBatchReads,
   resolveCommit,
 } from "./git";
-import type { GitTreeEntry, LastTouchingOptions, IgnoreRule} from "./git";
+import type { GitTreeEntry, LastTouchingOptions, IgnoreRule } from "./git";
 import { PRODUCT_NAME } from "./identity";
 import { ignoreRuleLine } from "./publication-ignore";
 import {
