@@ -161,7 +161,8 @@ that boundary:
   `--assume-unchanged` or `--skip-worktree`, so an edit there is invisible to
   that check. The interactive `promote` picker detects these paths and
   disables the item with `git is not watching <paths>`. A named
-  `capshelf promote <item>` does not check them yet.
+  `capshelf promote <item>` runs the same check before it writes. It
+  refuses with the same message and leaves the hidden file unchanged.
 
 ## What capshelf does not do
 

@@ -116,6 +116,7 @@ import {
 import { validatePromotePreview } from "../promote-preview";
 import type { PromotePreviewGuard } from "../promote-preview";
 import { sanitizeDisplayText } from "../pick-core";
+import { unwatchedPathsForItem } from "../promote-catalog";
 
 export interface PromoteOptions {
   message?: string;
@@ -242,6 +243,25 @@ export async function promoteOne(
   return result;
 }
 
+/**
+ * Refuse before any write when git hides a canonical source of the item.
+ * An `--assume-unchanged` or `--skip-worktree` path shows as clean, and the
+ * promote would overwrite the hidden edit. The interactive picker runs the
+ * same check and message.
+ */
+async function assertGitWatchesItem(
+  dataRepo: string,
+  kind: ItemKind,
+  name: string,
+): Promise<void> {
+  const unwatched = await unwatchedPathsForItem(dataRepo, kind, name);
+  if (unwatched.length > 0) {
+    throw new PreconditionError(
+      `git is not watching ${unwatched.join(", ")}; nothing was promoted for this item`,
+    );
+  }
+}
+
 async function promoteProjectTracked(
   project: string,
   dataRepo: string,
@@ -266,6 +286,7 @@ async function promoteProjectTracked(
   }
 
   const parsed = parseLockKey(key);
+  await assertGitWatchesItem(dataRepo, parsed.kind, parsed.name);
   if (isFragmentKind(parsed.kind)) {
     const result = await promoteFragmentSource(
       project,
@@ -542,6 +563,7 @@ async function promoteLocalTracked(
 
   const parsed = parseLockKey(key);
   assertLocalScopeSupported(parsed.kind, parsed.name, "promote");
+  await assertGitWatchesItem(dataRepo, parsed.kind, parsed.name);
   if (!isCopyDirectoryItemKind(parsed.kind)) {
     throw new PreconditionError(
       `promote --local requires a copy-directory item: ${parsed.kind}/${parsed.name}`,
