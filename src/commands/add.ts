@@ -134,6 +134,7 @@ import { formatDeclaredNeeds } from "../needs-format";
 import { confirmPluginConsent } from "../plugin-consent";
 import type { PluginConsentPoint } from "../plugin-consent";
 import { itemPluginRunsAtCommit, pluginExtraFile } from "../plugin-runs";
+import { holdsOnlyMountPoints } from "../mount-points";
 import type { PluginRuns } from "../plugin-runs";
 import {
   assertSubagentOutputAvailable,
@@ -886,12 +887,19 @@ export async function installDataItem(
   let adoptMatchingInstall = false;
   if (!alreadyInLock && conflict) {
     if (isCopyDirectoryItemKind(item.kind)) {
-      adoptMatchingInstall = await matchesPinnedInstall(
-        ctx,
-        item,
-        conflict,
-        pin,
-      );
+      // A folder that holds only a mounted volume is what `rm` leaves for an
+      // item with one. The user cannot delete a mount point, so it counts as
+      // an empty target and the write fills it.
+      adoptMatchingInstall =
+        (await matchesPinnedInstall(ctx, item, conflict, pin)) ||
+        (conflict ===
+          installedPath(
+            ctx.project,
+            item.kind,
+            item.name,
+            ctx.manifest.installMode,
+          ) &&
+          (await holdsOnlyMountPoints(conflict)));
     }
     if (!adoptMatchingInstall) {
       throw new PreconditionError(

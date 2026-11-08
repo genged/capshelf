@@ -1,5 +1,6 @@
 import { lstatSync } from "node:fs";
-import { rename, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 /**
  * Narrow a caught value to a Node errno error, optionally matching a specific
@@ -35,17 +36,18 @@ const RM_RETRY_DELAYS_MS = [150, 400];
  * transient writer finish; a persistent denial still throws the last error.
  */
 export async function rmTreeWithRetries(path: string): Promise<void> {
+  let madeWritable = false;
   for (const delay of RM_RETRY_DELAYS_MS) {
     try {
       await rm(path, { recursive: true, force: true });
       return;
     } catch (err) {
-      if (
-        !isErrno(err, "EACCES") &&
-        !isErrno(err, "EPERM") &&
-        !isErrno(err, "ENOTEMPTY")
-      ) {
-        throw err;
+      const denied = isErrno(err, "EACCES") || isErrno(err, "EPERM");
+      if (!denied && !isErrno(err, "ENOTEMPTY")) throw err;
+      if (denied && !madeWritable) {
+        madeWritable = true;
+        await makeFoldersWritable(path);
+        continue;
       }
       await new Promise((resolve) => {
         setTimeout(resolve, delay);
@@ -53,6 +55,33 @@ export async function rmTreeWithRetries(path: string): Promise<void> {
     }
   }
   await rm(path, { recursive: true, force: true });
+}
+
+/**
+ * Give the owner full access to each folder in a tree that is about to be
+ * deleted. A delete must write a folder to remove its entries, and some tools
+ * make their folders read-only, for example the Go module cache (0555). This
+ * does not follow symbolic links. A folder that this process cannot change
+ * stays as it is, and the next delete reports the error.
+ */
+async function makeFoldersWritable(path: string): Promise<void> {
+  let info: Awaited<ReturnType<typeof lstat>>;
+  try {
+    info = await lstat(path);
+  } catch {
+    return;
+  }
+  if (!info.isDirectory()) return;
+  if ((info.mode & 0o700) !== 0o700) {
+    await chmod(path, (info.mode & 0o7777) | 0o700).catch(() => {});
+  }
+  let names: string[];
+  try {
+    names = await readdir(path);
+  } catch {
+    return;
+  }
+  for (const name of names) await makeFoldersWritable(join(path, name));
 }
 
 let atomicWriteCounter = 0;

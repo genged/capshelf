@@ -745,6 +745,16 @@ An interrupted `move` can leave one key in both locks. `rm` of one scope
 then keeps the folder for the other scope. `status`, `apply`, and `update`
 refuse that state until one owner is removed.
 
+`rm` keeps a mounted volume inside the item folder, for example a container's
+`node_modules`. It deletes everything else, then removes the aliases, then the
+lock row. The text output prints `! kept <path>: it is a mounted volume` for
+each volume, and `--json` adds `keptMountPoints` when the list is not empty.
+The consent prompt does not list files on the volume, because `rm` does not
+delete them. A later `add` of the item accepts the folder that holds the volume.
+`rm` also deletes a read-only tree, for example a Go module cache. It gives
+the owner write access to each folder first. If the delete fails, the aliases
+and the lock row stay, and a rerun finishes the removal.
+
 A first `add` can take an unmanaged folder at the exact install path when
 its content matches the pin. The add keeps the ignored local files in that
 folder, so its install consent reads them with the pinned tree. An unmanaged folder whose name only folds to
@@ -1427,6 +1437,7 @@ directly.
 | Clean locked content is applied, updated, removed, or already current | No prompt | Continue normally |
 | Installed managed content or mode differs | Prompt; non-TTY/JSON exits 3 | `capshelf status <item> --diff`, then rerun with `--yes` if approved |
 | Ignored local-only file survives reconciliation | Preserved without a prompt | Its path remains installed; a collision with new managed content hard-refuses |
+| A folder in the item is a mounted volume, for example a container's `node_modules` | The volume stays in place without a prompt. `rm` keeps it too | Nothing. A managed path on the volume, or a path there that Git can see, hard-refuses with exit 3 |
 | `rm` would delete an ignored or visible extra path | Prompt names the physical path | Preserve it elsewhere or rerun `rm ... --yes` |
 | Fragment serialization would remove `.codex/config.toml` comments | Prompt names the output | Open the named file and review its comments before `--yes` |
 | Fragment serialization would remove `.claude/settings.json` or `.mcp.json` comments | No prompt; a warning says the file was not loading and the rewrite repairs it | Nothing — the comments were already stopping Claude Code from reading the file |

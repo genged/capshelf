@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { atomicWriteFile } from "./fs-utils";
 import { dirname, join } from "node:path";
 import { inventoryLocalTree } from "./gitignore";
@@ -15,6 +15,7 @@ import {
 import type { InstallMode } from "./paths";
 import type { MaterializedItemKind } from "./master";
 import { SYSTEM_SKILL_NAME } from "./identity";
+import { removeInstalledTree } from "./mount-points";
 
 export const CLI_VERSION = pkg.version;
 
@@ -106,7 +107,8 @@ export async function installSystemItem(
 ): Promise<string> {
   const dst = systemTargetDir(project, item, mode);
   assertCanMaterializeInstalled(project, item.kind, item.name, mode);
-  await rm(dst, { recursive: true, force: true });
+  // A mounted volume in the folder stays. See `removeInstalledTree`.
+  await removeInstalledTree(dst);
   await mkdir(dst, { recursive: true });
   for (const f of item.files) {
     const filePath = join(dst, f.relPath);

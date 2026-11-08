@@ -1,20 +1,33 @@
 import {
   chmod,
-  cp,
   mkdir,
   mkdtemp,
   readFile,
-  rename,
   rm,
   rmdir,
   writeFile,
 } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { NamedFile } from "./merge-tree";
 import { inventoryLocalTree } from "./gitignore";
 import { findDestinationPathCollision } from "./path-collision";
-import { PreconditionError } from "./errors";
-import { isErrno, rmTreeWithRetries } from "./fs-utils";
+import { firstErrorLine, PreconditionError } from "./errors";
+import {
+  assertNoManagedPathOnMount,
+  attachTree,
+  carriedUnits,
+  clearTree,
+  copyTree,
+  detachTree,
+  holding,
+  moveUnits,
+  readMountLayout,
+  removeScratchTree,
+  returnUnits,
+  splitMovableUnits,
+  type MountLayout,
+} from "./mount-points";
 
 export interface PromoteTransactionHooks {
   afterPrepared?: () => Promise<void>;
@@ -27,33 +40,64 @@ export interface InstalledReconciliation {
   rollback(): Promise<void>;
 }
 
+/**
+ * Replace `target` with the folder that `prepare` writes. `prepare` gets the
+ * mount points inside `target`: they stay in place, so it must not write a
+ * path on one. It returns the row-4 units to carry across: each one moves
+ * from the old folder into the new one with a rename, so its bytes are never
+ * read. A read-only unit cannot move to a new parent, so it stays in place
+ * like a mount point. Without mounts and held units, the folder itself moves
+ * with one rename each way.
+ */
 export async function beginDirectoryReplacement(
   target: string,
-  prepare: (replacement: string) => Promise<void>,
+  prepare: (
+    replacement: string,
+    layout: MountLayout,
+  ) => Promise<readonly string[] | undefined>,
 ): Promise<InstalledReconciliation> {
   const parent = dirname(target);
   await mkdir(parent, { recursive: true });
+  const mounts = await readMountLayout(target);
+  // The mount points, plus the units that stay in place.
+  let layout = mounts;
   const transactionDir = await mkdtemp(join(parent, ".capshelf-materialize-"));
   const replacement = join(transactionDir, "replacement");
   const backup = join(transactionDir, "original");
-  let hadOriginal = false;
+  let detached = false;
+  // True once `target` may hold entries of the new tree.
+  let attachStarted = false;
+  let units: readonly string[] = [];
+
+  // The rollback order matters: units go back to the old folder first, so the
+  // clear of `target` never deletes one. `target` is cleared only after the
+  // attach started, because before that it holds only pinned folders and
+  // mount points, or nothing.
+  const restore = async () => {
+    if (detached) await returnUnits(units, [target, replacement], backup);
+    if (attachStarted) await clearTree(target, layout);
+    if (detached) await attachTree(backup, target, layout);
+  };
 
   try {
-    await prepare(replacement);
-    try {
-      await rename(target, backup);
-      hadOriginal = true;
-    } catch (error) {
-      if (!isErrno(error, "ENOENT")) throw error;
+    units = (await prepare(replacement, mounts)) ?? [];
+    if (existsSync(target)) {
+      const split = await splitMovableUnits(target, units);
+      units = split.movable;
+      layout = holding(mounts, split.held);
+      await detachOrUndo(target, backup, layout);
+      detached = true;
+    } else {
+      units = [];
     }
-    try {
-      await rename(replacement, target);
-    } catch (error) {
-      if (hadOriginal) await rename(backup, target);
-      throw error;
-    }
+    await moveUnits(units, backup, replacement);
+    // One rename moves all or nothing. A move around mounts can stop part way.
+    attachStarted = layout.pinned.size > 0;
+    await attachTree(replacement, target, layout);
+    attachStarted = true;
   } catch (error) {
-    await rmTreeWithRetries(transactionDir).catch(() => {});
+    await restoreOrKeep(restore, firstErrorLine(error), backup);
+    await removeScratchTree(transactionDir).catch(() => {});
     throw error;
   }
 
@@ -62,16 +106,81 @@ export async function beginDirectoryReplacement(
     async commit() {
       if (finished) return;
       finished = true;
-      await rmTreeWithRetries(transactionDir);
+      await removeCommittedScratch(transactionDir);
     },
     async rollback() {
       if (finished) return;
       finished = true;
-      await rmTreeWithRetries(target);
-      if (hadOriginal) await rename(backup, target);
-      await rmTreeWithRetries(transactionDir);
+      await restoreOrKeep(restore, null, backup);
+      await removeScratchTree(transactionDir);
     },
   };
+}
+
+/**
+ * Remove the scratch folder after a commit. The new tree is in place by then,
+ * and a rollback can no longer run, so a failure here is a warning and not
+ * an error: an error would report a write that did happen as failed.
+ */
+async function removeCommittedScratch(path: string): Promise<void> {
+  try {
+    await removeScratchTree(path);
+  } catch (error) {
+    process.stderr.write(
+      `! could not delete the scratch folder ${path} (${firstErrorLine(error)}). The new files are in place. Delete the folder by hand.\n`,
+    );
+  }
+}
+
+/**
+ * Move the contents of `target` to `backup`. If that fails part way, move
+ * back what moved, so `target` is as it was, and rethrow. With mounts, this
+ * creates `backup` first: when that fails, nothing moved, and a path that was
+ * already there is never taken for moved entries.
+ */
+async function detachOrUndo(
+  target: string,
+  backup: string,
+  layout: MountLayout,
+): Promise<void> {
+  if (layout.pinned.size === 0) {
+    await detachTree(target, backup, layout);
+    return;
+  }
+  await mkdir(backup);
+  try {
+    await detachTree(target, backup, layout);
+  } catch (error) {
+    try {
+      await attachTree(backup, target, layout);
+    } catch (undoError) {
+      throw new Error(
+        `${firstErrorLine(error)}; moving the moved entries back also failed (${firstErrorLine(undoError)}). They are in ${backup}.`,
+        { cause: undoError },
+      );
+    }
+    throw error;
+  }
+}
+
+/**
+ * Run `restore`. If it fails, keep the scratch folder, because it holds the
+ * previous install, and say where it is.
+ */
+async function restoreOrKeep(
+  restore: () => Promise<void>,
+  failure: string | null,
+  backup: string,
+): Promise<void> {
+  try {
+    await restore();
+  } catch (restoreError) {
+    const reason = failure === null ? "" : `${failure}; `;
+    throw new Error(
+      `${reason}the restore of the previous install also failed (${firstErrorLine(restoreError)}). The previous install is kept in ${backup}.`,
+      { cause: restoreError },
+    );
+  }
 }
 
 /** One installed entry the reconciliation keeps. `content` is null for a non-regular entry. */
@@ -116,21 +225,53 @@ export async function beginInstalledReconciliation(
   localFiles: NamedFile[],
   mergedFiles: NamedFile[],
 ): Promise<InstalledReconciliation> {
+  const mounts = await readMountLayout(installedDir);
+  const managedPaths = [...localFiles, ...mergedFiles].map((file) => file.path);
+  await assertNoManagedPathOnMount(installedDir, mounts, managedPaths);
+  // Everything this write neither deletes nor writes stays. It moves back by
+  // rename, and only the managed entries are copied.
+  const inventory = await inventoryLocalTree(installedDir);
+  const managed = new Set(managedPaths);
+  const split = await splitMovableUnits(
+    installedDir,
+    carriedUnits({
+      kept: [
+        ...inventory.files,
+        ...inventory.irregular.map((object) => object.path),
+      ].filter((path) => !managed.has(path)),
+      blockers: managedPaths,
+      layout: mounts,
+    }),
+  );
+  const units = split.movable;
+  // The mount points, plus the read-only units that stay in place.
+  const layout = holding(mounts, split.held);
   const parent = dirname(installedDir);
   const backupDir = await mkdtemp(join(parent, ".capshelf-promote-"));
   const backup = join(backupDir, "original");
-  await rename(installedDir, backup);
+  let detached = false;
+  // After the detach, `installedDir` holds only what this write put there,
+  // beside pinned folders and mount points, so the clear is safe.
+  const restore = async () => {
+    if (!detached) return;
+    await returnUnits(units, [installedDir], backup);
+    await clearTree(installedDir, layout);
+    await attachTree(backup, installedDir, layout);
+  };
   try {
+    await detachOrUndo(installedDir, backup, layout);
+    detached = true;
     const replaceableIrregularPaths =
       await assertFrozenPreservedPathsDoNotCollide(
         backup,
         localFiles,
         mergedFiles,
       );
-    await cp(backup, installedDir, {
-      recursive: true,
-      preserveTimestamps: true,
-    });
+    // With no units, `copyTree` copies the whole folder to a missing path, as
+    // before. With units, the folder must exist to receive them.
+    if (units.length > 0) await mkdir(installedDir, { recursive: true });
+    await moveUnits(units, backup, installedDir);
+    await copyTree(backup, installedDir, holding(layout, units));
     for (const path of replaceableIrregularPaths) {
       await rm(join(installedDir, ...path.split("/")), { force: true });
     }
@@ -148,9 +289,12 @@ export async function beginInstalledReconciliation(
       await chmod(path, file.mode === "100755" ? 0o755 : 0o644);
     }
   } catch (error) {
-    await rmTreeWithRetries(installedDir);
-    await rename(backup, installedDir);
-    await rmTreeWithRetries(backupDir);
+    if (detached) {
+      await restoreOrKeep(restore, firstErrorLine(error), backup);
+      await removeScratchTree(backupDir).catch(() => {});
+    } else {
+      await removeScratchTree(backupDir).catch(() => {});
+    }
     throw error;
   }
 
@@ -159,14 +303,13 @@ export async function beginInstalledReconciliation(
     async commit() {
       if (finished) return;
       finished = true;
-      await rmTreeWithRetries(backupDir);
+      await removeCommittedScratch(backupDir);
     },
     async rollback() {
       if (finished) return;
       finished = true;
-      await rmTreeWithRetries(installedDir);
-      await rename(backup, installedDir);
-      await rmTreeWithRetries(backupDir);
+      await restoreOrKeep(restore, null, backup);
+      await removeScratchTree(backupDir);
     },
   };
 }

@@ -625,10 +625,43 @@ unmanaged folder. It compares folders, with case and Unicode folding, not lock
 keys. Claude Code loads a plugin folder as `<name>@skills-dir` in a trusted
 workspace, and Codex sees its skills only.
 
-Apply and revert build a complete replacement copy-item tree in a temporary
-sibling directory, verify its bytes and modes, then publish it with renames.
-The previous installation remains available as a backup through alias
-creation; a read, write, chmod, publication, or alias failure restores it.
+Apply, revert, update, and `init` write managed files into a replacement
+copy-item tree in a temporary sibling directory. The old folder then moves
+aside. Ignored local state (row 4 below) moves from the old folder into the
+replacement with renames, so capshelf never reads its bytes. A whole folder
+moves with one rename when nothing in it is managed, Git-visible, or mounted.
+A read-only folder of ignored state stays in place, like a mount point. Linux
+refuses a rename that gives a read-only folder a new parent, and the Go module
+cache, for example, makes its folders read-only.
+The replacement then moves into place, and capshelf checks the managed bytes
+and modes and the type of each kept path. The previous installation remains
+available as a backup through alias creation. A read, write, chmod,
+publication, or alias failure moves the kept entries back first, then restores
+the old folder.
+
+A mount point inside an installed item stays in place. A container can attach
+a volume on a folder in an item, for example a skill's `node_modules`. A rename
+of the item folder would move the volume with it. Then the delete of the old
+copy would empty the volume. So when an item holds a mount point, the swap
+keeps each folder that holds a mount and moves the other entries one at a time.
+Capshelf does not move, copy, or delete files on the volume. A failure part way
+moves the old entries back. These cases refuse before the first write:
+
+- A managed path on a mount point, or one that replaces a folder that holds a
+  mount point.
+- A path on a mount point that the write must delete, because Git can see it
+  or the previous version managed it.
+- An item folder that is itself a mount point.
+
+`rm`, adopt, and `init` keep a mounted volume too. They delete everything else
+in the item folder and report each kept mount point. `add` treats a folder that
+holds only mounted volumes as an empty target. Capshelf does not delete a
+temporary folder that holds a mount point. It reports the mount point instead.
+
+A delete of a tree first gives the owner write access to each folder in it, so
+a read-only tree can be deleted. After the swap, a failure to delete the
+temporary folder is a warning and not an error, because the new files are in
+place and the lock is written.
 
 Pi extensions are loaded by Pi only after project trust. Project and
 clone-local Capshelf scope both materialize to the same Pi project path;
@@ -776,7 +809,7 @@ the same table is repeated in `src/master.ts` next to the sidecar invariant.
 | 1 | Item content in the data-repo working tree | Regular files only, Git modes. Symlinks refused — trust boundary |
 | 2 | Item content at a commit | Regular blobs only, sidecar filtered |
 | 3 | Git-visible content inside an installed directory that is not managed | Drift. Reconciled away under consent as `extra_local_path`; Git modes apply, so `executable_mode` is a real change. `status` lists these paths, and they fail `status --strict` |
-| 4 | Ignored local state under an installed directory | Carried across as-is: real `stat` modes, symlinks preserved by target, never hashed or published. Non-recreatable objects (fifo, socket, device) refused on write, listed on remove |
+| 4 | Ignored local state under an installed directory | Carried across as-is by rename: real `stat` modes, symlinks preserved by target, never read, hashed, or published. Non-recreatable objects (fifo, socket, device) refused on write, listed on remove |
 | 5 | `.capshelf.yml` | Excluded from hashing and materialization everywhere; for reconciliation, treated as row 4 regardless of Git visibility |
 
 One rule decides whether Git can see an installed path, so row 3 and row 4
@@ -810,9 +843,11 @@ same plan without prompting. `--yes` authorizes only enumerated loss and never
 bypasses hard path, source, collision, or transaction checks.
 
 Copy-item reconciliation carries forward ignored local-only files that do not
-collide with selected managed paths. A failed revalidation names up to five
-changed paths. Removal inventories the complete physical
-tree, including ignored files. Fragment planning preserves unmanaged values and
+collide with selected managed paths. The snapshot records only the type of
+such a file, so a program that writes it during the command does not fail the
+revalidation. A failed revalidation names up to five changed paths. Removal
+inventories the complete physical tree, including ignored files, except the
+files on a mounted volume, which removal keeps. Fragment planning preserves unmanaged values and
 separately identifies managed contribution drift and JSONC/TOML comment loss.
 Missing managed content is reproducible and safe to recreate.
 
