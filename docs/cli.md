@@ -176,10 +176,12 @@ local-path binding command; pass remote URLs only to `init --data`.
 ### Changing the binding
 
 `data bind` verifies the path is the root of a Git worktree, checks the
-clone's `origin` against `dataRepoUpstream` when present, verifies existing
-data lock entries can be read from the clone, writes `.capshelf/local.json`,
-and ensures `.capshelf/.gitignore` contains that file. Nested directories
-inside a worktree are not valid bindings. Paths containing `..` or symlinked
+clone's `origin` against `dataRepoUpstream` when present, verifies that the
+clone contains the data lock entries in both the project lock and the local
+lock, writes `.capshelf/local.json`, and ensures `.capshelf/.gitignore`
+contains that file. A missing entry stops the command before it writes.
+Nested directories inside a worktree are not valid bindings.
+Paths containing `..` or symlinked
 parent components are accepted only when their canonical path is the
 worktree root. `data bind` accepts only local paths: a remote data repo URL
 fails with exit 3 and points at `capshelf init --data <remote-url>` for new

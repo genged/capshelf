@@ -5,7 +5,7 @@ import { isRemoteDataUrl } from "../data-bootstrap";
 import { assertDataRepoRoot } from "../git";
 import { PRODUCT_NAME } from "../identity";
 import { loadManifestForDataBinding, saveManifest } from "../manifest";
-import { loadLock } from "../lock";
+import { loadLocalLock, loadLock } from "../lock";
 import { loadLocalConfig, saveLocalConfig } from "../local-config";
 import { manifestPath, normalizePath, projectRoot } from "../paths";
 import { verifyDataLockEntries } from "../lock-verify";
@@ -36,6 +36,7 @@ export function buildSetData(name: string): Command {
       const { manifest, legacyManifestPath } =
         await loadManifestForDataBinding(project);
       const lock = await loadLock(project);
+      const localLock = await loadLocalLock(project);
       const storedPath = storedDataRepoPath(path);
       const dataRepo = normalizePath(storedPath, project);
 
@@ -52,6 +53,7 @@ export function buildSetData(name: string): Command {
 
       await verifyDataRepoUpstream(dataRepo, manifest);
       await verifyDataLockEntries(dataRepo, manifest, lock);
+      await verifyDataLockEntries(dataRepo, manifest, localLock);
       const existing = await loadLocalConfig(project);
       if (legacyManifestPath !== null) {
         await saveManifest(project, manifest);
