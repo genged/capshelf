@@ -1134,10 +1134,17 @@ describe("cli integration", () => {
       mcp: [],
     });
 
+    const localLock = await file(
+      join(project, ".capshelf", "local.lock.json"),
+    ).json();
+    const pinCommit: string = localLock.items["data/skills/hello"].sourceCommit;
+    expect(pinCommit).toMatch(/^[0-9a-f]{40}$/);
+
     const result = run("set-data", wrongRepo);
 
     expect(result.exitCode).toBe(1);
     expect(result.stderr.toString()).toContain("does not contain commit");
+    expect(result.stderr.toString()).toContain(pinCommit);
     expect(await file(localJson).text()).toBe(before);
   });
 
