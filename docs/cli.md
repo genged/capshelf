@@ -72,7 +72,9 @@ trees accept regular files only. Symlinks, Git links, and special filesystem obj
 both working-tree and committed-object boundaries. A symlink refusal adds a
 hint. The usual cause is a dependency install, for example `node_modules` from
 pnpm. The fix is to delete the path or to ignore it with a `.gitignore` inside
-the item. Executable intent is
+the item. In an installed item, a symlink that Git can see is an extra path:
+`update` and `apply` list it for consent and do not refuse. Any ignore rule that
+Git applies counts, also one in the project root `.gitignore`. Executable intent is
 normalized to Git modes `100644` and `100755`; status, promote, apply, and
 update preserve and compare that mode without changing the existing content
 hash format.
@@ -1347,10 +1349,18 @@ headline.
 |---|---|
 | `pin` | `valid`, `mismatch`, `unresolvable` |
 | `sourceState` | `exact`, `filtered`, `dirty` |
-| `installation` | `clean`, `modified`, `missing`, `hidden-extra`, `unsupported` |
+| `installation` | `clean`, `modified`, `missing`, `visible-extra`, `hidden-extra`, `unsupported` |
 
 The axis the spec calls `source` is `sourceState` in the row and in `--json`,
 because `source` already means the entry's origin (`data` or `system`).
+
+`visible-extra` means the folder holds files that the item does not include
+and that Git can see. `update` and `apply` delete them under consent. The row
+lists them in `visibleExtras`, the human row prints `N extra files` and the
+first paths, and `status --strict` exits 4. A kept-local row is exempt. To keep
+such files, add them to a `.gitignore` file. The human row says so.
+`hidden-extra` means the extra files are ignored. They are kept and do not
+affect `--strict`.
 
 When an install differs from its pin, `installDifferences` names the kind of
 each difference: `content-edit`, `line-endings`, `encoding`, `ident`, `mode`,
@@ -1382,6 +1392,14 @@ same way. Closed input there also exits 1, but an item already shared in
 the same run stays shared. JSON and other non-TTY runs refuse with exit 3
 unless `--yes` explicitly authorizes the listed loss. Capshelf revalidates
 the accepted snapshot immediately before writing.
+
+When one item has more than ten extra local paths, the list prints one line
+for each entry of the deepest folder that holds them all. Each folder line
+gives the number of listed paths in it. So a Python `.venv` that Git can see
+prints about four lines, not one line for each of its 1,000 files. A dry run
+with `--json` still lists every path in `destructiveChanges`. When the paths
+are files that Git can see, the list also says how to keep them: add them to a
+`.gitignore` file, then rerun the command.
 
 A plugin can also ask for consent before it puts commands in reach of Claude
 Code. Those questions follow the same terminal, `--json`, and `--yes` rules.
@@ -2580,6 +2598,12 @@ metadata and never adopts the user skill.
 | 5 | reserved for future unmet-requires checks (`add` with unmet `requires` warns and exits 0) |
 | 6 | no data repo configured for this project (pass `--data`, set `.capshelf/local.json`, or `$CAPSHELF_HOME`) |
 | 7 | required dependency missing (`git` not found on `PATH`, or older than 2.40.0) |
+
+`apply` and `update` report a failed item as a row and continue with the
+others. When every failed row has the same exit code, the command exits with
+it, for example 3 for a refused precondition. Otherwise it exits 1. The text
+output prints the error's hint under the row, and `--json` puts it in the
+row's `hint` field.
 
 ## Diagnostics
 

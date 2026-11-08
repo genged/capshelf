@@ -8,7 +8,9 @@ import {
   isMetadataSidecarPath,
   itemRepoRelPath,
 } from "./master";
-import { gitignoreVisibleFiles, inventoryLocalTree } from "./gitignore";
+import { inventoryLocalTree } from "./gitignore";
+import { installedVisiblePaths } from "./installed-visibility";
+import type { Scope } from "./promote-core";
 import type { GitTreeSource } from "./item-source";
 import { classifyInstalledFile, type InstallDifference } from "./install-diff";
 import type { ItemKind } from "./master";
@@ -80,6 +82,7 @@ export type InstallationAxis =
   | "clean"
   | "modified"
   | "missing"
+  | "visible-extra"
   | "hidden-extra"
   | "unsupported";
 
@@ -92,6 +95,11 @@ export interface InstallationReport {
   differences: InstallDifference[];
   /** Present but unpinned paths the project's own rules hide (S11). */
   hiddenExtras: string[];
+  /**
+   * Present but unpinned paths the project sees in Git (row 3). `update` and
+   * `apply` delete them under consent, so `status` shows them (D12).
+   */
+  visibleExtras: string[];
 }
 
 /**
@@ -108,6 +116,7 @@ export async function describeInstallation(
   source: GitTreeSource,
   kind: ItemKind,
   name: string,
+  scope: Scope,
   memo?: GitReadMemo,
 ): Promise<InstallationReport | null> {
   let entries: PinTreeEntry[];
@@ -175,7 +184,13 @@ export async function describeInstallation(
     }
   }
 
-  const hiddenExtras = await hiddenExtraPaths(project, kind, name, entries);
+  const { hiddenExtras, visibleExtras } = await unpinnedExtraPaths(
+    project,
+    kind,
+    name,
+    entries,
+    scope,
+  );
   const currentSha = sourcePinDigest(
     observed.map((observation) => ({
       path: observation.path,
@@ -199,36 +214,62 @@ export async function describeInstallation(
       ? "missing"
       : currentSha !== pinnedSha
         ? "modified"
-        : hiddenExtras.length > 0
-          ? "hidden-extra"
-          : "clean";
-  return { axis, currentSha, pinnedSha, differences, hiddenExtras };
+        : visibleExtras.length > 0
+          ? "visible-extra"
+          : hiddenExtras.length > 0
+            ? "hidden-extra"
+            : "clean";
+  return {
+    axis,
+    currentSha,
+    pinnedSha,
+    differences,
+    hiddenExtras,
+    visibleExtras,
+  };
 }
 
 /**
- * S11: a file inside a managed directory that no pin names and the project's
- * own rules hide. Reconciliation preserves it, so it is not drift — but an
- * agent that loads a skill by enumerating its directory reads it, which is why
- * the axis says so.
+ * The unpinned paths inside a managed directory, split by the shared
+ * visibility rule (`installedVisiblePaths`).
+ *
+ * S11: a hidden extra is one the project's own rules hide. Reconciliation
+ * preserves it, so it is not drift, but an agent that loads a skill by
+ * enumerating its directory reads it, which is why the axis says so.
+ *
+ * D12: a visible extra is row 3. Reconciliation deletes it under consent, so
+ * `status` must not call the item clean while one exists.
  */
-async function hiddenExtraPaths(
+async function unpinnedExtraPaths(
   project: string,
   kind: ItemKind,
   name: string,
   entries: readonly PinTreeEntry[],
-): Promise<string[]> {
-  if (!isCopyDirectoryItemKind(kind)) return [];
+  scope: Scope,
+): Promise<{ hiddenExtras: string[]; visibleExtras: string[] }> {
+  const none = { hiddenExtras: [], visibleExtras: [] };
+  if (!isCopyDirectoryItemKind(kind)) return none;
   const root = installedPath(project, kind, name);
-  if (!existsSync(root)) return [];
+  if (!existsSync(root)) return none;
   const pinned = new Set(entries.map((entry) => entry.path));
   const inventory = await inventoryLocalTree(root);
   const raw = [
     ...inventory.files,
     ...inventory.irregular.map((object) => object.path),
   ].filter((path) => !pinned.has(path) && !isMetadataSidecarPath(path));
-  if (raw.length === 0) return [];
-  const visible = new Set(await gitignoreVisibleFiles(root).catch(() => raw));
-  return raw.filter((path) => !visible.has(path)).sort();
+  if (raw.length === 0) return none;
+  const visible = await installedVisiblePaths({
+    project,
+    root,
+    kind,
+    name,
+    candidates: raw,
+    scope,
+  });
+  return {
+    hiddenExtras: raw.filter((path) => !visible.has(path)).sort(),
+    visibleExtras: raw.filter((path) => visible.has(path)).sort(),
+  };
 }
 
 /**

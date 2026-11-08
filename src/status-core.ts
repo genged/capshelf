@@ -114,6 +114,11 @@ export interface StatusRow {
   installation?: InstallationAxis;
   /** What kind of difference each drifted path carries (PIN-6 stage 2). */
   installDifferences?: InstallDifference[];
+  /**
+   * D12: unpinned installed paths the project sees in Git. `update` and
+   * `apply` delete them under consent. Present only when not empty.
+   */
+  visibleExtras?: string[];
   /** Managed paths that declare an external filter driver (PIN-9). */
   filteredPaths?: FilteredPath[];
   /** master sha (data) or bundled sha (system); null if upstream is gone */
@@ -250,6 +255,7 @@ export interface StatusAxes {
   sourceState: SourceAxis;
   installation?: InstallationAxis;
   installDifferences?: InstallDifference[];
+  visibleExtras?: string[];
   filteredPaths?: FilteredPath[];
 }
 
@@ -315,6 +321,10 @@ export function buildStatusRow(input: BuildStatusRowInput): StatusRow {
       ...(input.axes.installDifferences !== undefined &&
         input.axes.installDifferences.length > 0 && {
           installDifferences: input.axes.installDifferences,
+        }),
+      ...(input.axes.visibleExtras !== undefined &&
+        input.axes.visibleExtras.length > 0 && {
+          visibleExtras: input.axes.visibleExtras,
         }),
       ...(input.axes.filteredPaths !== undefined &&
         input.axes.filteredPaths.length > 0 && {

@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline/promises";
 import { PreconditionError } from "./errors";
+import { installDifferenceLabel } from "./install-diff";
 
 /**
  * Every kind of local state a consented write can destroy. A reason exists
@@ -37,6 +38,8 @@ export interface DestructiveChange {
 export interface DestructiveChangePlan {
   changes: DestructiveChange[];
   snapshot: string;
+  /** The sorted snapshot parts, so a mismatch can name what changed. */
+  state: readonly string[];
 }
 
 export interface DestructiveConfirmationContext {
@@ -106,12 +109,11 @@ export function createDestructiveChangePlan(
   snapshotParts: string[] = [],
 ): DestructiveChangePlan {
   const normalized = normalizeDestructiveChanges(changes);
+  const state = [...snapshotParts].sort();
   return {
     changes: normalized,
-    snapshot: JSON.stringify({
-      changes: normalized,
-      state: [...snapshotParts].sort(),
-    }),
+    snapshot: JSON.stringify({ changes: normalized, state }),
+    state,
   };
 }
 
@@ -120,11 +122,49 @@ export function assertDestructivePlanUnchanged(
   current: DestructiveChangePlan,
 ): void {
   if (accepted.snapshot !== current.snapshot) {
-    throw new PreconditionError(
+    const changed = changedSnapshotSubjects(accepted.state, current.state);
+    const shown = changed.slice(0, CHANGED_PATHS_SHOWN);
+    const rest = changed.length - shown.length;
+    const lines = [
       "local state changed after destructive-change preflight; no changes were written",
-      { hint: "Review the affected paths again, then rerun the command." },
+      ...shown.map((subject) => `  changed: ${subject}`),
+      ...(rest > 0 ? [`  and ${rest} more`] : []),
+    ];
+    throw new PreconditionError(lines.join("\n"), {
+      hint: "Review the affected paths again, then rerun the command.",
+    });
+  }
+}
+
+const CHANGED_PATHS_SHOWN = 5;
+
+/**
+ * What differs between two snapshots, as the paths the parts name. A copy or
+ * subagent part starts with `<kind>:<absolute path>:`. Any other part names a
+ * lock entry or a planned output, and is reported by its kind.
+ */
+function changedSnapshotSubjects(
+  accepted: readonly string[],
+  current: readonly string[],
+): string[] {
+  const before = new Set(accepted);
+  const after = new Set(current);
+  const subjects = new Set<string>();
+  for (const part of [
+    ...accepted.filter((item) => !after.has(item)),
+    ...current.filter((item) => !before.has(item)),
+  ]) {
+    const separator = part.indexOf(":");
+    const kind = part.slice(0, separator);
+    const rest = part.slice(separator + 1);
+    subjects.add(
+      kind === "copy" || kind === "subagent"
+        ? (rest.split(":")[0] ?? rest)
+        : `${kind} (a lock entry or planned output)`,
     );
   }
+  if (subjects.size === 0) subjects.add("the planned changes");
+  return [...subjects].sort();
 }
 
 let installedConfirmationContext: DestructiveConfirmationContext | null = null;
@@ -222,19 +262,101 @@ export function renderDestructiveChanges(
   changes: DestructiveChange[],
 ): string {
   const normalized = normalizeDestructiveChanges(changes);
+  const groups = new Map<string, DestructiveChange[]>();
+  for (const change of normalized) {
+    const key = groupKey(change);
+    groups.set(key, [...(groups.get(key) ?? []), change]);
+  }
+  const printed = new Set<string>();
   return [
     `${operation} would destroy local state:`,
     ...normalized.flatMap((change) => {
-      const item = change.item ? `${change.item} — ` : "";
-      const line = `  ${item}${change.path} — ${DESTRUCTIVE_CHANGE_REASON_LABELS[change.reason]}`;
+      const key = groupKey(change);
+      const group = groups.get(key) ?? [change];
+      if (group.length > FOLD_ABOVE) {
+        if (printed.has(key)) return [];
+        printed.add(key);
+        return foldedLines(group);
+      }
+      const line = `  ${itemPrefix(change)}${change.path} — ${DESTRUCTIVE_CHANGE_REASON_LABELS[change.reason]}`;
       return change.detail ? [line, `      ${change.detail}`] : [line];
     }),
+    ...(normalized.some((change) => change.detail === VISIBLE_EXTRA_DETAIL)
+      ? [
+          "  To keep a local-only path, add it to a .gitignore file, then rerun the command.",
+        ]
+      : []),
     ...(normalized.some((change) => change.scope === "local")
       ? [
           "  Warning: local-scope files are excluded from project Git and may not be recoverable.",
         ]
       : []),
   ].join("\n");
+}
+
+/** Groups larger than this print one line per folder. */
+const FOLD_ABOVE = 10;
+
+const VISIBLE_EXTRA_DETAIL = installDifferenceLabel({
+  path: "",
+  kind: "visible-extra",
+});
+
+function itemPrefix(change: DestructiveChange): string {
+  return change.item ? `${change.item} — ` : "";
+}
+
+function groupKey(change: DestructiveChange): string {
+  return [
+    change.scope,
+    change.item ?? "",
+    change.reason,
+    change.detail ?? "",
+  ].join("\0");
+}
+
+/**
+ * One line per entry of the deepest folder that holds all of `group`, with
+ * the number of listed paths in each subfolder. A Python venv that Git can
+ * see is about 1,000 files, and one line for each hides the decision. The
+ * plan itself still lists every path.
+ */
+function foldedLines(group: readonly DestructiveChange[]): string[] {
+  const [first] = group;
+  if (first === undefined) return [];
+  const parts = group.map((change) => change.path.split("/"));
+  let depth = 0;
+  while (
+    parts.every(
+      (path) => path.length > depth + 1 && path[depth] === parts[0]?.[depth],
+    )
+  ) {
+    depth++;
+  }
+  const base = parts[0]?.slice(0, depth).join("/") ?? "";
+  const counts = new Map<string, number>();
+  for (const path of parts) {
+    const entry = path[depth] ?? "";
+    const isFolder = path.length > depth + 1;
+    const key = isFolder ? `${entry}/` : entry;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const label = DESTRUCTIVE_CHANGE_REASON_LABELS[first.reason];
+  const entries = [...counts.entries()];
+  const lines = entries.slice(0, FOLD_ABOVE).map(([entry, count]) => {
+    const path = base ? `${base}/${entry}` : entry;
+    const suffix = entry.endsWith("/") ? ` (${count} paths in it)` : "";
+    return `  ${itemPrefix(first)}${path}${suffix} — ${label}`;
+  });
+  const rest = entries.length - FOLD_ABOVE;
+  if (rest > 0)
+    lines.push(
+      `  ${itemPrefix(first)}and ${rest} more entries in ${base || "."}`,
+    );
+  lines.push(
+    `      ${group.length} paths${first.detail ? `: ${first.detail}` : ""}`,
+  );
+  return lines;
 }
 
 function changeKey(change: DestructiveChange): string {

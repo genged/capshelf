@@ -23,7 +23,13 @@ import { dataKey, entryIdentity } from "../lock";
 import type { Lock } from "../lock";
 import type { Manifest } from "../manifest";
 import { assertNoScopeCollisions } from "../status-core";
-import { PreconditionError, ResultExitError } from "../errors";
+import {
+  itemErrorFields,
+  itemErrorsExitCode,
+  PreconditionError,
+  ResultExitError,
+  withoutExitCode,
+} from "../errors";
 import { parseItemRef } from "../item-ref";
 import {
   assertRefNotSplitAcrossPopulations,
@@ -93,6 +99,10 @@ interface ApplyError {
   name: string;
   action: "error";
   error: string;
+  /** A `CliError` hint, printed under the error. */
+  hint?: string;
+  /** A `CliError` exit code. Not printed. */
+  exitCode?: number;
 }
 
 interface ApplyExternalSkip {
@@ -261,7 +271,7 @@ export function registerApply(program: Command): void {
             json: opts.json === true,
           });
           if (preflight.results.some((result) => result.action === "error")) {
-            throw new ResultExitError(1);
+            throw new ResultExitError(itemErrorsExitCode(preflight.results));
           }
           return;
         }
@@ -293,7 +303,7 @@ export function registerApply(program: Command): void {
               "  no changes were written; fragment outputs are reconciled together",
             );
           }
-          throw new ResultExitError(1);
+          throw new ResultExitError(itemErrorsExitCode(preflight.results));
         }
         if (
           !(await confirmDestructiveChanges(preflight.destructivePlan, {
@@ -386,7 +396,7 @@ export function registerApply(program: Command): void {
                 kind: parsed.kind,
                 name: parsed.name,
                 action: "error",
-                error: err instanceof Error ? err.message : String(err),
+                ...itemErrorFields(err),
               });
             }
             continue;
@@ -419,7 +429,7 @@ export function registerApply(program: Command): void {
                 kind: parsed.kind,
                 name: parsed.name,
                 action: "error",
-                error: err instanceof Error ? err.message : String(err),
+                ...itemErrorFields(err),
               });
               continue;
             }
@@ -484,7 +494,7 @@ export function registerApply(program: Command): void {
               kind: parsed.kind,
               name: parsed.name,
               action: "error",
-              error: err instanceof Error ? err.message : String(err),
+              ...itemErrorFields(err),
             });
           }
         }
@@ -534,7 +544,7 @@ export function registerApply(program: Command): void {
               kind: target.kind,
               name: target.name,
               action: "error",
-              error: err instanceof Error ? err.message : String(err),
+              ...itemErrorFields(err),
             });
             continue;
           }
@@ -559,7 +569,7 @@ export function registerApply(program: Command): void {
               kind: target.kind,
               name: target.name,
               action: "error",
-              error: err instanceof Error ? err.message : String(err),
+              ...itemErrorFields(err),
             });
           }
         }
@@ -596,7 +606,7 @@ export function registerApply(program: Command): void {
         }
 
         if (results.some((r) => r.action === "error")) {
-          throw new ResultExitError(1);
+          throw new ResultExitError(itemErrorsExitCode(results));
         }
       },
     );
@@ -981,7 +991,7 @@ async function planApplyPreflight(
         kind: target.kind,
         name: target.name,
         action: "error",
-        error: error instanceof Error ? error.message : String(error),
+        ...itemErrorFields(error),
       });
     }
   }
@@ -1019,7 +1029,7 @@ function applyError(
     kind: parsed.kind,
     name: parsed.name,
     action: "error",
-    error: cause instanceof Error ? cause.message : String(cause),
+    ...itemErrorFields(cause),
   };
 }
 
@@ -1069,7 +1079,9 @@ function printApplyOutput(opts: {
           project: opts.project,
           dataRepo: opts.dataRepo,
           dryRun: opts.dryRun,
-          items: opts.results,
+          items: opts.results.map((item) =>
+            item.action === "error" ? withoutExitCode(item) : item,
+          ),
           destructiveChanges: opts.destructivePlan.changes,
         },
         null,
@@ -1130,6 +1142,7 @@ function printApplyResults(results: ApplyResult[]): void {
     if (r.action === "error") {
       console.log(`✗ ${id} error`);
       console.log(`  ${r.error}`);
+      if (r.hint) console.log(`  ${r.hint.replaceAll("\n", "\n  ")}`);
     } else if (r.action === "skipped-external") {
       console.log(`• ${id} skipped`);
       console.log(`  ${r.message}`);

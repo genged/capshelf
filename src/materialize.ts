@@ -7,7 +7,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { dirname, join } from "node:path";
 import { existsSync } from "node:fs";
 import type { Stats } from "node:fs";
 import { entryIdentity } from "./lock";
@@ -49,8 +49,8 @@ import type { RuntimeWarning } from "./runtime-warnings";
 import { missingSourceCommitMessage } from "./upstream-check";
 import type { NamedFile } from "./merge-tree";
 import { namedFilesEqual } from "./merge-tree";
-import { gitignoreVisibleFiles, inventoryLocalTree } from "./gitignore";
-import { gitPolicyVisiblePathsUnderPath } from "./git";
+import { inventoryLocalTree } from "./gitignore";
+import { installedVisiblePaths } from "./installed-visibility";
 import { beginDirectoryReplacement } from "./promote-transaction";
 import { shaOfNamedFiles } from "./item-snapshot";
 import { PRODUCT_NAME } from "./identity";
@@ -275,16 +275,21 @@ export async function materializeLockEntry(
           opts.memo,
         ).catch(() => null),
   );
-  const dataBeforeMatches = await installedFilesMatch(
-    dst,
-    reconciliationFiles.expected,
-    reconciliationFiles.preserved,
-  );
+  const dataBeforeMatches = await installedFilesMatch({
+    project: opts.project,
+    kind,
+    name,
+    scope: opts.scope,
+    root: dst,
+    expected: reconciliationFiles.expected,
+    preserved: reconciliationFiles.preserved,
+  });
   if (!opts.dryRun && !dataBeforeMatches) {
     await materializeCopyDirectory(
       opts.project,
       kind,
       name,
+      opts.scope,
       reconciliationFiles,
       opts.hooks,
     );
@@ -323,48 +328,6 @@ export async function materializeLockEntry(
     }),
     ...runtimeWarningFields(opts.project, kind, name),
   };
-}
-
-/**
- * PIN-5's classifier for *unpinned* paths under an installed item.
- *
- * | destination                        | classifier                                                          |
- * | ---------------------------------- | ------------------------------------------------------------------- |
- * | project scope in a Git worktree    | project Git, with the complete ignore stack                          |
- * | local scope                        | the item-root ignore walker — capshelf excludes the whole local item |
- * | project scope outside Git          | the item-root ignore walker                                          |
- *
- * Reimplementing Git's ignore stack in process was rejected: exact parity needs
- * nested and parent `.gitignore` files, `.git/info/exclude`,
- * `core.excludesFile`, negation, directory pruning, and the tracked-file rule.
- * Git owns that policy and answers it exactly. Using project Git for *every*
- * scope is equally wrong: capshelf puts a local-scope item in
- * `.git/info/exclude`, so project Git sees the whole item as ignored and cannot
- * tell a user-owned extra from a visible one.
- *
- * A project ignore edit may therefore move an extra between visible and
- * ignored. That is intentional — it changes who owns an unpinned file, not what
- * the lock manages.
- */
-async function visibleExtraPaths(
-  project: string,
-  root: string,
-  extras: readonly string[],
-  scope: Scope,
-): Promise<Set<string>> {
-  if (extras.length === 0) return new Set();
-  const candidates = new Set(extras);
-  const gitPolicyPaths =
-    scope === "project"
-      ? await gitPolicyVisiblePathsUnderPath(project, relative(project, root))
-      : null;
-  const visible =
-    gitPolicyPaths ??
-    // Outside project Git the fallback walker still does not consult parent
-    // ignore files, `.git/info/exclude`, or `core.excludesFile`. That
-    // limitation now applies only where no usable project Git policy exists.
-    (await gitignoreVisibleFiles(root).catch(() => [...candidates]));
-  return new Set(visible.filter((path) => candidates.has(path)));
 }
 
 /**
@@ -491,8 +454,11 @@ export async function copyDirectoryReconciliationFiles(opts: {
   const preserved = await preservedLocalEntries({
     project: opts.project,
     dst,
+    kind: opts.kind,
+    name: opts.name,
     managedPaths,
     scope: opts.scope,
+    incoming: expected,
   });
 
   await assertNoPreservedPathCollisions({
@@ -522,20 +488,27 @@ export async function copyDirectoryReconciliationFiles(opts: {
 export async function preservedLocalEntries(opts: {
   project: string;
   dst: string;
+  kind: CopyDirectoryItemKind;
+  name: string;
   managedPaths: ReadonlySet<string>;
   scope: Scope;
+  /** The files the write installs. See `installedVisiblePaths`. */
+  incoming?: readonly NamedFile[];
 }): Promise<PreservedEntry[]> {
   const inventory = await inventoryLocalTree(opts.dst);
   const extras = [
     ...inventory.files,
     ...inventory.irregular.map((object) => object.path),
   ].filter((path) => !opts.managedPaths.has(path));
-  const visibleExtras = await visibleExtraPaths(
-    opts.project,
-    opts.dst,
-    extras,
-    opts.scope,
-  );
+  const visibleExtras = await installedVisiblePaths({
+    project: opts.project,
+    root: opts.dst,
+    kind: opts.kind,
+    name: opts.name,
+    candidates: extras,
+    scope: opts.scope,
+    ...(opts.incoming !== undefined && { incoming: opts.incoming }),
+  });
   const preserved: PreservedEntry[] = [];
   for (const path of inventory.files) {
     // Row 5: the sidecar is excluded from hashing and materialization
@@ -765,6 +738,7 @@ async function materializeCopyDirectory(
   project: string,
   kind: CopyDirectoryItemKind,
   name: string,
+  scope: Scope,
   files: CopyDirectoryReconciliationFiles,
   hooks?: MaterializeHooks,
 ): Promise<void> {
@@ -796,7 +770,17 @@ async function materializeCopyDirectory(
   });
   try {
     await hooks?.afterPublish?.();
-    if (!(await installedFilesMatch(dst, files.expected, files.preserved))) {
+    if (
+      !(await installedFilesMatch({
+        project,
+        kind,
+        name,
+        scope,
+        root: dst,
+        expected: files.expected,
+        preserved: files.preserved,
+      }))
+    ) {
       throw new Error(
         `materialized ${kind}/${name} does not match the staged regular-file tree`,
       );
@@ -900,21 +884,40 @@ function fileModeFromGit(mode: string): number {
   }
 }
 
-async function installedFilesMatch(
-  root: string,
-  expected: NamedFile[],
-  preserved: PreservedEntry[] = [],
-): Promise<boolean> {
+async function installedFilesMatch(opts: {
+  project: string;
+  kind: CopyDirectoryItemKind;
+  name: string;
+  scope: Scope;
+  root: string;
+  expected: NamedFile[];
+  preserved?: readonly PreservedEntry[];
+}): Promise<boolean> {
+  const { root, expected } = opts;
+  const preserved = opts.preserved ?? [];
   if (!existsSync(root)) return false;
   const knownPaths = new Set([
     ...expected.map((file) => file.path),
     ...preserved.map((entry) => entry.path),
   ]);
-  for (const path of await gitignoreVisibleFiles(root)) {
+  const inventory = await inventoryLocalTree(root);
+  const unknown = [
+    ...inventory.files,
+    ...inventory.irregular.map((object) => object.path),
+  ].filter(
     // The sidecar is catalog data, never managed content and never drift.
-    if (isMetadataSidecarPath(path)) continue;
-    if (!knownPaths.has(path)) return false;
-  }
+    (path) => !knownPaths.has(path) && !isMetadataSidecarPath(path),
+  );
+  const visibleUnknown = await installedVisiblePaths({
+    project: opts.project,
+    root,
+    kind: opts.kind,
+    name: opts.name,
+    candidates: unknown,
+    scope: opts.scope,
+    incoming: expected,
+  });
+  if (visibleUnknown.size > 0) return false;
   const current: NamedFile[] = [];
   for (const file of expected) {
     const fullPath = join(root, ...file.path.split("/"));

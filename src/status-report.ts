@@ -177,7 +177,10 @@ export function rowFailsStrict(row: StatusRow): boolean {
     // D18: an unfinished adopt is a warning line rather than a new `State`, so
     // every consumer that switches on state is untouched. It still has to fail
     // strict while the condition lasts.
-    row.remote?.alsoTrackedInShelf === true
+    row.remote?.alsoTrackedInShelf === true ||
+    // D12, the same pattern: a visible extra is row-3 drift, which `update`
+    // deletes, so it fails strict. A kept-local row is exempt, as above.
+    (row.state !== "kept-local" && (row.visibleExtras?.length ?? 0) > 0)
   );
 }
 
@@ -343,7 +346,14 @@ export async function buildStatusReport(
     const treeIdentity = isTreePinned(entry);
     const installation =
       treeIdentity && tree
-        ? await describeInstallation(project, tree, kind, itemName, memo)
+        ? await describeInstallation(
+            project,
+            tree,
+            kind,
+            itemName,
+            rowScope,
+            memo,
+          )
         : null;
     let currentSha: string | null;
     let modeDrifted = false;
@@ -500,6 +510,7 @@ export async function buildStatusReport(
                 : "exact",
           ...(installation !== null && {
             installation: installation.axis,
+            visibleExtras: installation.visibleExtras,
             installDifferences: installation.differences.filter(
               (difference) => difference.kind !== "untouched",
             ),

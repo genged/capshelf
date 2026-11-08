@@ -76,6 +76,8 @@ async function buildRemoteRow(
         remoteTreeSource(cache.path, entry.sourceCommit, entry.subpath),
         kind,
         name,
+        // Every remote row is local scope (D5).
+        "local",
       )
     : null;
   // A missing cache is not a missing upstream: the upstream is the repository,
@@ -143,6 +145,7 @@ async function buildRemoteRow(
           : "unresolvable",
         sourceState: "exact" as const,
         installation: installation.axis,
+        visibleExtras: installation.visibleExtras,
         installDifferences: installation.differences.filter(
           (difference) => difference.kind !== "untouched",
         ),

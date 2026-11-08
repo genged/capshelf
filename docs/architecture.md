@@ -775,9 +775,21 @@ the same table is repeated in `src/master.ts` next to the sidecar invariant.
 |---|---|---|
 | 1 | Item content in the data-repo working tree | Regular files only, Git modes. Symlinks refused — trust boundary |
 | 2 | Item content at a commit | Regular blobs only, sidecar filtered |
-| 3 | Git-visible content inside an installed directory that is not managed | Drift. Reconciled away under consent as `extra_local_path`; Git modes apply, so `executable_mode` is a real change |
+| 3 | Git-visible content inside an installed directory that is not managed | Drift. Reconciled away under consent as `extra_local_path`; Git modes apply, so `executable_mode` is a real change. `status` lists these paths, and they fail `status --strict` |
 | 4 | Ignored local state under an installed directory | Carried across as-is: real `stat` modes, symlinks preserved by target, never hashed or published. Non-recreatable objects (fifo, socket, device) refused on write, listed on remove |
 | 5 | `.capshelf.yml` | Excluded from hashing and materialization everywhere; for reconciliation, treated as row 4 regardless of Git visibility |
+
+One rule decides whether Git can see an installed path, so row 3 and row 4
+are the same for `status`, the consent preflight, and the check after a write:
+
+| Destination | Rule |
+| --- | --- |
+| Project scope in a Git work tree | Project Git, with the full ignore stack |
+| Local scope in a Git work tree | Project Git without the `.git/info/exclude` lines that capshelf wrote for the item |
+| Outside Git | The item's own `.gitignore` files |
+
+A write also applies the `.gitignore` files it is about to install. A visible
+symlink is a row-3 path, not an error.
 
 Rows 1 and 2 are the trust boundary: item content crossing into or out of the
 data repo is Git's object model, and nothing below may widen it. Row 4 never
@@ -798,7 +810,8 @@ same plan without prompting. `--yes` authorizes only enumerated loss and never
 bypasses hard path, source, collision, or transaction checks.
 
 Copy-item reconciliation carries forward ignored local-only files that do not
-collide with selected managed paths. Removal inventories the complete physical
+collide with selected managed paths. A failed revalidation names up to five
+changed paths. Removal inventories the complete physical
 tree, including ignored files. Fragment planning preserves unmanaged values and
 separately identifies managed contribution drift and JSONC/TOML comment loss.
 Missing managed content is reproducible and safe to recreate.

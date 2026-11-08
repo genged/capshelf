@@ -219,6 +219,10 @@ export async function planCopyDirectoryDestruction(opts: {
           opts,
           join(root, ...object.path.split("/")),
           "extra_local_path",
+          installDifferenceLabel({
+            path: object.path,
+            kind: "visible-extra",
+          }) ?? undefined,
         ),
       );
     }
