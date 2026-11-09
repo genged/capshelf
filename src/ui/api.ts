@@ -104,8 +104,13 @@ interface LoadedProject {
   rows: StatusRow[];
 }
 
-/** Status reads kept for diff requests: enough for every open project. */
-const SNAPSHOT_LIMIT = 64;
+/**
+ * Status reads kept per project for diff requests. The client shows the
+ * newest read it accepted. That read drops out only after this many newer
+ * reads of the same project finish. A limit across all projects would drop
+ * the current read of some project once enough projects are registered.
+ */
+const SNAPSHOTS_PER_PROJECT = 4;
 
 const REVISION_COUNT = 30;
 const REVISION_FORMAT = "%H%x1f%h%x1f%s%x1f%an%x1f%aI";
@@ -149,10 +154,11 @@ export function createUiApi(ctx: UiContext): UiApi {
   // the comparison is built from the row the user is looking at rather than
   // from a second status run that could disagree with it.
   const loaded = new Map<string, LoadedProject>();
-  // Every recent status read by its snapshot id. Two reads of one project can
-  // overlap, and the older one can finish last. The client keeps the newer
-  // one, so a diff request names its snapshot instead of trusting `loaded`.
-  const snapshots = new Map<string, LoadedProject>();
+  // Recent status reads by project, then by snapshot id. Two reads of one
+  // project can overlap, and the older one can finish last. The client keeps
+  // the newer one, so a diff request names its snapshot instead of trusting
+  // `loaded`.
+  const snapshots = new Map<string, Map<string, LoadedProject>>();
   let nextSnapshot = 0;
 
   async function registeredProjects(): Promise<UiRegisteredProject[]> {
@@ -249,11 +255,13 @@ export function createUiApi(ctx: UiContext): UiApi {
     loaded.set(project, state);
     nextSnapshot += 1;
     const snapshot = String(nextSnapshot);
-    snapshots.set(snapshot, state);
+    const reads = snapshots.get(project) ?? new Map<string, LoadedProject>();
+    snapshots.set(project, reads);
+    reads.set(snapshot, state);
     // A Map iterates in insertion order, so the first key is the oldest.
-    for (const old of snapshots.keys()) {
-      if (snapshots.size <= SNAPSHOT_LIMIT) break;
-      snapshots.delete(old);
+    for (const old of reads.keys()) {
+      if (reads.size <= SNAPSHOTS_PER_PROJECT) break;
+      reads.delete(old);
     }
     return { registered, state, snapshot, report };
   }
@@ -333,8 +341,8 @@ export function createUiApi(ctx: UiContext): UiApi {
       const state =
         snapshot === undefined
           ? (loaded.get(path) ?? (await loadProject(path)).state)
-          : snapshots.get(snapshot);
-      if (state === undefined || state.project !== path) {
+          : snapshots.get(path)?.get(snapshot);
+      if (state === undefined) {
         throw new NotFoundError(
           `status read ${snapshot ?? ""} of ${path} is no longer kept; refresh the dashboard`,
         );

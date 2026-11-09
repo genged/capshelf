@@ -522,6 +522,41 @@ describe("capshelf ui server", () => {
     ).rejects.toThrow();
   });
 
+  test(
+    "reads of other projects never drop a project's current read",
+    async () => {
+      // The limit is per project. With one limit across all projects, a
+      // refresh of enough projects drops the read that some project shows.
+      const other = await tempDir("capshelf-ui-other-");
+      const run = runInProcess(other);
+      expect(
+        (await run(["init", "--data", world.dataRepo, "--no-pick"])).exitCode,
+      ).toBe(0);
+      expect((await run(["add", "skills/hello"])).exitCode).toBe(0);
+      const registryPath = join(await tempDir("capshelf-ui-two-"), "p.json");
+      await registerProject(world.project, registryPath);
+      await registerProject(other, registryPath);
+      const api = createUiApi({ registryPath });
+      const id = "project/data/skills/hello";
+      const first = await api.projectStatus(world.project);
+      for (let read = 0; read < 6; read += 1) {
+        await api.projectStatus(other);
+      }
+      expect(
+        (await api.projectDiff(world.project, id, "installed", first.snapshot))
+          .item,
+      ).toBe(id);
+      // Newer reads of the same project do drop it, so the store stays small.
+      for (let read = 0; read < 6; read += 1) {
+        await api.projectStatus(world.project);
+      }
+      await expect(
+        api.projectDiff(world.project, id, "installed", first.snapshot),
+      ).rejects.toThrow("no longer kept");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
   test("a relative --data override is printed as the resolved repository", async () => {
     // `capshelf --data ../shelf ui` resolves the override against the
     // directory it started in, but each printed command runs from a project
