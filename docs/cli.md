@@ -412,7 +412,10 @@ Generated outputs preserve unmanaged project-local values. On reconciliation,
 capshelf removes the old managed contribution, keeps local values, detects
 unmanaged scalar or shape collisions, and then merges the newly locked fragments.
 Arrays concatenate with deterministic dedupe; objects and TOML tables merge
-recursively. Two fragments that set the same scalar to *different* values are
+recursively. In an output array, local elements come first and managed
+elements follow, so a second `apply` writes nothing. A local value that is
+equal to a managed value cannot be told apart from it. `rm` of that fragment
+removes the local copy too. Two fragments that set the same scalar to *different* values are
 refused (naming both fragments) rather than resolved silently by manifest
 order; identical values and mergeable arrays/objects are fine. JSON outputs
 (`settings.json`, `.mcp.json`) are read as JSONC (comments and trailing commas

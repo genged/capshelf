@@ -667,6 +667,28 @@ collisions instead of overwriting project-local values, and refuses two
 fragments that set the same key to conflicting scalar values instead of
 resolving them silently by manifest order.
 
+An array in the output has one order. The local elements come first, in their
+local order and with their duplicates. The managed elements come after them,
+in manifest order and without duplicates. A local element that is equal to a
+managed element is not kept twice. So a second `apply` with an unchanged lock
+writes nothing.
+
+The output does not record who wrote a value. A local value that is equal to a
+managed value at the same path cannot be told apart from it. Removal of the
+managed contribution removes both. For example, a project with a local
+`"y": 1` adds a fragment that also sets `"y": 1`. After `rm` of that fragment,
+`y` is gone. A local value that is different from every managed value survives.
+Removal also prunes an object or array that it makes empty.
+
+`tests/fragment-merge-properties.test.ts` checks these rules on generated
+outputs and fragment sets:
+
+- A second `apply` with an unchanged lock writes nothing.
+- The output holds every local value and every managed value, and no other
+  value.
+- `rm` after `add` keeps exactly the local values that no fragment also sets.
+- Fragment order changes only the order of array elements.
+
 Multi-target reconciliation separates planning from publication: every
 fragment target must pass collision and current-output checks before the first
 write. Publication retains the old text for rollback, and lock state advances
