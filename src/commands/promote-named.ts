@@ -61,6 +61,7 @@ import { lockKeyForRef, parseItemRef } from "../item-ref";
 import { assertLocalScopeSupported } from "../local-config";
 import { assertNotPulledSkill } from "../remote-refusal";
 import {
+  METADATA_SIDECAR,
   captureCommittedItemNeeds,
   readSidecarBytes,
   restoreSidecarBytes,
@@ -116,6 +117,7 @@ import {
 import { validatePromotePreview } from "../promote-preview";
 import type { PromotePreviewGuard } from "../promote-preview";
 import { sanitizeDisplayText } from "../pick-core";
+import { unwatchedPathsForItem } from "../promote-catalog";
 
 export interface PromoteOptions {
   message?: string;
@@ -242,6 +244,25 @@ export async function promoteOne(
   return result;
 }
 
+/**
+ * Refuse before any write when git hides a canonical source of the item.
+ * An `--assume-unchanged` or `--skip-worktree` path shows as clean, and the
+ * promote would overwrite the hidden edit. The interactive picker runs the
+ * same check and message.
+ */
+async function assertGitWatchesItem(
+  dataRepo: string,
+  kind: ItemKind,
+  name: string,
+): Promise<void> {
+  const unwatched = await unwatchedPathsForItem(dataRepo, kind, name);
+  if (unwatched.length > 0) {
+    throw new PreconditionError(
+      `git is not watching ${unwatched.join(", ")}; nothing was promoted for this item`,
+    );
+  }
+}
+
 async function promoteProjectTracked(
   project: string,
   dataRepo: string,
@@ -266,6 +287,7 @@ async function promoteProjectTracked(
   }
 
   const parsed = parseLockKey(key);
+  await assertGitWatchesItem(dataRepo, parsed.kind, parsed.name);
   if (isFragmentKind(parsed.kind)) {
     const result = await promoteFragmentSource(
       project,
@@ -542,6 +564,7 @@ async function promoteLocalTracked(
 
   const parsed = parseLockKey(key);
   assertLocalScopeSupported(parsed.kind, parsed.name, "promote");
+  await assertGitWatchesItem(dataRepo, parsed.kind, parsed.name);
   if (!isCopyDirectoryItemKind(parsed.kind)) {
     throw new PreconditionError(
       `promote --local requires a copy-directory item: ${parsed.kind}/${parsed.name}`,
@@ -1035,10 +1058,10 @@ export async function syncTrackedIntoDataRepo(
   const dataDir = join(dataRepo, repoRelPath);
   const upstreamSidecar = await readSidecarBytes(dataDir);
   const codexConfigured = kind === "skills" && hasCodexMarketplace(dataRepo);
-  const replaceSource = async (): Promise<void> => {
+  const replaceSource = async (): Promise<string[]> => {
     await opts.snapshotHooks?.beforeCanonicalCopy?.();
     await replaceDirFromFiles(localPath, snapshot.files, dataDir);
-    await restoreSidecarBytes(dataDir, upstreamSidecar);
+    const keptSidecar = await restoreSidecarBytes(dataDir, upstreamSidecar);
     await opts.snapshotHooks?.afterCanonicalCopy?.();
     const currentSnapshot = await installedSnapshot(
       project,
@@ -1060,6 +1083,7 @@ export async function syncTrackedIntoDataRepo(
       );
     }
     if (kind === "skills") await refreshCodexProjection(dataRepo);
+    return keptSidecar ? [`${repoRelPath}/${METADATA_SIDECAR}`] : [];
   };
   const expectedHead = previewHead ?? (await headSha(dataRepo));
   // PIN-11. The old guard compared one working-tree hash of the data repo

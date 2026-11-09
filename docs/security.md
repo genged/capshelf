@@ -61,7 +61,8 @@ The one thing capshelf does run is your data repo's own commit hooks, on every
 commit it makes there — your code, in a repository you control, and no
 command picks a mechanism that skips them. Read-only commands run nothing:
 `status`, `ls`, `show`, `search`, and `get-path` execute no hook, no
-`diff.external` helper, no textconv driver, and no clean filter.
+`diff.external` helper, no textconv driver, no clean filter, and no
+`core.fsmonitor` program.
 
 ## The control plane is your git host
 
@@ -161,7 +162,8 @@ that boundary:
   `--assume-unchanged` or `--skip-worktree`, so an edit there is invisible to
   that check. The interactive `promote` picker detects these paths and
   disables the item with `git is not watching <paths>`. A named
-  `capshelf promote <item>` does not check them yet.
+  `capshelf promote <item>` runs the same check before it writes. It
+  refuses with the same message and leaves the hidden file unchanged.
 
 ## What capshelf does not do
 

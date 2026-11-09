@@ -189,22 +189,32 @@ export async function removeLocalExcludes(
   return true;
 }
 
+/** The first local install path that project Git already tracks, or null. */
+export async function trackedLocalInstallPath(
+  project: string,
+  kind: ItemKind,
+  name: string,
+): Promise<string | null> {
+  if (!(await isGitWorkTreeRoot(project))) return null;
+  for (const relPath of localInstallPaths(kind, name, false)) {
+    if (await trackedPathExists(project, relPath)) return relPath;
+  }
+  return null;
+}
+
 export async function assertLocalInstallPathsUntracked(
   project: string,
   kind: ItemKind,
   name: string,
 ): Promise<void> {
-  if (!(await isGitWorkTreeRoot(project))) return;
-  for (const relPath of localInstallPaths(kind, name, false)) {
-    const tracked = await trackedPathExists(project, relPath);
-    if (tracked) {
-      throw new PreconditionError(
-        `local install path is already tracked by git: ${relPath}`,
-        {
-          hint: ".git/info/exclude cannot protect tracked files; remove it from git or use project scope",
-        },
-      );
-    }
+  const relPath = await trackedLocalInstallPath(project, kind, name);
+  if (relPath !== null) {
+    throw new PreconditionError(
+      `local install path is already tracked by git: ${relPath}`,
+      {
+        hint: ".git/info/exclude cannot protect tracked files; remove it from git or use project scope",
+      },
+    );
   }
 }
 

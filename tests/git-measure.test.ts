@@ -20,7 +20,8 @@ test("Git measurement counts repeated batch requests separately from spawns", as
       await catFileBlobs(${JSON.stringify(repo)}, [${JSON.stringify(id)}]);
       await catFileBlobs(${JSON.stringify(repo)}, ["${"0".repeat(40)}"]).catch(() => {});`;
     const result = Bun.spawnSync([process.execPath, "-e", script], {
-      env: { ...process.env, CAPSHELF_GIT_MEASURE: "1" },
+      // FORCE_COLOR makes console.error wrap a line in ANSI codes.
+      env: { ...process.env, CAPSHELF_GIT_MEASURE: "1", FORCE_COLOR: "1" },
     });
     expect(result.exitCode).toBe(0);
     const records = result.stderr
