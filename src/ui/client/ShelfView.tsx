@@ -611,7 +611,7 @@ function ShelfOverview({
   const { facts, projects } = shelf;
   const name = splitDisplayPath(shelf.display).name;
   return (
-    <article class="detail" aria-label={`${name} overview`}>
+    <article class="detail detail-overview" aria-label={`${name} overview`}>
       <div class="detail-body">
         <DetailHead
           crumbs="Shelf"

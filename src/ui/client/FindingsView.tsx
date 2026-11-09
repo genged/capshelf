@@ -4,7 +4,11 @@ import type {
   UiDiffResponse,
   UiProjectStatus,
 } from "../shared/api-types";
-import { findingsAcrossProjects, sharedFindings } from "../shared/view-model";
+import {
+  findingsAcrossProjects,
+  findingsAllClear,
+  sharedFindings,
+} from "../shared/view-model";
 import { ItemDetail } from "./ItemDetail";
 import { ItemRow } from "./ItemRow";
 import { Icon } from "./icons";
@@ -131,7 +135,9 @@ export function FindingsView({
       </section>
       {selected && selectedGroup ? (
         <ItemDetail
-          key={`${selectedGroup.project}:${selected.id}`}
+          // The read time remounts the detail after a refresh, so its diff
+          // is read again, as in the project view.
+          key={`${selectedGroup.project}\t${selected.id}\t${statuses.find((status) => status.project === selectedGroup.project)?.generatedAt ?? ""}`}
           item={selected}
           projectName={selectedGroup.name}
           dataOverride={dataOverride}
@@ -142,10 +148,12 @@ export function FindingsView({
         />
       ) : (
         <section class="detail detail-empty">
-          {!discovering &&
-          total === 0 &&
-          pending === 0 &&
-          unread.length === 0 ? (
+          {findingsAllClear({
+            discovering,
+            found: total,
+            pending,
+            unread: unread.length,
+          }) ? (
             <p class="banner" role="status">
               <Icon name="check" />
               <span>Every project is up to date. Nothing to run.</span>

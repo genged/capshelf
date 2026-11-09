@@ -18,6 +18,7 @@ import {
   changedItemIds,
   currentStatus,
   externalEntries,
+  findingsAllClear,
   jumpCandidates,
   type JumpTarget,
   projectCounts,
@@ -86,58 +87,71 @@ export function Dashboard(): preact.JSX.Element {
   // Shelf catalogs for Jump, read the first time it opens.
   const [shelves, setShelves] = useState<UiShelf[] | null>(null);
   const diffCache = useRef(new Map<string, Promise<UiDiffResponse>>());
+  // Each refresh takes the next number. A reply from an older refresh can
+  // arrive after a newer one, and it must not replace the newer data.
+  const readGeneration = useRef(0);
 
-  const loadProject = useCallback(async (path: string): Promise<void> => {
-    try {
-      const data = await apiGet<UiProjectStatus>("/api/project/status", {
-        project: path,
-      });
-      let changed = new Set<string>();
-      setLoads((previous) => {
-        const next = new Map(previous);
-        const old = previous.get(path);
-        changed = changedItemIds(old?.data?.items, data.items);
-        next.set(path, {
-          state: "ready",
-          data,
-          stale: false,
-          error: null,
-          changed,
+  const loadProject = useCallback(
+    async (path: string, generation: number): Promise<void> => {
+      try {
+        const data = await apiGet<UiProjectStatus>("/api/project/status", {
+          project: path,
         });
-        return next;
-      });
-      if (changed.size > 0) {
-        window.setTimeout(() => {
-          setLoads((previous) => {
-            const current = previous.get(path);
-            if (!current) return previous;
-            const next = new Map(previous);
-            next.set(path, { ...current, changed: new Set() });
-            return next;
+        if (generation !== readGeneration.current) return;
+        let changed = new Set<string>();
+        setLoads((previous) => {
+          const next = new Map(previous);
+          const old = previous.get(path);
+          changed = changedItemIds(old?.data?.items, data.items);
+          next.set(path, {
+            state: "ready",
+            data,
+            stale: false,
+            error: null,
+            changed,
           });
-        }, 3000);
-      }
-    } catch (error) {
-      setLoads((previous) => {
-        const next = new Map(previous);
-        const old = previous.get(path) ?? EMPTY_LOAD;
-        next.set(path, {
-          ...old,
-          state: "error",
-          stale: true,
-          error:
-            error instanceof ApiError ? error : new ApiError(0, String(error)),
+          return next;
         });
-        return next;
-      });
-    }
-  }, []);
+        if (changed.size > 0) {
+          window.setTimeout(() => {
+            setLoads((previous) => {
+              const current = previous.get(path);
+              if (!current) return previous;
+              const next = new Map(previous);
+              next.set(path, { ...current, changed: new Set() });
+              return next;
+            });
+          }, 3000);
+        }
+      } catch (error) {
+        if (generation !== readGeneration.current) return;
+        setLoads((previous) => {
+          const next = new Map(previous);
+          const old = previous.get(path) ?? EMPTY_LOAD;
+          next.set(path, {
+            ...old,
+            state: "error",
+            stale: true,
+            error:
+              error instanceof ApiError
+                ? error
+                : new ApiError(0, String(error)),
+          });
+          return next;
+        });
+      }
+    },
+    [],
+  );
 
   const refreshAll = useCallback(async (): Promise<void> => {
     if (!hasToken()) return;
+    readGeneration.current += 1;
+    const generation = readGeneration.current;
     setRefreshing(true);
     try {
       const next = await apiGet<UiOverview>("/api/overview");
+      if (generation !== readGeneration.current) return;
       setOverview(next);
       setOverviewError(null);
       const existing = next.projects.filter((project) => project.exists);
@@ -151,14 +165,18 @@ export function Dashboard(): preact.JSX.Element {
       });
       diffCache.current.clear();
       setShelves(null);
-      await Promise.all(existing.map((project) => loadProject(project.path)));
+      await Promise.all(
+        existing.map((project) => loadProject(project.path, generation)),
+      );
+      if (generation !== readGeneration.current) return;
       setRefreshedAt(new Date());
     } catch (error) {
+      if (generation !== readGeneration.current) return;
       setOverviewError(
         error instanceof ApiError ? error : new ApiError(0, String(error)),
       );
     } finally {
-      setRefreshing(false);
+      if (generation === readGeneration.current) setRefreshing(false);
     }
   }, [loadProject]);
 
@@ -208,15 +226,23 @@ export function Dashboard(): preact.JSX.Element {
   // opens. A shelf that fails to read only drops out of the results.
   useEffect(() => {
     if (!jumpOpen || shelves !== null || overview === null) return;
+    // A refresh sets a new overview and clears the catalogs. A read that
+    // started before it must not fill them with the old shelves.
+    let current = true;
     void Promise.all(
       overview.shelves.map((shelf) =>
         apiGet<UiShelf>("/api/shelf", { repo: shelf.dataRepo }).catch(
           () => null,
         ),
       ),
-    ).then((read) =>
-      setShelves(read.filter((shelf): shelf is UiShelf => shelf !== null)),
-    );
+    ).then((read) => {
+      if (current) {
+        setShelves(read.filter((shelf): shelf is UiShelf => shelf !== null));
+      }
+    });
+    return () => {
+      current = false;
+    };
   }, [jumpOpen, shelves, overview]);
 
   const projects = overview?.projects ?? [];
@@ -391,11 +417,25 @@ export function Dashboard(): preact.JSX.Element {
     (sum, status) => sum + projectCounts(status.items).attention,
     0,
   );
+  // Projects with no current status: missing, or the last read failed.
+  const unreadProjects = projects
+    .filter(
+      (registered) =>
+        !registered.exists || loads.get(registered.path)?.state === "error",
+    )
+    .map((registered) => splitDisplayPath(registered.display).name);
+  const findingsClear = findingsAllClear({
+    discovering: overview === null,
+    found: findingsCount,
+    pending,
+    unread: unreadProjects.length,
+  });
   const picker = (
     <RailPicker
       entries={treeEntries}
       selectedPath={inFindings ? null : selectedPath}
       findings={findingsCount}
+      findingsComplete={findingsClear || findingsCount > 0}
       onSelect={selectProject}
       onFindings={openFindings}
     />
@@ -518,15 +558,23 @@ export function Dashboard(): preact.JSX.Element {
                 <Icon name="inbox" />
                 <span class="rail-row-name">All findings</span>
                 <span
-                  class={`count${findingsCount > 0 ? " is-attention" : " is-ok"}`}
+                  class={`count${findingsCount > 0 ? " is-attention" : findingsClear ? " is-ok" : ""}`}
                 >
-                  {findingsCount > 0 ? findingsCount : <Icon name="check" />}
+                  {findingsCount > 0 ? (
+                    findingsCount
+                  ) : findingsClear ? (
+                    <Icon name="check" />
+                  ) : (
+                    "?"
+                  )}
                   <span class="visually-hidden">
-                    {findingsCount === 0
-                      ? "No item needs attention"
-                      : findingsCount === 1
+                    {findingsCount > 0
+                      ? findingsCount === 1
                         ? " item needs attention"
-                        : " items need attention"}
+                        : " items need attention"
+                      : findingsClear
+                        ? "No item needs attention"
+                        : "Not every project is read"}
                   </span>
                 </span>
               </a>
@@ -537,13 +585,7 @@ export function Dashboard(): preact.JSX.Element {
               statuses={statuses}
               pending={pending}
               discovering={overview === null}
-              unread={projects
-                .filter(
-                  (registered) =>
-                    !registered.exists ||
-                    loads.get(registered.path)?.state === "error",
-                )
-                .map((registered) => splitDisplayPath(registered.display).name)}
+              unread={unreadProjects}
               dataOverride={commandOverride}
               project={route.project}
               item={route.item}

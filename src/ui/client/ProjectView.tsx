@@ -60,6 +60,10 @@ export function ProjectView({
   loadDiff: (itemId: string, view: DiffViewName) => Promise<UiDiffResponse>;
 }): preact.JSX.Element {
   const data = load.data;
+  // A failed refresh keeps the old data on screen. Every pane that shows
+  // that data says so.
+  const refreshError =
+    load.state === "error" ? (load.error?.message ?? "unknown error") : null;
   const name = splitDisplayPath(registered.display).name;
 
   if (!data) {
@@ -109,21 +113,21 @@ export function ProjectView({
         onFilter={onFilter}
         selected={selected}
         changed={load.changed}
-        refreshError={
-          load.state === "error" ? (load.error?.message ?? null) : null
-        }
+        refreshError={refreshError}
         onSelect={onSelect}
       />
       {item ? (
         <ItemDetail
           // One item id can exist in two projects; the key must remount the
-          // detail, and its loaded diff, when the project changes.
-          key={`${project}\t${item.id}`}
+          // detail, and its loaded diff, when the project changes. The read
+          // time remounts it after a refresh, so the diff is read again.
+          key={`${project}\t${item.id}\t${data.generatedAt}`}
           item={item}
           projectName={name}
           dataOverride={dataOverride}
           loadDiff={(view) => loadDiff(item.id, view)}
           onBack={() => onSelect(null)}
+          refreshError={refreshError}
         />
       ) : external ? (
         <ExternalDetail
@@ -133,6 +137,7 @@ export function ProjectView({
           projectName={name}
           displayPath={displayPath}
           onBack={() => onSelect(null)}
+          refreshError={refreshError}
         />
       ) : (
         <ProjectOverview
@@ -141,6 +146,7 @@ export function ProjectView({
           externals={externals}
           dataOverride={dataOverride}
           onBack={() => onSelect(null)}
+          refreshError={refreshError}
         />
       )}
     </>
@@ -302,12 +308,15 @@ function ProjectOverview({
   externals,
   dataOverride,
   onBack,
+  refreshError,
 }: {
   data: UiProjectStatus;
   name: string;
   externals: ExternalEntry[];
   dataOverride: string | undefined;
   onBack: () => void;
+  /** See `DetailHead`. */
+  refreshError: string | null;
 }): preact.JSX.Element {
   const counts = projectCounts(data.items);
   const skillsSh = externals.filter((entry) => entry.type === "skills.sh");
@@ -325,7 +334,7 @@ function ProjectOverview({
       : null,
   ].filter((part) => part !== null);
   return (
-    <article class="detail" aria-label={`${name} overview`}>
+    <article class="detail detail-overview" aria-label={`${name} overview`}>
       <ActionBar
         icon="folder"
         tone="ok"
@@ -339,8 +348,10 @@ function ProjectOverview({
           title={name}
           backLabel="Items"
           onBack={onBack}
+          refreshError={refreshError}
         />
-        {counts.items === 0 ? null : counts.attention === 0 ? (
+        {/* An all-clear from an older read would be a false all-clear. */}
+        {counts.items === 0 || refreshError ? null : counts.attention === 0 ? (
           <p class="banner" role="status">
             <Icon name="check" />
             <span>

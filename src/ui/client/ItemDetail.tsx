@@ -115,12 +115,19 @@ export function DetailHead({
   title,
   backLabel,
   onBack,
+  refreshError = null,
   children,
 }: {
   crumbs: ComponentChildren;
   title: string;
   backLabel: string;
   onBack: () => void;
+  /**
+   * The message of the project's last read when it failed. The facts below
+   * are then from an older read. On a phone the list, which also says so,
+   * is hidden behind the detail, so the detail says it too.
+   */
+  refreshError?: string | null;
   children?: ComponentChildren;
 }): preact.JSX.Element {
   return (
@@ -131,6 +138,14 @@ export function DetailHead({
       </button>
       <p class="detail-crumbs">{crumbs}</p>
       <h2 class="detail-title">{title}</h2>
+      {refreshError ? (
+        <p class="detail-state tone-attention" role="status">
+          <Icon name="alert" />
+          <span>
+            Refresh failed: {refreshError}. This is the last good read.
+          </span>
+        </p>
+      ) : null}
       {children}
     </header>
   );
@@ -142,6 +157,7 @@ export function ItemDetail({
   dataOverride,
   loadDiff,
   onBack,
+  refreshError = null,
 }: {
   item: UiItem;
   projectName: string;
@@ -149,6 +165,8 @@ export function ItemDetail({
   dataOverride: string | undefined;
   loadDiff: (view: DiffViewName) => Promise<UiDiffResponse>;
   onBack: () => void;
+  /** See `DetailHead`. */
+  refreshError?: string | null;
 }): preact.JSX.Element {
   const updateCommand = capshelfCommand(dataOverride, [
     "update",
@@ -177,6 +195,7 @@ export function ItemDetail({
               {item.source === "remote" ? " · remote" : ""}
             </>
           }
+          refreshError={refreshError}
           title={item.name}
           backLabel={projectName}
           onBack={onBack}

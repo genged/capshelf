@@ -154,12 +154,15 @@ export function RailPicker({
   entries,
   selectedPath,
   findings,
+  findingsComplete,
   onSelect,
   onFindings,
 }: {
   entries: TreeEntry[];
   selectedPath: string | null;
   findings: number;
+  /** False while a zero count could hide the findings of an unread project. */
+  findingsComplete: boolean;
   onSelect: (path: string) => void;
   onFindings: () => void;
 }): preact.JSX.Element | null {
@@ -176,7 +179,10 @@ export function RailPicker({
           else onSelect(value);
         }}
       >
-        <option value={FINDINGS_VALUE}>All findings ({findings})</option>
+        <option value={FINDINGS_VALUE}>
+          All findings ({findingsComplete ? findings : "not every project read"}
+          )
+        </option>
         {entries.map((entry) => {
           const attention = entry.counts?.attention ?? 0;
           return (

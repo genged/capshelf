@@ -25,7 +25,9 @@ import {
   currentStatus,
   externalEntries,
   findingsAcrossProjects,
+  findingsAllClear,
   groupByKind,
+  isBehind,
   jumpCandidates,
   listGroups,
   projectCounts,
@@ -467,6 +469,18 @@ describe("current statuses", () => {
   });
 });
 
+describe("the all-clear for All findings", () => {
+  test("only a full read with no finding is all clear", () => {
+    const base = { discovering: false, found: 0, pending: 0, unread: 0 };
+    expect(findingsAllClear(base)).toBe(true);
+    // Each of these can hide findings, so none of them may read as clear.
+    expect(findingsAllClear({ ...base, discovering: true })).toBe(false);
+    expect(findingsAllClear({ ...base, pending: 1 })).toBe(false);
+    expect(findingsAllClear({ ...base, unread: 1 })).toBe(false);
+    expect(findingsAllClear({ ...base, found: 1 })).toBe(false);
+  });
+});
+
 describe("across projects", () => {
   const billing = status("~/code/billing-api", [
     item("skills/quick-review", "update_available", {
@@ -652,6 +666,27 @@ describe("shelf views", () => {
     expect(usageState("skills/quick-review", usage(checkout), read).state).toBe(
       "behind-edited",
     );
+  });
+
+  test("a behind pin with visible extra files is not a clean update", () => {
+    // `update` deletes the extra files under consent, so the Rollouts note
+    // "No local edit. A plain update takes it." and its command must not
+    // apply. The pin is still behind, so the rollout still counts it.
+    const extras = status("~/code/extras", [
+      item("skills/quick-review", "update_available", {
+        row: {
+          ...item("skills/quick-review", "update_available").row,
+          visibleExtras: ["notes.txt"],
+        },
+      }),
+    ]);
+    const result = usageState(
+      "skills/quick-review",
+      usage(extras, { current: false }),
+      new Map([[extras.project, extras]]),
+    );
+    expect(result.state).toBe("other");
+    expect(isBehind(result)).toBe(true);
   });
 
   test("a bundled item joins the project's system row", () => {

@@ -1255,7 +1255,15 @@ fieldset.seg {
     display: none;
   }
 
-  .frame:not(.has-selection) > .detail {
+  /*
+   * With nothing selected, an overview stacks under the list. It holds facts
+   * and commands that no other pane shows, so it must stay reachable.
+   */
+  .frame:not(.has-selection) > .detail:not(.detail-overview) {
+    display: none;
+  }
+
+  .detail-overview .back-link {
     display: none;
   }
 

@@ -72,12 +72,15 @@ export function ExternalDetail({
   projectName,
   displayPath,
   onBack,
+  refreshError = null,
 }: {
   entry: ExternalEntry;
   project: string;
   projectName: string;
   displayPath: (path: string) => string;
   onBack: () => void;
+  /** See `DetailHead`. */
+  refreshError?: string | null;
 }): preact.JSX.Element {
   const managedBy =
     entry.type === "skills.sh"
@@ -114,6 +117,7 @@ export function ExternalDetail({
           title={entry.name}
           backLabel={projectName}
           onBack={onBack}
+          refreshError={refreshError}
         >
           <p class="detail-state">
             <Icon name="notequal" />

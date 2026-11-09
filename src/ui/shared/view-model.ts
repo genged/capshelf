@@ -96,6 +96,26 @@ export function awaitingStatus(read: StatusRead): boolean {
 }
 
 /**
+ * True when a view may say that no item in any project needs attention.
+ * A project that is missing, failed its read, or is still reading can hold
+ * findings, so the claim needs every project read.
+ */
+export function findingsAllClear(summary: {
+  /** The project list itself is still loading. */
+  discovering: boolean;
+  found: number;
+  pending: number;
+  unread: number;
+}): boolean {
+  return (
+    !summary.discovering &&
+    summary.found === 0 &&
+    summary.pending === 0 &&
+    summary.unread === 0
+  );
+}
+
+/**
  * The rows whose state or identity moved between two refreshes. The UI
  * highlights each once.
  */
@@ -557,8 +577,8 @@ export function usageState(
   /** The shelf item's source: a bundled item joins the system row. */
   source: UiShelfItem["source"] = "data",
   /**
-   * Projects whose first status read is still running. Only for them does
-   * the shelf flag stand in for the row. A failed read, or a status that
+   * Projects in a read with no current status (`awaitingStatus`). Only for
+   * them does the shelf flag stand in for the row. A failed read, or a status that
    * leaves the item out (a name skills.sh owns, for one), stays unknown, so
    * the views show no state and no command the CLI did not compute.
    */
@@ -597,8 +617,12 @@ export function usageState(
       itemId: null,
     };
   }
+  // "behind" promises that a plain update only takes the new version. An
+  // update also deletes visible extra files (D12, `visibleExtras`), so a row
+  // with them is a finding to resolve first.
   const state: UsageState =
-    row.row.state === "update_available"
+    row.row.state === "update_available" &&
+    (row.row.visibleExtras?.length ?? 0) === 0
       ? "behind"
       : row.row.state === "drifted_and_update"
         ? "behind-edited"
