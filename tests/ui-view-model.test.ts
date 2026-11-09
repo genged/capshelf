@@ -411,6 +411,7 @@ function status(
     personalClaudeExternal: [],
     shelf: null,
     notices: [],
+    snapshot: "1",
     generatedAt: "2026-11-03T00:00:00.000Z",
     ...overrides,
   };

@@ -127,6 +127,11 @@ export interface UiProjectStatus {
   personalClaudeExternal: ExternalPersonalClaudeSkill[];
   shelf: UiShelfFacts | null;
   notices: UiNotice[];
+  /**
+   * The id of this read on the server. A diff request names it, so the
+   * comparison comes from these rows and not from a later read.
+   */
+  snapshot: string;
   generatedAt: string;
 }
 

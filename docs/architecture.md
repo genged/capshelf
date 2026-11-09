@@ -1028,7 +1028,10 @@ second implementation. The command starts a `Bun.serve` server on 127.0.0.1
 | `/api/shelf/item` | `findMasterItemByRef`, the item's files | `show` |
 
 `status` and the dashboard call one function for the rows, so a row in the
-browser is the row `status --json` prints. The server adds display labels
+browser is the row `status --json` prints. Each status response carries a
+`snapshot` id. A diff request names it, and the server builds the comparison
+from the rows of that read. Two reads of one project can overlap, so the
+read that finished last is not always the read on screen. The server adds display labels
 (`src/ui/shared/state-label.ts`) and the commands a state can be resolved
 with (`src/status-actions.ts`). It computes no new fact and writes no file.
 The client groups a project's rows by state and names their kind with

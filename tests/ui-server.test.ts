@@ -493,6 +493,35 @@ describe("capshelf ui server", () => {
     }
   });
 
+  test("a diff answers from the status read it names, not the last one", async () => {
+    // Two reads of one project can overlap, and the older one can finish
+    // last. The client keeps the newer read, so its diff names that read.
+    const skill = join(world.project, ".agents", "skills", "hello", "SKILL.md");
+    const id = "project/data/skills/hello";
+    const api = createUiApi({ registryPath: world.registryPath });
+    await writeFile(skill, "# hello\n\nfirst line\nsecond line\n");
+    const clean = await api.projectStatus(world.project);
+    await writeFile(skill, "# hello\n\nfirst line\nedited line\n");
+    const edited = await api.projectStatus(world.project);
+    expect(clean.snapshot).not.toBe(edited.snapshot);
+    // The last read is the edited one, but the clean read's row has no diff.
+    expect(
+      (await api.projectDiff(world.project, id, "installed", clean.snapshot))
+        .diff,
+    ).toBeNull();
+    expect(
+      (await api.projectDiff(world.project, id, "installed", edited.snapshot))
+        .diff?.text,
+    ).toContain("+edited line");
+    // A snapshot the server no longer keeps, or of another project, is a 404.
+    await expect(
+      api.projectDiff(world.project, id, "installed", "no-such-read"),
+    ).rejects.toThrow("no longer kept");
+    await expect(
+      api.projectDiff(world.dataRepo, id, "installed", edited.snapshot),
+    ).rejects.toThrow();
+  });
+
   test("a relative --data override is printed as the resolved repository", async () => {
     // `capshelf --data ../shelf ui` resolves the override against the
     // directory it started in, but each printed command runs from a project

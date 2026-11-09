@@ -59,6 +59,7 @@ import {
   buildStatusReport,
   resolveStatusDataRepo,
   rowFailsStrict,
+  type StatusReport,
   statusDiffViews,
 } from "../status-report";
 import type {
@@ -103,6 +104,9 @@ interface LoadedProject {
   rows: StatusRow[];
 }
 
+/** Status reads kept for diff requests: enough for every open project. */
+const SNAPSHOT_LIMIT = 64;
+
 const REVISION_COUNT = 30;
 const REVISION_FORMAT = "%H%x1f%h%x1f%s%x1f%an%x1f%aI";
 
@@ -113,6 +117,8 @@ export interface UiApi {
     path: string,
     itemId: string,
     view: DiffViewName,
+    /** The `snapshot` of the status read the client shows. */
+    snapshot?: string,
   ): Promise<UiDiffResponse>;
   shelf(dataRepo: string): Promise<UiShelf>;
   shelfItem(
@@ -143,6 +149,11 @@ export function createUiApi(ctx: UiContext): UiApi {
   // the comparison is built from the row the user is looking at rather than
   // from a second status run that could disagree with it.
   const loaded = new Map<string, LoadedProject>();
+  // Every recent status read by its snapshot id. Two reads of one project can
+  // overlap, and the older one can finish last. The client keeps the newer
+  // one, so a diff request names its snapshot instead of trusting `loaded`.
+  const snapshots = new Map<string, LoadedProject>();
+  let nextSnapshot = 0;
 
   async function registeredProjects(): Promise<UiRegisteredProject[]> {
     const registry = await loadProjectRegistry(ctx.registryPath);
@@ -198,7 +209,12 @@ export function createUiApi(ctx: UiContext): UiApi {
     return out;
   }
 
-  async function loadProject(path: string): Promise<LoadedProject> {
+  async function loadProject(path: string): Promise<{
+    registered: UiRegisteredProject;
+    state: LoadedProject;
+    snapshot: string;
+    report: StatusReport;
+  }> {
     const registered = await requireRegistered(path);
     const project = registered.path;
     const manifest = await loadManifest(project);
@@ -221,7 +237,7 @@ export function createUiApi(ctx: UiContext): UiApi {
       remotes,
       dataRepo,
     });
-    const result: LoadedProject = {
+    const state: LoadedProject = {
       project,
       manifest,
       projectLock,
@@ -230,8 +246,16 @@ export function createUiApi(ctx: UiContext): UiApi {
       dataRepo,
       rows: report.rows,
     };
-    loaded.set(project, result);
-    return result;
+    loaded.set(project, state);
+    nextSnapshot += 1;
+    const snapshot = String(nextSnapshot);
+    snapshots.set(snapshot, state);
+    // A Map iterates in insertion order, so the first key is the oldest.
+    for (const old of snapshots.keys()) {
+      if (snapshots.size <= SNAPSHOT_LIMIT) break;
+      snapshots.delete(old);
+    }
+    return { registered, state, snapshot, report };
   }
 
   return {
@@ -260,37 +284,8 @@ export function createUiApi(ctx: UiContext): UiApi {
     },
 
     async projectStatus(path: string): Promise<UiProjectStatus> {
-      const registered = await requireRegistered(path);
-      const project = registered.path;
-      const manifest = await loadManifest(project);
-      const [projectLock, localLock, remotes] = await Promise.all([
-        loadLock(project),
-        loadLocalLock(project),
-        loadRemotesLock(project),
-      ]);
-      assertNoScopeCollisions(projectLock, localLock);
-      const dataRepo = await resolveStatusDataRepo({
-        override: dataOverride,
-        manifest,
-        project,
-      });
-      const report = await buildStatusReport({
-        project,
-        manifest,
-        projectLock,
-        localLock,
-        remotes,
-        dataRepo,
-      });
-      loaded.set(project, {
-        project,
-        manifest,
-        projectLock,
-        localLock,
-        remotes,
-        dataRepo,
-        rows: report.rows,
-      });
+      const { registered, state, snapshot, report } = await loadProject(path);
+      const { project, manifest, projectLock, localLock, dataRepo } = state;
 
       const notices: UiNotice[] = [];
       if (dataRepo === null) {
@@ -323,6 +318,7 @@ export function createUiApi(ctx: UiContext): UiApi {
         personalClaudeExternal: report.personalClaudeExternal,
         shelf: dataRepo === null ? null : await shelfFacts(dataRepo),
         notices,
+        snapshot,
         generatedAt: new Date().toISOString(),
       };
     },
@@ -331,8 +327,18 @@ export function createUiApi(ctx: UiContext): UiApi {
       path: string,
       id: string,
       view: DiffViewName,
+      snapshot?: string,
     ): Promise<UiDiffResponse> {
-      const state = loaded.get(path) ?? (await loadProject(path));
+      // With no snapshot, the project's last read answers, or a new one.
+      const state =
+        snapshot === undefined
+          ? (loaded.get(path) ?? (await loadProject(path)).state)
+          : snapshots.get(snapshot);
+      if (state === undefined || state.project !== path) {
+        throw new NotFoundError(
+          `status read ${snapshot ?? ""} of ${path} is no longer kept; refresh the dashboard`,
+        );
+      }
       const row = state.rows.find((candidate) => itemId(candidate) === id);
       if (!row) {
         throw new NotFoundError(`item is not tracked in this project: ${id}`);

@@ -95,7 +95,15 @@ export function startUiServer(options: UiServerOptions): UiServer {
             `invalid view ${view}; expected installed or upstream`,
           );
         }
-        return await api.projectDiff(param("project"), param("item"), view);
+        // A diff names the status read it belongs to. Without one, the
+        // project's last read answers.
+        const snapshot = url.searchParams.get("snapshot") ?? undefined;
+        return await api.projectDiff(
+          param("project"),
+          param("item"),
+          view,
+          snapshot,
+        );
       }
       case "/api/shelf":
         return await gate.run(() => api.shelf(param("repo")));

@@ -20,7 +20,7 @@ import {
   Notice,
   Skeleton,
 } from "./common";
-import type { ProjectLoad } from "./dashboard";
+import type { DiffSource, ProjectLoad } from "./dashboard";
 import { ExternalDetail, externalRowText } from "./ExternalRow";
 import { ActionBar, DetailHead, ItemDetail } from "./ItemDetail";
 import { ItemRow, onListKeyDown } from "./ItemRow";
@@ -57,7 +57,11 @@ export function ProjectView({
   selected: string | null;
   onSelect: (itemId: string | null) => void;
   displayPath: (path: string) => string;
-  loadDiff: (itemId: string, view: DiffViewName) => Promise<UiDiffResponse>;
+  loadDiff: (
+    status: DiffSource,
+    itemId: string,
+    view: DiffViewName,
+  ) => Promise<UiDiffResponse>;
 }): preact.JSX.Element {
   const data = load.data;
   // A failed refresh keeps the old data on screen. Every pane that shows
@@ -119,13 +123,13 @@ export function ProjectView({
       {item ? (
         <ItemDetail
           // One item id can exist in two projects; the key must remount the
-          // detail, and its loaded diff, when the project changes. The read
-          // time remounts it after a refresh, so the diff is read again.
-          key={`${project}\t${item.id}\t${data.generatedAt}`}
+          // detail, and its loaded diff, when the project changes. The
+          // snapshot remounts it after a refresh, so the diff is read again.
+          key={`${project}\t${item.id}\t${data.snapshot}`}
           item={item}
           projectName={name}
           dataOverride={dataOverride}
-          loadDiff={(view) => loadDiff(item.id, view)}
+          loadDiff={(view) => loadDiff(data, item.id, view)}
           onBack={() => onSelect(null)}
           refreshError={refreshError}
         />

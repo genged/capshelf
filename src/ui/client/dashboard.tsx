@@ -60,6 +60,9 @@ function jumpRoute(target: JumpTarget): Route {
   }
 }
 
+/** The status read a diff request belongs to. */
+export type DiffSource = Pick<UiProjectStatus, "project" | "snapshot">;
+
 export interface ProjectLoad extends StatusRead {
   error: ApiError | null;
   /** Item ids whose state moved in the last refresh; highlighted once. */
@@ -343,17 +346,20 @@ export function Dashboard(): preact.JSX.Element {
       : (projects.find((project) => project.path === selectedPath) ?? null);
   const selectedItem = route.view === "status" ? route.item : null;
 
+  // A diff belongs to the status read on screen. The server keeps each read
+  // by its snapshot, so an older read that finished last cannot answer.
   const loadDiff = useCallback(
     (
-      project: string,
+      status: DiffSource,
       itemId: string,
       view: DiffViewName,
     ): Promise<UiDiffResponse> => {
-      const key = `${project}\t${itemId}\t${view}`;
+      const key = `${status.project}\t${status.snapshot}\t${itemId}\t${view}`;
       const cached = diffCache.current.get(key);
       if (cached) return cached;
       const promise = apiGet<UiDiffResponse>("/api/project/diff", {
-        project,
+        project: status.project,
+        snapshot: status.snapshot,
         item: itemId,
         view,
       });
@@ -642,7 +648,7 @@ export function Dashboard(): preact.JSX.Element {
                 })
               }
               displayPath={(path) => homeDisplay(path, overview.home)}
-              loadDiff={(itemId, view) => loadDiff(selectedPath, itemId, view)}
+              loadDiff={loadDiff}
               picker={picker}
               dataOverride={commandOverride}
             />

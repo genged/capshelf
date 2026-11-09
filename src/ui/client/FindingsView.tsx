@@ -9,6 +9,7 @@ import {
   findingsAllClear,
   sharedFindings,
 } from "../shared/view-model";
+import type { DiffSource } from "./dashboard";
 import { ItemDetail } from "./ItemDetail";
 import { ItemRow } from "./ItemRow";
 import { Icon } from "./icons";
@@ -47,7 +48,7 @@ export function FindingsView({
   item: string | null;
   onSelect: (project: string, item: string | null) => void;
   loadDiff: (
-    project: string,
+    status: DiffSource,
     item: string,
     view: DiffViewName,
   ) => Promise<UiDiffResponse>;
@@ -61,6 +62,10 @@ export function FindingsView({
   const selected =
     selectedGroup?.rows.find((row) => row.id === item) ??
     (project === null ? (selectedGroup?.rows[0] ?? null) : null);
+  // The read the group came from, so its diff names the same snapshot.
+  const selectedStatus =
+    statuses.find((status) => status.project === selectedGroup?.project) ??
+    null;
 
   return (
     <>
@@ -133,17 +138,15 @@ export function FindingsView({
           </section>
         ) : null}
       </section>
-      {selected && selectedGroup ? (
+      {selected && selectedGroup && selectedStatus ? (
         <ItemDetail
-          // The read time remounts the detail after a refresh, so its diff
-          // is read again, as in the project view.
-          key={`${selectedGroup.project}\t${selected.id}\t${statuses.find((status) => status.project === selectedGroup.project)?.generatedAt ?? ""}`}
+          // The snapshot remounts the detail after a refresh, so its diff is
+          // read again, as in the project view.
+          key={`${selectedGroup.project}\t${selected.id}\t${selectedStatus.snapshot}`}
           item={selected}
           projectName={selectedGroup.name}
           dataOverride={dataOverride}
-          loadDiff={(view) =>
-            loadDiff(selectedGroup.project, selected.id, view)
-          }
+          loadDiff={(view) => loadDiff(selectedStatus, selected.id, view)}
           onBack={() => onSelect(selectedGroup.project, null)}
         />
       ) : (
