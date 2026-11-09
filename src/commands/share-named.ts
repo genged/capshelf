@@ -66,6 +66,7 @@ import {
   removeLocalConfigName,
   removeLocalExcludes,
   saveLocalConfig,
+  trackedLocalInstallPath,
 } from "../local-config";
 import { addToManifest } from "../promote-core";
 import type { AdoptionCandidate, PromoteResult, Scope } from "../promote-core";
@@ -183,28 +184,44 @@ export async function shareOne(
     );
   }
   const name = ref.name;
-  const scope = parseShareScope(
-    opts.to,
-    installsAtSkillTarget(kind) ? "local" : "project",
-  );
+  const requestedScope = parseShareScope(opts.to);
   if (isFragmentKind(kind)) {
-    await shareFragment(kind, name, scope, opts, cmd);
+    await shareFragment(kind, name, requestedScope ?? "project", opts, cmd);
     return;
   }
   if (kind === "subagents") {
-    await shareSubagent(name, scope, opts, cmd);
+    await shareSubagent(name, requestedScope ?? "project", opts, cmd);
     return;
   }
   if (!isCopyDirectoryItemKind(kind)) {
     throw new Error(`no share strategy for ${kind}/${name}`);
   }
-  await shareCopyItem(kind, name, scope, opts, cmd);
+  await shareCopyItem(kind, name, requestedScope, opts, cmd);
+}
+
+/**
+ * The scope `share` picks when `--to` is absent. Skills and plugins go to
+ * local scope, unless project Git already tracks their install path: then
+ * teammates already have the files, and `.git/info/exclude` cannot hide them.
+ * Pi extensions go to project scope.
+ */
+export async function defaultCopyItemShareScope(
+  project: string,
+  kind: CopyDirectoryItemKind,
+  name: string,
+): Promise<{ scope: ShareScope; trackedPath: string | null }> {
+  if (!installsAtSkillTarget(kind)) {
+    return { scope: "project", trackedPath: null };
+  }
+  const trackedPath = await trackedLocalInstallPath(project, kind, name);
+  return { scope: trackedPath === null ? "local" : "project", trackedPath };
 }
 
 export async function shareCopyItem(
   kind: CopyDirectoryItemKind,
   name: string,
-  scope: ShareScope,
+  /** The scope `--to` asked for, or null for the default. */
+  requestedScope: ShareScope | null,
   opts: ShareOptions,
   cmd: Command,
 ): Promise<void> {
@@ -229,13 +246,17 @@ export async function shareCopyItem(
     }
   }
 
-  if (scope === "local") {
+  if (requestedScope === "local") {
     assertLocalScopeSupported(kind, name, "share");
   }
 
   // Step 3.
   const { project, manifest, projectLock, localLock } =
     await loadProjectContext({ cmd });
+  const { scope, trackedPath } =
+    requestedScope === null
+      ? await defaultCopyItemShareScope(project, kind, name)
+      : { scope: requestedScope, trackedPath: null };
   const localConfig = await loadLocalConfig(project);
   const key = dataKey(kind, name);
   const projectKey = lockKeyForRef(projectLock, { kind, name }, "data");
@@ -283,7 +304,7 @@ export async function shareCopyItem(
         name,
         key,
         trackedScope: projectKey ? "project" : "local",
-        requestedScope: opts.to === undefined ? null : scope,
+        requestedScope,
         lock: projectKey ? projectLock : localLock,
         owner,
         json: opts.json === true,
@@ -504,6 +525,9 @@ export async function shareCopyItem(
   const verb = owner === null ? "shared" : "adopted";
   console.log(`✓ ${verb} ${scope}/data/${kind}/${name} @ ${adopted.sha}`);
   console.log(`  source commit: ${adopted.sourceCommit}`);
+  if (trackedPath !== null) {
+    console.log(`  project scope: git already tracks ${trackedPath}`);
+  }
   if (owner !== null) {
     await printAdoptProvenance(owner, dataRepo, kind, name, adopted.committed);
     console.log(`  released: ${ownerLabel(owner)} for ${kind}/${name}`);
@@ -1377,11 +1401,8 @@ function outputLabelFor(project: string, source: FragmentSource): string {
   );
 }
 
-function parseShareScope(
-  value: string | undefined,
-  fallback: ShareScope,
-): ShareScope {
-  if (value === undefined) return fallback;
+function parseShareScope(value: string | undefined): ShareScope | null {
+  if (value === undefined) return null;
   if (value === "local" || value === "project") return value;
   throw new PreconditionError(
     `invalid scope "${value}" (expected local or project)`,

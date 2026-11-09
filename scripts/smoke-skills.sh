@@ -175,4 +175,36 @@ assert_contains 'no data lock entry exists' "$TMP/untracked-rm.txt"
 test -f "$A/.claude/skills/local-only/SKILL.md"
 cp "$TMP/manifest.bak" "$A/.capshelf/capshelf.json"
 
+# --- promote: a file the data repo ignores refuses before the commit ---
+IGN_DATA="$TMP/ignore-data"
+IGN_PROJECT="$TMP/ignore-project"
+mkdir -p "$IGN_DATA/skills/hello" "$IGN_PROJECT"
+printf '%s\n' '---' 'name: hello' '---' '' 'hello v1' > "$IGN_DATA/skills/hello/SKILL.md"
+printf '%s\n' '__pycache__/' > "$IGN_DATA/.gitignore"
+init_git_repo "$IGN_DATA"
+configure_git_user "$IGN_DATA"
+set_portable_origin "$IGN_DATA" smoke-skills-ignore-data
+git -C "$IGN_DATA" add -A
+git -C "$IGN_DATA" commit -qm baseline
+init_git_repo "$IGN_PROJECT"
+(cd "$IGN_PROJECT" && "${CLI[@]}" init --data "$IGN_DATA" >/dev/null)
+(cd "$IGN_PROJECT" && "${CLI[@]}" add skills/hello >/dev/null)
+mkdir -p "$IGN_PROJECT/.agents/skills/hello/scripts/__pycache__"
+printf 'pyc' > "$IGN_PROJECT/.agents/skills/hello/scripts/__pycache__/x.pyc"
+printf '%s\n' 'project edit' >> "$IGN_PROJECT/.agents/skills/hello/SKILL.md"
+IGN_HEAD="$(git -C "$IGN_DATA" rev-parse HEAD)"
+set +e
+(cd "$IGN_PROJECT" && "${CLI[@]}" promote skills/hello -m 'publish' > "$TMP/ignored-promote.txt" 2>&1)
+IGN_EXIT=$?
+set -e
+if [ "$IGN_EXIT" -ne 3 ]; then
+  echo "expected promote to exit 3 for an ignored file, got $IGN_EXIT"
+  cat "$TMP/ignored-promote.txt"
+  exit 1
+fi
+assert_contains 'the data repo ignores files that this commit must contain' "$TMP/ignored-promote.txt"
+assert_contains 'ignored by .gitignore:1  __pycache__/' "$TMP/ignored-promote.txt"
+test "$(git -C "$IGN_DATA" rev-parse HEAD)" = "$IGN_HEAD"
+test ! -e "$IGN_DATA/skills/hello/scripts"
+
 echo "✓ smoke-skills ok"

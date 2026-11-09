@@ -19,7 +19,7 @@ export function registerShare(program: Command): void {
     )
     .option(
       "--to <scope>",
-      "resulting scope: local or project (default: local for skills, project for Pi extensions, subagents, and fragments)",
+      "resulting scope: local or project (default: local for skills and plugins that project Git does not track, project otherwise)",
     )
     .option("--from <path>", "source file for fragment or subagent items")
     .option(

@@ -19,8 +19,9 @@ import {
   registerBatchReads,
   resolveCommit,
 } from "./git";
-import type { GitTreeEntry, LastTouchingOptions } from "./git";
+import type { GitTreeEntry, LastTouchingOptions, IgnoreRule } from "./git";
 import { PRODUCT_NAME } from "./identity";
+import { ignoreRuleLine } from "./publication-ignore";
 import {
   allCanonicalItemRelPaths,
   isCopyDirectoryItemKind,
@@ -877,19 +878,25 @@ export function compareCandidateToCommit(
 export function commitProofRefusalMessage(
   ref: string,
   mismatches: readonly CommitProofMismatch[],
+  ruleFor: (path: string) => IgnoreRule | undefined = () => undefined,
 ): string {
   const width = Math.max(...mismatches.map((entry) => entry.path.length));
+  const rows: string[] = [];
+  for (const entry of mismatches) {
+    rows.push(
+      `    ${entry.path.padEnd(width)}    selected ${abbreviatePin(entry.candidate ?? "(absent)")}   committed ${abbreviatePin(entry.committed ?? "(absent)")}`,
+    );
+    const rule = entry.committed === null ? ruleFor(entry.path) : undefined;
+    if (rule) rows.push(ignoreRuleLine(rule));
+  }
   return [
     `not publishing ${ref}`,
     "  the committed content is not the selected publication content",
     "",
-    ...mismatches.map(
-      (entry) =>
-        `    ${entry.path.padEnd(width)}    selected ${abbreviatePin(entry.candidate ?? "(absent)")}   committed ${abbreviatePin(entry.committed ?? "(absent)")}`,
-    ),
+    ...rows,
     "",
-    "  something before the commit completed rewrote the file — a pre-commit",
-    "  hook, a clean filter, or a .gitattributes rule in the data repo",
+    "  possible causes in the data repo: an ignore rule, a pre-commit hook,",
+    "  a clean filter, or a .gitattributes rule",
     "  the data repo was rolled back; nothing was published",
   ].join("\n");
 }

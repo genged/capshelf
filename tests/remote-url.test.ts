@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { PreconditionError } from "../src/errors";
 import {
   isRemoteSkillUrl,
   ownerRepoShorthandHint,
@@ -131,4 +132,14 @@ test("a browser URL offers every ref/subpath split, longest ref first", () => {
   // The one-segment split stays the fallback for a caller that cannot resolve.
   expect(parsed.ref).toBe("feature");
   expect(parsed.subpath).toBe("login/skills/pdf");
+});
+
+test("a tree URL whose ref is revision magic is refused", () => {
+  for (const ref of ["@", "main@{1}"]) {
+    const url = `https://github.com/a/b/tree/${ref}/skills/x`;
+    expect(() => parseRemoteSkillUrl(url)).toThrow(PreconditionError);
+    expect(() => parseRemoteSkillUrl(url)).toThrow(
+      /ref capshelf will not pass to git/,
+    );
+  }
 });
