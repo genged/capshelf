@@ -61,7 +61,8 @@ The one thing capshelf does run is your data repo's own commit hooks, on every
 commit it makes there — your code, in a repository you control, and no
 command picks a mechanism that skips them. Read-only commands run nothing:
 `status`, `ls`, `show`, `search`, and `get-path` execute no hook, no
-`diff.external` helper, no textconv driver, and no clean filter.
+`diff.external` helper, no textconv driver, no clean filter, and no
+`core.fsmonitor` program.
 
 ## The control plane is your git host
 

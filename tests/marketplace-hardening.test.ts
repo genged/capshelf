@@ -413,6 +413,75 @@ describe("marketplace hardening", () => {
     );
   });
 
+  test("a rewritten file the data repo ignores refuses, even with unchanged bytes", async () => {
+    // `replaceOwnedFiles` deletes the owned roots and writes every file again,
+    // so a generated file with the same bytes is still one this commit must
+    // contain. The marketplace commit has no PIN-11 step to catch the loss.
+    const repo = await tempRepo("capshelf-marketplace-ignored-", {
+      origin: null,
+    });
+    await writeFile(join(repo, ".gitignore"), "*.log\n");
+    await mkdir(join(repo, "codex", "generated"), { recursive: true });
+    await writeFile(join(repo, "codex", "generated", "keep.txt"), "v1");
+    await commitAll(repo, "baseline");
+    await writeFile(join(repo, "codex", "generated", "trace.log"), "same");
+    const expectedHead = (
+      await Bun.$`git -C ${repo} rev-parse HEAD`.text()
+    ).trim();
+
+    await expect(
+      commitDataRepoMutation({
+        dataRepo: repo,
+        expectedHead,
+        ownedRoots: ["codex/generated"],
+        message: "regenerate",
+        mutate: async () => {
+          await writeFile(join(repo, "codex", "generated", "keep.txt"), "v2");
+          await writeFile(
+            join(repo, "codex", "generated", "trace.log"),
+            "same",
+          );
+        },
+      }),
+    ).rejects.toThrow("codex/generated/trace.log");
+
+    expect((await Bun.$`git -C ${repo} rev-parse HEAD`.text()).trim()).toBe(
+      expectedHead,
+    );
+    expect(
+      await readFile(join(repo, "codex", "generated", "keep.txt"), "utf8"),
+    ).toBe("v1");
+  });
+
+  test("a file the caller kept in place is not refused", async () => {
+    const repo = await tempRepo("capshelf-marketplace-kept-", {
+      origin: null,
+    });
+    await writeFile(join(repo, ".gitignore"), ".capshelf.yml\n");
+    await mkdir(join(repo, "skills", "s"), { recursive: true });
+    await writeFile(join(repo, "skills", "s", "SKILL.md"), "v1");
+    await commitAll(repo, "baseline");
+    await writeFile(join(repo, "skills", "s", ".capshelf.yml"), "needs: []\n");
+    const expectedHead = (
+      await Bun.$`git -C ${repo} rev-parse HEAD`.text()
+    ).trim();
+
+    const commit = await commitDataRepoMutation({
+      dataRepo: repo,
+      expectedHead,
+      ownedRoots: ["skills/s"],
+      message: "edit",
+      mutate: async () => {
+        await writeFile(join(repo, "skills", "s", "SKILL.md"), "v2");
+        return ["skills/s/.capshelf.yml"];
+      },
+    });
+
+    expect(
+      await Bun.$`git -C ${repo} show ${commit}:skills/s/SKILL.md`.text(),
+    ).toBe("v2");
+  });
+
   test("requires skills and accepts only current Codex policy values", async () => {
     const repo = await tempRepo("capshelf-marketplace-policy-", {
       origin: null,

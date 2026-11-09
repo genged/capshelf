@@ -528,6 +528,14 @@ sourcePinDigest = sha256 over sorted (name, mode, blobId)     from one ls-tree
   (`B`) *inside the transaction*, so a `pre-commit` hook or a clean filter that
   rewrote the content between the copy and the commit unwinds the promotion
   rather than publishing bytes the project never held.
+- Before that commit, every data-repo commit transaction asks Git which
+  written files `git add` will skip. The query is `git ls-files --others
+  --ignored --exclude-standard` over the owned roots. `git add -- <directory>`
+  skips an ignored file and exits 0. Without this check, the commit would
+  hold fewer files than the selection, and only the proof above would see it.
+  Git computes the set with its own rules, so capshelf parses no ignore
+  pattern. A match refuses with exit 3 and names the rule. The proof stays as
+  the backstop for causes that the check cannot see.
 - A managed path that declares an external filter driver is refused at pin
   time, in every clone. Git stores a placeholder for such a path, so faithful
   delivery would deliver the placeholder.
@@ -570,7 +578,9 @@ decide whether a pin is portable.
 
 `status`, `ls`, `show`, `search`, and `get-path` execute no program the
 repository names: no `diff.external`, no textconv driver, no clean filter, no
-hook. Beyond the plain objection to a look-only command running configured
+hook, no `core.fsmonitor` program. Every data-repo read passes
+`-c core.fsmonitor=false`, which overrides the value in the repository's
+configuration. Beyond the plain objection to a look-only command running configured
 code, such a program decides what a diff *says*, so its answer can disagree
 with the bytes — the same failure as the `core.autocrlf` case above, by a
 different route.

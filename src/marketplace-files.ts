@@ -17,6 +17,7 @@ import { atomicWriteFile, isErrno } from "./fs-utils";
 import {
   assertRepoClean,
   assertRepoCleanOutsidePaths,
+  assertNoIgnoredPublicationFiles,
   commitLiteralPathsInRepo,
   commitParents,
   sourceRead,
@@ -160,7 +161,13 @@ export async function commitDataRepoMutation(options: {
   expectedHead: string | null;
   message: string;
   ownedRoots: string[];
-  mutate: () => Promise<void>;
+  /**
+   * Writes the owned files. It may return repo-relative files that it wrote
+   * back unchanged and does not publish, such as a restored upstream sidecar.
+   * The ignore preflight skips them, so an ignored sidecar that the data repo
+   * never committed stays unpublished, as it was before the preflight.
+   */
+  mutate: () => Promise<void> | Promise<readonly string[]>;
   /**
    * Runs after the commit exists and inside the same transaction, so a
    * refusal unwinds through the established rollback: HEAD returns to
@@ -195,13 +202,16 @@ export async function commitDataRepoMutation(options: {
     else throw error;
   }
   try {
-    await mutate();
+    const keptInPlace = (await mutate()) ?? [];
     if ((await currentHead(dataRepo)) !== expectedHead) {
       throw new PreconditionError(
         "data repo HEAD changed during marketplace mutation",
       );
     }
     await assertRepoCleanOutsidePaths(dataRepo, ownedRoots);
+    // `git add -- <root>` skips an ignored file with exit 0. Refuse here,
+    // inside the try, so the rollback below restores the owned files.
+    await assertNoIgnoredPublicationFiles(dataRepo, ownedRoots, keptInPlace);
     createdCommit = await commitLiteralPathsInRepo(
       dataRepo,
       ownedRoots,

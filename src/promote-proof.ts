@@ -1,6 +1,7 @@
 import { PreconditionError } from "./errors";
+import { sourceIgnoreRules } from "./git";
 import { gitTreeSource } from "./item-source";
-import type { ItemKind } from "./master";
+import { type ItemKind, itemRepoRelPath } from "./master";
 import type { NamedFile } from "./merge-tree";
 import {
   commitProofRefusalMessage,
@@ -33,8 +34,21 @@ export async function assertCommittedTreeEqualsCandidate(opts: {
   );
   const mismatches = compareCandidateToCommit(opts.candidateFiles, pin.entries);
   if (mismatches.length > 0) {
+    // Mismatch paths are item-relative; ignore rules match repo-relative
+    // paths, and an anchored or item-local rule needs the full path.
+    const itemRoot = itemRepoRelPath(opts.kind, opts.name);
+    const rules = await sourceIgnoreRules(
+      opts.dataRepo,
+      mismatches
+        .filter((entry) => entry.committed === null)
+        .map((entry) => `${itemRoot}/${entry.path}`),
+    );
     throw new PreconditionError(
-      commitProofRefusalMessage(`${opts.kind}/${opts.name}`, mismatches),
+      commitProofRefusalMessage(
+        `${opts.kind}/${opts.name}`,
+        mismatches,
+        (path) => rules.get(`${itemRoot}/${path}`),
+      ),
     );
   }
   return pin;

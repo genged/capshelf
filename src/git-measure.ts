@@ -19,8 +19,8 @@ export function recordGitRead(
   if (!registered) {
     registered = true;
     process.once("exit", () => {
-      console.error(
-        JSON.stringify({
+      process.stderr.write(
+        `${JSON.stringify({
           type: "git-summary",
           spawns: Object.fromEntries(spawns),
           totalSpawns: [...spawns.values()].reduce(
@@ -37,7 +37,7 @@ export function recordGitRead(
               },
             ]),
           ),
-        }),
+        })}\n`,
       );
     });
   }
@@ -54,14 +54,14 @@ export function recordGitRead(
     count.failed += 1;
   }
   operations.set(operation, count);
-  console.error(
-    JSON.stringify({
+  process.stderr.write(
+    `${JSON.stringify({
       type: "git-read",
       operation,
       repository,
       arguments: args,
       outcome: success ? "success" : "failure",
       subprocess,
-    }),
+    })}\n`,
   );
 }
