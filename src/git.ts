@@ -57,7 +57,7 @@ export class GitTooOldError extends CliError {
  *
  * | profile          | binding                | policy                                                              |
  * | ---------------- | ---------------------- | ------------------------------------------------------------------- |
- * | source-read      | -C <dataRepo>          | replacement refs disabled; repository-selecting environment stripped  |
+ * | source-read      | -C <dataRepo>          | replacement refs and core.fsmonitor disabled; repository-selecting environment stripped |
  * | source-write     | -C <dataRepo>          | fixed binding; index/hook policy owned by the caller's transaction    |
  * | project-policy   | -C <project>           | fixed binding; project ignore and tracking configuration retained     |
  * | repository-free  | explicit cwd           | repository-selecting environment stripped; transport config retained  |
@@ -238,7 +238,17 @@ function environmentFor(
 function argvFor(binding: GitBinding, args: string[]): string[] {
   switch (binding.profile) {
     case "source-read":
-      return ["git", "-C", binding.repo, "--no-replace-objects", ...args];
+      // `core.fsmonitor` names a program that `git status` runs. A `-c` value
+      // beats the repository's own configuration.
+      return [
+        "git",
+        "-C",
+        binding.repo,
+        "-c",
+        "core.fsmonitor=false",
+        "--no-replace-objects",
+        ...args,
+      ];
     case "source-write":
     case "project-policy":
       return ["git", "-C", binding.repo, ...args];

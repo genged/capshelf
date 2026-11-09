@@ -578,7 +578,9 @@ decide whether a pin is portable.
 
 `status`, `ls`, `show`, `search`, and `get-path` execute no program the
 repository names: no `diff.external`, no textconv driver, no clean filter, no
-hook. Beyond the plain objection to a look-only command running configured
+hook, no `core.fsmonitor` program. Every data-repo read passes
+`-c core.fsmonitor=false`, which overrides the value in the repository's
+configuration. Beyond the plain objection to a look-only command running configured
 code, such a program decides what a diff *says*, so its answer can disagree
 with the bytes — the same failure as the `core.autocrlf` case above, by a
 different route.
