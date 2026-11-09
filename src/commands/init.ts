@@ -305,7 +305,9 @@ export function registerInit(program: Command): void {
             : "using existing data repo clone:",
         );
         console.log(`  ${bootstrap.url}`);
-        console.log(`  -> ${homeRelative(bootstrap.clonePath)}`);
+        // Absolute, not `~`-relative: in a container `~` is often a folder
+        // the user cannot see, and the short form hides that.
+        console.log(`  -> ${bootstrap.clonePath}`);
         console.log("");
       }
       console.log(`✓ initialized at ${project}`);

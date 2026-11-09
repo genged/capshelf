@@ -97,6 +97,9 @@ export function isSafeGitRef(ref: string): boolean {
   if (ref.length === 0) return false;
   if (ref.startsWith("-") || ref.startsWith("/")) return false;
   if (ref.includes("..") || ref.endsWith(".lock")) return false;
+  // Revision magic: `@` alone is HEAD, `@{` opens reflog syntax, and a
+  // trailing `.` is not a valid ref name.
+  if (ref === "@" || ref.includes("@{") || ref.endsWith(".")) return false;
   if (/[\s~^:?*[\]\\]/u.test(ref)) return false;
   if (
     [...ref].some((character) =>

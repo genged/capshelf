@@ -333,7 +333,10 @@ describe("cli integration", () => {
   test("init --data <remote-url> bootstraps a managed clone", async () => {
     const project = await tempRepo("capshelf-bootstrap-project-");
     const dataRepo = await tempRepo("capshelf-bootstrap-data-");
-    const xdg = await tempDir("capshelf-bootstrap-xdg-");
+    // The clone lands under $HOME, so a `~`-relative clone line would fail
+    // the absolute-path assertion below.
+    const home = await tempDir("capshelf-bootstrap-home-");
+    const xdg = join(home, ".local", "share");
     const cli = join(import.meta.dir, "..", "src", "cli.ts");
     await mkdir(join(dataRepo, "skills", "hello"), { recursive: true });
     await writeFile(join(dataRepo, "skills", "hello", "SKILL.md"), "hello\n");
@@ -343,7 +346,7 @@ describe("cli integration", () => {
     const result = Bun.spawnSync({
       cmd: [process.execPath, cli, "init", "--data", url, "--no-upstream"],
       cwd: project,
-      env: { ...process.env, XDG_DATA_HOME: xdg },
+      env: { ...process.env, HOME: home, XDG_DATA_HOME: xdg },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1085,5 +1088,86 @@ describe("cli integration", () => {
         mcp: [],
       },
     );
+  });
+
+  async function setupLocalPin(prefix: string) {
+    const project = await tempRepo(`${prefix}-project-`);
+    const originalRepo = await tempRepo(`${prefix}-original-`);
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+    await mkdir(join(originalRepo, "skills", "hello"), { recursive: true });
+    await writeFile(
+      join(originalRepo, "skills", "hello", "SKILL.md"),
+      "hello\n",
+    );
+    await commitAll(originalRepo, "hello");
+    const run = (...args: string[]) =>
+      Bun.spawnSync({
+        cmd: [process.execPath, cli, ...args],
+        cwd: project,
+        env: process.env,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+    expect(run("init", "--data", originalRepo).exitCode).toBe(0);
+    expect(run("add", "--local", "skills/hello").exitCode).toBe(0);
+    const manifest = await file(
+      join(project, ".capshelf", "capshelf.json"),
+    ).json();
+    return { project, originalRepo, run, upstream: manifest.dataRepoUpstream };
+  }
+
+  test("set-data verifies local lock entries before replacing local config", async () => {
+    const { project, originalRepo, run, upstream } = await setupLocalPin(
+      "capshelf-set-data-local-lock",
+    );
+    const wrongRepo = await tempRepo("capshelf-set-data-local-lock-wrong-");
+    await mkdir(join(wrongRepo, "skills", "hello"), { recursive: true });
+    await writeFile(join(wrongRepo, "skills", "hello", "SKILL.md"), "wrong\n");
+    await commitAll(wrongRepo, "wrong hello");
+    await $`git -C ${wrongRepo} remote set-url origin ${upstream}`.quiet();
+
+    const localJson = join(project, ".capshelf", "local.json");
+    const before = await file(localJson).text();
+    expect(JSON.parse(before)).toEqual({
+      dataRepo: originalRepo,
+      skills: ["hello"],
+      plugins: [],
+      piExtensions: [],
+      settings: [],
+      mcp: [],
+    });
+
+    const localLock = await file(
+      join(project, ".capshelf", "local.lock.json"),
+    ).json();
+    const pinCommit: string = localLock.items["data/skills/hello"].sourceCommit;
+    expect(pinCommit).toMatch(/^[0-9a-f]{40}$/);
+
+    const result = run("set-data", wrongRepo);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr.toString()).toContain("does not contain commit");
+    expect(result.stderr.toString()).toContain(pinCommit);
+    expect(await file(localJson).text()).toBe(before);
+  });
+
+  test("set-data accepts a clone that contains the local lock pin", async () => {
+    const { project, run, upstream } = await setupLocalPin(
+      "capshelf-set-data-local-lock-ok",
+    );
+    const cloneParent = await tempDir("capshelf-set-data-local-lock-clone-");
+    const clone = join(cloneParent, "clone");
+    const localJson = join(project, ".capshelf", "local.json");
+    const original = JSON.parse(await file(localJson).text());
+    await $`git clone ${original.dataRepo} ${clone}`.quiet();
+    await $`git -C ${clone} remote set-url origin ${upstream}`.quiet();
+
+    const result = run("set-data", clone);
+
+    expect(result.exitCode).toBe(0);
+    expect(await file(localJson).json()).toEqual({
+      ...original,
+      dataRepo: clone,
+    });
   });
 });
