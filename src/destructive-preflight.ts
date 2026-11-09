@@ -12,6 +12,8 @@ import type {
 } from "./fragments";
 import type { GitReadMemo } from "./git-read-memo";
 import { inventoryLocalTree } from "./gitignore";
+import { marksPluginManifest } from "./plugin-runs";
+import { isOnMount, readMountLayout } from "./mount-points";
 import { installedPath } from "./installed";
 import { isBundled, requireContentSource } from "./item-source";
 import type { ContentSource } from "./item-source";
@@ -165,6 +167,19 @@ export async function planCopyDirectoryDestruction(opts: {
   for (const path of inventory.files) {
     seen.add(path);
     const fullPath = join(root, ...path.split("/"));
+    // D4: a kept ignored file is not destroyed, so its bytes are not part of
+    // what consent authorizes. The snapshot records its type only, so a cache
+    // write during the command does not fail it. A path the selected entry
+    // writes is destroyed, and a plugin manifest decides what runs, so both
+    // keep their digest.
+    if (
+      preservedPaths.has(path) &&
+      selectedPaths?.has(path) !== true &&
+      !marksPluginManifest(path, false)
+    ) {
+      snapshotParts.push(`copy:${fullPath}:preserved:file`);
+      continue;
+    }
     const [info, content] = await Promise.all([
       lstat(fullPath),
       readFile(fullPath),
@@ -219,6 +234,10 @@ export async function planCopyDirectoryDestruction(opts: {
           opts,
           join(root, ...object.path.split("/")),
           "extra_local_path",
+          installDifferenceLabel({
+            path: object.path,
+            kind: "visible-extra",
+          }) ?? undefined,
         ),
       );
     }
@@ -300,10 +319,15 @@ export async function planCopyDirectoryRemoval(opts: {
   );
   const seen = new Set<string>();
   const changes: DestructiveChange[] = [];
-  const snapshotParts: string[] = [];
+  // D7: removal keeps a mounted volume and everything on it, so those paths
+  // are neither listed as loss nor read. The layout is part of the snapshot,
+  // so a mount attached or removed after consent refuses the write.
+  const layout = await readMountLayout(root);
+  const snapshotParts: string[] = [`mounts:${[...layout.mounts].join(",")}`];
   const inventory = await inventoryLocalTree(root);
   for (const path of inventory.files) {
     seen.add(path);
+    if (isOnMount(layout, path)) continue;
     const fullPath = join(root, ...path.split("/"));
     const [info, content] = await Promise.all([
       lstat(fullPath),
@@ -329,6 +353,7 @@ export async function planCopyDirectoryRemoval(opts: {
   // assertDestructivePlanUnchanged notice a retarget between prompt and write.
   for (const object of inventory.irregular) {
     seen.add(object.path);
+    if (isOnMount(layout, object.path)) continue;
     snapshotParts.push(
       await irregularSnapshotPart(root, object.path, object.type),
     );

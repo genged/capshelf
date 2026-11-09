@@ -823,7 +823,7 @@ const MANIFEST_ANCESTOR_KEYS = PLUGIN_MANIFEST_REL.split("/")
  * path, folded, or a non-regular entry at one of its ancestors, such as a
  * `.claude-plugin` symlink that Claude Code would follow.
  */
-function marksPluginManifest(path: string, regular: boolean): boolean {
+export function marksPluginManifest(path: string, regular: boolean): boolean {
   const key = foldedPath(path);
   return (
     key === MANIFEST_KEY || (!regular && MANIFEST_ANCESTOR_KEYS.includes(key))

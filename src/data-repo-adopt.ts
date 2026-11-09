@@ -1,5 +1,4 @@
 import { existsSync, readlinkSync } from "node:fs";
-import { rm as fsRm } from "node:fs/promises";
 import { dirname, join, relative, resolve } from "node:path";
 import {
   installsAtSkillTarget,
@@ -54,6 +53,7 @@ import {
   hasCodexMarketplace,
   refreshCodexProjection,
 } from "./marketplace-integration";
+import { removeInstalledTree } from "./mount-points";
 
 export interface AdoptionSource {
   path: string;
@@ -423,7 +423,8 @@ async function normalizeAdoptedSkill(
         managedPath,
       );
     }
-    await fsRm(adoption.path, { recursive: true, force: true });
+    // A mounted volume in the adopted folder stays where it is.
+    await removeInstalledTree(adoption.path);
   }
   await ensureInstallAliases(project, kind, name, mode);
 }

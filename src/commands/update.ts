@@ -75,7 +75,13 @@ import {
 } from "../git";
 import { PRODUCT_NAME } from "../identity";
 import { findSystemItem, shaOfSystemItem, CLI_VERSION } from "../bundled";
-import { PreconditionError, ResultExitError } from "../errors";
+import {
+  itemErrorFields,
+  itemErrorsExitCode,
+  PreconditionError,
+  ResultExitError,
+  withoutExitCode,
+} from "../errors";
 import { assertLocalScopeSupported } from "../local-config";
 import { findMasterItemByRef, parseItemRef } from "../item-ref";
 import {
@@ -207,6 +213,10 @@ interface UpdateResult {
   dryRun?: true;
   localReason?: string;
   error?: string;
+  /** A `CliError` hint, printed under the error. */
+  hint?: string;
+  /** A `CliError` exit code. Not printed. */
+  exitCode?: number;
   runtimeWarnings?: RuntimeWarning[];
   scope?: "project" | "local";
   merged?: true;
@@ -477,7 +487,7 @@ export function registerUpdate(program: Command): void {
             json: opts.json === true,
           });
           if (dryResults.some((result) => result.action === "error")) {
-            throw new ResultExitError(1);
+            throw new ResultExitError(itemErrorsExitCode(dryResults));
           }
           return;
         }
@@ -505,7 +515,7 @@ export function registerUpdate(program: Command): void {
               "  no changes were written; fragment outputs are reconciled together",
             );
           }
-          throw new ResultExitError(1);
+          throw new ResultExitError(itemErrorsExitCode(preflight.results));
         }
         // D7 point 2 before the loss prompt. Both answers are needed before
         // any write, and `--yes` answers both.
@@ -601,7 +611,7 @@ export function registerUpdate(program: Command): void {
                 kind: fragmentKindForTarget(target),
                 name: "(merged)",
                 action: "error",
-                error: err instanceof Error ? err.message : String(err),
+                ...itemErrorFields(err),
               });
             }
           }
@@ -625,7 +635,7 @@ export function registerUpdate(program: Command): void {
                 kind: fragmentKindForTarget(target),
                 name: "(merged)",
                 action: "error",
-                error: err instanceof Error ? err.message : String(err),
+                ...itemErrorFields(err),
               });
             }
           }
@@ -677,7 +687,7 @@ export function registerUpdate(program: Command): void {
           printRemoteSkipHint(remoteOutcome.results);
         }
         if (results.some((r) => r.action === "error")) {
-          throw new ResultExitError(1);
+          throw new ResultExitError(itemErrorsExitCode(results));
         }
       },
     );
@@ -796,7 +806,7 @@ async function runRemoteUpdates(input: {
         kind: target.kind,
         name: target.name,
         action: "error",
-        error: err instanceof Error ? err.message : String(err),
+        ...itemErrorFields(err),
       });
       continue;
     }
@@ -1819,7 +1829,7 @@ async function planUpdatePreflight(
         kind: parsed.kind,
         name: parsed.name,
         action: "error",
-        error: error instanceof Error ? error.message : String(error),
+        ...itemErrorFields(error),
       };
       if (failed === -1) results.push(errorResult);
       else results[failed] = errorResult;
@@ -1851,7 +1861,7 @@ async function planUpdatePreflight(
           kind: fragmentKindForTarget(target),
           name: "(merged)",
           action: "error",
-          error: error instanceof Error ? error.message : String(error),
+          ...itemErrorFields(error),
         });
       }
     }
@@ -1936,7 +1946,7 @@ function printUpdateOutput(opts: {
           project: opts.project,
           dataRepo: opts.dataRepo,
           dryRun: opts.dryRun,
-          items: opts.results,
+          items: opts.results.map(withoutExitCode),
           destructiveChanges: opts.destructivePlan.changes,
         },
         null,
@@ -1994,7 +2004,7 @@ export async function updateOneTarget(
       kind: parsed.kind,
       name: parsed.name,
       action: "error",
-      error: cause instanceof Error ? cause.message : String(cause),
+      ...itemErrorFields(cause),
     },
   });
   if (
@@ -2611,6 +2621,7 @@ function printUpdateResults(results: UpdateResult[]): void {
     if (r.action === "error") {
       console.log(`✗ ${id} error`);
       console.log(`  ${r.error}`);
+      if (r.hint) console.log(`  ${r.hint.replaceAll("\n", "\n  ")}`);
     } else if (r.action === "skipped-external") {
       console.log(`• ${id} skipped`);
       console.log(`  ${r.error}`);

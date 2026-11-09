@@ -430,9 +430,10 @@ describe("skill-target ownership at each write (D2 guard 5)", () => {
     await injectConflictingEntry(project, dataRepo, "plugins", "rr");
 
     // No explicit ref: the conflicted targets are reported, not thrown, and
-    // the unrelated healthy item still converges.
+    // the unrelated healthy item still converges. Every per-item error is the
+    // same refusal, so the sweep exits with its code (D9).
     const apply = await run(["apply", "--yes", "--json"]);
-    expect(apply.exitCode).toBe(1);
+    expect(apply.exitCode).toBe(3);
     const items: Array<{ name: string; action: string; error?: string }> =
       JSON.parse(apply.stdout.toString()).items;
     const rrRows = items.filter((row) => row.name === "rr");
@@ -478,8 +479,9 @@ describe("skill-target ownership at each write (D2 guard 5)", () => {
     expect((await run(["add", "skills/healthy"])).exitCode).toBe(0);
     await injectConflictingEntry(project, dataRepo, "plugins", "rr");
 
+    // The per-item error keeps the refusal's exit code (D9).
     const update = await run(["update", "--json"]);
-    expect(update.exitCode).toBe(1);
+    expect(update.exitCode).toBe(3);
     const items: Array<{ name: string; action: string; error?: string }> =
       JSON.parse(update.stdout.toString()).items;
     const rrRows = items.filter((row) => row.name === "rr");
@@ -958,8 +960,9 @@ describe("remote rows and folder ownership (D2 guard 5)", () => {
       "is already installed by data/plugins/pdf",
     );
 
+    // The per-item error keeps the refusal's exit code (D9).
     const sweep = await run(["apply", "--yes", "--json"]);
-    expect(sweep.exitCode).toBe(1);
+    expect(sweep.exitCode).toBe(3);
     const items: Array<{ key: string; action: string; error?: string }> =
       JSON.parse(sweep.stdout.toString()).items;
     const row = items.find((item) => item.key === "remote/skills/pdf");
@@ -975,8 +978,9 @@ describe("remote rows and folder ownership (D2 guard 5)", () => {
       "is already installed by data/plugins/pdf",
     );
 
+    // The per-item error keeps the refusal's exit code (D9).
     const sweep = await run(["update", "--json"]);
-    expect(sweep.exitCode).toBe(1);
+    expect(sweep.exitCode).toBe(3);
     const items: Array<{ key: string; action: string; error?: string }> =
       JSON.parse(sweep.stdout.toString()).items;
     const row = items.find((item) => item.key === "remote/skills/pdf");

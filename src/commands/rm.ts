@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
-import { relative } from "node:path";
+import { join, relative } from "node:path";
 import {
   assertDestructivePlanUnchanged,
   confirmDestructiveChanges,
@@ -12,7 +12,8 @@ import {
   planSubagentDestruction,
 } from "../destructive-preflight";
 import { contentSourceOrNull } from "../item-source";
-import { rmTreeWithRetries } from "../fs-utils";
+import { isErrno } from "../fs-utils";
+import { removeInstalledTree } from "../mount-points";
 import { projectRoot } from "../paths";
 import { resolveProjectDataRepo } from "../command-context";
 import {
@@ -435,6 +436,7 @@ export function registerRm(program: Command): void {
 
       let path = "";
       let removed = false;
+      let keptMountPoints: string[] = [];
       if (isFragmentItemKind(kind)) {
         const targets = await lockedFragmentTargetsForItem(
           await requireDataRepo(),
@@ -462,27 +464,21 @@ export function registerRm(program: Command): void {
         // this item but leave the folder — and its compatibility alias —
         // alone; they are not this item's to delete.
         if (!keptBy) {
-          removed = await removeInstallAliases(
-            project,
-            kind,
-            name,
-            path,
-            oldManifest.installMode,
-          );
+          // The folder goes first. A failed delete then leaves the aliases and
+          // the lock row in place, so the item stays usable and a rerun can
+          // finish (G8).
           if (existsSync(path)) {
-            try {
-              await rmTreeWithRetries(path);
-            } catch (err) {
-              const detail = err instanceof Error ? err.message : String(err);
-              throw new CliError(`could not delete ${path} (${detail})`, {
-                hint:
-                  "another process may be writing to that directory (an agent runtime watching it?) — stop it and retry,\n" +
-                  "  or delete the directory manually and re-run this command to finish untracking",
-                cause: err,
-              });
-            }
+            keptMountPoints = await deleteInstalledFolder(path);
             removed = true;
           }
+          removed =
+            (await removeInstallAliases(
+              project,
+              kind,
+              name,
+              path,
+              oldManifest.installMode,
+            )) || removed;
         }
       } else if (isCopyTargetFileItemKind(kind)) {
         const paths = await removeSubagentOutputs(
@@ -526,6 +522,11 @@ export function registerRm(program: Command): void {
               path,
               removedFiles: removed,
               ...(keptBy && { keptBy: skillTargetOwnerLabel(keptBy) }),
+              ...(keptMountPoints.length > 0 && {
+                keptMountPoints: keptMountPoints.map((mount) =>
+                  relative(project, join(path, mount)),
+                ),
+              }),
             },
             null,
             2,
@@ -545,6 +546,7 @@ export function registerRm(program: Command): void {
           `  ${isFragmentItemKind(kind) ? "updated" : "deleted"} ${path}`,
         );
       }
+      printKeptMountPoints(project, path, keptMountPoints);
     });
 }
 
@@ -640,26 +642,20 @@ async function removeRemoteItem(input: {
 
   const path = installedPath(project, kind, name, input.manifest.installMode);
   let removed = false;
+  let keptMountPoints: string[] = [];
   if (!keptBy) {
-    removed = await removeInstallAliases(
-      project,
-      kind,
-      name,
-      path,
-      input.manifest.installMode,
-    );
     if (existsSync(path)) {
-      try {
-        await rmTreeWithRetries(path);
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err);
-        throw new CliError(`could not delete ${path} (${detail})`, {
-          hint: "another process may be writing to that directory — stop it and retry",
-          cause: err,
-        });
-      }
+      keptMountPoints = await deleteInstalledFolder(path);
       removed = true;
     }
+    removed =
+      (await removeInstallAliases(
+        project,
+        kind,
+        name,
+        path,
+        input.manifest.installMode,
+      )) || removed;
   }
   if (!excludesNeeded) await removeLocalExcludes(project, kind, name);
   delete remotes.items[key];
@@ -677,6 +673,11 @@ async function removeRemoteItem(input: {
           path,
           removedFiles: removed,
           ...(keptBy && { keptBy: skillTargetOwnerLabel(keptBy) }),
+          ...(keptMountPoints.length > 0 && {
+            keptMountPoints: keptMountPoints.map((mount) =>
+              relative(project, join(path, mount)),
+            ),
+          }),
         },
         null,
         2,
@@ -691,5 +692,43 @@ async function removeRemoteItem(input: {
     );
   } else if (removed) {
     console.log(`  deleted ${path}`);
+  }
+  printKeptMountPoints(project, path, keptMountPoints);
+}
+
+/**
+ * Delete an installed item folder and keep each mounted volume in it. The
+ * error names the folder, so the user can see what is left.
+ */
+async function deleteInstalledFolder(path: string): Promise<string[]> {
+  try {
+    return await removeInstalledTree(path);
+  } catch (err) {
+    if (err instanceof CliError) throw err;
+    const detail = err instanceof Error ? err.message : String(err);
+    // The delete already gave this user write access to each folder in the
+    // tree that it owns. A denial that is left comes from a folder of another
+    // user (for example one that a container wrote as root), from the parent
+    // folder, or from a process that holds a file open.
+    const cause =
+      isErrno(err, "EACCES") || isErrno(err, "EPERM")
+        ? "this user cannot write that directory, its parent, or a folder in it, or another process is using it. Fix the permissions or stop the process, then retry."
+        : "another process may be writing to that directory (an agent runtime watching it?). Stop it and retry.";
+    throw new CliError(`could not delete ${path} (${detail})`, {
+      hint: `${cause}\n  The lock row and the aliases are unchanged, so a rerun of this command finishes the removal.`,
+      cause: err,
+    });
+  }
+}
+
+function printKeptMountPoints(
+  project: string,
+  path: string,
+  mounts: readonly string[],
+): void {
+  for (const mount of mounts) {
+    console.log(
+      `! kept ${relative(project, join(path, mount))}: it is a mounted volume`,
+    );
   }
 }

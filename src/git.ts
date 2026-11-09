@@ -6,6 +6,7 @@ import {
   lstat,
   mkdir,
   mkdtemp,
+  readFile,
   realpath,
   rm,
   writeFile,
@@ -1887,6 +1888,91 @@ export async function gitPolicyVisiblePathsUnderPath(
     .filter((path) => path.length > 0)
     .map((path) => relativeToGitPath(path, normalized))
     .sort();
+}
+
+/**
+ * `gitPolicyVisiblePathsUnderPath` for a local-scope item. Capshelf lists a
+ * local item in `.git/info/exclude`, so project Git sees all of it as ignored.
+ * This asks Git with the same ignore stack minus the lines in `ownLines`:
+ * every `.gitignore`, the other `info/exclude` lines, and `core.excludesFile`.
+ * The kept `info/exclude` lines go in on stdin. Command-line patterns would
+ * outrank the `.gitignore` files, so `-x` cannot express this. Null when
+ * `project` is not a Git work tree root.
+ */
+export async function gitPolicyVisiblePathsWithoutExcludes(
+  project: string,
+  relPath: string,
+  ownLines: ReadonlySet<string>,
+): Promise<string[] | null> {
+  if (!(await isProjectWorkTreeRoot(project))) return null;
+  const normalized = normalizeGitPath(relPath);
+  const excludePath = await gitInfoExcludePath(project);
+  let raw = "";
+  if (excludePath !== null) {
+    try {
+      raw = await readFile(excludePath, "utf-8");
+    } catch (error) {
+      if (!isErrno(error, "ENOENT")) throw error;
+    }
+  }
+  const keptLines = raw
+    .split(/\r?\n/)
+    .filter((line) => !ownLines.has(line.trim()))
+    .join("\n");
+  const excludesFile = await userExcludesFile(project);
+  const args = [
+    "ls-files",
+    "-z",
+    "--cached",
+    "--others",
+    "--exclude-per-directory=.gitignore",
+    "--exclude-from=/dev/stdin",
+    // Git refuses a missing exclude file, so pass it only when it exists.
+    ...(excludesFile === null ? [] : [`--exclude-from=${excludesFile}`]),
+    "--",
+    literalPathspec(normalized),
+  ];
+  const out = throwOnFailure(
+    await projectPolicy(project, args, { stdin: `${keptLines}\n` }),
+    args,
+  ).toString("utf-8");
+  return out
+    .split("\0")
+    .filter((path) => path.length > 0)
+    .map((path) => relativeToGitPath(path, normalized))
+    .sort();
+}
+
+/**
+ * The user's global ignore file when it exists: `core.excludesFile`, else
+ * `$XDG_CONFIG_HOME/git/ignore`, else `$HOME/.config/git/ignore`
+ * (gitignore(5)).
+ */
+async function userExcludesFile(project: string): Promise<string | null> {
+  const configured = await projectPolicy(project, [
+    "config",
+    "--path",
+    "--get",
+    "core.excludesFile",
+  ]);
+  const fromConfig = configured.stdout.toString("utf-8").trim();
+  const xdg = process.env.XDG_CONFIG_HOME;
+  const home = process.env.HOME;
+  const candidate =
+    configured.exitCode === 0 && fromConfig.length > 0
+      ? resolve(project, fromConfig)
+      : xdg
+        ? join(xdg, "git", "ignore")
+        : home
+          ? join(home, ".config", "git", "ignore")
+          : null;
+  if (candidate === null) return null;
+  try {
+    await access(candidate, constants.R_OK);
+    return candidate;
+  } catch {
+    return null;
+  }
 }
 
 async function presentFilesRelativeTo(

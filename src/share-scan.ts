@@ -42,6 +42,7 @@ import { sanitizeDisplayText } from "./pick-core";
 import type { PickRow } from "./pick-core";
 import { subagentCandidates, validateSubagentSource } from "./subagents";
 import type { SubagentTarget } from "./subagents";
+import { holdsOnlyMountPoints } from "./mount-points";
 
 /** The kinds the scanner can offer: copy items and subagents. */
 export type ShareableItemKind = CopyDirectoryItemKind | "subagents";
@@ -249,6 +250,13 @@ export async function scanUntrackedShareItems(opts: {
         // A plain file here is not item material; a directory or a symlink
         // is, and the named command's own checks decide what to say about it.
         if (entry.isFile()) continue;
+        // What `rm` leaves for an item with a mounted volume is not an item.
+        if (
+          entry.isDirectory() &&
+          (await holdsOnlyMountPoints(join(dir, entry.name)))
+        ) {
+          continue;
+        }
         names.add(entry.name);
       }
     }

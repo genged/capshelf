@@ -4,10 +4,9 @@ import {
   mkdir,
   readFile,
   readlink,
-  symlink,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { dirname, join } from "node:path";
 import { existsSync } from "node:fs";
 import type { Stats } from "node:fs";
 import { entryIdentity } from "./lock";
@@ -49,9 +48,16 @@ import type { RuntimeWarning } from "./runtime-warnings";
 import { missingSourceCommitMessage } from "./upstream-check";
 import type { NamedFile } from "./merge-tree";
 import { namedFilesEqual } from "./merge-tree";
-import { gitignoreVisibleFiles, inventoryLocalTree } from "./gitignore";
-import { gitPolicyVisiblePathsUnderPath } from "./git";
+import { inventoryLocalTree } from "./gitignore";
+import { installedVisiblePaths } from "./installed-visibility";
 import { beginDirectoryReplacement } from "./promote-transaction";
+import {
+  assertNoManagedPathOnMount,
+  carriedUnits,
+  isOnMount,
+  readMountLayout,
+} from "./mount-points";
+import { marksPluginManifest } from "./plugin-runs";
 import { shaOfNamedFiles } from "./item-snapshot";
 import { PRODUCT_NAME } from "./identity";
 import { PreconditionError } from "./errors";
@@ -139,7 +145,15 @@ export interface MaterializeOptions {
  * the Git-boundary type shared with merge-tree, promote, and the tree code.
  */
 export type PreservedEntry =
-  | { kind: "file"; path: string; content: Buffer; mode: number }
+  | {
+      kind: "file";
+      path: string;
+      /**
+       * Read only for a plugin consent point (`installedPreservedEntries`).
+       * A folder replacement moves the file by rename and never reads it.
+       */
+      content?: Buffer;
+    }
   | { kind: "symlink"; path: string; target: string };
 
 export interface CopyDirectoryReconciliationFiles {
@@ -275,16 +289,21 @@ export async function materializeLockEntry(
           opts.memo,
         ).catch(() => null),
   );
-  const dataBeforeMatches = await installedFilesMatch(
-    dst,
-    reconciliationFiles.expected,
-    reconciliationFiles.preserved,
-  );
+  const dataBeforeMatches = await installedFilesMatch({
+    project: opts.project,
+    kind,
+    name,
+    scope: opts.scope,
+    root: dst,
+    expected: reconciliationFiles.expected,
+    preserved: reconciliationFiles.preserved,
+  });
   if (!opts.dryRun && !dataBeforeMatches) {
     await materializeCopyDirectory(
       opts.project,
       kind,
       name,
+      opts.scope,
       reconciliationFiles,
       opts.hooks,
     );
@@ -323,48 +342,6 @@ export async function materializeLockEntry(
     }),
     ...runtimeWarningFields(opts.project, kind, name),
   };
-}
-
-/**
- * PIN-5's classifier for *unpinned* paths under an installed item.
- *
- * | destination                        | classifier                                                          |
- * | ---------------------------------- | ------------------------------------------------------------------- |
- * | project scope in a Git worktree    | project Git, with the complete ignore stack                          |
- * | local scope                        | the item-root ignore walker — capshelf excludes the whole local item |
- * | project scope outside Git          | the item-root ignore walker                                          |
- *
- * Reimplementing Git's ignore stack in process was rejected: exact parity needs
- * nested and parent `.gitignore` files, `.git/info/exclude`,
- * `core.excludesFile`, negation, directory pruning, and the tracked-file rule.
- * Git owns that policy and answers it exactly. Using project Git for *every*
- * scope is equally wrong: capshelf puts a local-scope item in
- * `.git/info/exclude`, so project Git sees the whole item as ignored and cannot
- * tell a user-owned extra from a visible one.
- *
- * A project ignore edit may therefore move an extra between visible and
- * ignored. That is intentional — it changes who owns an unpinned file, not what
- * the lock manages.
- */
-async function visibleExtraPaths(
-  project: string,
-  root: string,
-  extras: readonly string[],
-  scope: Scope,
-): Promise<Set<string>> {
-  if (extras.length === 0) return new Set();
-  const candidates = new Set(extras);
-  const gitPolicyPaths =
-    scope === "project"
-      ? await gitPolicyVisiblePathsUnderPath(project, relative(project, root))
-      : null;
-  const visible =
-    gitPolicyPaths ??
-    // Outside project Git the fallback walker still does not consult parent
-    // ignore files, `.git/info/exclude`, or `core.excludesFile`. That
-    // limitation now applies only where no usable project Git policy exists.
-    (await gitignoreVisibleFiles(root).catch(() => [...candidates]));
-  return new Set(visible.filter((path) => candidates.has(path)));
 }
 
 /**
@@ -488,11 +465,21 @@ export async function copyDirectoryReconciliationFiles(opts: {
     ...expected.map((file) => file.path),
     ...previousPaths,
   ]);
-  const preserved = await preservedLocalEntries({
+  const classified = await classifyInstalledEntries({
     project: opts.project,
     dst,
+    kind: opts.kind,
+    name: opts.name,
     managedPaths,
     scope: opts.scope,
+    incoming: expected,
+  });
+  const preserved = classified.preserved;
+  await assertNothingToDeleteOnMount({
+    dst,
+    installedPaths: classified.installedPaths,
+    expected,
+    preserved,
   });
 
   await assertNoPreservedPathCollisions({
@@ -522,34 +509,54 @@ export async function copyDirectoryReconciliationFiles(opts: {
 export async function preservedLocalEntries(opts: {
   project: string;
   dst: string;
+  kind: CopyDirectoryItemKind;
+  name: string;
   managedPaths: ReadonlySet<string>;
   scope: Scope;
+  readContent?: boolean;
 }): Promise<PreservedEntry[]> {
+  return (await classifyInstalledEntries(opts)).preserved;
+}
+
+async function classifyInstalledEntries(opts: {
+  project: string;
+  dst: string;
+  kind: CopyDirectoryItemKind;
+  name: string;
+  managedPaths: ReadonlySet<string>;
+  scope: Scope;
+  readContent?: boolean;
+  /** The files the write installs. See `installedVisiblePaths`. */
+  incoming?: readonly NamedFile[];
+}): Promise<{ preserved: PreservedEntry[]; installedPaths: string[] }> {
   const inventory = await inventoryLocalTree(opts.dst);
-  const extras = [
+  const installedPaths = [
     ...inventory.files,
     ...inventory.irregular.map((object) => object.path),
-  ].filter((path) => !opts.managedPaths.has(path));
-  const visibleExtras = await visibleExtraPaths(
-    opts.project,
-    opts.dst,
-    extras,
-    opts.scope,
-  );
+  ];
+  const extras = installedPaths.filter((path) => !opts.managedPaths.has(path));
+  const visibleExtras = await installedVisiblePaths({
+    project: opts.project,
+    root: opts.dst,
+    kind: opts.kind,
+    name: opts.name,
+    candidates: extras,
+    scope: opts.scope,
+    ...(opts.incoming !== undefined && { incoming: opts.incoming }),
+  });
   const preserved: PreservedEntry[] = [];
   for (const path of inventory.files) {
     // Row 5: the sidecar is excluded from hashing and materialization
     // everywhere, so it is carried across regardless of Git visibility. Every
-    // other Git-visible extra is row 3 — drift the caller reconciles away.
+    // other Git-visible extra is row 3, drift the caller reconciles away.
     if (!isMetadataSidecarPath(path) && visibleExtras.has(path)) continue;
     if (opts.managedPaths.has(path)) continue;
-    const fullPath = join(opts.dst, ...path.split("/"));
-    const info = await lstat(fullPath);
     preserved.push({
       kind: "file",
       path,
-      content: await readFile(fullPath),
-      mode: info.mode & 0o7777,
+      ...(opts.readContent === true && {
+        content: await readFile(join(opts.dst, ...path.split("/"))),
+      }),
     });
   }
   for (const object of inventory.irregular) {
@@ -576,7 +583,42 @@ export async function preservedLocalEntries(opts: {
     });
   }
 
-  return preserved;
+  return { preserved, installedPaths };
+}
+
+/**
+ * D5: a replacement around a mount cannot delete a path on the mounted
+ * volume. So a path there that the write would delete refuses before
+ * consent: a Git-visible extra, or a path the previous version managed.
+ * A managed path that the new version writes there refuses too.
+ */
+async function assertNothingToDeleteOnMount(opts: {
+  dst: string;
+  installedPaths: readonly string[];
+  expected: readonly NamedFile[];
+  preserved: readonly PreservedEntry[];
+}): Promise<void> {
+  const layout = await readMountLayout(opts.dst);
+  if (layout.mounts.size === 0) return;
+  await assertNoManagedPathOnMount(
+    opts.dst,
+    layout,
+    opts.expected.map((file) => file.path),
+  );
+  const kept = new Set(opts.preserved.map((entry) => entry.path));
+  const doomed = opts.installedPaths.find(
+    (path) => isOnMount(layout, path) && !kept.has(path),
+  );
+  if (doomed === undefined) return;
+  const [mount] = [...layout.mounts].filter((candidate) =>
+    isOnMount({ mounts: new Set([candidate]), pinned: new Set() }, doomed),
+  );
+  throw new PreconditionError(
+    `${doomed} in ${opts.dst} is on mounted volume ${mount ?? doomed}, and Git can see it; ${PRODUCT_NAME} cannot delete a path on a mounted volume`,
+    {
+      hint: `Ignore ${mount ?? doomed}/ in the item's .gitignore, then rerun the command.`,
+    },
+  );
 }
 
 /**
@@ -593,7 +635,26 @@ export async function installedPreservedEntries(opts: {
 }): Promise<PreservedEntry[]> {
   const dst = installedPath(opts.project, opts.kind, opts.name);
   if (!existsSync(dst)) return [];
-  return await preservedLocalEntries({ ...opts, dst });
+  const entries = await preservedLocalEntries({ ...opts, dst });
+  // The plugin runs reader needs the bytes of kept files, but only for a
+  // plugin. A skill with no manifest path anywhere is not one, so its
+  // ignored state (a whole node_modules) is not read.
+  const mayBePlugin =
+    opts.kind === "plugins" ||
+    [...opts.managedPaths, ...entries.map((entry) => entry.path)].some((path) =>
+      marksPluginManifest(path, false),
+    );
+  if (!mayBePlugin) return entries;
+  return await Promise.all(
+    entries.map(async (entry) =>
+      entry.kind === "file"
+        ? {
+            ...entry,
+            content: await readFile(join(dst, ...entry.path.split("/"))),
+          }
+        : entry,
+    ),
+  );
 }
 
 export async function assertNoPreservedPathCollisions(opts: {
@@ -765,38 +826,81 @@ async function materializeCopyDirectory(
   project: string,
   kind: CopyDirectoryItemKind,
   name: string,
+  scope: Scope,
   files: CopyDirectoryReconciliationFiles,
   hooks?: MaterializeHooks,
 ): Promise<void> {
   const dst = installedPath(project, kind, name);
   assertCanMaterializeInstalled(project, kind, name);
-  const transaction = await beginDirectoryReplacement(dst, async (staged) => {
-    for (const [index, file] of files.expected.entries()) {
-      const out = join(staged, ...file.path.split("/"));
-      await mkdir(dirname(out), { recursive: true });
-      await hooks?.beforeStagedWrite?.(file.path, index);
-      await writeFile(out, file.content);
-      await hooks?.afterStagedWrite?.(file.path, index);
-      const mode = fileModeFromGit(file.mode);
-      await hooks?.beforeStagedChmod?.(file.path, index);
-      await chmod(out, mode);
-      await hooks?.afterStagedChmod?.(file.path, index);
-    }
-    for (const entry of files.preserved) {
-      const out = join(staged, ...entry.path.split("/"));
-      await mkdir(dirname(out), { recursive: true });
-      if (entry.kind === "symlink") {
-        await symlink(entry.target, out);
-        continue;
+  const transaction = await beginDirectoryReplacement(
+    dst,
+    async (staged, layout) => {
+      const expectedPaths = files.expected.map((file) => file.path);
+      await assertNoManagedPathOnMount(dst, layout, expectedPaths);
+      for (const [index, file] of files.expected.entries()) {
+        const out = join(staged, ...file.path.split("/"));
+        await mkdir(dirname(out), { recursive: true });
+        await hooks?.beforeStagedWrite?.(file.path, index);
+        await writeFile(out, file.content);
+        await hooks?.afterStagedWrite?.(file.path, index);
+        const mode = fileModeFromGit(file.mode);
+        await hooks?.beforeStagedChmod?.(file.path, index);
+        await chmod(out, mode);
+        await hooks?.afterStagedChmod?.(file.path, index);
       }
-      await writeFile(out, entry.content);
-      await chmod(out, entry.mode);
-    }
-    await hooks?.beforePublish?.();
-  });
+      // Row 4 moves by rename after the old folder is set aside, so its bytes
+      // are never read. A unit is a whole folder when nothing in it is
+      // managed, visible, or mounted.
+      const inventory = existsSync(dst)
+        ? await inventoryLocalTree(dst)
+        : { files: [], irregular: [] };
+      const installed = [
+        ...inventory.files,
+        ...inventory.irregular.map((object) => object.path),
+      ];
+      const present = new Set(installed);
+      const keptPaths = files.preserved
+        .map((entry) => entry.path)
+        .filter((path) => present.has(path));
+      const kept = new Set(keptPaths);
+      const units = carriedUnits({
+        kept: keptPaths,
+        blockers: [
+          ...expectedPaths,
+          ...installed.filter((path) => !kept.has(path)),
+        ],
+        layout,
+      });
+      const collision = await findDestinationPathCollision(
+        dst,
+        units,
+        expectedPaths,
+      );
+      if (collision) {
+        throw new PreconditionError(
+          `ignored local path ${collision.left} collides with selected managed path ${collision.right} in ${kind}/${name}`,
+          {
+            hint: "Move or rename the local-only path, then review the item and rerun the command.",
+          },
+        );
+      }
+      await hooks?.beforePublish?.();
+      return units;
+    },
+  );
   try {
     await hooks?.afterPublish?.();
-    if (!(await installedFilesMatch(dst, files.expected, files.preserved))) {
+    if (
+      !(await installedFilesMatch({
+        project,
+        kind,
+        name,
+        scope,
+        root: dst,
+        expected: files.expected,
+        preserved: files.preserved,
+      }))
+    ) {
       throw new Error(
         `materialized ${kind}/${name} does not match the staged regular-file tree`,
       );
@@ -900,21 +1004,40 @@ function fileModeFromGit(mode: string): number {
   }
 }
 
-async function installedFilesMatch(
-  root: string,
-  expected: NamedFile[],
-  preserved: PreservedEntry[] = [],
-): Promise<boolean> {
+async function installedFilesMatch(opts: {
+  project: string;
+  kind: CopyDirectoryItemKind;
+  name: string;
+  scope: Scope;
+  root: string;
+  expected: NamedFile[];
+  preserved?: readonly PreservedEntry[];
+}): Promise<boolean> {
+  const { root, expected } = opts;
+  const preserved = opts.preserved ?? [];
   if (!existsSync(root)) return false;
   const knownPaths = new Set([
     ...expected.map((file) => file.path),
     ...preserved.map((entry) => entry.path),
   ]);
-  for (const path of await gitignoreVisibleFiles(root)) {
+  const inventory = await inventoryLocalTree(root);
+  const unknown = [
+    ...inventory.files,
+    ...inventory.irregular.map((object) => object.path),
+  ].filter(
     // The sidecar is catalog data, never managed content and never drift.
-    if (isMetadataSidecarPath(path)) continue;
-    if (!knownPaths.has(path)) return false;
-  }
+    (path) => !knownPaths.has(path) && !isMetadataSidecarPath(path),
+  );
+  const visibleUnknown = await installedVisiblePaths({
+    project: opts.project,
+    root,
+    kind: opts.kind,
+    name: opts.name,
+    candidates: unknown,
+    scope: opts.scope,
+    incoming: expected,
+  });
+  if (visibleUnknown.size > 0) return false;
   const current: NamedFile[] = [];
   for (const file of expected) {
     const fullPath = join(root, ...file.path.split("/"));
@@ -928,18 +1051,30 @@ async function installedFilesMatch(
   }
   if (!namedFilesEqual(current, expected)) return false;
 
+  // Row 4 moves by rename, which keeps the bytes, so a byte compare proves
+  // nothing. A kept path must keep its type. One the user deleted is gone.
+  // The walk above already read each type, so a kept path needs no lstat of
+  // its own: an ignored tree can hold many thousands of files.
+  const types = new Map<string, string>([
+    ...inventory.files.map((path): [string, string] => [path, "file"]),
+    ...inventory.irregular.map((object): [string, string] => [
+      object.path,
+      object.type,
+    ]),
+  ]);
   for (const entry of preserved) {
     const fullPath = join(root, ...entry.path.split("/"));
-    const stats = await lstatOrNullAsync(fullPath);
-    if (stats === null) return false;
-    if (entry.kind === "symlink") {
-      if (!stats.isSymbolicLink()) return false;
-      if ((await readlink(fullPath)) !== entry.target) return false;
+    const type = types.get(entry.path);
+    if (type === undefined) {
+      // Gone, or a folder now: the walk lists files and links, not folders.
+      if ((await lstatOrNullAsync(fullPath))?.isDirectory() === true) {
+        return false;
+      }
       continue;
     }
-    if (!stats.isFile()) return false;
-    if ((stats.mode & 0o7777) !== entry.mode) return false;
-    if (!(await readFile(fullPath)).equals(entry.content)) return false;
+    if (type !== entry.kind) return false;
+    if (entry.kind === "symlink" && (await readlink(fullPath)) !== entry.target)
+      return false;
   }
   return true;
 }

@@ -1,5 +1,5 @@
 import { file } from "bun";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import {
   chmod,
   mkdtemp,
@@ -28,6 +28,7 @@ describe("beginDirectoryReplacement", () => {
       async (replacement) => {
         await mkdir(replacement);
         await writeFile(join(replacement, "SKILL.md"), "new\n");
+        return [];
       },
     );
 
@@ -57,6 +58,140 @@ describe("beginDirectoryReplacement", () => {
     expect(transactionDirs).toEqual([]);
     expect(installedContent).toBe("new\n");
   });
+});
+
+const runningAsRoot = process.getuid?.() === 0;
+
+/** A target with a managed file and a read-only ignored folder `cache`. */
+async function targetWithReadOnlyUnit(prefix: string) {
+  const parent = await mkdtemp(join(tmpdir(), prefix));
+  const target = join(parent, "hello");
+  await mkdir(join(target, "cache", "inner"), { recursive: true });
+  await writeFile(join(target, "SKILL.md"), "old\n");
+  await writeFile(join(target, "cache", "inner", "a.bin"), "kept\n");
+  await chmod(join(target, "cache"), 0o555);
+  const cleanup = async () => {
+    await chmod(join(target, "cache"), 0o755).catch(() => {});
+    await rm(parent, { recursive: true, force: true });
+  };
+  return { parent, target, cleanup };
+}
+
+describe("read-only units", () => {
+  for (const finish of ["commit", "rollback"] as const) {
+    test.skipIf(runningAsRoot)(
+      `beginDirectoryReplacement holds a read-only unit in place (${finish})`,
+      async () => {
+        const { parent, target, cleanup } = await targetWithReadOnlyUnit(
+          "capshelf-held-unit-",
+        );
+        try {
+          const transaction = await beginDirectoryReplacement(
+            target,
+            async (replacement) => {
+              await mkdir(replacement);
+              await writeFile(join(replacement, "SKILL.md"), "new\n");
+              return ["cache"];
+            },
+          );
+          await transaction[finish]();
+          expect(await file(join(target, "SKILL.md")).text()).toBe(
+            finish === "commit" ? "new\n" : "old\n",
+          );
+          expect(
+            await file(join(target, "cache", "inner", "a.bin")).text(),
+          ).toBe("kept\n");
+          expect((await stat(join(target, "cache"))).mode & 0o777).toBe(0o555);
+          expect(
+            (await readdir(parent)).filter((name) =>
+              name.startsWith(".capshelf-"),
+            ),
+          ).toEqual([]);
+        } finally {
+          await cleanup();
+        }
+      },
+    );
+
+    test.skipIf(runningAsRoot)(
+      `beginInstalledReconciliation holds a read-only unit in place (${finish})`,
+      async () => {
+        const { target, cleanup } = await targetWithReadOnlyUnit(
+          "capshelf-held-reconcile-",
+        );
+        try {
+          const transaction = await beginInstalledReconciliation(
+            target,
+            [
+              {
+                path: "SKILL.md",
+                content: Buffer.from("old\n"),
+                mode: "100644",
+              },
+            ],
+            [
+              {
+                path: "SKILL.md",
+                content: Buffer.from("new\n"),
+                mode: "100644",
+              },
+            ],
+          );
+          await transaction[finish]();
+          expect(await file(join(target, "SKILL.md")).text()).toBe(
+            finish === "commit" ? "new\n" : "old\n",
+          );
+          expect(
+            await file(join(target, "cache", "inner", "a.bin")).text(),
+          ).toBe("kept\n");
+        } finally {
+          await cleanup();
+        }
+      },
+    );
+  }
+
+  test.skipIf(runningAsRoot)(
+    "a scratch folder that cannot be deleted after a commit is a warning",
+    async () => {
+      const parent = await mkdtemp(join(tmpdir(), "capshelf-commit-warn-"));
+      const target = join(parent, "hello");
+      await mkdir(target);
+      await writeFile(join(target, "SKILL.md"), "old\n");
+      const transaction = await beginDirectoryReplacement(
+        target,
+        async (replacement) => {
+          await mkdir(replacement);
+          await writeFile(join(replacement, "SKILL.md"), "new\n");
+          return [];
+        },
+      );
+      const written: string[] = [];
+      const stderr = spyOn(process.stderr, "write").mockImplementation(
+        (chunk) => {
+          written.push(String(chunk));
+          return true;
+        },
+      );
+      // The scratch folder is in `parent`, so a read-only parent keeps it.
+      await chmod(parent, 0o555);
+      try {
+        await transaction.commit();
+      } finally {
+        stderr.mockRestore();
+        await chmod(parent, 0o755);
+      }
+      try {
+        expect(await file(join(target, "SKILL.md")).text()).toBe("new\n");
+        expect(written.join("")).toContain(
+          "could not delete the scratch folder",
+        );
+        expect(written.join("")).toContain("The new files are in place.");
+      } finally {
+        await rm(parent, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
 describe("beginInstalledReconciliation", () => {

@@ -1,4 +1,4 @@
-import { mkdir, copyFile, readdir, rm } from "node:fs/promises";
+import { mkdir, copyFile, readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isIgnoredDotDirent } from "./dotfiles";
@@ -12,6 +12,7 @@ import {
 } from "./installed";
 import type { InstallMode } from "./paths";
 import { PreconditionError } from "./errors";
+import { removeInstalledTree } from "./mount-points";
 
 export function targetDir(
   project: string,
@@ -69,7 +70,7 @@ export async function replaceDirFromDir(
   dst: string,
   skip?: SkipPredicate,
 ): Promise<void> {
-  if (existsSync(dst)) await rm(dst, { recursive: true, force: true });
+  if (existsSync(dst)) await removeInstalledTree(dst);
   await copyRecursive(src, dst, skip);
 }
 
@@ -79,7 +80,7 @@ export async function replaceDirFromFiles(
   dst: string,
   skip?: SkipPredicate,
 ): Promise<void> {
-  if (existsSync(dst)) await rm(dst, { recursive: true, force: true });
+  if (existsSync(dst)) await removeInstalledTree(dst);
   for (const rel of files) {
     if (skip?.(rel)) continue;
     const from = join(src, ...rel.split("/"));
@@ -96,7 +97,7 @@ export async function replaceDirFromGitVisibleFiles(
   dst: string,
   skip?: SkipPredicate,
 ): Promise<void> {
-  if (existsSync(dst)) await rm(dst, { recursive: true, force: true });
+  if (existsSync(dst)) await removeInstalledTree(dst);
   const files = await sourceVisibleFilesUnderPath(repo, relPath);
   for (const rel of files) {
     if (skip?.(rel)) continue;

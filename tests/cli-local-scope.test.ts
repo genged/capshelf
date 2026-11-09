@@ -257,7 +257,7 @@ describe("cli integration", () => {
       expect(rm.exitCode).toBe(1);
       const stderr = rm.stderr.toString();
       expect(stderr).toContain("could not delete");
-      expect(stderr).toContain("delete the directory manually");
+      expect(stderr).toContain("a rerun of this command finishes the removal");
       // The failed delete must not have untracked the item.
       const localConfig = await file(
         join(project, ".capshelf", "local.json"),

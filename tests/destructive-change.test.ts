@@ -10,6 +10,7 @@ import {
   type DestructiveChange,
   type DestructiveConfirmationContext,
   normalizeDestructiveChanges,
+  renderDestructiveChanges,
 } from "../src/destructive-change";
 import { PreconditionError } from "../src/errors";
 import { rejection, tempDir } from "./cli-fixtures";
@@ -193,6 +194,63 @@ describe("destructive change consent", () => {
     expect(() => assertDestructivePlanUnchanged(accepted, current)).toThrow(
       /changed after destructive-change preflight/,
     );
+  });
+});
+
+describe("renderDestructiveChanges", () => {
+  const detail = "not part of the item — reconciliation removes it";
+  const extra = (path: string): DestructiveChange => ({
+    scope: "project",
+    item: "data/skills/draw",
+    path: `.agents/skills/draw/${path}`,
+    reason: "extra_local_path",
+    detail,
+  });
+
+  test("a large group prints one line per folder entry", () => {
+    const venv = [
+      ...Array.from({ length: 30 }, (_, index) => `.venv/lib/f${index}.py`),
+      ".venv/bin/python",
+      ".venv/bin/pip",
+      ".venv/pyvenv.cfg",
+    ];
+    const text = renderDestructiveChanges("Update", [
+      ...venv.map(extra),
+      extra("notes.md"),
+    ]);
+    expect(text.split("\n")).toEqual([
+      "Update would destroy local state:",
+      "  data/skills/draw — .agents/skills/draw/.venv/ (33 paths in it) — delete a local-only path",
+      "  data/skills/draw — .agents/skills/draw/notes.md — delete a local-only path",
+      `      34 paths: ${detail}`,
+      "  To keep a local-only path, add it to a .gitignore file, then rerun the command.",
+    ]);
+  });
+
+  test("a small group prints every path, and other reasons stay apart", () => {
+    const text = renderDestructiveChanges("Update", [
+      extra("a.md"),
+      {
+        scope: "project",
+        item: "data/skills/draw",
+        path: ".agents/skills/draw/SKILL.md",
+        reason: "managed_content",
+      },
+    ]);
+    expect(text.split("\n")).toEqual([
+      "Update would destroy local state:",
+      "  data/skills/draw — .agents/skills/draw/a.md — delete a local-only path",
+      `      ${detail}`,
+      "  data/skills/draw — .agents/skills/draw/SKILL.md — overwrite managed content",
+      "  To keep a local-only path, add it to a .gitignore file, then rerun the command.",
+    ]);
+  });
+
+  test("rm rows without the visible-extra detail get no .gitignore hint", () => {
+    const text = renderDestructiveChanges("Remove", [
+      { ...extra("a.md"), detail: undefined },
+    ]);
+    expect(text).not.toContain(".gitignore");
   });
 });
 

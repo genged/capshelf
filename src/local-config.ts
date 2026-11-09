@@ -163,6 +163,11 @@ export async function ensureLocalExcludes(
   );
 }
 
+/** The `.git/info/exclude` lines capshelf writes for a local-scope item. */
+export function localExcludeLines(kind: ItemKind, name: string): string[] {
+  return localInstallPaths(kind, name, true);
+}
+
 /** True when a line was actually removed, so a caller can put back only that. */
 export async function removeLocalExcludes(
   project: string,

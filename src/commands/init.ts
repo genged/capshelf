@@ -9,12 +9,15 @@ import { loadManifest, saveManifest } from "../manifest";
 import { assertWritableLock, loadLock, saveLock, systemKey } from "../lock";
 import {
   SYSTEM_ITEMS,
-  installSystemItem,
   installedMatchesSystemItem,
   shaOfSystemItem,
   CLI_VERSION,
 } from "../bundled";
 import { findInstallConflict } from "../installed";
+import { contentSourceFor } from "../item-source";
+import type { SystemLockEntry } from "../lock";
+import { materializeLockEntry } from "../materialize";
+import { holdsOnlyMountPoints } from "../mount-points";
 import {
   assertDataRepoRoot,
   normalizeRemoteUrl,
@@ -199,6 +202,9 @@ export function registerInit(program: Command): void {
         if (await installedMatchesSystemItem(project, item, installMode)) {
           continue;
         }
+        // What `rm` or a failed write leaves for an item with a mounted
+        // volume: the write fills it and keeps the volume.
+        if (await holdsOnlyMountPoints(conflict)) continue;
         throw new PreconditionError(
           `not installing system/${item.kind}/${item.name} — target already exists but is not managed by capshelf\n` +
             `  existing path: ${conflict}\n` +
@@ -214,20 +220,52 @@ export function registerInit(program: Command): void {
         dst: string;
         runtimeWarnings?: RuntimeWarning[];
       }[] = [];
+      // The system items go through the same writer as `update`, so a
+      // re-run keeps ignored local state and mounted volumes in the folder
+      // instead of deleting it. That writer reads the install mode from the
+      // manifest, so the manifest is saved first. `local.json` still comes
+      // last (see below).
+      await saveManifest(project, manifest);
       for (const item of SYSTEM_ITEMS) {
-        const dst = await installSystemItem(project, item, installMode);
+        const key = systemKey(item.kind, item.name);
         const sha = await shaOfSystemItem(item);
-        const runtimeWarnings = runtimeWarningsForItem(
-          project,
-          item.kind,
-          item.name,
-        );
-        lock.items[systemKey(item.kind, item.name)] = {
+        const entry: SystemLockEntry = {
           source: "system",
           sha,
           cliVersion: CLI_VERSION,
           appliedAt: new Date().toISOString(),
         };
+        const previous = lock.items[key];
+        const { path: dst } = await materializeLockEntry({
+          project,
+          source: contentSourceFor({
+            entry,
+            kind: item.kind,
+            name: item.name,
+          }),
+          kind: item.kind,
+          name: item.name,
+          key,
+          manifest,
+          entry,
+          ...(previous !== undefined && {
+            previous: {
+              entry: previous,
+              source: contentSourceFor({
+                entry: previous,
+                kind: item.kind,
+                name: item.name,
+              }),
+            },
+          }),
+          scope: "project",
+        });
+        const runtimeWarnings = runtimeWarningsForItem(
+          project,
+          item.kind,
+          item.name,
+        );
+        lock.items[key] = entry;
         installed.push({
           kind: item.kind,
           name: item.name,

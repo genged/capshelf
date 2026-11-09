@@ -357,6 +357,7 @@ async function itemState(
           }),
           kind,
           name,
+          opts.scope,
         )
       : null;
     currentSha = installation?.currentSha ?? null;

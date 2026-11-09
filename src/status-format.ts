@@ -301,7 +301,12 @@ export const CLAUDE_TRUST_HINT =
   "Claude Code does not load plugins in an untrusted workspace. Open the project in Claude Code and trust it.";
 
 function formatRow(r: StatusRow): string[] {
-  const g = glyph(r.state).padEnd(3);
+  // D12: visible extras fail `status --strict`, so an otherwise clean row
+  // must not show the clean glyph.
+  const extras = r.visibleExtras?.length ?? 0;
+  const g = (extras > 0 && r.state === "ok" ? "⚠" : glyph(r.state)).padEnd(3);
+  const extrasLabel =
+    extras > 0 ? `, ${extras} extra ${extras === 1 ? "file" : "files"}` : "";
   // A remote row already sits under a heading that names its population, so
   // the id drops the source prefix the shelf groups need.
   const id = (
@@ -311,12 +316,33 @@ function formatRow(r: StatusRow): string[] {
   ).padEnd(39);
   const label = r.label ? ` ${r.label}` : "";
   return [
-    `  ${g} ${id} ${shortIdentity(r.lockedSha)}${label}  ${describe(r)}${runsSuffix(r)}`,
+    `  ${g} ${id} ${shortIdentity(r.lockedSha)}${label}  ${describe(r)}${extrasLabel}${runsSuffix(r)}`,
     ...remoteRowDetail(r),
+    ...visibleExtrasGuidance(r),
     ...targetCoverageGuidance(r),
     ...missingSourceCommitGuidance(r),
     ...needsStateGuidance(r),
     ...formatRuntimeWarnings(r.runtimeWarnings, "    "),
+  ];
+}
+
+const VISIBLE_EXTRAS_SHOWN = 3;
+
+/**
+ * D12: unpinned files that Git can see. They are not part of the item, and
+ * `update` and `apply` delete them under consent, so the row says so before
+ * that happens.
+ */
+function visibleExtrasGuidance(r: StatusRow): string[] {
+  const extras = r.visibleExtras ?? [];
+  if (extras.length === 0) return [];
+  const shown = extras.slice(0, VISIBLE_EXTRAS_SHOWN).join(", ");
+  const rest = extras.length - VISIBLE_EXTRAS_SHOWN;
+  const count = `${extras.length} ${extras.length === 1 ? "file is" : "files are"}`;
+  return [
+    `    ! ${count} not part of the item, and Git can see them. update and apply delete them:`,
+    `      ${shown}${rest > 0 ? `, and ${rest} more` : ""}`,
+    "      To keep them, add them to a .gitignore file.",
   ];
 }
 

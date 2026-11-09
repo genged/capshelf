@@ -228,8 +228,10 @@ describe("PIN-8 unprovable pin repair", () => {
 
       await breakSourceCommit(project, "data/settings/base");
 
+      // The refusal is a precondition, and the per-item row keeps its exit
+      // code (D9).
       const updated = await run(["update", "settings/base"]);
-      expect(updated.exitCode).toBe(1);
+      expect(updated.exitCode).toBe(3);
       const text = updated.stdout.toString();
       expect(text).toContain("cannot be resolved");
       expect(text).toContain("capshelf rm settings/base");

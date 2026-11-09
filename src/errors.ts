@@ -90,6 +90,54 @@ export class ResultExitError extends CliError {
   }
 }
 
+/** What a per-item error result keeps from a caught error. */
+export interface ItemErrorFields {
+  error: string;
+  hint?: string;
+  /** Not printed. `itemErrorsExitCode` reads it. */
+  exitCode?: number;
+}
+
+/**
+ * A per-item error keeps the message, and a `CliError` also keeps its hint and
+ * exit code. A command that collects per-item results would otherwise drop
+ * the hint that tells the user how to fix the refusal.
+ */
+export function itemErrorFields(cause: unknown): ItemErrorFields {
+  if (cause instanceof CliError) {
+    return {
+      error: cause.message,
+      ...(cause.hint !== undefined && { hint: cause.hint }),
+      exitCode: cause.exitCode,
+    };
+  }
+  return { error: cause instanceof Error ? cause.message : String(cause) };
+}
+
+/** A per-item result as JSON prints it: without the internal exit code. */
+export function withoutExitCode<T extends { exitCode?: number }>(
+  result: T,
+): Omit<T, "exitCode"> {
+  const { exitCode: _exitCode, ...rest } = result;
+  return rest;
+}
+
+/**
+ * The exit code for a run with per-item errors: the code that every error
+ * shares, or 1 when they differ or one is a plain `Error`.
+ */
+export function itemErrorsExitCode(
+  results: readonly { action: string; exitCode?: number }[],
+): number {
+  const codes = new Set(
+    results
+      .filter((result) => result.action === "error")
+      .map((result) => result.exitCode ?? ExitCode.Unknown),
+  );
+  const [only] = codes;
+  return codes.size === 1 && only !== undefined ? only : ExitCode.Unknown;
+}
+
 /**
  * The first line of a caught error, for one-line diagnostics (catalog rows,
  * per-item failure summaries) where a multi-line git message would break the
