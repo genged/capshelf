@@ -525,6 +525,25 @@ describe("capshelf ui server", () => {
     const overview = await api.overview();
     expect(overview.dataOverride).toBe(resolve("../no-such-shelf"));
   });
+
+  test("an empty --data is no override, as in the CLI", async () => {
+    // The CLI ignores `--data ""`. Made absolute, "" would name the start
+    // directory and replace every project's own binding.
+    const empty = createUiApi({
+      registryPath: world.registryPath,
+      dataOverride: "",
+    });
+    const none = createUiApi({ registryPath: world.registryPath });
+    const overview = await empty.overview();
+    expect(overview.dataOverride).toBeNull();
+    expect(overview.shelves).toEqual((await none.overview()).shelves);
+    const status = await empty.projectStatus(world.project);
+    expect(status.items.map((item) => item.actions)).toEqual(
+      (await none.projectStatus(world.project)).items.map(
+        (item) => item.actions,
+      ),
+    );
+  });
 });
 
 // Keep the shell dependency visible: the fixtures above run real git.

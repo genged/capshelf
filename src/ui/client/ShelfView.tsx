@@ -115,15 +115,25 @@ export function ShelfView({
         ? previous
         : { state: "loading" },
     );
+    // A reply for a shelf the user has left must not replace the shelf on
+    // screen, so a reply that arrives after the cleanup is dropped.
+    let current = true;
     apiGet<UiShelf>("/api/shelf", { repo }).then(
-      (data) => setShelf({ state: "ready", data }),
-      (cause: unknown) =>
+      (data) => {
+        if (current) setShelf({ state: "ready", data });
+      },
+      (cause: unknown) => {
+        if (!current) return;
         setShelf({
           state: "error",
           error:
             cause instanceof ApiError ? cause : new ApiError(0, String(cause)),
-        }),
+        });
+      },
     );
+    return () => {
+      current = false;
+    };
   }, [repo, generation]);
 
   const go = (section: ShelfSection, ref: string | null): void =>
@@ -774,13 +784,19 @@ function ItemReader({
         ? previous
         : { state: "loading" },
     );
+    // A reply for a file or item the user has left is dropped, as in
+    // `ShelfView`.
+    let current = true;
     apiGet<UiShelfItemDetail>("/api/shelf/item", {
       repo,
       ref: itemRef,
       ...(file !== null && { file }),
     }).then(
-      (data) => setDetail({ state: "ready", data }),
+      (data) => {
+        if (current) setDetail({ state: "ready", data });
+      },
       (cause: unknown) => {
+        if (!current) return;
         // A refresh can remove the selected file while the item stays. The
         // server answers 404 for that, so the reader falls back to the
         // item's main file. A missing item answers 404 again without a file,
@@ -800,6 +816,9 @@ function ItemReader({
         });
       },
     );
+    return () => {
+      current = false;
+    };
   }, [repo, itemRef, file, generation]);
 
   if (detail.state !== "ready") {

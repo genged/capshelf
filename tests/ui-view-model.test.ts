@@ -20,7 +20,9 @@ import {
   warningLabel,
 } from "../src/ui/shared/state-label";
 import {
+  awaitingStatus,
   changedItemIds,
+  currentStatus,
   externalEntries,
   findingsAcrossProjects,
   groupByKind,
@@ -411,6 +413,59 @@ function status(
     ...overrides,
   };
 }
+
+describe("current statuses", () => {
+  const data = status("~/code/billing-api", []);
+
+  test("each step of a read gives the status the views across projects show", () => {
+    // The dashboard writes these states in this order: a first read, a
+    // success, a refresh, a failed refresh, a second refresh, a success.
+    const steps = [
+      {
+        read: { state: "loading", data: null, stale: false },
+        shown: false,
+        awaiting: true,
+      },
+      {
+        read: { state: "ready", data, stale: false },
+        shown: true,
+        awaiting: false,
+      },
+      {
+        read: { state: "loading", data, stale: false },
+        shown: true,
+        awaiting: false,
+      },
+      {
+        read: { state: "error", data, stale: true },
+        shown: false,
+        awaiting: false,
+      },
+      // The refresh keeps the old data for the project view. It must not
+      // bring that data back into All findings, Rollouts, or This machine.
+      {
+        read: { state: "loading", data, stale: true },
+        shown: false,
+        awaiting: true,
+      },
+      {
+        read: { state: "ready", data, stale: false },
+        shown: true,
+        awaiting: false,
+      },
+    ] as const;
+    for (const { read, shown, awaiting } of steps) {
+      expect(currentStatus(read)).toBe(shown ? data : null);
+      expect(awaitingStatus(read)).toBe(awaiting);
+    }
+  });
+
+  test("a first read that fails is neither shown nor awaited", () => {
+    const read = { state: "error", data: null, stale: true } as const;
+    expect(currentStatus(read)).toBeNull();
+    expect(awaitingStatus(read)).toBe(false);
+  });
+});
 
 describe("across projects", () => {
   const billing = status("~/code/billing-api", [

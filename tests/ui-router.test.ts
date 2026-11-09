@@ -81,6 +81,21 @@ describe("hash routes", () => {
     });
   });
 
+  test("a bad percent escape opens the status view and does not throw", () => {
+    for (const hash of [
+      "#/status/%E0%A4%A",
+      "#/shelf/100%",
+      "#/findings/%2Fa/%zz",
+      "#/machine/%",
+    ]) {
+      expect(parseRoute(hash)).toEqual({
+        view: "status",
+        project: null,
+        item: null,
+      });
+    }
+  });
+
   test("a slash inside a segment stays inside it", () => {
     const hash = routeHash({
       view: "findings",

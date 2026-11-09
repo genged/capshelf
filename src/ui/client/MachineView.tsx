@@ -2,6 +2,8 @@ import type { ExternalClaudePlugin, ExternalUserSkill } from "../../external";
 import type { UiOverview, UiProjectStatus } from "../shared/api-types";
 import { homeDisplay } from "../shared/display";
 import {
+  awaitingStatus,
+  currentStatus,
   machinePluginKey,
   machineSkillKey,
   splitDisplayPath,
@@ -60,8 +62,9 @@ export function MachineView({
   let pending = 0;
   // A failed refresh keeps old data; this view reads current statuses only.
   for (const load of loads.values()) {
-    if (load.data && load.state !== "error") ready.push(load.data);
-    else if (load.state === "loading") pending += 1;
+    const status = currentStatus(load);
+    if (status) ready.push(status);
+    else if (awaitingStatus(load)) pending += 1;
   }
 
   const skills = new Map<string, SkillEntry>();

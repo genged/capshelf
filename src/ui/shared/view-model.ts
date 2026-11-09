@@ -72,6 +72,29 @@ export function groupByKind<Row extends { kind: ItemKind }>(
   return groups;
 }
 
+/** A project's status read, as the dashboard holds it. */
+export interface StatusRead {
+  state: "loading" | "ready" | "error";
+  data: UiProjectStatus | null;
+  /** The last read that finished failed, so `data` is from an older read. */
+  stale: boolean;
+}
+
+/**
+ * The status that the views across projects may show. A failed read keeps
+ * its old data for the project view, which says that the refresh failed.
+ * That data stays out of All findings, Jump, Rollouts, Coverage, and This
+ * machine until a new read of the project succeeds.
+ */
+export function currentStatus(read: StatusRead): UiProjectStatus | null {
+  return read.state === "error" || read.stale ? null : read.data;
+}
+
+/** True while a read runs for a project that has no current status. */
+export function awaitingStatus(read: StatusRead): boolean {
+  return read.state === "loading" && currentStatus(read) === null;
+}
+
 /**
  * The rows whose state or identity moved between two refreshes. The UI
  * highlights each once.

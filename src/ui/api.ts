@@ -133,10 +133,12 @@ export function createUiApi(ctx: UiContext): UiApi {
   // (src/data-repo.ts, candidateDataRepo). Every printed command runs from a
   // project root instead, so the override is made absolute here, once. The
   // repository it names is the same; only the spelling changes.
-  const dataOverride =
-    ctx.dataOverride === undefined
-      ? undefined
-      : normalizePath(ctx.dataOverride);
+  // An empty `--data ""` is no override, as in `candidateDataRepo`. The
+  // check runs before `normalizePath`, which turns "" into the start
+  // directory.
+  const dataOverride = ctx.dataOverride
+    ? normalizePath(ctx.dataOverride)
+    : undefined;
   // The rows a project last reported. A diff request names one of them, so
   // the comparison is built from the row the user is looking at rather than
   // from a second status run that could disagree with it.

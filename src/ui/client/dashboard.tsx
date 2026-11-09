@@ -14,11 +14,14 @@ import type {
 } from "../shared/api-types";
 import { homeDisplay } from "../shared/display";
 import {
+  awaitingStatus,
   changedItemIds,
+  currentStatus,
   externalEntries,
   jumpCandidates,
   type JumpTarget,
   projectCounts,
+  type StatusRead,
   sortTree,
   splitDisplayPath,
   type TreeEntry,
@@ -56,9 +59,7 @@ function jumpRoute(target: JumpTarget): Route {
   }
 }
 
-export interface ProjectLoad {
-  state: "loading" | "ready" | "error";
-  data: UiProjectStatus | null;
+export interface ProjectLoad extends StatusRead {
   error: ApiError | null;
   /** Item ids whose state moved in the last refresh; highlighted once. */
   changed: Set<string>;
@@ -67,6 +68,7 @@ export interface ProjectLoad {
 export const EMPTY_LOAD: ProjectLoad = {
   state: "loading",
   data: null,
+  stale: false,
   error: null,
   changed: new Set(),
 };
@@ -95,7 +97,13 @@ export function Dashboard(): preact.JSX.Element {
         const next = new Map(previous);
         const old = previous.get(path);
         changed = changedItemIds(old?.data?.items, data.items);
-        next.set(path, { state: "ready", data, error: null, changed });
+        next.set(path, {
+          state: "ready",
+          data,
+          stale: false,
+          error: null,
+          changed,
+        });
         return next;
       });
       if (changed.size > 0) {
@@ -116,6 +124,7 @@ export function Dashboard(): preact.JSX.Element {
         next.set(path, {
           ...old,
           state: "error",
+          stale: true,
           error:
             error instanceof ApiError ? error : new ApiError(0, String(error)),
         });
@@ -211,29 +220,30 @@ export function Dashboard(): preact.JSX.Element {
   }, [jumpOpen, shelves, overview]);
 
   const projects = overview?.projects ?? [];
-  // The views across projects read only current statuses. A failed refresh
-  // keeps its old data for the project view, which says the refresh failed,
-  // but All findings, Jump, Rollouts, and Coverage leave it out and All
-  // findings names it as unread. A refresh in progress keeps the last good
-  // read, so the views do not empty while it runs.
+  // The views across projects read only current statuses (`currentStatus`).
+  // All findings names a project whose read failed as unread. A refresh in
+  // progress keeps the last good read, so the views do not empty while it
+  // runs.
   const statuses = useMemo<UiProjectStatus[]>(
     () =>
-      [...loads.values()].flatMap((load) =>
-        load.data && load.state !== "error" ? [load.data] : [],
-      ),
+      [...loads.values()].flatMap((load) => {
+        const status = currentStatus(load);
+        return status ? [status] : [];
+      }),
     [loads],
   );
   const statusByProject = useMemo(
     () => new Map(statuses.map((status) => [status.project, status])),
     [statuses],
   );
-  // Projects on their first status read. Only for these does a shelf view
-  // let the shelf's pin flag stand in for the missing row.
+  // Projects in a read with no current status: a first read, or a read
+  // after a failed one. Only for these does a shelf view let the shelf's pin
+  // flag stand in for the missing row.
   const pendingProjects = useMemo(
     () =>
       new Set(
         [...loads.entries()].flatMap(([path, load]) =>
-          load.data === null && load.state === "loading" ? [path] : [],
+          awaitingStatus(load) ? [path] : [],
         ),
       ),
     [loads],
@@ -261,10 +271,11 @@ export function Dashboard(): preact.JSX.Element {
           }
           const load = loads.get(project.path);
           if (!load || load.state === "loading") {
+            const status = load ? currentStatus(load) : null;
             return {
               ...base,
               state: "loading",
-              counts: load?.data ? projectCounts(load.data.items) : null,
+              counts: status ? projectCounts(status.items) : null,
             };
           }
           if (load.state === "error" || load.data === null) {
@@ -321,7 +332,13 @@ export function Dashboard(): preact.JSX.Element {
         view,
       });
       diffCache.current.set(key, promise);
-      promise.catch(() => diffCache.current.delete(key));
+      // A refresh clears the cache, so a newer request can hold this key
+      // when an older one fails. Only the failed request's own entry goes.
+      promise.catch(() => {
+        if (diffCache.current.get(key) === promise) {
+          diffCache.current.delete(key);
+        }
+      });
       return promise;
     },
     [],

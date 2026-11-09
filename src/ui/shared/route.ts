@@ -26,12 +26,23 @@ function isSection(value: string | undefined): value is ShelfSection {
   return value === "items" || value === "rollouts" || value === "coverage";
 }
 
+const OVERVIEW: Route = { view: "status", project: null, item: null };
+
 export function parseRoute(hash: string): Route {
   const raw = hash.startsWith("#") ? hash.slice(1) : hash;
-  const parts = raw
-    .split("/")
-    .filter((part) => part.length > 0)
-    .map((part) => decodeURIComponent(part));
+  let parts: string[];
+  try {
+    parts = raw
+      .split("/")
+      .filter((part) => part.length > 0)
+      .map((part) => decodeURIComponent(part));
+  } catch {
+    // A hand-edited link can hold a bad percent escape, and
+    // `decodeURIComponent` throws a URIError for it. The route is parsed
+    // during render, so a throw would leave a blank page. The overview opens
+    // instead.
+    return OVERVIEW;
+  }
   if (parts[0] === "shelf") {
     const section = parts[2];
     return isSection(section)
