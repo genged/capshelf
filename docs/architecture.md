@@ -545,7 +545,8 @@ the `--assume-unchanged` or `--skip-worktree` index bit produces empty
 `git status` output, so a cleanliness check alone treats a hidden data-repo
 edit as no change. The interactive promote picker reads those bits and
 disables the affected item with `git is not watching <paths>`. The named
-`promote` command does not run this check yet.
+`promote` command runs the same check before it writes. It refuses with the
+same message and leaves the hidden file unchanged.
 
 ### Git execution profiles
 
