@@ -717,7 +717,7 @@ describe("cli integration", () => {
     await $`git -C ${project} add .agents/skills/tracked/SKILL.md`.quiet();
     await $`git -C ${project} commit -qm "track local skill"`.quiet();
 
-    const share = await run(["share", "skills/tracked"]);
+    const share = await run(["share", "skills/tracked", "--to", "local"]);
     expect(share.exitCode).toBe(3);
     expect(share.stderr.toString()).toContain(
       "local install path is already tracked by git",
@@ -730,6 +730,47 @@ describe("cli integration", () => {
     expect(await file(join(dataRepo, "skills", "tracked")).exists()).toBe(
       false,
     );
+  });
+
+  test("share defaults a project-git-tracked skill to project scope", async () => {
+    const project = await tempRepo("capshelf-share-tracked-default-project-");
+    const dataRepo = await tempRepo("capshelf-share-tracked-default-data-");
+    const run = runInProcess(project);
+    const init = await run(["init", "--data", dataRepo]);
+    expect(init.exitCode).toBe(0);
+
+    await mkdir(join(project, ".agents", "skills", "tracked"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(project, ".agents", "skills", "tracked", "SKILL.md"),
+      "tracked\n",
+    );
+    await $`git -C ${project} add .agents/skills/tracked/SKILL.md`.quiet();
+    await $`git -C ${project} commit -qm "track skill"`.quiet();
+
+    const share = await run(["share", "skills/tracked"]);
+    expect(share.exitCode).toBe(0);
+    expect(share.stdout.toString()).toContain(
+      "project scope: git already tracks .agents/skills/tracked",
+    );
+
+    expect(
+      await file(join(dataRepo, "skills", "tracked", "SKILL.md")).text(),
+    ).toBe("tracked\n");
+    const manifest = await file(
+      join(project, ".capshelf", "capshelf.json"),
+    ).json();
+    expect(manifest.skills).toEqual(["tracked"]);
+    const localConfig = await file(
+      join(project, ".capshelf", "local.json"),
+    ).json();
+    expect(localConfig.skills).toEqual([]);
+    const exclude = await readFile(
+      join(project, ".git", "info", "exclude"),
+      "utf-8",
+    );
+    expect(exclude).not.toContain(".agents/skills/tracked/");
   });
 
   test("move changes tracked skill scope in both directions", async () => {

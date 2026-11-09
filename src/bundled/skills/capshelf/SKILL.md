@@ -80,7 +80,7 @@ For system items (e.g. this `capshelf` skill), the edit loop doesn't apply — t
 
 ## How it works
 
-- **Data repo** (e.g. `~/code/work-skills/`) holds canonical versions of every shared item under `skills/`, `pi/extensions/`, `subagents/`, `settings/`, `mcp/`, and `codex/config/`. It must be a git repo. Resolution order: `--data <path>` flag > gitignored `.capshelf/local.json` > `$CAPSHELF_HOME`. There is no implicit default.
+- **Data repo** (a Git repo at a path the user chooses) holds canonical versions of every shared item under `skills/`, `pi/extensions/`, `subagents/`, `settings/`, `mcp/`, and `codex/config/`. It must be a git repo. Resolution order: `--data <path>` flag > gitignored `.capshelf/local.json` > `$CAPSHELF_HOME`. There is no implicit default.
 - **This project** pins the exact content hash + source commit of each item in `.capshelf/capshelf.lock.json` (clone-local pins in gitignored `.capshelf/local.lock.json`). Data-repo updates do NOT propagate until this project runs `capshelf update`.
 - **Installed copies** live under `.agents/skills/<name>/` by default with `.claude/skills/<name>` symlinks (Claude-only projects install directly under `.claude/skills/<name>/`). Pi extensions live under `.pi/extensions/<name>/`. Claude custom commands are modeled as skills.
 - **Subagents** are project-scoped logical items. `subagents/<name>/claude.md` installs to `.claude/agents/<name>.md`; `subagents/<name>/codex.toml` installs to `.codex/agents/<name>.toml`. Either target or both may exist under one lock; capshelf reports which as target coverage.
@@ -95,7 +95,7 @@ For system items (e.g. this `capshelf` skill), the edit loop doesn't apply — t
   repository outside your shelf. Added via `add <url>`, removed via `rm`,
   never promoted. `share <item> --adopt` is the one exit. See Remote skills.
 
-Mutating commands only touch files tracked in the lockfiles: `add` refuses to overwrite an existing untracked target, and `rm` deletes only locked data items. Copy-directory items can use committed project scope or clone-local scope; subagents are project-only. `share skills/<name>` defaults to local scope; Pi extensions default to project scope, so pass `--to local` when adopting one as clone-local intent.
+Mutating commands only touch files tracked in the lockfiles: `add` refuses to overwrite an existing untracked target, and `rm` deletes only locked data items. Copy-directory items can use committed project scope or clone-local scope; subagents are project-only. `share skills/<name>` defaults to local scope, or to project scope when project Git already tracks the skill's files; Pi extensions default to project scope, so pass `--to local` when adopting one as clone-local intent.
 
 ## Command reference
 
@@ -526,6 +526,11 @@ control.
 - **Treat `add` conflict refusals (exit 3) as decisions for the user**, not obstacles. There is no force flag by design.
 - **Do not work around an already-initialized `init` refusal.** Use the named
   `data` or `update` command; install-mode changes need a dedicated migration.
+- **Ask the user where the data repo goes before you clone or create one.**
+  This covers `init --data <url>`, `--data-dir`, and a new data repo. Do not
+  copy a path from an example. The default clone path is under `$HOME`. In a
+  container or a sandbox, `$HOME` is often not visible to the user. Tell the
+  user the absolute path that `init` printed.
 - **Never pass `promote --stale-ok` without explicit user direction** — it intentionally overwrites a teammate's newer upstream version.
 - **Never pass `--yes` merely to route around a destructive-change refusal.** Show every affected path, use `capshelf status <item> --diff-view installed` for managed item drift (or marketplace sync dry-run for projections), explain what will be lost, and get the user's permission first. `--yes` does not bypass hard safety refusals.
 - **Never clear a `lock migrate` blocker with `--repin` or `--remove-item` on
