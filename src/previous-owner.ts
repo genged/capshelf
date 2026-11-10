@@ -139,6 +139,7 @@ export const SKILLS_SH_PREVIOUS_OWNER: PreviousOwner = {
     await atomicWriteFile(
       path,
       `${JSON.stringify(document, null, 2)}${text.endsWith("\n") ? "\n" : ""}`,
+      { root: project },
     );
     const after = parseSkillsShLock(await readFile(path, "utf-8"));
     if (skillsShRow(after, name) !== null) {

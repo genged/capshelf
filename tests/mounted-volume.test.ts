@@ -132,7 +132,7 @@ describe.skipIf(!canMount)("scratch folder removal", () => {
     await writeFile(
       script,
       `import { removeScratchTree } from ${JSON.stringify(join(import.meta.dir, "..", "src", "mount-points.ts"))};
-await removeScratchTree(process.argv[2]).catch((error) => console.log(String(error)));`,
+await removeScratchTree(process.argv[2], { exempt: "test" }).catch((error) => console.log(String(error)));`,
     );
 
     const result = withVolume(
@@ -169,10 +169,10 @@ const show = async () =>
     lib: (await readdir(join(installed, "lib"))).sort(),
     volume: await readFile(join(installed, "lib", "node_modules", "lib.js"), "utf-8"),
   }));
-const first = await beginInstalledReconciliation(installed, [file("local.md", "local\\n")], [file("merged.md", "merged\\n")]);
+const first = await beginInstalledReconciliation(installed, [file("local.md", "local\\n")], [file("merged.md", "merged\\n")], { exempt: "test" });
 await first.commit();
 await show();
-const second = await beginInstalledReconciliation(installed, [], [file("lib/other.md", "other\\n")]);
+const second = await beginInstalledReconciliation(installed, [], [file("lib/other.md", "other\\n")], { exempt: "test" });
 await second.rollback();
 await show();
 console.log((await readdir(join(installed, ".."))).filter((name) => name.startsWith(".capshelf-")).length);`,
@@ -365,7 +365,7 @@ describe.skipIf(!canMount)("transaction defects (D2)", () => {
     await writeFile(
       script,
       `import { removeScratchTree } from ${JSON.stringify(join(SRC, "mount-points.ts"))};
-await removeScratchTree(process.argv[2]).catch((error) => console.log(String(error)));`,
+await removeScratchTree(process.argv[2], { exempt: "test" }).catch((error) => console.log(String(error)));`,
     );
     const result = withVolume(
       scratch,
@@ -395,7 +395,7 @@ import { beginDirectoryReplacement } from ${JSON.stringify(join(SRC, "promote-tr
 const target = process.argv[2];
 let message = "";
 try {
-  await beginDirectoryReplacement(target, async (replacement) => {
+  await beginDirectoryReplacement(target, { exempt: "test" }, async (replacement) => {
     await mkdir(replacement);
     await writeFile(join(replacement, "SKILL.md"), "new\\n");
     // A file where the backup folder goes makes mkdir(backup) fail.

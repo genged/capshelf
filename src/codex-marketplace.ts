@@ -12,7 +12,7 @@ import {
   validateMarketplaceName,
 } from "./plugin-projection";
 import { lsTreeEntriesAtCommit, showAtCommit } from "./git";
-import { assertNoSymlinkAncestors } from "./path-safety";
+import { assertConfined } from "./path-safety";
 
 const ownerSchema = z
   .object({ name: z.string().min(1), email: z.string().min(1).optional() })
@@ -110,9 +110,10 @@ by the same command and must not be edited manually.
 `;
 
 export async function loadCodexState(dataRepo: string): Promise<CodexState> {
-  await assertNoSymlinkAncestors(
+  await assertConfined(
     dataRepo,
     "codex/plugin-definitions/marketplace.json",
+    "deny",
   );
   const root = join(dataRepo, "codex", "plugin-definitions");
   let marketplaceRaw: string;

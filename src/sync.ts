@@ -1,4 +1,4 @@
-import { mkdir, copyFile, readdir } from "node:fs/promises";
+import { copyFile, readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { isIgnoredDotDirent } from "./dotfiles";
@@ -13,6 +13,8 @@ import {
 import type { InstallMode } from "./paths";
 import { PreconditionError } from "./errors";
 import { removeInstalledTree } from "./mount-points";
+import { ensureDir } from "./fs-utils";
+import type { MutationScope } from "./path-safety";
 
 export function targetDir(
   project: string,
@@ -38,12 +40,13 @@ type SkipPredicate = (rel: string) => boolean;
 export async function copyRecursive(
   src: string,
   dst: string,
+  scope: MutationScope,
   skip?: SkipPredicate,
 ): Promise<void> {
   await go(src, dst, "");
 
   async function go(from: string, to: string, rel: string): Promise<void> {
-    await mkdir(to, { recursive: true });
+    await ensureDir(to, scope);
     const entries = await readdir(from, { withFileTypes: true });
     for (const e of entries) {
       if (isIgnoredDotDirent(e)) continue;
@@ -68,24 +71,26 @@ export async function copyRecursive(
 export async function replaceDirFromDir(
   src: string,
   dst: string,
+  scope: MutationScope,
   skip?: SkipPredicate,
 ): Promise<void> {
-  if (existsSync(dst)) await removeInstalledTree(dst);
-  await copyRecursive(src, dst, skip);
+  if (existsSync(dst)) await removeInstalledTree(dst, scope);
+  await copyRecursive(src, dst, scope, skip);
 }
 
 export async function replaceDirFromFiles(
   src: string,
   files: string[],
   dst: string,
+  scope: MutationScope,
   skip?: SkipPredicate,
 ): Promise<void> {
-  if (existsSync(dst)) await removeInstalledTree(dst);
+  if (existsSync(dst)) await removeInstalledTree(dst, scope);
   for (const rel of files) {
     if (skip?.(rel)) continue;
     const from = join(src, ...rel.split("/"));
     const to = join(dst, ...rel.split("/"));
-    await mkdir(dirname(to), { recursive: true });
+    await ensureDir(dirname(to), scope);
     await copyFile(from, to);
   }
 }
@@ -95,15 +100,16 @@ export async function replaceDirFromGitVisibleFiles(
   relPath: string,
   src: string,
   dst: string,
+  scope: MutationScope,
   skip?: SkipPredicate,
 ): Promise<void> {
-  if (existsSync(dst)) await removeInstalledTree(dst);
+  if (existsSync(dst)) await removeInstalledTree(dst, scope);
   const files = await sourceVisibleFilesUnderPath(repo, relPath);
   for (const rel of files) {
     if (skip?.(rel)) continue;
     const from = join(src, ...rel.split("/"));
     const to = join(dst, ...rel.split("/"));
-    await mkdir(dirname(to), { recursive: true });
+    await ensureDir(dirname(to), scope);
     await copyFile(from, to);
   }
 }
@@ -127,10 +133,16 @@ export async function copyItemIntoProject(
       item.repoRelPath,
       item.path,
       dst,
+      { root: project },
       isMetadataSidecarPath,
     );
   } else {
-    await replaceDirFromDir(item.path, dst, isMetadataSidecarPath);
+    await replaceDirFromDir(
+      item.path,
+      dst,
+      { root: project },
+      isMetadataSidecarPath,
+    );
   }
   await ensureInstallAliases(project, item.kind, item.name, mode);
   return dst;

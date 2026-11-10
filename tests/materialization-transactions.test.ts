@@ -37,6 +37,7 @@ function fragmentPlan(
 ): FragmentOutputPlan {
   return {
     target: "claude-settings",
+    project: dirname(path),
     path,
     currentText,
     plannedText,

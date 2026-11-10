@@ -1,6 +1,6 @@
 import type { GitReadMemo } from "./git-read-memo";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { parse as parseToml, type TomlTable } from "smol-toml";
 import { parseDocument } from "yaml";
@@ -12,7 +12,12 @@ import {
 import type { ConfigObject, ConfigValue } from "./config-values";
 import { hashNamedContents } from "./content-hash";
 import { PreconditionError } from "./errors";
-import { atomicWriteFile, lstatOrNull } from "./fs-utils";
+import {
+  atomicWriteFile,
+  ensureDir,
+  lstatOrNull,
+  rmTreeWithRetries,
+} from "./fs-utils";
 import {
   catFileBlobs,
   type GitTreeEntry,
@@ -413,12 +418,13 @@ export async function removeSubagentOutputs(
     }
     snapshots.set(source.outputPath, await readFile(source.outputPath));
   }
+  const scope = { root: project };
   try {
-    for (const path of snapshots.keys()) await rm(path, { force: true });
+    for (const path of snapshots.keys()) await rmTreeWithRetries(path, scope);
   } catch (error) {
     for (const [path, content] of snapshots) {
-      await mkdir(dirname(path), { recursive: true }).catch(() => {});
-      await atomicWriteFile(path, content).catch(() => {});
+      await ensureDir(dirname(path), scope).catch(() => {});
+      await atomicWriteFile(path, content, scope).catch(() => {});
     }
     throw error;
   }
@@ -526,14 +532,19 @@ export async function materializeSubagent(
     snapshots.set(path, stat?.isFile() ? await readFile(path) : null);
   }
 
+  const scope = { root: options.project };
   try {
     for (const [index, source] of desired.entries()) {
-      await mkdir(dirname(source.outputPath), { recursive: true });
+      await ensureDir(dirname(source.outputPath), scope);
       await options.hooks?.beforeReplace?.(source, index);
-      await atomicWriteFile(source.outputPath, contents.get(source.target)!);
+      await atomicWriteFile(
+        source.outputPath,
+        contents.get(source.target)!,
+        scope,
+      );
     }
     for (const source of stale) {
-      await rm(source.outputPath, { force: true });
+      await rmTreeWithRetries(source.outputPath, scope);
     }
     await options.hooks?.afterReplace?.();
     // Write-then-verify: the claim this write establishes is re-derived here,
@@ -568,10 +579,10 @@ export async function materializeSubagent(
   } catch (error) {
     for (const [path, snapshot] of snapshots) {
       if (snapshot === null) {
-        await rm(path, { force: true }).catch(() => {});
+        await rmTreeWithRetries(path, scope).catch(() => {});
       } else {
-        await mkdir(dirname(path), { recursive: true }).catch(() => {});
-        await atomicWriteFile(path, snapshot).catch(() => {});
+        await ensureDir(dirname(path), scope).catch(() => {});
+        await atomicWriteFile(path, snapshot, scope).catch(() => {});
       }
     }
     throw error;

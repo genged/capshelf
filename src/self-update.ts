@@ -549,6 +549,7 @@ async function writeStartupCache(
     await atomicWriteFile(
       context.cachePath,
       `${JSON.stringify(record, null, 2)}\n`,
+      { exempt: "the update-check cache lives in the user cache folder" },
     );
   } catch {
     // Cache writes are best-effort and must not affect command execution.

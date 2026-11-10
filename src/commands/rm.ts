@@ -468,7 +468,7 @@ export function registerRm(program: Command): void {
           // the lock row in place, so the item stays usable and a rerun can
           // finish (G8).
           if (existsSync(path)) {
-            keptMountPoints = await deleteInstalledFolder(path);
+            keptMountPoints = await deleteInstalledFolder(project, path);
             removed = true;
           }
           removed =
@@ -645,7 +645,7 @@ async function removeRemoteItem(input: {
   let keptMountPoints: string[] = [];
   if (!keptBy) {
     if (existsSync(path)) {
-      keptMountPoints = await deleteInstalledFolder(path);
+      keptMountPoints = await deleteInstalledFolder(project, path);
       removed = true;
     }
     removed =
@@ -700,9 +700,12 @@ async function removeRemoteItem(input: {
  * Delete an installed item folder and keep each mounted volume in it. The
  * error names the folder, so the user can see what is left.
  */
-async function deleteInstalledFolder(path: string): Promise<string[]> {
+async function deleteInstalledFolder(
+  project: string,
+  path: string,
+): Promise<string[]> {
   try {
-    return await removeInstalledTree(path);
+    return await removeInstalledTree(path, { root: project });
   } catch (err) {
     if (err instanceof CliError) throw err;
     const detail = err instanceof Error ? err.message : String(err);

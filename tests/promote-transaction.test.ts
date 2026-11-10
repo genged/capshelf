@@ -16,6 +16,9 @@ import {
   beginDirectoryReplacement,
   beginInstalledReconciliation,
 } from "../src/promote-transaction";
+import type { MutationScope } from "../src/path-safety";
+
+const TEST_SCOPE: MutationScope = { exempt: "test folder in the temp dir" };
 
 describe("beginDirectoryReplacement", () => {
   test("retries transaction cleanup after a transient denial", async () => {
@@ -25,6 +28,7 @@ describe("beginDirectoryReplacement", () => {
     await writeFile(join(target, "SKILL.md"), "old\n");
     const transaction = await beginDirectoryReplacement(
       target,
+      TEST_SCOPE,
       async (replacement) => {
         await mkdir(replacement);
         await writeFile(join(replacement, "SKILL.md"), "new\n");
@@ -88,6 +92,7 @@ describe("read-only units", () => {
         try {
           const transaction = await beginDirectoryReplacement(
             target,
+            TEST_SCOPE,
             async (replacement) => {
               await mkdir(replacement);
               await writeFile(join(replacement, "SKILL.md"), "new\n");
@@ -136,6 +141,7 @@ describe("read-only units", () => {
                 mode: "100644",
               },
             ],
+            TEST_SCOPE,
           );
           await transaction[finish]();
           expect(await file(join(target, "SKILL.md")).text()).toBe(
@@ -160,6 +166,7 @@ describe("read-only units", () => {
       await writeFile(join(target, "SKILL.md"), "old\n");
       const transaction = await beginDirectoryReplacement(
         target,
+        TEST_SCOPE,
         async (replacement) => {
           await mkdir(replacement);
           await writeFile(join(replacement, "SKILL.md"), "new\n");
@@ -218,6 +225,7 @@ describe("beginInstalledReconciliation", () => {
           mode: "100755",
         },
       ],
+      TEST_SCOPE,
     );
     await transaction.commit();
 
@@ -253,6 +261,7 @@ describe("beginInstalledReconciliation", () => {
           mode: "100644",
         },
       ],
+      TEST_SCOPE,
     );
     await transaction.rollback();
 
@@ -290,6 +299,7 @@ describe("beginInstalledReconciliation", () => {
             mode: "100644",
           },
         ],
+        TEST_SCOPE,
       ),
     ).rejects.toThrow(
       "preserved local path generated collides with reconciled managed path generated/file.md",
@@ -328,6 +338,7 @@ describe("beginInstalledReconciliation", () => {
           mode: "100644",
         },
       ],
+      TEST_SCOPE,
     );
     await transaction.commit();
 
@@ -357,6 +368,7 @@ describe("beginInstalledReconciliation", () => {
           },
         ],
         [],
+        TEST_SCOPE,
       ),
     ).rejects.toThrow(
       "preserved local path managed collides with reconciled managed path managed/file.md",
@@ -394,6 +406,7 @@ describe("beginInstalledReconciliation", () => {
           mode: "100644",
         },
       ],
+      TEST_SCOPE,
     );
     await transaction.commit();
 

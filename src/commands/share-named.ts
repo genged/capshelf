@@ -5,8 +5,9 @@
  */
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
-import { atomicWriteFile, lstatOrNull } from "../fs-utils";
+import { readFile } from "node:fs/promises";
+import { atomicWriteFile, ensureDir, lstatOrNull } from "../fs-utils";
+import { dataRepoScope } from "../path-safety";
 import { basename, dirname, join, relative } from "node:path";
 import {
   capshelfCommandPrefix,
@@ -956,8 +957,8 @@ export async function shareSubagent(
     mutate: async () => {
       for (const { source, raw } of pending) {
         const path = join(dataRepo, ...source.relPath.split("/"));
-        await mkdir(dirname(path), { recursive: true });
-        await atomicWriteFile(path, raw);
+        await ensureDir(dirname(path), dataRepoScope(dataRepo));
+        await atomicWriteFile(path, raw, dataRepoScope(dataRepo));
       }
     },
     // PIN-11: the candidate was generated from the project's own files, so
@@ -1122,8 +1123,8 @@ export async function shareFragment(
     mutate: async () => {
       for (const { source, raw } of pending) {
         const canonicalPath = join(dataRepo, ...source.relPath.split("/"));
-        await mkdir(dirname(canonicalPath), { recursive: true });
-        await atomicWriteFile(canonicalPath, raw);
+        await ensureDir(dirname(canonicalPath), dataRepoScope(dataRepo));
+        await atomicWriteFile(canonicalPath, raw, dataRepoScope(dataRepo));
       }
     },
   });

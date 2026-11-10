@@ -1,8 +1,10 @@
 import { existsSync, readlinkSync } from "node:fs";
 import { assertSafeItemName, assertNever } from "./assert";
-import { lstatOrNull } from "./fs-utils";
-import { mkdir, rm, symlink } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { ensureDir, lstatOrNull } from "./fs-utils";
+import { rm, symlink } from "node:fs/promises";
+import { dirname, join, relative, resolve } from "node:path";
+import { PreconditionError } from "./errors";
+import { assertConfinedSync, resolveThroughExistingSync } from "./path-safety";
 import {
   ITEM_KINDS,
   installsAtSkillTarget,
@@ -35,6 +37,18 @@ export function itemOutputTargets(
   kind: MaterializedItemKind,
   name: string,
   mode: InstallMode = detectInstallMode(project),
+): ItemOutputTarget[] {
+  const targets = unconfinedItemOutputTargets(project, kind, name, mode);
+  // Every builder result is confined before a caller can mutate it.
+  for (const target of targets) assertConfinedSync(project, target.outputPath);
+  return targets;
+}
+
+function unconfinedItemOutputTargets(
+  project: string,
+  kind: MaterializedItemKind,
+  name: string,
+  mode: InstallMode,
 ): ItemOutputTarget[] {
   switch (kind) {
     case "skills":
@@ -106,24 +120,14 @@ export function installedPath(
         return assertNever(kind);
     }
   }
-  // Root invariant: an install destination is always inside the project. Every
-  // destructive caller (materialize/sync rm+rewrite) trusts this path, so a
-  // path that escapes — via a `..`/absolute item name or a redirected
-  // compatibility symlink — must never be returned. This backstops the
-  // per-boundary name validation and the symlink guard rather than relying on
-  // either alone.
-  assertInsideProject(project, dst);
+  // Root invariant: an install destination is always inside the project, and
+  // so is every real path it resolves to. Every destructive caller
+  // (materialize/sync rm+rewrite) trusts this path, so a path that escapes —
+  // via a `..`/absolute item name or a symlinked parent — must never be
+  // returned. This backstops the per-boundary name validation rather than
+  // relying on it alone.
+  assertConfinedSync(project, dst);
   return dst;
-}
-
-function assertInsideProject(project: string, dst: string): void {
-  const root = resolve(project);
-  const target = resolve(dst);
-  if (target !== root && !target.startsWith(root + sep)) {
-    throw new Error(
-      `refusing install path outside project: ${dst}\n  (resolved to ${target}, project root ${root})`,
-    );
-  }
 }
 
 export function claudeSkillPath(project: string, name: string): string {
@@ -142,7 +146,6 @@ export function findInstallConflict(
 ): string | null {
   if (isMaterializedItemKind(kind)) {
     for (const target of itemOutputTargets(project, kind, name, mode)) {
-      assertInsideProject(project, target.outputPath);
       if (pathExists(target.outputPath)) return target.outputPath;
     }
   } else {
@@ -167,6 +170,7 @@ export function assertCanMaterializeInstalled(
   if (!installsAtSkillTarget(kind) || mode !== "codex-compatible") return;
 
   const claudePath = claudeSkillPath(project, name);
+  assertConfinedSync(project, dirname(claudePath));
   const stat = lstatOrNull(claudePath);
   if (!stat || stat.isSymbolicLink()) return;
 
@@ -185,6 +189,11 @@ export async function ensureInstallAliases(
 
   const dst = installedPath(project, kind, name, mode);
   const claudePath = claudeSkillPath(project, name);
+  // The alias folder must resolve inside the project. The link target is
+  // computed from the physical folder, because the OS resolves a relative
+  // link from there, not from the path as written.
+  const physicalParent = assertConfinedSync(project, dirname(claudePath));
+  const physicalDst = assertConfinedSync(project, dst);
   const stat = lstatOrNull(claudePath);
 
   if (stat) {
@@ -193,15 +202,15 @@ export async function ensureInstallAliases(
         `compatibility path already exists but is not a symlink: ${claudePath}`,
       );
     }
-    const existingTarget = resolveSymlinkTarget(claudePath);
-    if (samePath(existingTarget, dst)) return;
+    const existingTarget = physicalAliasTarget(physicalParent, claudePath);
+    if (samePath(existingTarget, physicalDst)) return;
     throw new Error(
       `compatibility symlink points somewhere else: ${claudePath} -> ${existingTarget}`,
     );
   }
 
-  await mkdir(dirname(claudePath), { recursive: true });
-  await symlink(relative(dirname(claudePath), dst), claudePath, "dir");
+  await ensureDir(dirname(claudePath), { root: project });
+  await symlink(relative(physicalParent, physicalDst), claudePath, "dir");
 }
 
 export async function removeInstallAliases(
@@ -214,11 +223,13 @@ export async function removeInstallAliases(
   if (!installsAtSkillTarget(kind) || mode !== "codex-compatible") return false;
 
   const claudePath = claudeSkillPath(project, name);
+  // Confine the folder, not the link: a dangling alias is still ours to remove.
+  const physicalParent = assertConfinedSync(project, dirname(claudePath));
   const stat = lstatOrNull(claudePath);
   if (!stat?.isSymbolicLink()) return false;
 
-  const target = resolveSymlinkTarget(claudePath);
-  if (samePath(target, managedPath)) {
+  const target = physicalAliasTarget(physicalParent, claudePath);
+  if (samePath(target, assertConfinedSync(project, managedPath))) {
     await rm(claudePath, { force: true });
     return true;
   }
@@ -296,14 +307,25 @@ function skillInstalledPath(
 ): string {
   const canonical = join(installBaseDir(project, mode), "skills", name);
   const claudePath = claudeSkillPath(project, name);
+  const physicalParent = assertConfinedSync(project, dirname(claudePath));
   const stat = lstatOrNull(claudePath);
   if (stat?.isSymbolicLink()) {
-    const symlinkTarget = resolveSymlinkTarget(claudePath);
+    const symlinkTarget = physicalAliasTarget(physicalParent, claudePath);
     // The compatibility alias must resolve to the managed skill location.
     // Materialize/sync delete-and-rewrite whatever path this returns, so
     // following a stray or hostile symlink that points elsewhere would let it
     // wipe an arbitrary directory. Refuse instead of following it.
-    if (!samePath(symlinkTarget, canonical)) {
+    if (!samePath(symlinkTarget, assertConfinedSync(project, canonical))) {
+      // A link that leaves the project is refused first, with exit 3.
+      try {
+        assertConfinedSync(project, claudePath);
+      } catch (error) {
+        if (!(error instanceof PreconditionError)) throw error;
+        throw new PreconditionError(
+          `compatibility symlink for ${kind}/${name} resolves outside the managed skills dir: ${claudePath} -> ${symlinkTarget}\n  ${error.message}`,
+          { cause: error, hint: error.hint },
+        );
+      }
       const codexPath = codexSkillPath(project, name);
       if (
         mode === "codex-compatible" &&
@@ -324,12 +346,23 @@ function skillInstalledPath(
   return canonical;
 }
 
-function pathExists(path: string): boolean {
-  return lstatOrNull(path) !== null;
+/**
+ * Where an alias points, as a real path. `resolve` alone only normalizes the
+ * link text. It does not follow a symlink inside the target, so it cannot be
+ * compared with `assertConfinedSync`, which returns real paths. A dangling
+ * target keeps its missing tail, so a managed dangling alias still matches.
+ */
+function physicalAliasTarget(
+  physicalParent: string,
+  claudePath: string,
+): string {
+  return resolveThroughExistingSync(
+    resolve(physicalParent, readlinkSync(claudePath)),
+  );
 }
 
-function resolveSymlinkTarget(path: string): string {
-  return resolve(dirname(path), readlinkSync(path));
+function pathExists(path: string): boolean {
+  return lstatOrNull(path) !== null;
 }
 
 function samePath(a: string, b: string): boolean {

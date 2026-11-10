@@ -75,7 +75,9 @@ export async function saveProjectRegistry(
 ): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const normalized = ProjectRegistrySchema.parse(registry);
-  await atomicWriteFile(path, `${JSON.stringify(normalized, null, 2)}\n`);
+  await atomicWriteFile(path, `${JSON.stringify(normalized, null, 2)}\n`, {
+    exempt: "the machine-wide project registry lives in the user config folder",
+  });
 }
 
 /**

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { lstat, readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { Command } from "commander";
 import { z } from "zod";
 import {
@@ -58,7 +58,7 @@ import {
 } from "../marketplace-files";
 import type { FileSetDiff } from "../marketplace-files";
 import { findProjectRoot } from "../paths";
-import { assertNoSymlinkAncestors } from "../path-safety";
+import { assertConfined } from "../path-safety";
 import {
   collectSelectedSkill,
   jsonFile,
@@ -1659,9 +1659,8 @@ async function gitVisibleStats(
   for (const path of paths) {
     const fullPath = relRoot === "." ? path : `${relRoot}/${path}`;
     const parts = fullPath.split("/");
-    const parent = parts.length > 1 ? parts.slice(0, -1).join("/") : ".";
-    await assertNoSymlinkAncestors(dataRepo, parent);
-    const absolute = join(dataRepo, ...fullPath.split("/"));
+    const absolute = join(dataRepo, ...parts);
+    await assertConfined(dataRepo, dirname(absolute), "deny");
     const info = await lstat(absolute);
     bytes += info.isSymbolicLink()
       ? info.size

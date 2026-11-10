@@ -1,7 +1,8 @@
 import type { GitReadMemo } from "./git-read-memo";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm } from "node:fs/promises";
-import { atomicWriteFile } from "./fs-utils";
+import { readFile } from "node:fs/promises";
+import { atomicWriteFile, ensureDir, rmTreeWithRetries } from "./fs-utils";
+import { assertConfinedSync } from "./path-safety";
 import { dirname, join, relative } from "node:path";
 import { hashNamedContents } from "./content-hash";
 import {
@@ -87,6 +88,8 @@ export interface FragmentOutputSpec {
 
 export interface FragmentOutputPlan {
   target: FragmentTarget;
+  /** The project root that `path` must stay inside. */
+  project: string;
   path: string;
   currentText: string | null;
   plannedText: string | null;
@@ -162,13 +165,24 @@ export function fragmentOutputPath(
   return fragmentOutputSpec(target).outputPath(project);
 }
 
+/**
+ * Every fragment output path is confined before a caller reads or writes it:
+ * a symlinked `.claude`, `.codex`, or `.mcp.json` that leaves the project is
+ * refused.
+ */
+function confinedOutput(project: string, path: string): string {
+  assertConfinedSync(project, path);
+  return path;
+}
+
 export function fragmentOutputSpec(target: FragmentTarget): FragmentOutputSpec {
   switch (target) {
     case "claude-settings":
       return {
         target,
         format: "json",
-        outputPath: (project) => join(claudeDir(project), "settings.json"),
+        outputPath: (project) =>
+          confinedOutput(project, join(claudeDir(project), "settings.json")),
         normalizeOutput: normalizeClaudeSettingsOutput,
         isSyntheticOnly: isSyntheticOnlyClaudeSettings,
         validateFragment: validateClaudeSettingsFragment,
@@ -179,7 +193,8 @@ export function fragmentOutputSpec(target: FragmentTarget): FragmentOutputSpec {
       return {
         target,
         format: "json",
-        outputPath: (project) => join(project, ".mcp.json"),
+        outputPath: (project) =>
+          confinedOutput(project, join(project, ".mcp.json")),
         normalizeOutput: identityOutput,
         isSyntheticOnly: isEmptyObject,
         validateFragment: validateClaudeMcpFragment,
@@ -191,7 +206,10 @@ export function fragmentOutputSpec(target: FragmentTarget): FragmentOutputSpec {
         target,
         format: "toml",
         outputPath: (project) =>
-          join(codexProjectConfigDir(project), "config.toml"),
+          confinedOutput(
+            project,
+            join(codexProjectConfigDir(project), "config.toml"),
+          ),
         normalizeOutput: identityOutput,
         isSyntheticOnly: isEmptyObject,
         validateFragment: validateCodexConfigFragment,
@@ -576,6 +594,7 @@ export async function planFragmentOutput(
 
   return {
     target: opts.target,
+    project: opts.project,
     path,
     currentText,
     plannedText,
@@ -702,12 +721,13 @@ async function writeFragmentPlan(
   plan: FragmentOutputPlan,
   text: string | null,
 ): Promise<void> {
+  const scope = { root: plan.project };
   if (text === null) {
-    await rm(plan.path, { force: true });
+    await rmTreeWithRetries(plan.path, scope);
     return;
   }
-  await mkdir(dirname(plan.path), { recursive: true });
-  await atomicWriteFile(plan.path, text);
+  await ensureDir(dirname(plan.path), scope);
+  await atomicWriteFile(plan.path, text, scope);
 }
 
 export async function fragmentContributionState(

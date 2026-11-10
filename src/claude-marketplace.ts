@@ -10,7 +10,7 @@ import {
   collectSelectedSkill,
   validateMarketplaceName,
 } from "./plugin-projection";
-import { assertNoSymlinkAncestors } from "./path-safety";
+import { assertConfined } from "./path-safety";
 
 const ownerSchema = z
   .object({ name: z.string().min(1), email: z.string().min(1).optional() })
@@ -98,7 +98,7 @@ export function claudePluginSkills(plugin: ClaudePlugin): string[] {
 export async function loadClaudeMarketplace(
   dataRepo: string,
 ): Promise<ClaudeMarketplace> {
-  await assertNoSymlinkAncestors(dataRepo, ".claude-plugin/marketplace.json");
+  await assertConfined(dataRepo, ".claude-plugin/marketplace.json", "deny");
   const path = join(dataRepo, ".claude-plugin", "marketplace.json");
   let raw: string;
   try {

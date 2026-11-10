@@ -1,46 +1,163 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, symlink } from "node:fs/promises";
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PreconditionError } from "../src/errors";
 import {
-  assertNoSymlinkAncestors,
-  assertNoSymlinkAncestorsSync,
+  assertConfined,
+  assertConfinedSync,
   assertRealPathOutsideRoot,
+  type ConfinementPolicy,
 } from "../src/path-safety";
 import { rejection, tempDir } from "./cli-fixtures";
 
-type Guard = (root: string, relPath: string) => Promise<void>;
+type Guard = (
+  root: string,
+  target: string,
+  policy?: ConfinementPolicy,
+) => Promise<void>;
 
 const guards: [string, Guard][] = [
-  ["async", assertNoSymlinkAncestors],
+  [
+    "async",
+    async (root, target, policy) => {
+      await assertConfined(root, target, policy);
+    },
+  ],
   [
     "sync",
-    async (root, relPath) => {
-      assertNoSymlinkAncestorsSync(root, relPath);
+    async (root, target, policy) => {
+      assertConfinedSync(root, target, policy);
     },
   ],
 ];
 
-const unsafePaths = ["../x", "/etc/passwd", "a\\b", "./a", "a/../../x"];
+const unsafePaths = [
+  "",
+  ".",
+  "../x",
+  "/etc/passwd",
+  "a\\b",
+  "./a",
+  "a/./b",
+  "a/../../x",
+];
 
-describe.each(guards)("%s symlink-ancestor guard", (_name, guard) => {
+describe.each(guards)("%s confinement primitive", (_name, guard) => {
   test.each(unsafePaths)("refuses unsafe path %p", async (relPath) => {
     const root = await tempDir("capshelf-path-safety-unsafe-");
     const error = await rejection(guard(root, relPath), PreconditionError);
-    expect(error.message).toContain("unsafe repository path");
+    expect(error.message).toMatch(/unsafe repository path|outside project/);
   });
 
-  test("refuses a symlink ancestor", async () => {
-    const root = await tempDir("capshelf-path-safety-link-root-");
-    const outside = await tempDir("capshelf-path-safety-link-outside-");
+  test("refuses an absolute path outside the root", async () => {
+    const root = await tempDir("capshelf-path-safety-abs-root-");
+    const other = await tempDir("capshelf-path-safety-abs-other-");
+    const error = await rejection(guard(root, other), PreconditionError);
+    expect(error.message).toContain("outside project");
+  });
+
+  test("refuses a parent link that leaves the root and names both paths", async () => {
+    const root = await tempDir("capshelf-path-safety-parent-root-");
+    const outside = await tempDir("capshelf-path-safety-parent-outside-");
     await symlink(outside, join(root, "link"));
     const error = await rejection(guard(root, "link/x"), PreconditionError);
-    expect(error.message).toContain('symlink component "link"');
+    expect(error.message).toContain("link/x");
+    expect(error.message).toContain(await realpath(outside));
   });
 
-  test("accepts the root path", async () => {
+  test("refuses a leaf link that leaves the root", async () => {
+    const root = await tempDir("capshelf-path-safety-leaf-root-");
+    const outside = await tempDir("capshelf-path-safety-leaf-outside-");
+    await writeFile(join(outside, "file"), "x");
+    await symlink(join(outside, "file"), join(root, "leaf"));
+    const error = await rejection(guard(root, "leaf"), PreconditionError);
+    expect(error.message).toContain(await realpath(outside));
+  });
+
+  test("refuses an absolute target below a parent link that leaves the root", async () => {
+    const root = await tempDir("capshelf-path-safety-abs-link-root-");
+    const outside = await tempDir("capshelf-path-safety-abs-link-outside-");
+    await symlink(outside, join(root, "link"));
+    await rejection(guard(root, join(root, "link", "x")), PreconditionError);
+  });
+
+  test("refuses a dangling link", async () => {
+    const root = await tempDir("capshelf-path-safety-dangling-root-");
+    await symlink(join(root, "missing"), join(root, "dangling"));
+    const error = await rejection(guard(root, "dangling/x"), PreconditionError);
+    expect(error.message).toContain("dangling");
+  });
+
+  test("allows a link that stays inside the root", async () => {
+    const root = await tempDir("capshelf-path-safety-inside-root-");
+    await mkdir(join(root, "real"));
+    await symlink(join(root, "real"), join(root, "alias"));
+    await guard(root, "alias/x");
+    await guard(root, "alias");
+  });
+
+  test("allows a relative link that stays inside the root", async () => {
+    const root = await tempDir("capshelf-path-safety-relative-root-");
+    await mkdir(join(root, "a/skills/x"), { recursive: true });
+    await mkdir(join(root, "b/skills"), { recursive: true });
+    await symlink("../../a/skills/x", join(root, "b/skills/x"));
+    await guard(root, "b/skills/x");
+  });
+
+  test("refuses an inside link whose next link leaves the root", async () => {
+    const root = await tempDir("capshelf-path-safety-chain-root-");
+    const outside = await tempDir("capshelf-path-safety-chain-outside-");
+    await mkdir(join(root, "real"));
+    await symlink(outside, join(root, "real", "out"));
+    await symlink(join(root, "real"), join(root, "alias"));
+    await rejection(guard(root, "alias/out/x"), PreconditionError);
+  });
+
+  test("refuses any link under the deny policy", async () => {
+    const root = await tempDir("capshelf-path-safety-deny-root-");
+    await mkdir(join(root, "real"));
+    await symlink(join(root, "real"), join(root, "alias"));
+    const error = await rejection(
+      guard(root, "alias/x", "deny"),
+      PreconditionError,
+    );
+    expect(error.message).toContain('symlink component "alias"');
+  });
+
+  test("allows a root that is reached through a symlink", async () => {
+    const parent = await tempDir("capshelf-path-safety-rootlink-");
+    await mkdir(join(parent, "real/sub"), { recursive: true });
+    await symlink(join(parent, "real"), join(parent, "alias"));
+    await guard(join(parent, "alias"), "sub/x");
+    await guard(join(parent, "alias"), join(parent, "alias", "sub", "x"));
+    await guard(join(parent, "alias"), "sub/x", "deny");
+  });
+
+  test("accepts the root as an absolute path", async () => {
     const root = await tempDir("capshelf-path-safety-dot-");
-    await guard(root, ".");
+    await guard(root, root);
+  });
+
+  test("allows an in-project link to a name that starts with two dots", async () => {
+    const root = await tempDir("capshelf-path-safety-dotdot-name-");
+    await mkdir(join(root, "..cache"));
+    await symlink("..cache", join(root, "link"));
+    await guard(root, "link/x");
+  });
+
+  test("refuses a missing root that is a dangling symlink", async () => {
+    const parent = await tempDir("capshelf-path-safety-deadroot-");
+    await symlink(join(parent, "nowhere"), join(parent, "root"));
+    const error = await rejection(
+      guard(join(parent, "root"), "a/b"),
+      PreconditionError,
+    );
+    expect(error.message).toContain("dangling");
+  });
+
+  test("accepts a root that does not exist", async () => {
+    const parent = await tempDir("capshelf-path-safety-noroot-");
+    await guard(join(parent, "missing"), "a/b");
   });
 
   test("accepts a missing path", async () => {

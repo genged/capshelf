@@ -1,19 +1,22 @@
 import { existsSync } from "node:fs";
-import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { buildCodexProjection, loadCodexState } from "./codex-marketplace";
 import { CODEX_PROJECTION_ROOTS, replaceOwnedFiles } from "./marketplace-files";
 import type { NamedFile } from "./merge-tree";
 import { METADATA_SIDECAR } from "./metadata";
 import {
-  assertNoSymlinkAncestors,
-  assertNoSymlinkAncestorsSync,
+  assertConfined,
+  assertConfinedSync,
+  dataRepoScope,
 } from "./path-safety";
+import { ensureDir, rmTreeWithRetries } from "./fs-utils";
 
 export function hasCodexMarketplace(dataRepo: string): boolean {
-  assertNoSymlinkAncestorsSync(
+  assertConfinedSync(
     dataRepo,
     "codex/plugin-definitions/marketplace.json",
+    "deny",
   );
   return existsSync(`${dataRepo}/codex/plugin-definitions/marketplace.json`);
 }
@@ -31,17 +34,18 @@ export async function replaceSkillWithNamedFiles(
   files: NamedFile[],
   sidecar: Buffer | null,
 ): Promise<void> {
-  await assertNoSymlinkAncestors(dataRepo, repoRelPath);
+  const scope = dataRepoScope(dataRepo);
+  await assertConfined(dataRepo, repoRelPath, "deny");
   const root = join(dataRepo, ...repoRelPath.split("/"));
-  await rm(root, { recursive: true, force: true });
+  await rmTreeWithRetries(root, scope);
   for (const file of files) {
     const path = join(root, ...file.path.split("/"));
-    await mkdir(dirname(path), { recursive: true });
+    await ensureDir(dirname(path), scope);
     await writeFile(path, file.content);
     await chmod(path, file.mode === "100755" ? 0o755 : 0o644);
   }
   if (sidecar !== null) {
-    await mkdir(root, { recursive: true });
+    await ensureDir(root, scope);
     await writeFile(join(root, METADATA_SIDECAR), sidecar);
   }
 }

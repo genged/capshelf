@@ -66,6 +66,8 @@ Most item arguments accept either a bare unique name (`hello`) or an explicit ki
 
 Mutating commands only touch item files that are tracked in `.capshelf/capshelf.lock.json` or `.capshelf/local.lock.json`. `add` refuses to overwrite an existing untracked target, `init` refuses to overwrite an existing untracked system target, and `rm` deletes only locked data items. Copy-directory items (skills, plugins, and Pi extensions) can use either committed project scope or clone-local scope. Use `share <item> --to local|project` to choose when adopting an unmanaged copy.
 
+Every command that writes a managed path first checks that the path stays inside the project. The check resolves symlinks. A path whose real location is outside the project is refused with exit 3 before any write, move, or delete. The message names the path and the real path. This covers installed items, the `.claude/skills` alias, fragment outputs, subagent files, `.capshelf` metadata, and the project side of `share` and `promote`. A symlink that stays inside the project is allowed. A symlinked `.agents`, `.claude`, `.codex`, `.pi`, or `.capshelf` that leaves the project is refused. See [security](security.md#managed-writes-stay-inside-the-project).
+
 Item names of every kind reject control characters (C0, DEL, and C1),
 backslashes, a leading `/` or `-`, and `.` or `..` path segments. Copy-item
 trees accept regular files only. Symlinks, Git links, and special filesystem objects are refused at

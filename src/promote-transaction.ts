@@ -13,6 +13,8 @@ import type { NamedFile } from "./merge-tree";
 import { inventoryLocalTree } from "./gitignore";
 import { findDestinationPathCollision } from "./path-collision";
 import { firstErrorLine, PreconditionError } from "./errors";
+import { ensureDir } from "./fs-utils";
+import { assertInScope, type MutationScope } from "./path-safety";
 import {
   assertNoManagedPathOnMount,
   attachTree,
@@ -47,17 +49,20 @@ export interface InstalledReconciliation {
  * from the old folder into the new one with a rename, so its bytes are never
  * read. A read-only unit cannot move to a new parent, so it stays in place
  * like a mount point. Without mounts and held units, the folder itself moves
- * with one rename each way.
+ * with one rename each way. `scope` confines `target`, its parent, and the
+ * scratch folder.
  */
 export async function beginDirectoryReplacement(
   target: string,
+  scope: MutationScope,
   prepare: (
     replacement: string,
     layout: MountLayout,
   ) => Promise<readonly string[] | undefined>,
 ): Promise<InstalledReconciliation> {
   const parent = dirname(target);
-  await mkdir(parent, { recursive: true });
+  await ensureDir(parent, scope);
+  await assertInScope(scope, target);
   const mounts = await readMountLayout(target);
   // The mount points, plus the units that stay in place.
   let layout = mounts;
@@ -74,9 +79,11 @@ export async function beginDirectoryReplacement(
   // attach started, because before that it holds only pinned folders and
   // mount points, or nothing.
   const restore = async () => {
-    if (detached) await returnUnits(units, [target, replacement], backup);
-    if (attachStarted) await clearTree(target, layout);
-    if (detached) await attachTree(backup, target, layout);
+    if (detached) {
+      await returnUnits(units, [target, replacement], backup, scope);
+    }
+    if (attachStarted) await clearTree(target, layout, scope);
+    if (detached) await attachTree(backup, target, layout, scope);
   };
 
   try {
@@ -85,19 +92,19 @@ export async function beginDirectoryReplacement(
       const split = await splitMovableUnits(target, units);
       units = split.movable;
       layout = holding(mounts, split.held);
-      await detachOrUndo(target, backup, layout);
+      await detachOrUndo(target, backup, layout, scope);
       detached = true;
     } else {
       units = [];
     }
-    await moveUnits(units, backup, replacement);
+    await moveUnits(units, backup, replacement, scope);
     // One rename moves all or nothing. A move around mounts can stop part way.
     attachStarted = layout.pinned.size > 0;
-    await attachTree(replacement, target, layout);
+    await attachTree(replacement, target, layout, scope);
     attachStarted = true;
   } catch (error) {
     await restoreOrKeep(restore, firstErrorLine(error), backup);
-    await removeScratchTree(transactionDir).catch(() => {});
+    await removeScratchTree(transactionDir, scope).catch(() => {});
     throw error;
   }
 
@@ -106,13 +113,13 @@ export async function beginDirectoryReplacement(
     async commit() {
       if (finished) return;
       finished = true;
-      await removeCommittedScratch(transactionDir);
+      await removeCommittedScratch(transactionDir, scope);
     },
     async rollback() {
       if (finished) return;
       finished = true;
       await restoreOrKeep(restore, null, backup);
-      await removeScratchTree(transactionDir);
+      await removeScratchTree(transactionDir, scope);
     },
   };
 }
@@ -122,9 +129,12 @@ export async function beginDirectoryReplacement(
  * and a rollback can no longer run, so a failure here is a warning and not
  * an error: an error would report a write that did happen as failed.
  */
-async function removeCommittedScratch(path: string): Promise<void> {
+async function removeCommittedScratch(
+  path: string,
+  scope: MutationScope,
+): Promise<void> {
   try {
-    await removeScratchTree(path);
+    await removeScratchTree(path, scope);
   } catch (error) {
     process.stderr.write(
       `! could not delete the scratch folder ${path} (${firstErrorLine(error)}). The new files are in place. Delete the folder by hand.\n`,
@@ -142,17 +152,19 @@ async function detachOrUndo(
   target: string,
   backup: string,
   layout: MountLayout,
+  scope: MutationScope,
 ): Promise<void> {
   if (layout.pinned.size === 0) {
-    await detachTree(target, backup, layout);
+    await detachTree(target, backup, layout, scope);
     return;
   }
+  await assertInScope(scope, backup);
   await mkdir(backup);
   try {
-    await detachTree(target, backup, layout);
+    await detachTree(target, backup, layout, scope);
   } catch (error) {
     try {
-      await attachTree(backup, target, layout);
+      await attachTree(backup, target, layout, scope);
     } catch (undoError) {
       throw new Error(
         `${firstErrorLine(error)}; moving the moved entries back also failed (${firstErrorLine(undoError)}). They are in ${backup}.`,
@@ -224,7 +236,9 @@ export async function beginInstalledReconciliation(
   installedDir: string,
   localFiles: NamedFile[],
   mergedFiles: NamedFile[],
+  scope: MutationScope,
 ): Promise<InstalledReconciliation> {
+  await assertInScope(scope, installedDir);
   const mounts = await readMountLayout(installedDir);
   const managedPaths = [...localFiles, ...mergedFiles].map((file) => file.path);
   await assertNoManagedPathOnMount(installedDir, mounts, managedPaths);
@@ -247,6 +261,7 @@ export async function beginInstalledReconciliation(
   // The mount points, plus the read-only units that stay in place.
   const layout = holding(mounts, split.held);
   const parent = dirname(installedDir);
+  await assertInScope(scope, parent);
   const backupDir = await mkdtemp(join(parent, ".capshelf-promote-"));
   const backup = join(backupDir, "original");
   let detached = false;
@@ -254,12 +269,12 @@ export async function beginInstalledReconciliation(
   // beside pinned folders and mount points, so the clear is safe.
   const restore = async () => {
     if (!detached) return;
-    await returnUnits(units, [installedDir], backup);
-    await clearTree(installedDir, layout);
-    await attachTree(backup, installedDir, layout);
+    await returnUnits(units, [installedDir], backup, scope);
+    await clearTree(installedDir, layout, scope);
+    await attachTree(backup, installedDir, layout, scope);
   };
   try {
-    await detachOrUndo(installedDir, backup, layout);
+    await detachOrUndo(installedDir, backup, layout, scope);
     detached = true;
     const replaceableIrregularPaths =
       await assertFrozenPreservedPathsDoNotCollide(
@@ -269,31 +284,34 @@ export async function beginInstalledReconciliation(
       );
     // With no units, `copyTree` copies the whole folder to a missing path, as
     // before. With units, the folder must exist to receive them.
-    if (units.length > 0) await mkdir(installedDir, { recursive: true });
-    await moveUnits(units, backup, installedDir);
-    await copyTree(backup, installedDir, holding(layout, units));
+    if (units.length > 0) await ensureDir(installedDir, scope);
+    await moveUnits(units, backup, installedDir, scope);
+    await copyTree(backup, installedDir, holding(layout, units), scope);
     for (const path of replaceableIrregularPaths) {
-      await rm(join(installedDir, ...path.split("/")), { force: true });
+      const irregular = join(installedDir, ...path.split("/"));
+      await assertInScope(scope, dirname(irregular));
+      await rm(irregular, { force: true });
     }
     for (const file of [...localFiles].sort(
       (a, b) => b.path.length - a.path.length,
     )) {
       const path = join(installedDir, ...file.path.split("/"));
+      await assertInScope(scope, dirname(path));
       await rm(path, { force: true });
       await pruneEmptyParents(dirname(path), installedDir);
     }
     for (const file of mergedFiles) {
       const path = join(installedDir, ...file.path.split("/"));
-      await mkdir(dirname(path), { recursive: true });
+      await ensureDir(dirname(path), scope);
       await writeFile(path, file.content);
       await chmod(path, file.mode === "100755" ? 0o755 : 0o644);
     }
   } catch (error) {
     if (detached) {
       await restoreOrKeep(restore, firstErrorLine(error), backup);
-      await removeScratchTree(backupDir).catch(() => {});
+      await removeScratchTree(backupDir, scope).catch(() => {});
     } else {
-      await removeScratchTree(backupDir).catch(() => {});
+      await removeScratchTree(backupDir, scope).catch(() => {});
     }
     throw error;
   }
@@ -303,13 +321,13 @@ export async function beginInstalledReconciliation(
     async commit() {
       if (finished) return;
       finished = true;
-      await removeCommittedScratch(backupDir);
+      await removeCommittedScratch(backupDir, scope);
     },
     async rollback() {
       if (finished) return;
       finished = true;
       await restoreOrKeep(restore, null, backup);
-      await removeScratchTree(backupDir);
+      await removeScratchTree(backupDir, scope);
     },
   };
 }
