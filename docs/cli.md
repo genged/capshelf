@@ -66,6 +66,8 @@ Most item arguments accept either a bare unique name (`hello`) or an explicit ki
 
 Mutating commands only touch item files that are tracked in `.capshelf/capshelf.lock.json` or `.capshelf/local.lock.json`. `add` refuses to overwrite an existing untracked target, `init` refuses to overwrite an existing untracked system target, and `rm` deletes only locked data items. Copy-directory items (skills, plugins, and Pi extensions) can use either committed project scope or clone-local scope. Use `share <item> --to local|project` to choose when adopting an unmanaged copy.
 
+Fragment and subagent commands also refuse an output path whose real path is outside the project. The cause is a parent directory, for example `.codex` or `.claude/agents`, that is a symlink to another place. The command exits with code 3 and names both paths. This applies to `add`, `apply`, `update`, `revert`, and `rm`. A symlink that stays inside the project is allowed. See [security](security.md).
+
 Item names of every kind reject control characters (C0, DEL, and C1),
 backslashes, a leading `/` or `-`, and `.` or `..` path segments. Copy-item
 trees accept regular files only. Symlinks, Git links, and special filesystem objects are refused at

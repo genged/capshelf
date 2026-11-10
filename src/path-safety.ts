@@ -1,6 +1,6 @@
 import { lstatSync, realpathSync } from "node:fs";
 import { lstat, realpath } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { PreconditionError } from "./errors";
 import { isErrno } from "./fs-utils";
 
@@ -72,6 +72,38 @@ export async function assertRealPathOutsideRoot(
   if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) {
     throw new PreconditionError(message);
   }
+}
+
+/**
+ * Refuse a candidate whose real path leaves `root`. The candidate may not
+ * exist yet: its nearest existing ancestor is resolved through symlinks and
+ * the missing tail is appended. A symlink whose target stays inside `root`
+ * passes. `message` receives the real path so the error can name it.
+ */
+export async function assertRealPathInsideRoot(
+  root: string,
+  candidate: string,
+  message: (candidateReal: string) => string,
+): Promise<void> {
+  const rootReal = await realpath(root);
+  const candidateReal = await resolveThroughNearestExisting(candidate);
+  const rel = relative(rootReal, candidateReal);
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+    throw new PreconditionError(message(candidateReal));
+  }
+}
+
+/** Refuse a managed output path that resolves outside the project. */
+export async function assertOutputInsideProject(
+  project: string,
+  outputPath: string,
+): Promise<void> {
+  await assertRealPathInsideRoot(
+    project,
+    outputPath,
+    (real) =>
+      `refusing to write ${relative(project, outputPath)}: it resolves outside the project (${real})`,
+  );
 }
 
 async function resolveThroughNearestExisting(path: string): Promise<string> {

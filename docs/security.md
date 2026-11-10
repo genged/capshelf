@@ -188,6 +188,29 @@ Explicitly out of scope, with the reasoning:
   marketplace, upload a package, install or refresh a plugin, or edit Claude
   or Codex caches. Those actions remain explicit runtime operations.
 
+## Managed writes stay inside the project
+
+Capshelf writes and deletes managed fragment and subagent files only inside
+the current project. Before the first write or delete, it resolves each output
+path through its nearest existing parent directory. A parent directory can be
+a symlink, for example `.codex` or `.claude/agents`.
+
+If the real path of an output is outside the real project root, the command
+stops that item with exit 3. It names the path and the real path. For the
+checked fragment batch or the checked subagent, it writes nothing, deletes
+nothing, and leaves the lock unchanged. This rule applies to `add`, `apply`,
+`update`, `revert`, and `rm`.
+
+A bare `apply` checks each subagent on its own. It records a refusal as an
+error for that item. It continues with the other items. Items that pass the
+check are still applied.
+
+A symlink whose target is inside the project is allowed. A project root that
+you reach through a symlink is also allowed.
+
+This check does not cover skills and other copy items. It also does not cover
+read-only commands.
+
 ## Marketplace package boundary
 
 Claude managed entries use the data-repo root as their official Git source,

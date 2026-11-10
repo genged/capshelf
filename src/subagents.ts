@@ -12,6 +12,7 @@ import {
 import type { ConfigObject, ConfigValue } from "./config-values";
 import { hashNamedContents } from "./content-hash";
 import { PreconditionError } from "./errors";
+import { assertOutputInsideProject } from "./path-safety";
 import { atomicWriteFile, lstatOrNull } from "./fs-utils";
 import {
   catFileBlobs,
@@ -413,6 +414,9 @@ export async function removeSubagentOutputs(
     }
     snapshots.set(source.outputPath, await readFile(source.outputPath));
   }
+  for (const path of snapshots.keys()) {
+    await assertOutputInsideProject(project, path);
+  }
   try {
     for (const path of snapshots.keys()) await rm(path, { force: true });
   } catch (error) {
@@ -520,6 +524,11 @@ export async function materializeSubagent(
   }
 
   const touched = [...desired, ...stale].map((source) => source.outputPath);
+  // Contain every path before the first write or delete. A symlinked parent
+  // directory can send an output outside the project.
+  for (const path of touched) {
+    await assertOutputInsideProject(options.project, path);
+  }
   const snapshots = new Map<string, Buffer | null>();
   for (const path of touched) {
     const stat = lstatOrNull(path);

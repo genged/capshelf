@@ -4,6 +4,7 @@ import { mkdir, readFile, rm } from "node:fs/promises";
 import { atomicWriteFile } from "./fs-utils";
 import { dirname, join, relative } from "node:path";
 import { hashNamedContents } from "./content-hash";
+import { assertOutputInsideProject } from "./path-safety";
 import {
   cloneConfig,
   configPathLabel,
@@ -87,6 +88,8 @@ export interface FragmentOutputSpec {
 
 export interface FragmentOutputPlan {
   target: FragmentTarget;
+  /** The project root that contains `path`. */
+  project: string;
   path: string;
   currentText: string | null;
   plannedText: string | null;
@@ -576,6 +579,7 @@ export async function planFragmentOutput(
 
   return {
     target: opts.target,
+    project: opts.project,
     path,
     currentText,
     plannedText,
@@ -628,6 +632,12 @@ export async function applyFragmentOutputPlans(
 ): Promise<FragmentApplyResult[]> {
   if (opts.dryRun) {
     return plans.map((plan) => fragmentApplyResult(plan, true));
+  }
+
+  // Contain every write and delete before the first one. A symlinked parent
+  // directory can send `plan.path` outside the project.
+  for (const plan of plans) {
+    if (plan.changed) await assertOutputInsideProject(plan.project, plan.path);
   }
 
   for (const plan of plans) {
