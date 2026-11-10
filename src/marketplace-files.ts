@@ -13,7 +13,12 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { PreconditionError } from "./errors";
-import { atomicWriteFile, isErrno } from "./fs-utils";
+import {
+  atomicWriteFile,
+  ensureDir,
+  isErrno,
+  rmTreeWithRetries,
+} from "./fs-utils";
 import {
   assertRepoClean,
   assertRepoCleanOutsidePaths,
@@ -30,7 +35,7 @@ import {
   type ProjectionFile,
   validateProjectionFiles,
 } from "./plugin-projection";
-import { assertNoSymlinkAncestors } from "./path-safety";
+import { assertConfined, dataRepoScope } from "./path-safety";
 
 export const CODEX_PROJECTION_ROOTS = [
   ".agents/plugins/marketplace.json",
@@ -43,7 +48,7 @@ export async function readFilesBelow(
 ): Promise<ProjectionFile[]> {
   const files: ProjectionFile[] = [];
   for (const relRoot of relRoots) {
-    await assertNoSymlinkAncestors(root, relRoot);
+    await assertConfined(root, relRoot, "deny");
     await walk(root, relRoot, files);
   }
   return files.sort((a, b) => a.path.localeCompare(b.path));
@@ -121,18 +126,16 @@ export async function replaceOwnedFiles(
   files: ProjectionFile[],
 ): Promise<void> {
   validateProjectionFiles(files);
+  const scope = dataRepoScope(root);
   for (const relRoot of ownedRoots) {
-    await assertNoSymlinkAncestors(root, relRoot);
-    await rm(join(root, ...relRoot.split("/")), {
-      recursive: true,
-      force: true,
-    });
+    await assertConfined(root, relRoot, "deny");
+    await rmTreeWithRetries(join(root, ...relRoot.split("/")), scope);
   }
   for (const file of files) {
-    await assertNoSymlinkAncestors(root, file.path);
+    await assertConfined(root, file.path, "deny");
     const path = join(root, ...file.path.split("/"));
-    await mkdir(dirname(path), { recursive: true });
-    await atomicWriteFile(path, file.bytes);
+    await ensureDir(dirname(path), scope);
+    await atomicWriteFile(path, file.bytes, scope);
     await chmod(path, file.executable ? 0o755 : 0o644);
   }
 }

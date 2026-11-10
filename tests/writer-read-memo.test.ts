@@ -327,18 +327,18 @@ for (const verb of ["apply", "update"] as const) {
         let injected = false;
         let firstPublishedText: Buffer | undefined;
         const writer = spyOn(fsUtils, "atomicWriteFile").mockImplementation(
-          async (path, bytes) => {
+          async (path, bytes, scope) => {
             if (!injected && (path === fixture.output || path === mcp)) {
               if (published.length === 1) {
                 firstPublishedText = await readFile(published[0]!);
                 injected = true;
                 throw new Error("injected second fragment write failure");
               }
-              await atomicWrite(path, bytes);
+              await atomicWrite(path, bytes, scope);
               published.push(path);
               return;
             }
-            await atomicWrite(path, bytes);
+            await atomicWrite(path, bytes, scope);
           },
         );
         try {

@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { readFile, mkdir } from "node:fs/promises";
-import { atomicWriteFile } from "./fs-utils";
+import { readFile } from "node:fs/promises";
+import { atomicWriteFile, ensureDir } from "./fs-utils";
 import { dirname } from "node:path";
 import {
   clearInstallModeCache,
@@ -141,10 +141,12 @@ export async function saveManifest(
   m: Manifest,
 ): Promise<void> {
   const p = manifestPath(project);
-  await mkdir(dirname(p), { recursive: true });
+  await ensureDir(dirname(p), { root: project });
   const normalized = ManifestSchema.parse(m);
   const out = { ...fenceFor(normalized.plugins?.length ?? 0), ...normalized };
-  await atomicWriteFile(p, `${JSON.stringify(out, null, 2)}\n`);
+  await atomicWriteFile(p, `${JSON.stringify(out, null, 2)}\n`, {
+    root: project,
+  });
   // installMode may have changed; drop the memoized detectInstallMode value so
   // a later read in the same process sees the new manifest.
   clearInstallModeCache(project);

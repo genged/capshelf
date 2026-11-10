@@ -659,6 +659,7 @@ export async function updateMergeRemoteTarget(opts: {
       snapshot.localPath,
       localFiles,
       files,
+      { root: opts.project },
     );
     try {
       await transaction.commit();

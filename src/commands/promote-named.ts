@@ -6,9 +6,10 @@
 import type { Command } from "commander";
 import { printShareUpstreamGuidance } from "./share-named";
 import { existsSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { dirname, join, posix, relative } from "node:path";
-import { atomicWriteFile, lstatOrNull } from "../fs-utils";
+import { atomicWriteFile, ensureDir, lstatOrNull } from "../fs-utils";
+import { dataRepoScope } from "../path-safety";
 import { homeRelative, shellArg } from "../paths";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
 import { saveManifest } from "../manifest";
@@ -494,8 +495,8 @@ export async function promoteSubagent(
       await opts.beforeCanonicalWrite?.();
       for (const { relPath, raw } of pending) {
         const path = join(dataRepo, ...relPath.split("/"));
-        await mkdir(dirname(path), { recursive: true });
-        await atomicWriteFile(path, raw);
+        await ensureDir(dirname(path), dataRepoScope(dataRepo));
+        await atomicWriteFile(path, raw, dataRepoScope(dataRepo));
       }
     },
     verify: async (commit) => {
@@ -1060,8 +1061,17 @@ export async function syncTrackedIntoDataRepo(
   const codexConfigured = kind === "skills" && hasCodexMarketplace(dataRepo);
   const replaceSource = async (): Promise<string[]> => {
     await opts.snapshotHooks?.beforeCanonicalCopy?.();
-    await replaceDirFromFiles(localPath, snapshot.files, dataDir);
-    const keptSidecar = await restoreSidecarBytes(dataDir, upstreamSidecar);
+    await replaceDirFromFiles(
+      localPath,
+      snapshot.files,
+      dataDir,
+      dataRepoScope(dataRepo),
+    );
+    const keptSidecar = await restoreSidecarBytes(
+      dataDir,
+      upstreamSidecar,
+      dataRepoScope(dataRepo),
+    );
     await opts.snapshotHooks?.afterCanonicalCopy?.();
     const currentSnapshot = await installedSnapshot(
       project,

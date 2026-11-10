@@ -1,10 +1,19 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { LOCAL_CONFIG_FILE, LOCAL_LOCK_FILE, METADATA_DIR } from "./identity";
 import { expandTilde } from "./paths";
-import { atomicWriteFile } from "./fs-utils";
+import { atomicWriteFile, ensureDir } from "./fs-utils";
+import type { MutationScope } from "./path-safety";
+
+/**
+ * Git decides where `info/exclude\` lives, and a worktree or a submodule puts
+ * it outside the project folder on purpose.
+ */
+const GIT_DIR_EXEMPTION: MutationScope = {
+  exempt: "the Git exclude file path comes from git rev-parse --git-path",
+};
 import { isConfigObject, type ConfigValue } from "./config-values";
 import { assertFenceOrFederation, fenceFor } from "./manifest-fence";
 import { PreconditionError } from "./errors";
@@ -70,9 +79,11 @@ export async function saveLocalConfig(
   cfg: LocalConfig,
 ): Promise<void> {
   const path = localConfigPath(project);
-  await mkdir(dirname(path), { recursive: true });
+  await ensureDir(dirname(path), { root: project });
   const out = { ...fenceFor(cfg.plugins.length), ...cfg };
-  await atomicWriteFile(path, `${JSON.stringify(out, null, 2)}\n`);
+  await atomicWriteFile(path, `${JSON.stringify(out, null, 2)}\n`, {
+    root: project,
+  });
   await ensureGitignored(project, LOCAL_CONFIG_FILE);
   await ensureGitignored(project, LOCAL_LOCK_FILE);
 }
@@ -82,16 +93,18 @@ export async function ensureGitignored(
   entry: string,
 ): Promise<void> {
   const path = join(project, METADATA_DIR, ".gitignore");
-  await mkdir(dirname(path), { recursive: true });
+  await ensureDir(dirname(path), { root: project });
   if (!existsSync(path)) {
-    await atomicWriteFile(path, `${entry}\n`);
+    await atomicWriteFile(path, `${entry}\n`, { root: project });
     return;
   }
 
   const raw = await readFile(path, "utf-8");
   if (raw.split(/\r?\n/).some((line) => line.trim() === entry)) return;
   const separator = raw.length === 0 || raw.endsWith("\n") ? "" : "\n";
-  await atomicWriteFile(path, `${raw}${separator}${entry}\n`);
+  await atomicWriteFile(path, `${raw}${separator}${entry}\n`, {
+    root: project,
+  });
 }
 
 export function localConfigNamesForKind(
@@ -149,7 +162,7 @@ export async function ensureLocalExcludes(
     }
   }
 
-  await mkdir(dirname(excludePath), { recursive: true });
+  await ensureDir(dirname(excludePath), GIT_DIR_EXEMPTION);
   const raw = existsSync(excludePath)
     ? await readFile(excludePath, "utf-8")
     : "";
@@ -160,6 +173,7 @@ export async function ensureLocalExcludes(
   await atomicWriteFile(
     excludePath,
     `${raw}${separator}${additions.join("\n")}\n`,
+    GIT_DIR_EXEMPTION,
   );
 }
 
@@ -185,7 +199,11 @@ export async function removeLocalExcludes(
   const nextLines = lines.filter((line) => !entries.has(line.trim()));
   if (nextLines.length === lines.length) return false;
   const next = nextLines.join("\n");
-  await atomicWriteFile(excludePath, trailingNewline ? `${next}\n` : next);
+  await atomicWriteFile(
+    excludePath,
+    trailingNewline ? `${next}\n` : next,
+    GIT_DIR_EXEMPTION,
+  );
   return true;
 }
 

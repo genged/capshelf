@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
-import { atomicWriteFile } from "./fs-utils";
+import { readFile } from "node:fs/promises";
+import { atomicWriteFile, ensureDir } from "./fs-utils";
 import { dirname, join } from "node:path";
 import { inventoryLocalTree } from "./gitignore";
 import bootstrap from "./bundled/skills/capshelf/SKILL.md" with {
@@ -108,12 +108,13 @@ export async function installSystemItem(
   const dst = systemTargetDir(project, item, mode);
   assertCanMaterializeInstalled(project, item.kind, item.name, mode);
   // A mounted volume in the folder stays. See `removeInstalledTree`.
-  await removeInstalledTree(dst);
-  await mkdir(dst, { recursive: true });
+  const scope = { root: project };
+  await removeInstalledTree(dst, scope);
+  await ensureDir(dst, scope);
   for (const f of item.files) {
     const filePath = join(dst, f.relPath);
-    await mkdir(dirname(filePath), { recursive: true });
-    await atomicWriteFile(filePath, f.content);
+    await ensureDir(dirname(filePath), scope);
+    await atomicWriteFile(filePath, f.content, scope);
   }
   await ensureInstallAliases(project, item.kind, item.name, mode);
   return dst;

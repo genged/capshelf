@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { readFile, mkdir } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { localLockPath, lockPath, lockReadPath } from "./paths";
-import { atomicWriteFile, isErrno } from "./fs-utils";
+import { atomicWriteFile, ensureDir, isErrno } from "./fs-utils";
 import { PRODUCT_NAME } from "./identity";
 import { ItemNeedsSchema } from "./metadata";
 import type { ItemNeeds } from "./metadata";
@@ -289,8 +289,8 @@ export async function saveLock(
   lock: WritableLock,
 ): Promise<void> {
   const p = lockPath(project);
-  await mkdir(dirname(p), { recursive: true });
-  await atomicWriteFile(p, serializeLock(lock));
+  await ensureDir(dirname(p), { root: project });
+  await atomicWriteFile(p, serializeLock(lock), { root: project });
 }
 
 export async function loadLocalLock(project: string): Promise<Lock> {
@@ -311,8 +311,8 @@ export async function saveLocalLock(
   lock: WritableLock,
 ): Promise<void> {
   const p = localLockPath(project);
-  await mkdir(dirname(p), { recursive: true });
-  await atomicWriteFile(p, serializeLock(lock));
+  await ensureDir(dirname(p), { root: project });
+  await atomicWriteFile(p, serializeLock(lock), { root: project });
 }
 
 /**

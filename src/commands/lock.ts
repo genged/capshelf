@@ -1,6 +1,6 @@
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { resolveProjectDataRepo } from "../command-context";
 import {
@@ -10,7 +10,7 @@ import {
 } from "../destructive-change";
 import { planCopyDirectoryDestruction } from "../destructive-preflight";
 import { PreconditionError, ResultExitError } from "../errors";
-import { atomicWriteFile } from "../fs-utils";
+import { atomicWriteFile, ensureDir, rmTreeWithRetries } from "../fs-utils";
 import { resolveCommit } from "../git";
 import { PRODUCT_NAME } from "../identity";
 import { installedPath, parseLockKey } from "../installed";
@@ -721,6 +721,7 @@ async function publishMigration(
   plan: MigrationPlan,
 ): Promise<void> {
   const written: LockSnapshot[] = [];
+  const scope = { root: project };
   try {
     for (const repair of plan.repinned) {
       const parsed = parseLockKey(repair.key);
@@ -747,16 +748,18 @@ async function publishMigration(
       if (!candidate) continue;
       if (snapshot.before === null && Object.keys(candidate.items).length === 0)
         continue;
-      await mkdir(dirname(snapshot.path), { recursive: true });
-      await atomicWriteFile(snapshot.path, serializeLock(candidate));
+      await ensureDir(dirname(snapshot.path), scope);
+      await atomicWriteFile(snapshot.path, serializeLock(candidate), scope);
       written.push(snapshot);
     }
   } catch (error) {
     for (const snapshot of written) {
       if (snapshot.before === null) {
-        await rm(snapshot.path, { force: true }).catch(() => {});
+        await rmTreeWithRetries(snapshot.path, scope).catch(() => {});
       } else {
-        await atomicWriteFile(snapshot.path, snapshot.before).catch(() => {});
+        await atomicWriteFile(snapshot.path, snapshot.before, scope).catch(
+          () => {},
+        );
       }
     }
     throw error;

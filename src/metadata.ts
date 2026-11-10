@@ -13,6 +13,7 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { atomicWriteFile } from "./fs-utils";
+import type { MutationScope } from "./path-safety";
 import { join } from "node:path";
 import { z } from "zod";
 import type { SystemItem } from "./bundled";
@@ -369,11 +370,12 @@ export async function readSidecarBytes(
 export async function restoreSidecarBytes(
   itemDir: string,
   cached: Buffer | null,
+  scope: MutationScope,
 ): Promise<boolean> {
   if (cached === null) return false;
   const path = join(itemDir, METADATA_SIDECAR);
   if (existsSync(path)) return false;
-  await atomicWriteFile(path, cached);
+  await atomicWriteFile(path, cached, scope);
   return true;
 }
 
@@ -593,6 +595,7 @@ export interface SidecarProvenance {
 export async function writeSidecarProvenance(
   itemDir: string,
   provenance: SidecarProvenance,
+  scope: MutationScope,
 ): Promise<void> {
   const path = join(itemDir, METADATA_SIDECAR);
   const existing = existsSync(path) ? await readFile(path, "utf-8") : "";
@@ -603,5 +606,6 @@ export async function writeSidecarProvenance(
       ["upstreamCommit", provenance.upstreamCommit],
       ["upstreamPath", provenance.upstreamPath],
     ]),
+    scope,
   );
 }

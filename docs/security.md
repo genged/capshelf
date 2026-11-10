@@ -188,6 +188,71 @@ Explicitly out of scope, with the reasoning:
   marketplace, upload a package, install or refresh a plugin, or edit Claude
   or Codex caches. Those actions remain explicit runtime operations.
 
+## Managed writes stay inside the project
+
+Capshelf writes, moves, and deletes managed files only inside the current
+project. One rule covers every managed path. This includes installed items,
+the alias in `.claude/skills`, fragment outputs such as `.claude/settings.json`,
+`.codex/config.toml`, and `.mcp.json`, subagent files, and the metadata in
+`.capshelf`.
+
+The rule: each real path that a managed path resolves to must stay inside the
+real path of the project root. Capshelf checks this before it creates, writes,
+moves, or deletes anything. It walks the path one component at a time. It
+resolves each symlink it meets and checks the result.
+
+A command that breaks the rule stops with exit 3. The message names the path
+relative to the project and the real path it resolves to. The command writes
+nothing, deletes nothing, and leaves the lock unchanged. The rule applies to
+`add`, `apply`, `update`, `revert`, `rm`, `share`, `promote`, `init`, `lock`,
+and `set-data`.
+
+Capshelf refuses these cases:
+
+- A parent folder is a symlink to a place outside the project. Example:
+  `.agents`, `.claude`, `.codex`, `.pi`, or `.capshelf` linked to another
+  folder.
+- The final component is a symlink to a place outside the project. Example:
+  `.mcp.json` linked to a file in your home folder.
+- A symlink on the path points nowhere (a dangling link).
+- A symlink on the path leads to a second symlink that leaves the project.
+
+Capshelf refuses these cases even if you made the link on purpose, for example
+to keep `.claude` in a dotfiles repository. Move the folder into the project,
+or link a path inside the project.
+
+Capshelf allows these cases:
+
+- A symlink whose real target is inside the project. The codex-compatible
+  alias `.claude/skills/<name> -> ../../.agents/skills/<name>` is one case. A
+  `.codex` link to a folder in the project is another.
+- A project root that you reach through a symlink. Capshelf compares real
+  paths, so the project path itself can be a link.
+
+Copy-up reads use the same rule. `share` and `promote` read an item from the
+project and write it to the data repo. They resolve the item folder first. A
+symlinked parent that leaves the project is refused, so content from outside
+the project does not reach the data repo.
+
+Paths in the data repo use a stricter form of the rule: no component of the
+path may be a symlink. A data repo that holds a committed symlinked folder at
+a path that capshelf writes is refused.
+
+Known limits:
+
+- The check and the write are two steps. A process that swaps a folder for a
+  symlink between them can still redirect one write. The check does not hold a
+  lock and does not open files with `O_NOFOLLOW`.
+- Capshelf does not apply the rule to the Git directory. `git rev-parse`
+  decides where `.git/info/exclude` lives. A worktree or a submodule puts it
+  outside the project folder on purpose. The Git index backup that capshelf
+  makes in the data repo follows the same exception.
+- Capshelf does not apply the rule to places outside any project. These are
+  the project registry in `$XDG_CONFIG_HOME/capshelf`, the update-check cache,
+  scratch folders in the system temp folder, and the `--out` path of a
+  package command. A package command has its own check: the output path must
+  be outside the data repo.
+
 ## Marketplace package boundary
 
 Claude managed entries use the data-repo root as their official Git source,

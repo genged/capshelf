@@ -17,7 +17,7 @@
  * computes the version from the rows every time; nothing sets it directly.
  */
 import { z } from "zod";
-import { mkdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   assertSafeItemName,
@@ -27,7 +27,7 @@ import {
 } from "./assert";
 import type { ConfigValue } from "./config-values";
 import { PreconditionError } from "./errors";
-import { atomicWriteFile, isErrno } from "./fs-utils";
+import { atomicWriteFile, ensureDir, isErrno } from "./fs-utils";
 import { PRODUCT_NAME, REMOTES_LOCK_FILE } from "./identity";
 import type { ItemRef } from "./item-ref";
 import { ensureGitignored } from "./local-config";
@@ -263,8 +263,8 @@ export async function saveRemotesLock(
   lock: RemotesLock,
 ): Promise<void> {
   const path = remotesLockPath(project);
-  await mkdir(dirname(path), { recursive: true });
-  await atomicWriteFile(path, serializeRemotesLock(lock));
+  await ensureDir(dirname(path), { root: project });
+  await atomicWriteFile(path, serializeRemotesLock(lock), { root: project });
   // Deliberately not `saveLocalConfig`: D7 allows a project that holds remote
   // rows and no data-repo binding, and `LocalConfigSchema` requires one.
   await ensureGitignored(project, REMOTES_LOCK_FILE);

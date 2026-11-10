@@ -834,6 +834,7 @@ async function materializeCopyDirectory(
   assertCanMaterializeInstalled(project, kind, name);
   const transaction = await beginDirectoryReplacement(
     dst,
+    { root: project },
     async (staged, layout) => {
       const expectedPaths = files.expected.map((file) => file.path);
       await assertNoManagedPathOnMount(dst, layout, expectedPaths);

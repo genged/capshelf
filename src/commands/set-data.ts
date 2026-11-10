@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { rm } from "node:fs/promises";
+import { rmTreeWithRetries } from "../fs-utils";
 import { isAbsolute, resolve } from "node:path";
 import { isRemoteDataUrl } from "../data-bootstrap";
 import { assertDataRepoRoot } from "../git";
@@ -70,7 +70,7 @@ export function buildSetData(name: string): Command {
         legacyManifestPath !== null &&
         resolve(legacyManifestPath) !== resolve(manifestPath(project))
       ) {
-        await rm(legacyManifestPath);
+        await rmTreeWithRetries(legacyManifestPath, { root: project });
       }
       if (opts.json) {
         console.log(JSON.stringify({ project, dataRepo }, null, 2));

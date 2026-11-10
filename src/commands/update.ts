@@ -1447,6 +1447,7 @@ async function updateMergeTarget(input: {
           snapshot.localPath,
           localFiles,
           resultFiles,
+          { root: project },
         )
       : null;
     const previous = lock.items[target.key];

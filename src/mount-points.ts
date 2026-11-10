@@ -3,7 +3,6 @@ import {
   access,
   cp,
   lstat,
-  mkdir,
   readdir,
   readFile,
   realpath,
@@ -11,9 +10,10 @@ import {
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { PreconditionError } from "./errors";
-import { isErrno, rmTreeWithRetries } from "./fs-utils";
+import { ensureDir, isErrno, rmTreeWithRetries } from "./fs-utils";
 import { PRODUCT_NAME } from "./identity";
 import { findDestinationPathCollision } from "./path-collision";
+import { assertInScope, type MutationScope } from "./path-safety";
 
 /**
  * The mount points inside an installed folder.
@@ -155,16 +155,32 @@ export async function splitMovableUnits(
   return { movable, held };
 }
 
+/**
+ * Rename `from` to `to` after both paths pass `scope`. Every move in this
+ * file goes through here, so a symlinked parent cannot take a move out of
+ * the scope's root.
+ */
+async function renameInScope(
+  from: string,
+  to: string,
+  scope: MutationScope,
+): Promise<void> {
+  await assertInScope(scope, from);
+  await assertInScope(scope, to);
+  await rename(from, to);
+}
+
 /** Rename each unit from `from` to `to`, creating parent folders. */
 export async function moveUnits(
   units: readonly string[],
   from: string,
   to: string,
+  scope: MutationScope,
 ): Promise<void> {
   for (const unit of units) {
     const destination = absolute(to, unit);
-    await mkdir(dirname(destination), { recursive: true });
-    await rename(absolute(from, unit), destination);
+    await ensureDir(dirname(destination), scope);
+    await renameInScope(absolute(from, unit), destination, scope);
   }
 }
 
@@ -177,6 +193,7 @@ export async function returnUnits(
   units: readonly string[],
   places: readonly string[],
   backup: string,
+  scope: MutationScope,
 ): Promise<void> {
   for (const unit of [...units].reverse()) {
     for (const place of places) {
@@ -188,8 +205,8 @@ export async function returnUnits(
         throw error;
       }
       const destination = absolute(backup, unit);
-      await mkdir(dirname(destination), { recursive: true });
-      await rename(source, destination);
+      await ensureDir(dirname(destination), scope);
+      await renameInScope(source, destination, scope);
       break;
     }
   }
@@ -234,14 +251,15 @@ export async function detachTree(
   target: string,
   backup: string,
   layout: MountLayout,
+  scope: MutationScope,
 ): Promise<void> {
   if (layout.pinned.size === 0) {
-    await rename(target, backup);
+    await renameInScope(target, backup, scope);
     return;
   }
   // The caller may have created `backup` already.
-  await mkdir(backup, { recursive: true });
-  await moveChildren(target, backup, "", layout);
+  await ensureDir(backup, scope);
+  await moveChildren(target, backup, "", layout, scope);
 }
 
 /**
@@ -253,12 +271,13 @@ export async function attachTree(
   source: string,
   target: string,
   layout: MountLayout,
+  scope: MutationScope,
 ): Promise<void> {
   if (layout.pinned.size === 0) {
-    await rename(source, target);
+    await renameInScope(source, target, scope);
     return;
   }
-  await moveChildren(source, target, "", layout);
+  await moveChildren(source, target, "", layout, scope);
 }
 
 /** Copy `source` into `target` the way `attachTree` moves it. */
@@ -266,12 +285,14 @@ export async function copyTree(
   source: string,
   target: string,
   layout: MountLayout,
+  scope: MutationScope,
 ): Promise<void> {
+  await assertInScope(scope, target);
   if (layout.pinned.size === 0) {
     await cp(source, target, { recursive: true, preserveTimestamps: true });
     return;
   }
-  await copyChildren(source, target, "", layout);
+  await copyChildren(source, target, "", layout, scope);
 }
 
 /**
@@ -281,12 +302,13 @@ export async function copyTree(
 export async function clearTree(
   target: string,
   layout: MountLayout,
+  scope: MutationScope,
 ): Promise<void> {
   if (layout.pinned.size === 0) {
-    await rmTreeWithRetries(target);
+    await rmTreeWithRetries(target, scope);
     return;
   }
-  await clearChildren(target, "", layout);
+  await clearChildren(target, "", layout, scope);
 }
 
 /**
@@ -295,9 +317,13 @@ export async function clearTree(
  * `root`. A delete through a mount point would empty the volume and then
  * fail with EBUSY, so `rm`, `init`, and adopt delete with this.
  */
-export async function removeInstalledTree(root: string): Promise<string[]> {
+export async function removeInstalledTree(
+  root: string,
+  scope: MutationScope,
+): Promise<string[]> {
+  await assertInScope(scope, root);
   const layout = await readMountLayout(root);
-  await clearTree(root, layout);
+  await clearTree(root, layout, scope);
   return [...layout.mounts].sort();
 }
 
@@ -328,7 +354,10 @@ export async function holdsOnlyMountPoints(root: string): Promise<boolean> {
  * recursive delete would empty the mounted volume first and then fail on the
  * mount point, so this check runs before any delete.
  */
-export async function removeScratchTree(path: string): Promise<void> {
+export async function removeScratchTree(
+  path: string,
+  scope: MutationScope,
+): Promise<void> {
   const found = await layoutAt(path);
   const [mount] = found.layout.mounts;
   const mountPoint = found.rootIsMount
@@ -341,7 +370,7 @@ export async function removeScratchTree(path: string): Promise<void> {
       `${mountPoint} is a mount point; ${PRODUCT_NAME} did not delete the scratch folder ${path}. Unmount it, then remove ${path}.`,
     );
   }
-  await rmTreeWithRetries(path);
+  await rmTreeWithRetries(path, scope);
 }
 
 async function moveChildren(
@@ -349,16 +378,17 @@ async function moveChildren(
   to: string,
   relDir: string,
   layout: MountLayout,
+  scope: MutationScope,
 ): Promise<void> {
   for (const name of await readdir(absolute(from, relDir))) {
     const path = childPath(relDir, name);
     if (layout.mounts.has(path)) continue;
     if (layout.pinned.has(path)) {
-      await mkdir(absolute(to, path), { recursive: true });
-      await moveChildren(from, to, path, layout);
+      await ensureDir(absolute(to, path), scope);
+      await moveChildren(from, to, path, layout, scope);
       continue;
     }
-    await rename(absolute(from, path), absolute(to, path));
+    await renameInScope(absolute(from, path), absolute(to, path), scope);
   }
 }
 
@@ -367,15 +397,17 @@ async function copyChildren(
   to: string,
   relDir: string,
   layout: MountLayout,
+  scope: MutationScope,
 ): Promise<void> {
   for (const name of await readdir(absolute(from, relDir))) {
     const path = childPath(relDir, name);
     if (layout.mounts.has(path)) continue;
     if (layout.pinned.has(path)) {
-      await mkdir(absolute(to, path), { recursive: true });
-      await copyChildren(from, to, path, layout);
+      await ensureDir(absolute(to, path), scope);
+      await copyChildren(from, to, path, layout, scope);
       continue;
     }
+    await assertInScope(scope, absolute(to, path));
     await cp(absolute(from, path), absolute(to, path), {
       recursive: true,
       preserveTimestamps: true,
@@ -387,6 +419,7 @@ async function clearChildren(
   target: string,
   relDir: string,
   layout: MountLayout,
+  scope: MutationScope,
 ): Promise<void> {
   let names: string[];
   try {
@@ -399,10 +432,10 @@ async function clearChildren(
     const path = childPath(relDir, name);
     if (layout.mounts.has(path)) continue;
     if (layout.pinned.has(path)) {
-      await clearChildren(target, path, layout);
+      await clearChildren(target, path, layout, scope);
       continue;
     }
-    await rmTreeWithRetries(absolute(target, path));
+    await rmTreeWithRetries(absolute(target, path), scope);
   }
 }
 

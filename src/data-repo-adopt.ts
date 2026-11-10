@@ -45,6 +45,7 @@ import { compareCandidateToCommit, pinItemAtCommit } from "./pin";
 import type { PinnedSource } from "./pin";
 import { gitTreeSource } from "./item-source";
 import { lstatOrNull } from "./fs-utils";
+import { assertConfinedSync, dataRepoScope } from "./path-safety";
 import {
   CODEX_PROJECTION_ROOTS,
   commitDataRepoMutation,
@@ -137,23 +138,37 @@ export async function adoptIntoDataRepo(
       : [];
   const mutateSource = async (): Promise<string[]> => {
     if (snapshot.source === "filesystem") {
-      await replaceDirFromFiles(adoption.path, snapshot.files, dataPath);
+      await replaceDirFromFiles(
+        adoption.path,
+        snapshot.files,
+        dataPath,
+        dataRepoScope(dataRepo),
+      );
     } else {
       await replaceDirFromGitVisibleFiles(
         project,
         adoptionRelPath,
         adoption.path,
         dataPath,
+        dataRepoScope(dataRepo),
       );
     }
-    const restored = await restoreSidecarBytes(dataPath, upstreamSidecar);
+    const restored = await restoreSidecarBytes(
+      dataPath,
+      upstreamSidecar,
+      dataRepoScope(dataRepo),
+    );
     if (!restored) await warnAboutAdoptedSidecar(dataPath, kind, name);
     // Inside the mutation, so the provenance is part of the one commit rather
     // than an uncommitted change left in the shelf. The sidecar is excluded
     // from the pin, so it changes no identity and PIN-11 still compares the
     // same two trees.
     if (opts.provenance) {
-      await writeSidecarProvenance(dataPath, opts.provenance);
+      await writeSidecarProvenance(
+        dataPath,
+        opts.provenance,
+        dataRepoScope(dataRepo),
+      );
     }
     if (kind === "skills") await refreshCodexProjection(dataRepo);
     // Provenance rewrites the sidecar above, so it is then new content to
@@ -334,6 +349,7 @@ export function findAdoptionSource(
 ): AdoptionSource | null {
   if (kind === "pi-extensions") {
     return existingItemDir(
+      project,
       installedPath(project, kind, name, mode),
       "installed",
       kind,
@@ -342,12 +358,12 @@ export function findAdoptionSource(
 
   if (mode === "claude-only") {
     const path = claudeSkillPath(project, name);
-    return existingItemDir(path, "installed", kind);
+    return existingItemDir(project, path, "installed", kind);
   }
 
   const codexPath = codexSkillPath(project, name);
   const claudePath = claudeSkillPath(project, name);
-  const codex = existingItemDir(codexPath, "installed", kind);
+  const codex = existingItemDir(project, codexPath, "installed", kind);
   const claudeStat = lstatOrNull(claudePath);
 
   if (codex && claudeStat && !claudeStat.isSymbolicLink()) {
@@ -360,20 +376,26 @@ export function findAdoptionSource(
 
   if (claudeStat?.isSymbolicLink()) {
     return existingItemDir(
+      project,
       installedPath(project, kind, name, mode),
       "installed",
       kind,
     );
   }
-  if (claudeStat) return existingItemDir(claudePath, "claude-real", kind);
+  if (claudeStat)
+    return existingItemDir(project, claudePath, "claude-real", kind);
   return null;
 }
 
 function existingItemDir(
+  project: string,
   path: string,
   sourceKind: AdoptionSource["kind"],
   kind: CopyDirectoryItemKind,
 ): AdoptionSource | null {
+  // The read root of a copy-up: a symlink that leaves the project must not
+  // publish what lies outside it.
+  assertConfinedSync(project, path);
   const stat = lstatOrNull(path);
   if (!stat) return null;
   if (!stat.isDirectory()) {
@@ -413,7 +435,9 @@ async function normalizeAdoptedSkill(
   if (adoption.kind === "claude-real") {
     const managedPath = codexSkillPath(project, name);
     if (snapshot.source === "filesystem") {
-      await replaceDirFromFiles(adoption.path, snapshot.files, managedPath);
+      await replaceDirFromFiles(adoption.path, snapshot.files, managedPath, {
+        root: project,
+      });
     } else {
       const adoptionRelPath = relative(project, adoption.path);
       await replaceDirFromGitVisibleFiles(
@@ -421,10 +445,11 @@ async function normalizeAdoptedSkill(
         adoptionRelPath,
         adoption.path,
         managedPath,
+        { root: project },
       );
     }
     // A mounted volume in the adopted folder stays where it is.
-    await removeInstalledTree(adoption.path);
+    await removeInstalledTree(adoption.path, { root: project });
   }
   await ensureInstallAliases(project, kind, name, mode);
 }

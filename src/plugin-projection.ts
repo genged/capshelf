@@ -21,7 +21,7 @@ import {
   showAtCommit,
 } from "./git";
 import { isPrivateDotenvPath } from "./dotfiles";
-import { assertNoSymlinkAncestors } from "./path-safety";
+import { assertConfined } from "./path-safety";
 
 export interface ProjectionFile {
   path: string;
@@ -188,7 +188,7 @@ async function collectWorkingFiles(
   ref: string,
 ): Promise<ProjectionFile[]> {
   const root = join(dataRepo, ...ref.split("/"));
-  await assertNoSymlinkAncestors(dataRepo, ref);
+  await assertConfined(dataRepo, ref, "deny");
   try {
     const rootInfo = await lstat(root);
     if (rootInfo.isSymbolicLink()) {
@@ -208,7 +208,7 @@ async function collectWorkingFiles(
   const files: ProjectionFile[] = [];
   for (const relPath of relPaths) {
     if (relPath === ".capshelf.yml") continue;
-    await assertNoSymlinkAncestors(dataRepo, `${ref}/${relPath}`);
+    await assertConfined(dataRepo, `${ref}/${relPath}`, "deny");
     const absolute = join(dataRepo, ...ref.split("/"), ...relPath.split("/"));
     const info = await lstat(absolute);
     if (info.isSymbolicLink()) {
