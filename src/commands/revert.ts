@@ -29,7 +29,10 @@ import { NotFoundError, PreconditionError } from "../errors";
 import { assertLocalScopeSupported } from "../local-config";
 import { lockKeyForRef, parseItemRef } from "../item-ref";
 import { assertNotPulledSkill } from "../remote-refusal";
-import { materializeLockEntry } from "../materialize";
+import {
+  assertFragmentEntryMatchesLock,
+  materializeLockEntry,
+} from "../materialize";
 import { findSkillsShSkill, skillsShConflictMessage } from "../external";
 import { printRuntimeWarnings } from "../runtime-warnings";
 import {
@@ -136,6 +139,13 @@ export function registerRevert(program: Command): void {
           if (!dataRepo || entry.source !== "data") {
             throw new Error("data repo is required");
           }
+          await assertFragmentEntryMatchesLock({
+            dataRepo,
+            manifest,
+            kind: parsed.kind,
+            name: parsed.name,
+            entry,
+          });
           const targets = await lockedFragmentTargetsForItem(
             dataRepo,
             parsed.kind,
@@ -157,6 +167,7 @@ export function registerRevert(program: Command): void {
                 oldLock: lock,
                 nextLock: lock,
                 target,
+                verifyPins: true,
               }),
             );
             contributionStates.set(

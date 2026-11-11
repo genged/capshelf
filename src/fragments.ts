@@ -60,6 +60,7 @@ import { missingSourceCommitMessage } from "./upstream-check";
 import { readEntryBytes } from "./pin";
 import type { PinnedBytes, PinTreeEntry } from "./pin";
 import { findMasterItemByRef } from "./item-ref";
+import { assertFragmentEntryMatchesLock } from "./materialize";
 
 export type FragmentFormat = "json" | "toml";
 export type FragmentTarget = "claude-settings" | "claude-mcp" | "codex-config";
@@ -135,6 +136,12 @@ export interface ApplyFragmentOutputOptions {
   target: FragmentTarget;
   dryRun?: boolean;
   memo?: GitReadMemo;
+  /**
+   * Check each contributing data entry against its locked pin before its bytes
+   * enter the plan. `apply` and `revert` set it. `update` does not: it is the
+   * repair for a contradictory pin.
+   */
+  verifyPins?: boolean;
 }
 
 export interface FragmentApplyResult {
@@ -565,6 +572,7 @@ export async function planFragmentOutput(
     lock: opts.nextLock,
     target: opts.target,
     memo: opts.memo,
+    verifyPins: opts.verifyPins,
   });
   const planned = spec.normalizeOutput(
     reconcileFragmentValues({
@@ -912,12 +920,23 @@ export async function fragmentValuesForTarget(opts: {
   lock: Lock;
   target: FragmentTarget;
   memo?: GitReadMemo;
+  verifyPins?: boolean;
 }): Promise<FragmentValue[]> {
   const values: FragmentValue[] = [];
   for (const kind of contributionKindsForTarget(opts.target)) {
     for (const name of manifestNamesForKind(opts.manifest, kind)) {
       const entry = opts.lock.items[dataKey(kind, name)];
       if (entry?.source !== "data" || entry.local === true) continue;
+      if (opts.verifyPins) {
+        await assertFragmentEntryMatchesLock({
+          dataRepo: opts.dataRepo,
+          manifest: opts.manifest,
+          kind,
+          name,
+          entry,
+          memo: opts.memo,
+        });
+      }
       const loaded = await loadFragmentSourcesAtCommit({
         dataRepo: opts.dataRepo,
         kind,

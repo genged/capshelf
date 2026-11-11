@@ -20,10 +20,14 @@ import {
 } from "./installed";
 import type { ItemSource } from "./installed";
 import { isTreePinned } from "./install-identity";
-import { isGitTree, sameContentSource } from "./item-source";
+import { gitTreeSource, isGitTree, sameContentSource } from "./item-source";
 import type { ContentSource, GitTreeSource } from "./item-source";
 import type { GitReadMemo } from "./git-read-memo";
-import type { ItemKind, CopyDirectoryItemKind } from "./master";
+import type {
+  CopyDirectoryItemKind,
+  FragmentItemKind,
+  ItemKind,
+} from "./master";
 import {
   isCopyDirectoryItemKind,
   isCopyTargetFileItemKind,
@@ -64,6 +68,7 @@ import { PreconditionError } from "./errors";
 import { assertSafeItemName } from "./assert";
 import { isErrno } from "./fs-utils";
 import { findDestinationPathCollision } from "./path-collision";
+import { legacyShaAtCommit } from "./lock-verify";
 
 export type MaterializeAction =
   | "reconciled"
@@ -822,6 +827,61 @@ function assertSourceMatchesEntry(
   );
 }
 
+/**
+ * The fragment form of `assertSourceMatchesEntry`, for `apply` and `revert`.
+ *
+ * A fragment has no copy step, so no read inside the reconciler compares the
+ * tree at `entry.sourceCommit` with the lock. `apply` and `revert` call this
+ * before they plan any output, so a contradictory pin refuses the item with
+ * the skill message and nothing is written. `update` does not call it: it is
+ * the repair.
+ */
+export async function assertFragmentEntryMatchesLock(opts: {
+  dataRepo: string;
+  manifest: Manifest;
+  kind: FragmentItemKind;
+  name: string;
+  entry: DataLockEntry;
+  memo?: GitReadMemo;
+}): Promise<void> {
+  const { dataRepo, manifest, kind, name, entry, memo } = opts;
+  if (entry.sourcePinDigest !== undefined) {
+    const digest = sourcePinDigest(
+      await itemTreeEntriesAtCommit(
+        gitTreeSource({
+          repo: dataRepo,
+          kind,
+          name,
+          commit: entry.sourceCommit,
+        }),
+        kind,
+        memo,
+      ).catch(() => {
+        throw new Error(
+          `${missingSourceCommitMessage(dataRepo, entry.sourceCommit, manifest)}\n  ${unprovablePinGuidance(kind, name)}`,
+        );
+      }),
+    );
+    if (digest === entry.sourcePinDigest) return;
+    throw new Error(
+      `source ${kind}/${name} at ${entry.sourceCommit} pins to ${abbreviatePin(digest)}, but lock expects ${abbreviatePin(entry.sourcePinDigest)}\n` +
+        `  ${unprovablePinGuidance(kind, name)}`,
+    );
+  }
+  const sourceSha = await legacyShaAtCommit(
+    dataRepo,
+    manifest,
+    kind,
+    name,
+    entry.sourceCommit,
+  );
+  if (sourceSha === entry.sha) return;
+  throw new Error(
+    `source ${kind}/${name} at ${entry.sourceCommit} hashes to ${sourceSha}, but lock expects ${entry.sha}\n` +
+      `  ${unprovablePinGuidance(kind, name)}`,
+  );
+}
+
 async function materializeCopyDirectory(
   project: string,
   kind: CopyDirectoryItemKind,
@@ -988,7 +1048,7 @@ function throwMissingCommit(
  * selects a new commit, which is a verified target, so it can.
  */
 function unprovablePinGuidance(
-  kind: CopyDirectoryItemKind,
+  kind: CopyDirectoryItemKind | FragmentItemKind,
   name: string,
 ): string {
   return `the locked source cannot supply a verified target — repair the pin with: ${PRODUCT_NAME} update ${kind}/${name}`;
