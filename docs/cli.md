@@ -498,6 +498,9 @@ capshelf share codex-config/defaults --pick model
 `--pick` and `--from` are mutually exclusive, and `--pick` is rejected for
 non-fragment items.
 
+For skills, plugins, and Pi extensions, `share` refuses `--from` and
+`--target` with exit 3. It writes nothing.
+
 `promote` commits canonical source files, not generated outputs. For example,
 edit the path from `capshelf get-path mcp/github --target codex`, then run
 `capshelf promote mcp/github -m "update github mcp"`. `keep-local` and local

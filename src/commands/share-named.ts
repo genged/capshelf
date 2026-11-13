@@ -231,22 +231,19 @@ export async function shareCopyItem(
       "--pick is only valid for fragment items (settings, mcp, codex-config)",
     );
   }
-  // Step 2. `--adopt` takes what is already installed; the other three name a
-  // different source, so pairing them would be two answers to one question.
-  if (opts.adopt === true) {
-    for (const [flag, value] of [
-      ["--from", opts.from],
-      ["--pick", opts.pick],
-      ["--target", opts.target],
-    ] as const) {
-      if (value !== undefined) {
-        throw new PreconditionError(
-          `share --adopt cannot be combined with ${flag}`,
-        );
-      }
+  // Step 2. `--from` and `--target` name a source file or a runtime. A copy
+  // item has neither, so a silent drop would commit the installed directory
+  // instead. This covers `--adopt` too: it takes what is already installed.
+  for (const [flag, value, applies] of [
+    ["--from", opts.from, "fragment and subagent items"],
+    ["--target", opts.target, "mcp and subagent items"],
+  ] as const) {
+    if (value !== undefined) {
+      throw new PreconditionError(
+        `share ${kind}/${name}: ${flag} applies to ${applies} only`,
+      );
     }
   }
-
   if (requestedScope === "local") {
     assertLocalScopeSupported(kind, name, "share");
   }
