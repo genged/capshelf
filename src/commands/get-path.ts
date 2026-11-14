@@ -2,11 +2,13 @@ import type { Command } from "commander";
 import { join } from "node:path";
 import { projectRoot } from "../paths";
 import { resolveDataRepo } from "../data-repo";
-import { loadLock } from "../lock";
+import { loadLocalLock, loadLock } from "../lock";
 import { installedPath, parseLockKey } from "../installed";
-import { lockKeyForRef, parseItemRef } from "../item-ref";
+import { parseItemRef } from "../item-ref";
+import { matchRefAcrossScopes } from "../targets";
 import { loadManifest } from "../manifest";
 import { globalOpts } from "../global-options";
+import { PRODUCT_NAME } from "../identity";
 import { NotFoundError, PreconditionError } from "../errors";
 import { assertIsGitRepo } from "../git";
 import { isMaterializedItemKind } from "../master";
@@ -41,11 +43,35 @@ export function registerGetPath(program: Command): void {
       const ref = parseItemRef(itemRef);
       const project = projectRoot();
       const manifest = await loadManifest(project);
-      const lock = await loadLock(project);
-      const key = lockKeyForRef(lock, ref);
-      if (!key) {
+      const projectLock = await loadLock(project);
+      const localLock = await loadLocalLock(project);
+      const matches = matchRefAcrossScopes(projectLock, localLock, ref);
+      if (matches.length === 0) {
         throw new NotFoundError(`not tracked in this project: ${itemRef}`);
       }
+      const distinctKeys = [...new Set(matches.map((match) => match.key))];
+      if (distinctKeys.length > 1) {
+        // Same wording as the one-lock refusal at src/item-ref.ts:110-111. It is a
+        // plain Error, so the exit code is 1 (src/cli.ts:128).
+        throw new Error(
+          `ambiguous item "${ref.name}": found ${distinctKeys
+            .map((candidate) => {
+              const candidateParsed = parseLockKey(candidate);
+              return `${candidateParsed.kind}/${candidateParsed.name}`;
+            })
+            .join(", ")}; use kind/name`,
+        );
+      }
+      if (matches.length > 1) {
+        throw new PreconditionError(
+          `${itemRef} is tracked in both project and local scope`,
+          {
+            hint: `finish the interrupted move: ${PRODUCT_NAME} move ${itemRef} --to local (or --to project)`,
+          },
+        );
+      }
+      const { key, scope } = matches[0]!;
+      const lock = scope === "local" ? localLock : projectLock;
 
       const parsed = parseLockKey(key);
       const cliTarget = sourceTargetForCli(opts.target);
@@ -143,6 +169,7 @@ export function registerGetPath(program: Command): void {
               path,
               ...(sourcePath && { sourcePath }),
               ...(outputPath && { outputPath }),
+              scope,
               lock: lock.items[key],
             },
             null,
