@@ -131,6 +131,8 @@ assert_fixed_contains 'already version 5' "$TMP/again.txt"
 (cd "$LOCAL_PROJECT" && "${CLI[@]}" init --data "$DATA" >/dev/null)
 (cd "$LOCAL_PROJECT" && "${CLI[@]}" add skills/csv-report --local >/dev/null)
 (cd "$LOCAL_PROJECT" && "${CLI[@]}" status --strict >/dev/null)
+(cd "$LOCAL_PROJECT" && "${CLI[@]}" get-path csv-report > "$TMP/get-path.txt")
+assert_fixed_contains "$LOCAL_PROJECT/.agents/skills/csv-report" "$TMP/get-path.txt"
 cmp -s \
   "$PROJECT/.agents/skills/csv-report/template.csv" \
   "$LOCAL_PROJECT/.agents/skills/csv-report/template.csv"
