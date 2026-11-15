@@ -8,7 +8,6 @@ import {
   METADATA_DIR,
 } from "./identity";
 
-/** Exit 4. Kept here so existing `./upstream-check` imports stay valid. */
 export class UpstreamVerificationError extends CheckFailedError {}
 
 export function normalizedManifestUpstream(manifest: Manifest): string | null {
