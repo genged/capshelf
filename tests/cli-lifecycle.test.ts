@@ -176,9 +176,6 @@ describe("cli integration", () => {
     expect((await runOriginal(["init", "--data", dataRepo])).exitCode).toBe(0);
     expect((await runOriginal(["add", "skills/hello"])).exitCode).toBe(0);
 
-    // Simulate a fresh clone of the original project: the committed manifest
-    // and lock are present, but installed outputs and the gitignored
-    // .capshelf/local.json binding are not.
     await mkdir(join(clone, ".capshelf"), { recursive: true });
     for (const name of ["capshelf.json", "capshelf.lock.json"]) {
       await writeFile(
@@ -350,7 +347,6 @@ describe("cli integration", () => {
     expect((await run(["add", "skills/hello"])).exitCode).toBe(0);
     expect((await run(["add", "settings/security"])).exitCode).toBe(0);
 
-    // An unmanaged user key in the merged output must survive rm.
     const settingsPath = join(project, ".claude", "settings.json");
     const settings = await file(settingsPath).json();
     expect(settings.permissions.deny).toEqual(["Bash(rm *)"]);

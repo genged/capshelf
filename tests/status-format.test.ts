@@ -222,8 +222,8 @@ describe("formatStatusHuman", () => {
       lines.some((l) => l.includes("skills/ext") && l.includes("acme/ext")),
     ).toBe(true);
     expect(lines).toContain("external/  (Claude plugins)");
-    // D11: the external Claude marketplace plugin id collides with the
-    // `plugins` item kind, so this row is `claude-plugins/<id>`.
+    // The external Claude marketplace plugin id collides with the `plugins`
+    // kind, so the row is `claude-plugins/<id>`.
     expect(
       lines.some(
         (l) => l.includes("claude-plugins/rev@co") && l.includes("enabled"),
@@ -327,8 +327,6 @@ describe("plugin row workspace trust (M8)", () => {
     const lines = formatStatusHuman({
       project: "/p",
       dataRepo: null,
-      // claudeTrust is typed "plugin rows only"; this checks the formatter
-      // itself gates on kind, not merely on the test fixtures being honest.
       rows: [{ ...row({ name: "alpha" }), claudeTrust: "untrusted" }],
       external: [],
       externalClaudePlugins: [],

@@ -20,7 +20,6 @@ import {
   tempRepo,
 } from "./cli-fixtures";
 
-/** A local bare repository holding one skill, plus the working clone that feeds it. */
 async function bareUpstream(): Promise<{ url: string; work: string }> {
   const work = await tempRepo("capshelf-remote-src-", { origin: null });
   await addSkill(
@@ -129,9 +128,8 @@ test("a fetch against a deleted upstream reports the failure instead of throwing
 });
 
 test("the default branch is the one the upstream published, not git's default", async () => {
-  // `git init` here creates `master`; the fixture renames the branch to `main`
-  // before the bare clone, so this asserts the clone was asked rather than a
-  // name being assumed.
+  // `git init` creates `master` but the fixture renames to `main`, so this
+  // asserts the clone was asked for the default branch.
   const { url } = await bareUpstream();
   const { cloneUrl, upstream } = parseRemoteSkillUrl(url);
   const xdg = await tempDir("capshelf-remote-xdg-default-");

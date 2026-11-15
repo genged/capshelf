@@ -49,8 +49,8 @@ describe("marketplace hardening", () => {
   });
 
   test("the logical hash of a known manifest is stable", () => {
-    // Pinned on 33becb7, before the hash moved onto the JSON value model, so
-    // a drift in the canonical form is visible.
+    // Expected hash was captured before the hash moved onto the JSON value
+    // model, so canonical-form drift shows up.
     expect(logicalContentHash({ z: 1, nested: { b: 2, a: 1 } }, [])).toBe(
       "df7303c1baa9589a3c1f2363e9ec72692a514745628c3b9acf157e797287ac94",
     );
@@ -414,9 +414,8 @@ describe("marketplace hardening", () => {
   });
 
   test("a rewritten file the data repo ignores refuses, even with unchanged bytes", async () => {
-    // `replaceOwnedFiles` deletes the owned roots and writes every file again,
-    // so a generated file with the same bytes is still one this commit must
-    // contain. The marketplace commit has no PIN-11 step to catch the loss.
+    // `replaceOwnedFiles` rewrites every owned file, so an unchanged generated
+    // file must still be in the commit; nothing else catches its loss.
     const repo = await tempRepo("capshelf-marketplace-ignored-", {
       origin: null,
     });

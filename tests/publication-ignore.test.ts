@@ -29,8 +29,6 @@ describe("ignoredPublicationMessage", () => {
   });
 
   test("a rule inside an owned root says the commit writes it", () => {
-    // A Codex projection copies a canonical skill's own `.gitignore`, so the
-    // rule source sits under a generated root, not in the project.
     const path = "codex/generated/plugins/p/skills/s/x.log";
     const text = ignoredPublicationMessage(
       [path],

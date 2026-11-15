@@ -2,10 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { hashNamedContents } from "../src/content-hash";
 
 describe("hashNamedContents", () => {
-  // Golden value: this is the one content-hashing convention every lock sha is
-  // built on. If this digest ever changes, every existing project lockfile
-  // silently stops matching its source. Changing it is a breaking, versioned
-  // decision — this test exists to make that impossible to do by accident.
+  // Golden value: changing this digest silently invalidates every existing
+  // lockfile, so it must be a deliberate, versioned break.
   test("pins the digest for a known input", () => {
     expect(
       hashNamedContents([

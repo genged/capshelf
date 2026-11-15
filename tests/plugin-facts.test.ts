@@ -12,8 +12,6 @@ import { tempRepo, commitAll } from "./cli-fixtures";
 import { claudeCatalog, writePlugins } from "./plugin-fixtures";
 import { skillText } from "./remote-fixtures";
 
-// ------------------------------------------------------------- scanSkillFiles
-
 test("plugin-root matches CLAUDE_PLUGIN_ROOT and CODEX_PLUGIN_ROOT, not PLUGIN_ROOT alone", () => {
   const uses = scanSkillFiles({
     skillDir: "plugins/p/skills/one",
@@ -82,9 +80,6 @@ test("outside-links matches an escaping link, stays-inside and URL-scheme links 
       },
     ],
   });
-  // The ref for nested/b.md's link drops the title but keeps the fragment,
-  // trimmed: "../../CHANGELOG.md#notes", not the raw
-  // "../../CHANGELOG.md#notes 'Title'".
   expect(uses).toEqual([
     {
       reason: "outside-links",
@@ -123,8 +118,6 @@ test("scanSkillFiles leaves out a reason with no refs and orders the reasons it 
   ]);
 });
 
-// ------------------------------------------------------------- workflowMetaName
-
 test("workflowMetaName reads the name in export const meta, name before description", () => {
   const source = `export const meta = { name: "audit", description: "x" };`;
   expect(workflowMetaName(source)).toBe("audit");
@@ -148,8 +141,6 @@ test("workflowMetaName reads a multi-line literal", () => {
 test("workflowMetaName returns null for a file with no meta", () => {
   expect(workflowMetaName("export const foo = 1;\n")).toBeNull();
 });
-
-// ------------------------------------------------------------- collectPluginFacts
 
 async function treeEntries(repo: string) {
   return await lsTreeEntriesForPathspecs(repo, "HEAD", [literalPathspec(".")]);
@@ -213,7 +204,6 @@ test("collectPluginFactsWithLimits: over-1mb does not inflate the total, and the
   const repo = await tempRepo("capshelf-facts-budget-");
   const content = skillText("one", "One");
   const skillSize = Buffer.byteLength(content, "utf8");
-  // Sorted order after "SKILL.md": a-big.bin, b-ok.txt, c-overflow.txt, d-tiny.txt.
   await writePlugins(
     repo,
     [
@@ -238,11 +228,9 @@ test("collectPluginFactsWithLimits: over-1mb does not inflate the total, and the
   await commitAll(repo, "budget");
   const entries = await treeEntries(repo);
   const inventory = await discoverPlugins(repo, entries);
-  // Budget: SKILL.md (skillSize) + b-ok.txt (5) + 10 bytes of slack. a-big.bin
-  // must not count against it (over-1mb), or b-ok.txt would overflow too.
-  // c-overflow.txt (20 bytes) genuinely overflows the remaining 10-byte
-  // slack. d-tiny.txt (1 byte) would fit against the pre-overflow total on
-  // its own, but the budget stays exceeded for every later file.
+  // The budget stays exceeded once overflowed, so d-tiny.txt is skipped even
+  // though it would fit alone; a-big.bin must not count against it or b-ok.txt
+  // would overflow too.
   const budget = skillSize + 5 + 10;
   const facts = await collectPluginFactsWithLimits(
     repo,
@@ -314,9 +302,8 @@ test("an unread workflow file marks every skill of that plugin factsComplete: fa
 });
 
 test("a skill directory that equals its plugin directory does not list an unread workflow blob twice", async () => {
-  // A manifest `skills: "./"` makes the plugin directory itself the skill
-  // directory, so a workflow file sits under both the skill's own files and
-  // the plugin's workflows/ — one blob, and it must be one unread entry.
+  // With `skills: "./"` the plugin dir is itself the skill dir, so one workflow
+  // blob appears under both and must count as a single unread entry.
   const repo = await tempRepo("capshelf-facts-root-skill-");
   await writePlugins(
     repo,

@@ -15,9 +15,8 @@ import {
 import { sourceRead } from "../src/git";
 
 /**
- * A read-only command runs no program the data repo names. `core.fsmonitor`
- * names one, and `git status` runs it. The `source-read` profile must turn it
- * off even when the repository's own configuration sets it.
+ * `core.fsmonitor` names a program `git status` runs, so the `source-read`
+ * profile must disable it even when the repo's config sets it.
  */
 
 async function armFsmonitor(dataRepo: string): Promise<string> {

@@ -71,7 +71,8 @@ describe("parseBundleText", () => {
       "x",
       "/data/bundles/x.yml",
     );
-    // Fragment merge order is authored order — never sorted.
+    // Fragment merge order follows authored order and must not be sorted, since
+    // later fragments override earlier ones.
     expect(refs(bundle)).toEqual([
       "settings/permissions-go",
       "settings/permissions-base",
@@ -115,7 +116,6 @@ describe("parseBundleText", () => {
     expect(bundle.warnings.join("\n")).toContain(
       '"tags" must be a list of strings',
     );
-    // Salvage-level warnings never block install.
     expect(() => assertBundleInstallable(bundle)).not.toThrow();
   });
 
@@ -200,7 +200,7 @@ describe("isBundleRef", () => {
     expect(isBundleRef("bundles/.")).toBeNull();
     expect(isBundleRef("bundles/..")).toBeNull();
     expect(isBundleRef("bundles/a/b")).toBeNull();
-    // ":" carries the federation-spec reservation.
+    // ":" is reserved by the federation spec.
     expect(isBundleRef("bundles/a:b")).toBeNull();
     expect(isBundleRef("x")).toBeNull();
     expect(isBundleRef("skills/x")).toBeNull();

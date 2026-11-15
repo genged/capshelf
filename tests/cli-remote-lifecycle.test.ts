@@ -113,9 +113,8 @@ test(
 test(
   "bare update skips a remote row whose cache already holds newer content",
   async () => {
-    // The cache must hold something newer than the pin, or this test cannot
-    // fail: a fresh install leaves the cache head equal to the pin, so an
-    // implementation that moved every remote pin would also leave it alone.
+    // The cache must hold something newer than the pin, or an implementation
+    // that moved every remote pin would pass anyway.
     const { upstream, world, run, lockPath } = await installed();
     await pushChange(upstream, "skills/pdf", "Extract text and tables");
     await run(["status", "--check-upstream", "--json"], world.env);
@@ -145,10 +144,8 @@ test(
 test(
   "bare update opens no network connection while a remote row exists",
   async () => {
-    // Exit 0 with the upstream deleted is not proof. `fetchOrigin` reports a
-    // failure instead of throwing, so a command that fetched and swallowed the
-    // error would pass that assertion. Count the invocations instead, and keep
-    // the deleted upstream as a second signal.
+    // `fetchOrigin` reports failure instead of throwing, so exit 0 proves
+    // nothing; count git invocations instead.
     const { upstream, world, run, lockPath } = await installed();
     const before = await readFile(lockPath, "utf-8");
     const git = await recordGitInvocations(world);
@@ -197,8 +194,8 @@ test(
 test(
   "a named update without --yes refuses in a non-TTY run and writes nothing",
   async () => {
-    // A9: consent covers a commit. `--json` names a scripted caller and does
-    // not answer the question; `--yes` does.
+    // `--json` names a scripted caller but does not answer the consent question
+    // for a commit; `--yes` does.
     const { upstream, world, run, lockPath } = await installed();
     await pushChange(upstream, "skills/pdf", "Extract text and tables");
     await run(["status", "--check-upstream", "--json"], world.env);
@@ -232,14 +229,13 @@ test(
     const out = result.stdout.toString();
     expect(out).toContain("capshelf share skills/pdf --adopt");
     expect(out).not.toContain("capshelf promote");
-    // A merge reports as a merge. "updated" would hide that a local edit was
-    // reconciled rather than overwritten, and drop the review command with it.
+    // A merge must report as a merge, since "updated" would hide that a local
+    // edit was reconciled and drop the review command.
     expect(out).toContain("merged upstream into installed copy");
     expect(out).toContain("capshelf status skills/pdf --diff-view installed");
     expect(out).not.toContain("--local");
-    // The merge moves the pin as well as the files. Asserting only the file
-    // content would pass while the lock still named the old commit, and the
-    // row would then read as drift the merge itself created.
+    // The merge must move the pin as well as the files, or the row reads as
+    // drift the merge itself created.
     const lock = JSON.parse(
       await readFile(
         join(world.project, ".capshelf", "remotes.lock.json"),
@@ -350,9 +346,8 @@ test(
 test(
   "rm works when the cache is gone, and names every path it would delete",
   async () => {
-    // Task 1's degrade rule: with the locked file set unknown, every installed
-    // path is possibly the user's, so each one is named and deleted only with
-    // consent. `--yes` supplies it.
+    // With the locked file set unknown, every installed path may be the user's,
+    // so each is named and deleted only with consent.
     const { world, run, installPath } = await installed();
     await rm(cacheRootOf(world), { recursive: true });
     const refused = await run(["rm", "skills/pdf", "--json"], world.env);
@@ -388,9 +383,8 @@ test(
 test(
   "promote refuses a remote row before it resolves a data repo",
   async () => {
-    // D7 allows a project that holds remote rows and no data-repo binding. The
-    // refusal that names `share --adopt` has to come first, or that project
-    // exits 6 with a message about a shelf it never had.
+    // The `share --adopt` refusal must come first, or a project with remote
+    // rows and no data binding exits 6 about a shelf it never had.
     const { world, run } = await installed();
     await rm(join(world.project, ".capshelf", "local.json"));
     const result = await run(["promote", "skills/pdf", "--json"], {
@@ -423,9 +417,8 @@ test.each([
 test(
   "update --dry-run previews the pin a real run would move",
   async () => {
-    // The earlier dry-run test only asserts that nothing changed, which a
-    // command that does nothing at all passes trivially. This one asserts the
-    // preview reports the row, so the dry run and the real run agree.
+    // Asserts the preview reports the row, since a do-nothing command would
+    // pass the dry-run no-change test trivially.
     const { upstream, world, run } = await installed();
     await pushChange(upstream, "skills/pdf", "Extract text and tables");
     await run(["status", "--check-upstream", "--json"], world.env);
@@ -458,11 +451,8 @@ test(
 test(
   "a remote refusal after the shelf pass keeps the shelf lock in step with disk",
   async () => {
-    // The shelf loop materializes new bytes for every target before the remote
-    // pass starts, and the remote pass refuses a cold cache by throwing. A
-    // shelf lock saved after that throw is never saved at all, so the item's
-    // files sit ahead of its pin — drift the user never introduced, which the
-    // next `apply` reverts.
+    // A shelf lock saved after the remote pass throws is never saved, leaving
+    // item files ahead of their pin and reverted by the next `apply`.
     const upstream = await upstreamWith([["skills/pdf", "Extract text"]]);
     const world = await initRemoteProject();
     const run = runInProcess(world.project);
@@ -503,12 +493,9 @@ test(
 test(
   "share --adopt --to project reads the excluded install and drops its exclude",
   async () => {
-    // `--to project` is required: a skill shared without `--to` lands in local
-    // scope, where the exclude is correct and stays.
-    //
-    // The exclude has to go before the adopt reads the item, not after it
-    // commits. A project-scope adopt snapshots through project Git, and the
-    // install path `add <url>` excluded reads there as an empty directory.
+    // The exclude must go before the adopt reads the item: a project-scope
+    // adopt snapshots through project Git, which sees an excluded install path
+    // as empty.
     const { world, run } = await installed();
     const excludePath = join(world.project, ".git/info/exclude");
     expect(await readFile(excludePath, "utf-8")).toContain(
@@ -529,14 +516,14 @@ test(
       world.env,
     );
     expect(result.exitCode).toBe(0);
-    // Exit 0 alone would pass on an adopt that committed an empty tree, so the
-    // shelf copy is the assertion that can fail.
+    // Exit 0 alone would pass on an adopt that committed an empty tree, so
+    // assert the shelf copy.
     expect(
       await readFile(join(world.dataRepo, "skills/pdf/SKILL.md"), "utf-8"),
     ).toContain("name: pdf");
-    // A project-scope item still named in `.git/info/exclude` is skipped by
-    // `git add -A`, and every unpinned extra under it is misclassified, because
-    // the project scope reads Git's whole ignore stack.
+    // A path still in `.git/info/exclude` is skipped by `git add -A` and
+    // misclassifies unpinned extras, because project scope reads Git's whole
+    // ignore stack.
     expect(await readFile(excludePath, "utf-8")).not.toContain(
       ".agents/skills/pdf/",
     );
@@ -547,9 +534,8 @@ test(
 test(
   "a cold cache reports an unreadable source, not a missing install",
   async () => {
-    // The files are intact; only machine state is gone. Reporting
-    // `missing_installed` sent the user to `capshelf apply`, which then refuses
-    // with the cold-cache refusal — a dead end that also failed --strict.
+    // A cold cache with intact files must not report `missing_installed`: it
+    // points to `capshelf apply`, which refuses on a cold cache, a dead end.
     const { world, run, installPath } = await installed();
     await rm(cacheRootOf(world), { recursive: true });
     expect(existsSync(join(installPath, "SKILL.md"))).toBe(true);
@@ -572,9 +558,8 @@ test(
 test(
   "a check that finds the item gone upstream clears the digest it measured before",
   async () => {
-    // The first check records a digest. The second must replace it, not merge
-    // with it: a digest carried over from the run that still found the item
-    // leaves a deleted skill reading `ok` forever.
+    // The second check must replace the digest, not merge: a carried-over
+    // digest leaves a deleted skill reading `ok` forever.
     const { upstream, world, run, lockPath } = await installed();
     await run(["status", "--check-upstream", "--json"], world.env);
     expect(
@@ -606,9 +591,6 @@ test(
 test(
   "a bare apply sweep names the check flag when the cache is gone",
   async () => {
-    // The named case refuses in the preflight. The sweep records that refusal
-    // and carries on to the write loop, which built a source from a path
-    // holding no repository and reported whatever git printed about it.
     const { world, run } = await installed();
     await rm(cacheRootOf(world), { recursive: true });
 
@@ -624,9 +606,8 @@ test.each([["apply"], ["update"]])(
   "%s refuses a bare ref that names a shelf item and a remote skill",
   async (verb) => {
     // `add <url>` only checks `skills/<name>` against the locks, so a project
-    // can hold `pi-extensions/pdf` and pull `skills/pdf`. The remote row is
-    // resolved first, so without the guard the remote skill wins the bare ref
-    // outright and the shelf item is silently left unconverged.
+    // can hold `pi-extensions/pdf` and pull `skills/pdf`; the bare ref must not
+    // silently resolve to the remote row.
     const upstream = await upstreamWith([["skills/pdf", "Extract text"]]);
     const world = await initRemoteProject();
     const run = runInProcess(world.project);
@@ -648,7 +629,6 @@ test.each([["apply"], ["update"]])(
     expect(message).toContain("pi-extensions/pdf");
     expect(message).toContain("remote/skills/pdf");
 
-    // The named forms still resolve to one population each.
     expect(
       (await run([verb, "pi-extensions/pdf", "--yes", "--json"], world.env))
         .exitCode,
@@ -657,9 +637,8 @@ test.each([["apply"], ["update"]])(
       (await run([verb, "skills/pdf", "--yes", "--json"], world.env)).exitCode,
     ).toBe(0);
 
-    // Both kinds named in one command: each reaches its own population. The
-    // shelf pass used to filter by bare name, so the mcp-shaped ref here was
-    // dropped without a word once the skill matched a remote row.
+    // Each named kind must reach its own population; the shelf pass must not
+    // drop an mcp-shaped ref because the skill matched a remote row.
     if (verb !== "update") return;
     const both = await run(
       [verb, "skills/pdf", "pi-extensions/pdf", "--yes", "--json"],
@@ -676,22 +655,15 @@ test.each([["apply"], ["update"]])(
 test(
   "a pin move deletes a hidden path the new commit dropped",
   async () => {
-    // Without the previous pin, `materializeLockEntry` knows of no path the old
-    // commit managed, so a dropped file the item's own `.gitignore` hides is
-    // classified as the user's and copied forward — leaving the install holding
-    // a file the pin does not name, while the row reads `ok` because the digest
-    // covers pinned paths only.
-    //
-    // The dropping commit also edits `SKILL.md`. A commit that only deleted the
-    // hidden file would change no visible path, and `installedFilesMatch`
-    // enumerates visible files alone, so no write would happen at all and the
-    // test would pass against both implementations.
+    // Without the previous pin, a dropped file hidden by the item's
+    // `.gitignore` is classified as the user's and copied forward. The commit
+    // also edits `SKILL.md` so a write happens; otherwise the test passes
+    // against both implementations.
     const upstream = await upstreamWith([["skills/pdf", "Extract text"]]);
     await writeFile(join(upstream.work, "skills/pdf/helper.sh"), "echo old\n");
     await commitAll(upstream.work, "ship a helper");
-    // A second commit: `git add -A` under this rule would never have staged the
-    // file it ignores. The pin reads the tree, so the helper stays pinned; only
-    // the install-side classification treats it as hidden.
+    // The pin reads the tree, so the ignored helper stays pinned; only
+    // install-side classification treats it as hidden.
     await writeFile(join(upstream.work, "skills/pdf/.gitignore"), "*.sh\n");
     await commitAll(upstream.work, "ignore shell helpers inside the item");
     await $`git -C ${upstream.work} push -q origin main`.quiet();
@@ -738,7 +710,6 @@ test(
       (candidate) => candidate.name === "pdf",
     )!;
     const from = objectField(objectItems(report, "diffs")[0]!, "from");
-    // Null here told a scripted consumer the row had no pin, when it has one.
     expect(from.sha).toBe(row.lockedSha);
     expect(from.sha).not.toBeNull();
   },
@@ -748,9 +719,8 @@ test(
 test(
   "share without --adopt refuses a remote skill instead of making two owners",
   async () => {
-    // A plain share would commit the bytes to the shelf and leave the remote
-    // row in place: the state status labels "an adopt did not finish", reached
-    // by a documented command.
+    // A plain share would commit the bytes but leave the remote row, the state
+    // status labels "an adopt did not finish".
     const { world, run, lockPath } = await installed();
     const before = await readFile(lockPath, "utf-8");
 
@@ -771,10 +741,8 @@ test(
 test(
   "a failed project-scope share puts the exclude line back",
   async () => {
-    // The exclude has to come off before the adopt reads the item through
-    // project Git. If the adopt then fails, the install path is still owned by
-    // the remote row and must stay invisible to project Git, or the next
-    // `git add -A` commits clone-local files into the project.
+    // If the adopt fails, the install path stays owned by the remote row and
+    // must stay excluded, or the next `git add -A` commits clone-local files.
     const { world, run } = await installed();
     const excludePath = join(world.project, ".git/info/exclude");
     // A dirty data repo fails the adopt after the exclude is dropped.
@@ -795,9 +763,8 @@ test(
 test(
   "a second add from a cached repository pins what the upstream holds now",
   async () => {
-    // `ensureClone` clones once and never fetches, so the second install used
-    // to resolve `main` against a cache from the first and pin a commit the
-    // repository had already moved past.
+    // `ensureClone` clones once and never fetches, so a second install must
+    // refresh the cache or it pins a stale commit.
     const upstream = await upstreamWith([
       ["skills/pdf", "Extract text"],
       ["skills/xlsx", "Read workbooks"],
@@ -853,8 +820,8 @@ test(
 test(
   "add names apply when the record is current but the install is gone",
   async () => {
-    // Reporting "already current" beside a path that no longer exists made the
-    // obvious repair command a silent no-op.
+    // "Already current" beside a missing path would make the obvious repair
+    // command a silent no-op.
     const { upstream, world, run, installPath } = await installed();
     await rm(installPath, { recursive: true });
 
@@ -873,14 +840,9 @@ test(
 test.each([["apply"], ["update"]])(
   "%s refuses skills/<name> when the shelf and a remote row both own it",
   async (verb) => {
-    // The unfinished-adopt state D18 describes: `share --adopt` writes the
-    // shelf lock entry at step 11 and releases the remote row last at step 12,
-    // so a crash between them leaves both owners. Reconstructed from the real
-    // record rather than hand-authored: capture the remotes lock, adopt, then
-    // put the captured bytes back.
-    //
-    // Every remote row is kind `skills`, so naming the kind settles nothing —
-    // both populations still match, and the remote row used to win outright.
+    // Reconstructs the unfinished-adopt state (a crash after the shelf lock
+    // write but before the remote row is released) from a real record. Every
+    // remote row is kind `skills`, so naming the kind does not disambiguate.
     const { world, run, lockPath } = await installed();
     const beforeAdopt = await readFile(lockPath, "utf-8");
     expect(
@@ -893,8 +855,6 @@ test.each([["apply"], ["update"]])(
     ).toBe(0);
     await writeFile(lockPath, beforeAdopt);
 
-    // Confirm the state really is the one D18 names, or the refusal below
-    // would be proving something else.
     const status = await run(["status", "skills/pdf", "--json"], world.env);
     const remoteRow = objectItems(jsonOutput(status), "items").find(
       (row) => row.source === "remote",
@@ -917,10 +877,9 @@ test.each([["apply"], ["update"]])(
 test(
   "a converging adopt does not claim provenance the shelf copy lacks",
   async () => {
-    // The shelf already holds identical content, so `adoptIntoDataRepo` returns
-    // `already-upstream` before the commit that writes the sidecar. Printing
-    // "provenance recorded" there claimed the origin of third-party code was on
-    // record when the shelf copy carries none.
+    // `adoptIntoDataRepo` returns `already-upstream` before writing the
+    // sidecar, so "provenance recorded" must not print when the shelf copy
+    // carries none.
     const { upstream, world, run } = await installed();
     const body = await readFile(
       join(world.project, ".agents/skills/pdf/SKILL.md"),
@@ -948,10 +907,9 @@ test(
 test(
   "a pin move onto a cache the check never saw clears the stale measurement",
   async () => {
-    // `add <url>` fetches a warm cache, so the cache can pass the head the last
-    // check recorded. Carrying that check's digest across the move left the row
-    // reporting `update_available` against a digest older than its own pin,
-    // failing --strict, and suggesting an update that answers already-current.
+    // A warm cache can pass the head the last check recorded; carrying that
+    // digest across the move leaves a stale `update_available` that fails
+    // --strict.
     const upstream = await upstreamWith([
       ["skills/pdf", "Extract text"],
       ["skills/xlsx", "Read workbooks"],
@@ -965,7 +923,6 @@ test(
     await pushChange(upstream, "skills/pdf", "Extract text and tables");
     await run(["status", "--check-upstream", "--json"], world.env);
 
-    // The cache runs ahead of that check: a second install fetches it again.
     await pushChange(upstream, "skills/pdf", "Extract text, tables, and forms");
     await run(
       ["add", upstream.url, "--path", "skills/xlsx", "--yes", "--json"],
@@ -992,9 +949,8 @@ test(
 test(
   "rm refuses a name the shelf and a remote copy both own",
   async () => {
-    // Letting the shelf path win deleted the install and the lock entry while
-    // the remote row survived, pointing at a directory that no longer exists:
-    // the next `apply` put the skill straight back.
+    // The shelf path must not win: it would delete the install and lock entry
+    // while the remote row survives, so the next `apply` reinstalls the skill.
     const { world, run, lockPath, installPath } = await installed();
     const beforeAdopt = await readFile(lockPath, "utf-8");
     expect(
@@ -1022,9 +978,9 @@ test(
 test(
   "the consent prompt cannot be repainted by repository-controlled text",
   async () => {
-    // A file name and a description both come from the repository. The prompt
-    // is the one gate authorizing third-party code to run as the user, so a
-    // repository able to emit ESC into it could hide a file or fake a license.
+    // The prompt is the gate authorizing third-party code, so
+    // repository-supplied names and descriptions must not be able to emit ESC
+    // into it.
     const upstream = await upstreamWith([["skills/pdf", "Extract text"]]);
     await writeFile(
       join(upstream.work, "skills/pdf/SKILL.md"),
@@ -1052,9 +1008,9 @@ test(
 test(
   "apply and update leave a remote skill alone once skills.sh claims the name",
   async () => {
-    // `add <url>` checks skills.sh at install time, but skills.sh can claim the
-    // name afterwards. Both tools then write `.agents/skills/pdf`, and
-    // reconciling regardless would overwrite the other tool's content.
+    // skills.sh can claim the name after install and both tools write
+    // `.agents/skills/pdf`, so reconciling anyway would overwrite the other
+    // tool's content.
     const { world, run, installPath } = await installed();
     await writeFile(
       join(world.project, "skills-lock.json"),
@@ -1093,8 +1049,8 @@ test(
     const { upstream, world, run, lockPath } = await installed();
     await run(["status", "--check-upstream", "--json"], world.env);
 
-    // The branch the row pins goes away. Without pruning, the cache would keep
-    // resolving it from its stale remote-tracking ref and report it healthy.
+    // Without pruning, the cache keeps resolving a deleted branch from its
+    // stale remote-tracking ref and reports it healthy.
     const bare = upstream.url.replace("file://", "");
     await $`git -C ${upstream.work} branch -M main retired`.quiet();
     await $`git -C ${upstream.work} push -q origin retired`.quiet();
@@ -1121,9 +1077,8 @@ test(
 test(
   "an edit made while the update prompt is open aborts the write",
   async () => {
-    // The prompt holds the run open for as long as the user reads it. The loss
-    // summary they accept is computed before that wait, so the write has to
-    // check that the summary still describes the tree.
+    // The loss summary is computed before the prompt wait, so the write must
+    // recheck that it still describes the tree.
     const { upstream, world, run, installPath } = await installed();
     await pushChange(upstream, "skills/pdf", "Extract text and tables");
     await run(["status", "--check-upstream", "--json"], world.env);
@@ -1132,7 +1087,6 @@ test(
       stdinIsTTY: true,
       stderrIsTTY: true,
       prompt: async () => {
-        // Whatever an editor would have done while the question was on screen.
         await writeFile(join(installPath, "SKILL.md"), "edited mid-prompt\n");
         return "y";
       },
@@ -1157,8 +1111,6 @@ test(
 test(
   "a refusal on the second named row keeps the first row's moved pin recorded",
   async () => {
-    // The same rule as the install loop: a row whose files were rewritten must
-    // have its pin recorded before the next row can fail the command.
     const moving = await upstreamWith([["skills/pdf", "Extract text"]]);
     const stalled = await upstreamWith([["skills/sql-review", "Review SQL"]]);
     const world = await initRemoteProject();
@@ -1167,8 +1119,6 @@ test(
     await run(["add", stalled.url, "--yes", "--json"], world.env);
     await pushChange(moving, "skills/pdf", "Extract text and tables");
     await run(["status", "--check-upstream", "--json"], world.env);
-    // Only the second row's cache goes away, so the first row moves and the
-    // second one throws the cold-cache refusal.
     await rm(
       remoteCachePath(parseRemoteSkillUrl(stalled.url).upstream, world.env),
       { recursive: true },
@@ -1185,7 +1135,6 @@ test(
         "utf-8",
       ),
     ).toContain("Extract text and tables");
-    // The moved row must not read as drifted: its files and its pin agree.
     const status = await run(["status", "skills/pdf", "--json"], world.env);
     const rows = objectItems(jsonOutput(status), "items");
     expect(rows.find((row) => row.name === "pdf")!.state).toBe("ok");

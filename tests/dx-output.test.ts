@@ -126,11 +126,6 @@ describe("human-readable DX output", () => {
   });
 });
 
-/**
- * Target coverage: every command that describes an `mcp` or `subagents` item
- * says which runtime targets it covers, which it does not, and where the
- * missing source belongs.
- */
 describe("runtime target coverage", () => {
   async function writeMcpItem(
     dataRepo: string,
@@ -207,8 +202,6 @@ describe("runtime target coverage", () => {
     return { project, dataRepo, run };
   }
 
-  /** A `codex` stub on PATH plus an untrusted CODEX_HOME, so the trust
-   * warning is emitted whenever the gate lets it through. */
   async function codexEnv(): Promise<Record<string, string>> {
     const binDir = await tempDir("capshelf-codex-bin-");
     const stub = join(binDir, "codex");
@@ -299,8 +292,6 @@ describe("runtime target coverage", () => {
       },
     ]);
     expect(parsed.coverageState).toBeUndefined();
-    // Retained keys are pinned, not merely promised: `dst` keeps its
-    // first-surviving-target value and `sources` stays present-only.
     expect(parsed.dst).toBe(join(project, ".mcp.json"));
     expect(parsed.sources).toEqual([
       {
@@ -413,7 +404,6 @@ describe("runtime target coverage", () => {
       "targets: unknown (locked commit unreachable)",
     );
     expect(unreachable.stdout.toString()).not.toContain("reads mcp/deepwiki");
-    // Fail toward emitting: the gate removes a warning only on evidence.
     expect(unreachable.stdout.toString()).toContain(
       "Codex project config may be ignored",
     );
@@ -425,15 +415,12 @@ describe("runtime target coverage", () => {
     ).toEqual([null, null]);
     expect(unreachableJson.coverageState).toBe("unknown");
 
-    // The re-pin guidance belongs to this state and not to a corrupt object
-    // database, which is unknown for a different reason.
     const readdHuman = await run(["add", "mcp/deepwiki"], env);
     expect(readdHuman.stdout.toString()).toContain(
       "targets: unknown (locked commit unreachable)",
     );
     expect(readdHuman.stdout.toString()).toContain("capshelf sync-data");
 
-    // `add` on the already-installed branch builds its JSON independently.
     const readd = await run(["add", "mcp/deepwiki", "--json"], env);
     expect(readd.exitCode).toBe(0);
     const readdJson = JSON.parse(readd.stdout.toString());
@@ -462,9 +449,9 @@ describe("runtime target coverage", () => {
     const { dataRepo, run } = await fixture("coverage-unreadable-tree");
     expect((await run(["add", "subagents/reviewer"])).exitCode).toBe(0);
 
-    // The locked commit still resolves, so the unreachable-commit gate passes,
-    // but its tree does not read. `subagentSourcesAtCommit` cannot tell that
-    // from "this item has no sources" and throws.
+    // The locked commit resolves but its tree is unreadable, which
+    // `subagentSourcesAtCommit` cannot distinguish from an item with no sources
+    // and throws.
     const tree = (
       await $`git -C ${dataRepo} rev-parse HEAD:subagents/reviewer`.text()
     ).trim();
@@ -483,17 +470,17 @@ describe("runtime target coverage", () => {
       (await run(["status", "subagents/reviewer", "--json"])).stdout.toString(),
     ).items[0];
     expect(row.coverageState).toBe("unknown");
-    // Omitted, not emptied: `targets: []` would claim the item has no targets.
+    // Omit `targets` rather than emptying it: `targets: []` would claim the
+    // item has no targets.
     expect(row.targets).toBeUndefined();
   });
 
   test("add refuses when a pinned fragment source cannot be read", async () => {
     const { project, dataRepo, run } = await fixture("coverage-unreadable-mcp");
 
-    // `ls-tree` lists this path without opening it, so the pin names it and
-    // coverage would call the target covered — while the merge that writes the
-    // output skips any source whose `git show` fails. Installing here would
-    // write an empty contribution and report it as written.
+    // `ls-tree` lists the path without opening it, so coverage would call the
+    // target covered while the merge skips the unreadable source and writes an
+    // empty contribution.
     const blob = (
       await $`git -C ${dataRepo} rev-parse HEAD:mcp/github/codex.toml`.text()
     ).trim();
@@ -507,7 +494,6 @@ describe("runtime target coverage", () => {
     expect(add.stderr.toString()).toContain(
       "cannot read mcp/github/codex.toml at",
     );
-    // Refused before anything was written or locked.
     expect(
       JSON.parse(
         await readFile(join(project, ".capshelf", "capshelf.json"), "utf-8"),
@@ -527,9 +513,8 @@ describe("runtime target coverage", () => {
     );
     await commitAll(dataRepo, "codex.toml as a directory");
 
-    // `ls-tree -r` names this only through its descendants, so exact-path
-    // matching calls Codex absent. Without the guard `add` locks the item and
-    // `apply` fails afterwards, parsing a tree listing as TOML.
+    // Without the directory guard, exact-path matching would report Codex
+    // absent and a later apply would try to parse a tree listing as TOML.
     const add = await run(["add", "mcp/deepwiki"]);
     expect(add.exitCode).toBe(3);
     expect(add.stderr.toString()).toContain(
@@ -544,8 +529,6 @@ describe("runtime target coverage", () => {
       ).items["data/mcp/deepwiki"],
     ).toBeUndefined();
 
-    // Retaining tree entries also detects an empty canonical directory
-    // (src/fragments.ts:320).
     const beforeManifest = await readFile(
       join(project, ".capshelf", "capshelf.json"),
     );
@@ -610,9 +593,8 @@ describe("runtime target coverage", () => {
     expect(added.stdout.toString() + added.stderr.toString()).toContain(
       "cannot read mcp/github/codex.toml at",
     );
-    // The proof runs while the plans are built, so it refuses before the first
-    // member is installed. Run it only at install time and `settings/base`
-    // lands and persists before `mcp/github` fails.
+    // The proof must run while plans are built; at install time `settings/base`
+    // would land and persist before `mcp/github` fails.
     expect(existsSync(join(project, ".claude", "settings.json"))).toBe(false);
     expect(
       JSON.parse(
@@ -625,9 +607,8 @@ describe("runtime target coverage", () => {
     const { dataRepo, run } = await fixture("coverage-unreadable-blob");
     expect((await run(["add", "mcp/github"])).exitCode).toBe(0);
 
-    // `ls-tree` still lists this path, so tree membership alone would call the
-    // Codex target covered — for a source `apply` cannot read. `present: true`
-    // has to mean the content can be produced.
+    // `ls-tree` still lists the path, so tree membership alone would call the
+    // target covered for a source `apply` cannot read.
     const blob = (
       await $`git -C ${dataRepo} rev-parse HEAD:mcp/github/codex.toml`.text()
     ).trim();
@@ -660,8 +641,8 @@ describe("runtime target coverage", () => {
     expect(readd.exitCode).toBe(0);
     const stdout = readd.stdout.toString();
     expect(stdout).toContain("targets: unknown (source tree unreadable)");
-    // `sync-data && update` re-pins a squash-merged commit. It does not repair
-    // an object that will not read, so pointing at it would misdirect.
+    // `sync-data && update` does not repair an unreadable object, so pointing
+    // at it would misdirect.
     expect(stdout).not.toContain("capshelf sync-data");
     expect(stdout).not.toContain("squash-merged");
   });
@@ -672,10 +653,8 @@ describe("runtime target coverage", () => {
     await commitAll(dataRepo, "two-target subagent");
     expect((await run(["add", "subagents/pair"])).exitCode).toBe(0);
 
-    // One of two blobs unreadable: `subagentSourcesAtCommit` silently drops it
-    // and returns the survivor, so `targets` would list one entry beside a
-    // `targetCoverage` claiming both — the one-target-for-a-set report this
-    // whole change exists to remove, in its own output.
+    // `subagentSourcesAtCommit` silently drops the unreadable blob, so
+    // `targets` would list one entry while `targetCoverage` claims both.
     const blob = (
       await $`git -C ${dataRepo} rev-parse HEAD:subagents/pair/codex.toml`.text()
     ).trim();
@@ -712,10 +691,9 @@ describe("runtime target coverage", () => {
     expect(stderr).toContain(
       "mcp/github/codex.toml is present at the commit this project reads.",
     );
-    // The "author it and commit" repair belongs to a real gap, not this one.
     expect(stderr).not.toContain("Codex reads mcp/github/codex.toml in your");
-    // And no computed shell repair: `git checkout --` fixes an uncommitted
-    // deletion and fails on a staged one, or on one a later commit made.
+    // No computed shell repair: `git checkout --` fixes an uncommitted deletion
+    // but fails on a staged one or one a later commit made.
     expect(stderr).not.toContain("git -C");
   });
 
@@ -736,7 +714,6 @@ describe("runtime target coverage", () => {
     expect(shown.stderr.toString()).toContain(
       "mcp/deepwiki/codex.toml is not a regular file",
     );
-    // The link's target is never printed, inside the item or not.
     expect(shown.stdout.toString()).not.toContain("content outside the item");
   });
 

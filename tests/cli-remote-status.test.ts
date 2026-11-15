@@ -117,11 +117,6 @@ test(
 test(
   "a deleted install reports the missing installation axis and fails --strict",
   async () => {
-    // A tree-pinned copy item whose install is gone reports `drifted_local`
-    // with `installation: "missing"`, not the `missing_installed` state: every
-    // pinned path is observed as absent, which is a different identity rather
-    // than an absent one. Measured against a shelf item on 2026-09-16, and
-    // asserted here so a remote row is reported the same way a shelf row is.
     const { world, run } = await installOne();
     await rm(join(world.project, ".agents/skills/pdf"), { recursive: true });
     const json = await run(["status", "--json"], world.env);
@@ -137,8 +132,6 @@ test(
 test(
   "a name tracked in both the shelf and the remotes lock warns and fails --strict",
   async () => {
-    // Constructed state, not a raced one: this is the intermediate state an
-    // adopt leaves between step 11 and step 12.
     const { upstream, world, run } = await installOne();
     await mkdir(join(world.dataRepo, "skills/pdf"), { recursive: true });
     await writeFile(
@@ -147,12 +140,8 @@ test(
     );
     await $`git -C ${world.dataRepo} add -A`.quiet();
     await $`git -C ${world.dataRepo} commit -qm "adopt pdf"`.quiet();
-    // Write the shelf row directly. `add skills/pdf --local` cannot build this
-    // state: the ownership check refuses a name the remotes lock holds, which
-    // is the whole point of the warning under test.
-    // A project with only remote rows has no local lock file yet — every
-    // remote row lives in `remotes.lock.json` by A3 — and `loadLocalLock`
-    // returns an empty v4 lock for an absent file.
+    // The shelf row is written directly because `add skills/pdf --local`
+    // refuses a name the remotes lock holds.
     const localLockPath = join(world.project, ".capshelf", "local.lock.json");
     const pin = await pinItemAtCommit(
       gitTreeSource({
@@ -176,8 +165,6 @@ test(
       needs: null,
       needsSourceCommit: null,
     };
-    // Through the real serializer, so the constructed row is one a real
-    // `apply` would accept rather than a hand-shaped object.
     await writeFile(localLockPath, serializeLock(withShelfRow));
 
     const result = await run(["status", "skills/pdf"], world.env);
@@ -234,8 +221,6 @@ test(
       expect(row.remote).toMatchObject({ lastChecked: expect.any(String) });
     }
 
-    // The check records freshness. It never moves a pin. Read back through the
-    // real loader, so the assertion also proves the written file parses.
     const after = await loadRemotesLock(world.project);
     for (const [key, entry] of Object.entries(after.items)) {
       expect(entry.sourceCommit).toBe(before.items[key]!.sourceCommit);
@@ -276,9 +261,8 @@ test(
     expect(fetches.some((entry) => entry.ok === false)).toBe(true);
     const rows = objectItems(jsonOutput(result), "items");
     expect(rows.find((row) => row.name === "sql-review")!.state).toBe("ok");
-    // `lastChecked` means "last successful measurement", so a failed fetch
-    // records nothing: a fresh timestamp beside a stale head is the one thing
-    // the spec forbids.
+    // `lastChecked` means last successful measurement, so a failed fetch
+    // records nothing; a fresh timestamp beside a stale head is wrong.
     const after = await loadRemotesLock(world.project);
     expect(
       after.items["remote/skills/sql-review"]!.lastChecked,
@@ -307,9 +291,8 @@ test(
 test(
   "a cold cache whose repository is also gone reports per row and exits 0",
   async () => {
-    // Maintainer decision: `ensureClone` throws where `fetchOrigin` reports, so
-    // the check catches the clone failure and records it as a failed fetch.
-    // One dead repository must not block the check for every other row.
+    // `ensureClone` throws where `fetchOrigin` reports, so the check catches
+    // the clone failure; one dead repository must not block the other rows.
     const { one, world, run } = await installTwoRepos();
     await rm(cacheRootOf(world), { recursive: true });
     await deleteUpstream(one);
@@ -323,7 +306,6 @@ test(
     );
     expect(fetches).toHaveLength(2);
     expect(fetches.filter((entry) => entry.ok === false)).toHaveLength(1);
-    // The reachable repository was still checked.
     const rows = objectItems(jsonOutput(result), "items");
     expect(rows.find((row) => row.name === "pdf")!.remote).toMatchObject({
       lastChecked: expect.any(String),
@@ -348,9 +330,8 @@ test(
 test(
   "--check-upstream writes nothing in a project that pulled no skills",
   async () => {
-    // `status` is a report. With no remote rows there is nothing to record,
-    // and `saveRemotesLock` would append to `.capshelf/.gitignore`, which is a
-    // committed file: a read-only command must not dirty the worktree.
+    // `status` must not dirty the worktree: `saveRemotesLock` would append to
+    // the committed `.capshelf/.gitignore`.
     const world = await initRemoteProject();
     const gitignore = join(world.project, ".capshelf", ".gitignore");
     const before = await readFile(gitignore, "utf-8");

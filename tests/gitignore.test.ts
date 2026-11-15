@@ -64,8 +64,8 @@ describe("gitignoreVisibleFiles", () => {
     await writeFile(join(root, "real.txt"), "real\n");
     await symlink("real.txt", join(root, "link.txt"));
 
-    // Row 1 of the object-model table: the data-repo trust boundary does not
-    // move when ignored local state learns to carry symlinks across.
+    // Ignored local state carrying symlinks must not move the data-repo trust
+    // boundary.
     const error = await rejection(
       gitignoreVisibleFiles(root),
       PreconditionError,

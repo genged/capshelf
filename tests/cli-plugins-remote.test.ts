@@ -1,7 +1,3 @@
-/**
- * `capshelf add <url> --path <plugin root>` installs the whole plugin as a
- * remote row (spec D3, D5, D6, D7 point 1, D8, D13).
- */
 import { describe, expect, test } from "bun:test";
 import { $ } from "bun";
 import { existsSync, lstatSync } from "node:fs";
@@ -51,15 +47,10 @@ const gh: PluginSpec = {
   },
 };
 
-/**
- * The folders under `.agents/skills`. `init` installs the bundled `capshelf`
- * skill there, so a refused install leaves exactly that one.
- */
 async function installedSkillFolders(project: string): Promise<string[]> {
   return (await readdir(join(project, ".agents", "skills"))).sort();
 }
 
-/** Run with a terminal that answers each prompt from `answers`. */
 async function runWithTerminal(
   project: string,
   env: Record<string, string>,
@@ -121,7 +112,6 @@ describe("add <url> --path <plugin root>", () => {
       expect(stdout).toContain(
         "to give it to the team: capshelf share plugins/gh-cli --adopt",
       );
-      // `--yes` skips the prompt, so the runs go to stderr instead.
       expect(r.stderr.toString()).toContain("bash hooks/setup.sh");
       const exclude = await readFile(
         join(world.project, ".git", "info", "exclude"),
@@ -176,11 +166,9 @@ describe("add <url> --path <plugin root>", () => {
         "  install   .agents/skills/gh-cli  (local scope, gitignored)",
       );
       expect(block).toMatch(/ {2}files {5}5 files, /);
-      // A group row counts raw files only; it names no items.
       expect(block).toMatch(/skills\/\s+1 file\s/);
       expect(block).toMatch(/agents\/\s+1 file\s/);
       expect(block).toContain("  skills    1, called as gh-cli:<skill>");
-      // The name row shares the file-group rows' 14-space indent.
       expect(block).toContain("              gh-cli");
       expect(block).toContain("  agents    1, called as gh-cli:<agent>");
       expect(block).toContain("              worker");
@@ -361,7 +349,6 @@ describe("add <url> --path <plugin root>", () => {
     "the --list footer names the whole-plugin install line with the real URL and path",
     async () => {
       const world = await initRemoteProject();
-      // A plugin with no catalog entry is not listed, so the catalog names it.
       const up = await pluginUpstream([gh], {
         claude: claudeCatalog([{ name: "gh-cli", source: "./plugins/gh-cli" }]),
       });
@@ -396,7 +383,6 @@ describe("add <url> --path <plugin root>", () => {
       const listed = await run(["add", up.url, "--list"], world.env);
       expect(listed.exitCode).toBe(0);
       const lines = listed.stdout.toString().split("\n");
-      // Directly under the footer line.
       const footer = lines.findIndex((l) =>
         l.includes("install a whole plugin"),
       );
@@ -528,7 +514,6 @@ describe("add <url> --path <plugin root>", () => {
   );
 });
 
-/** The gh plugin's hooks with one more hook, a PostToolUse. */
 const ghHooksWithFormat = JSON.stringify({
   hooks: {
     SessionStart: [
@@ -540,7 +525,6 @@ const ghHooksWithFormat = JSON.stringify({
   },
 });
 
-/** A project with the gh plugin installed from its own upstream. */
 async function installGh(): Promise<{
   world: RemoteProject;
   up: Upstream;
@@ -557,7 +541,6 @@ async function installGh(): Promise<{
   return { world, up, run };
 }
 
-/** Push a new PostToolUse hook and its script to the gh plugin upstream. */
 async function pushFormatHook(up: Upstream): Promise<void> {
   await pushPluginChange(up, "plugins/gh-cli/hooks/format.sh", "echo fmt\n");
   await pushPluginChange(
@@ -568,8 +551,8 @@ async function pushFormatHook(up: Upstream): Promise<void> {
 }
 
 /**
- * `update` reads the local cache only, so a pushed change reaches it through
- * the one command that fetches.
+ * `update` reads only the local cache, so a pushed change reaches it via the
+ * one command that fetches.
  */
 async function fetchUpstream(
   run: ReturnType<typeof runInProcess>,
@@ -950,8 +933,8 @@ describe("remote plugin rows: update, apply, rm, status", () => {
 
 describe("a bare name that matches two remote rows", () => {
   /**
-   * The CLI cannot create this pair (D2 guard 5 refuses the second install),
-   * so the test writes the second row into the remotes lock directly.
+   * The CLI refuses a second install, so the test writes the second row into
+   * the remotes lock directly.
    */
   async function installPair(): Promise<{
     world: RemoteProject;
@@ -1122,23 +1105,16 @@ describe("plugin consent text", () => {
       const at120 = renderPluginConsent(block, 120).join("\n");
       expect(at80).toContain("  skills    11, called as p:<skill>");
       expect(at120).toContain("  skills    11, called as p:<skill>");
-      // Name rows share the file-group rows' 14-space indent (12-space
-      // continuation + the 2-space gutter `formatFileGroupRows` also adds).
-      // width 80: 64 usable columns, each name 8 wide + a 2-space gap fits 6
-      // per row, so 11 names take two rows.
       expect(at80).toContain(
         "              skill-01  skill-02  skill-03  skill-04  skill-05  skill-06",
       );
       expect(at80).toContain(
         "              skill-07  skill-08  skill-09  skill-10  skill-11",
       );
-      // width 120: 104 usable columns fit 10 per row, so 11 names still take
-      // two rows, one more than at width 80 fits per row.
       expect(at120).toContain(
         "              skill-01  skill-02  skill-03  skill-04  skill-05  skill-06  skill-07  skill-08  skill-09  skill-10",
       );
       expect(at120).toContain("              skill-11");
-      // Names carry no plugin prefix in the grid itself.
       expect(at80).not.toContain("p:skill-01");
     });
 
@@ -1175,8 +1151,6 @@ describe("plugin consent text", () => {
         input({ files: skillFiles(["gh-cli"]) }),
         80,
       ).join("\n");
-      // The install path always names ".agents/", so check for the field
-      // label itself rather than the bare substring "agents".
       expect(withoutAgent).not.toMatch(/\n {2}agents {4}/);
     });
 

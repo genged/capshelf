@@ -80,8 +80,8 @@ describe("revert destructive-change consent", () => {
       expect(accepted.exitCode).toBe(0);
       expect(JSON.parse(accepted.stdout.toString()).action).toBe("reconciled");
       expect(await file(installed).text()).toBe("locked\n");
-      // The marker records intent, not content state: reverting to the pinned
-      // base so a fresh edit can start is exactly when it is most justified.
+      // The marker records intent, not content state, so it persists across a
+      // revert to the pinned base.
       expect(await file(lockPath).text()).toBe(before);
       expect(
         (await file(lockPath).json()).items["data/skills/drift"].local,
@@ -95,7 +95,6 @@ describe("revert destructive-change consent", () => {
         "capshelf keep-local skills/drift --unset",
       );
 
-      // Only --unset clears it, and only then does apply reconcile again.
       await writeFile(installed, "third edit\n");
       expect((await run(["apply", "skills/drift"])).exitCode).toBe(0);
       expect(await file(installed).text()).toBe("third edit\n");
@@ -137,8 +136,8 @@ describe("revert destructive-change consent", () => {
         ).exitCode,
       ).toBe(0);
 
-      // The marker is now cleared by exactly one command, so every place it
-      // takes effect has to name that command — once per run, not per item.
+      // Only one command clears the marker, so every place it takes effect
+      // names that command once per run.
       for (const command of [["apply"], ["update"]]) {
         const output = await run(command);
         expect(output.exitCode).toBe(0);
@@ -165,8 +164,8 @@ describe("revert destructive-change consent", () => {
     const lockPath = join(project, ".capshelf", "capshelf.lock.json");
     const before = await file(lockPath).text();
 
-    // No marker and no drift: the hint belongs only to a kept-local item, and
-    // revert must not rewrite the lock just to report that nothing changed.
+    // The hint belongs only to kept-local items, and revert must not rewrite
+    // the lock just to report no change.
     const reverted = await run(["revert", "skills/quiet"]);
     expect(reverted.exitCode).toBe(0);
     const out = reverted.stdout.toString();
@@ -332,7 +331,6 @@ describe("revert destructive-change consent", () => {
     expect(refused.stderr.toString()).toContain(
       "replace a managed config contribution",
     );
-    // Comment loss in a strict-JSON target is repair, not consentable loss.
     expect(refused.stderr.toString()).not.toContain("remove config comments");
     expect(await file(output).text()).toContain("// local context");
 

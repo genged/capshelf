@@ -359,8 +359,6 @@ describe("marketplace CLI", () => {
         origin: null,
       });
       await seedSkill(repo, "review");
-      // Marketplace skill names are slug-restricted, but the files inside a
-      // skill are not, and they project verbatim.
       await mkdir(join(repo, "skills", "review", "assets"), {
         recursive: true,
       });
@@ -417,9 +415,8 @@ describe("marketplace CLI", () => {
         "another edit\n",
       );
 
-      // Without -z the porcelain path comes back as "codex/.../caf\303\251/..."
-      // and never matches the raw UTF-8 changed path, so the guard silently
-      // fails open and the edit is overwritten by a `✓` clean sync.
+      // Without -z, porcelain quotes non-ASCII paths as octal escapes, so the
+      // guard never matches and silently fails open.
       const dryRun = await run([
         "--data",
         repo,

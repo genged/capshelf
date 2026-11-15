@@ -21,14 +21,12 @@ import type { DestructiveConfirmationContext } from "../src/destructive-change";
 import { setPickContext } from "../src/pick";
 import type { PickContext } from "../src/pick";
 
-// Multi-command lifecycle tests use real Git repositories and can exceed
-// Bun's 5-second default on macOS filesystems. Apply this only to those broad
-// integration workflows so focused tests retain the strict default timeout.
+// Multi-command lifecycle tests on real Git repos can exceed Bun's 5-second
+// default on macOS filesystems.
 export const CLI_INTEGRATION_TEST_TIMEOUT_MS = 30_000;
 
-// True when the volume under tmpdir() treats `A` and `a` as one name, as the
-// default macOS volume does. Tests that put two case variants side by side
-// on disk skip there, because the volume merges the two paths.
+// The default macOS volume folds case, so tests placing two case variants side
+// by side must skip there.
 export const tmpdirFoldsCase = ((): boolean => {
   const dir = mkdtempSync(join(tmpdir(), "capshelf-case-probe-"));
   try {
@@ -40,8 +38,8 @@ export const tmpdirFoldsCase = ((): boolean => {
 })();
 
 export async function tempDir(prefix: string): Promise<string> {
-  // realpath: on macOS tmpdir() is a symlink (/var -> /private/var); the CLI
-  // reports resolved paths, so tests must compare against the resolved form.
+  // On macOS tmpdir() is a symlink (/var -> /private/var) and the CLI reports
+  // resolved paths.
   return await realpath(await mkdtemp(join(tmpdir(), prefix)));
 }
 
@@ -81,7 +79,6 @@ export async function commitAll(repo: string, message: string): Promise<void> {
   await $`git -C ${repo} commit -qm ${message}`.quiet();
 }
 
-/** The JSON object a command printed on stdout. Anything else fails the test. */
 export function jsonOutput(result: CliResult): ConfigObject {
   const value = parseJsonc(result.stdout.toString());
   if (!isConfigObject(value)) {
@@ -90,7 +87,6 @@ export function jsonOutput(result: CliResult): ConfigObject {
   return value;
 }
 
-/** The JSON array of objects a command printed on stdout. */
 export function jsonRows(result: CliResult): ConfigObject[] {
   const value = parseJsonc(result.stdout.toString());
   if (!Array.isArray(value)) {
@@ -104,7 +100,6 @@ export function jsonRows(result: CliResult): ConfigObject[] {
   });
 }
 
-/** A JSON document on disk, as an object. The product parser reads it. */
 export async function readJsonObject(path: string): Promise<ConfigObject> {
   return parseJsonConfigObject(await readFile(path, "utf-8"), path);
 }
@@ -144,7 +139,6 @@ export function objectItems(object: ConfigObject, key: string): ConfigObject[] {
 
 const RESOLVED = Symbol("resolved");
 
-/** The typed error a promise rejects with. Any other outcome fails the test. */
 export async function rejection<T extends Error, R>(
   promise: Promise<R>,
   type: abstract new (...args: never[]) => T,
@@ -183,13 +177,9 @@ export interface CliResult {
 }
 
 /**
- * `runInProcess` runs the CLI inside the test process, so without this the
- * consent prompt reads the *developer's* terminal: `bun test` from an
- * interactive shell makes `confirmDestructiveChanges` take the TTY branch and
- * block on `readline.question` forever, and any refusal asserted without
- * `--json` times out. Pin it to non-interactive so a consent refusal is
- * deterministic regardless of how the suite was launched. Tests that mean to
- * exercise the prompt install their own context and get it back.
+ * runInProcess shares the developer's terminal, so without pinning
+ * non-interactive the consent prompt would block on readline forever under an
+ * interactive `bun test`.
  */
 const NON_INTERACTIVE_CONFIRMATION: DestructiveConfirmationContext = {
   stdinIsTTY: false,
@@ -203,14 +193,9 @@ const NON_INTERACTIVE_CONFIRMATION: DestructiveConfirmationContext = {
 };
 
 /**
- * The same hazard as `NON_INTERACTIVE_CONFIRMATION`, for the item picker.
- *
- * `capshelf init` and a bare `capshelf add` offer the shelf when stdin and
- * stderr are terminals. Without this, `bun test` launched from an interactive
- * shell would take that branch, draw a picker over the test output, and block
- * on a keypress that never comes. Pinned off so every existing init test keeps
- * asserting the non-interactive path; tests that mean to exercise the picker
- * install their own context and get it back.
+ * Pinned non-interactive so `bun test` from a terminal doesn't draw the picker
+ * and block on a keypress; tests exercising the picker install their own
+ * context.
  */
 const NON_INTERACTIVE_PICK: PickContext = {
   stdinIsTTY: false,
@@ -228,8 +213,6 @@ export function runInProcess(project: string) {
     env: Record<string, string | undefined> = {},
   ): Promise<CliResult> => {
     const previousCwd = process.cwd();
-    // Read the installed context by swapping, then put back whatever a test
-    // installed — or the non-interactive default when nothing was.
     const outerConfirmation = setDestructiveConfirmationContext(null);
     setDestructiveConfirmationContext(
       outerConfirmation ?? NON_INTERACTIVE_CONFIRMATION,
