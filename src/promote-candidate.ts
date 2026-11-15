@@ -8,7 +8,6 @@ import type { FragmentItemKind } from "./master";
 import type { GitFileMode, NamedFile } from "./merge-tree";
 import { subagentSourceCandidates } from "./subagents";
 
-/** The canonical fragment bytes that a commit of the current worktree uses. */
 export async function currentFragmentCandidateFiles(
   dataRepo: string,
   kind: FragmentItemKind,
@@ -38,11 +37,9 @@ export async function currentFragmentCandidateFiles(
 }
 
 /**
- * Every canonical subagent source that the next commit will contain.
- *
- * `pending` holds installed targets that differ from the locked source. Other
- * targets stay at their current data-repo bytes. This is the same hybrid tree
- * that `promoteSubagent` commits.
+ * Only installed targets that differ from the locked source are replaced; other
+ * targets keep their current data-repo bytes, matching what `promoteSubagent`
+ * commits.
  */
 export async function promotedSubagentFiles(
   project: string,

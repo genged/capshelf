@@ -29,7 +29,6 @@ export interface ProjectionFile {
   executable: boolean;
 }
 
-/** The JSON documents the projections write, one member per writer. */
 export type ProjectionJson =
   | ClaudeMarketplace
   | CodexMarketplaceSource
@@ -283,11 +282,6 @@ async function trackedModesUnderPath(
   return modes;
 }
 
-/**
- * A document as the JSON value model sees it. `JSON.parse` without a reviver
- * yields exactly the members of `ConfigValue`, and the round trip drops the
- * `undefined` properties `JSON.stringify` would drop anyway.
- */
 function jsonValueOf(value: ProjectionJson | ConfigValue): ConfigValue {
   return JSON.parse(JSON.stringify(value));
 }

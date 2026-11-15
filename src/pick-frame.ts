@@ -1,15 +1,3 @@
-/**
- * The picker's frame, assembled as plain strings.
- *
- * Every line the picker draws is built here, by pure functions, so the layout
- * is a unit test rather than something you must drive a pseudo-terminal to
- * look at. `pick.ts` hands the result to the prompt library and does nothing
- * else with it.
- *
- * Styling is injected as a `PickPalette` rather than imported, for the same
- * reason `highlightRef` takes a `paint` function: a module that owns escape
- * sequences cannot be asserted on as text.
- */
 import {
   highlightRef,
   isPickRowDisabled,
@@ -21,15 +9,11 @@ import { showsGroupHeadings } from "./pick-tabs";
 import type { PickTab } from "./pick-tabs";
 
 export interface PickPalette {
-  /** The active tab, and matched characters inside a ref. */
   accent(text: string): string;
-  /** Hints, counts, and the key legend. */
   dim(text: string): string;
-  /** An already-installed row, which cannot be marked. */
   disabled(text: string): string;
 }
 
-/** Identity styling. Tests use it to assert on text. */
 export const PLAIN_PALETTE: PickPalette = {
   accent: (text) => text,
   dim: (text) => text,
@@ -40,17 +24,8 @@ export const MARKED = "◉";
 export const UNMARKED = "◯";
 
 /**
- * The focused-row marker, and the blank that reserves its column.
- *
- * Both are two cells wide so the checkbox lands in the same column on every
- * row. A one-cell marker put the marker hard against the box and the two
- * rendered as a single blob.
- *
- * A chevron, not a triangle. `◯` and `◉` are round, and the right-pointing
- * triangles Unicode offers are a small one (`▸`) and a full-size one (`▶`),
- * neither drawn to the same vertical metrics as the checkbox. The small one
- * reads as sitting low beside it. The chevron is a text-weight glyph that sits
- * on the same optical line.
+ * Two cells wide so the checkbox column aligns; a chevron because `▸`/`▶` sit
+ * off the checkbox's vertical metrics.
  */
 export const POINTER = "❯ ";
 const NO_POINTER = "  ";
@@ -61,43 +36,24 @@ export interface PickFrame {
   tabs: PickTab[];
   activeTab: number;
   query: string;
-  /** Ranked rows for the active tab, in display order. */
   rows: RankedPickRow[];
-  /** Index into `rows`, or -1 when there is nothing to point at. */
   cursor: number;
   marked: ReadonlySet<string>;
-  /** Maximum row lines to draw, headings included. */
   height: number;
-  /**
-   * Terminal width, so a line can be kept to one row. Absent means unlimited,
-   * which is what the unit tests use.
-   */
   columns?: number;
   palette?: PickPalette;
-  /** The verb Enter performs, for the legend. Absent means `install`. */
   action?: string;
-  /** Whether the focused row has a Ctrl-V diff overlay. */
   preview?: boolean;
 }
 
-/** The gutter `pick.ts` draws before every body line, and the cells it takes. */
 export const GUTTER = "│  ";
 export const GUTTER_WIDTH = GUTTER.length;
 
-/** Below this, a hint is dropped rather than shown as a stub. */
 const MIN_HINT_WIDTH = 12;
 
 /**
- * Cells one body line may fill on a terminal `columns` wide.
- *
- * Every renderer is handed this number rather than the width, so the two
- * subtractions are written once. The gutter is the caller's decoration, and
- * the extra cell is the auto-wrap rule: a line that fills the last column
- * wraps on terminals that wrap there, and a wrapped line breaks the redraw for
- * the whole frame, because the rewind then counts one line where two were
- * drawn.
- *
- * An absent width is unlimited, which the arithmetic below carries on its own.
+ * Reserve one extra cell: a line filling the last column wraps on some
+ * terminals, which breaks the redraw's line-count rewind.
  */
 export function bodyBudget(columns: number | undefined): number {
   if (columns === undefined) return Number.POSITIVE_INFINITY;
@@ -105,12 +61,8 @@ export function bodyBudget(columns: number | undefined): number {
 }
 
 /**
- * The tab bar: `All │ bundles │ skills`, with the active one accented and
- * underlined.
- *
- * Two lines, not one. Colour alone would carry the selection, and it is the
- * one part of the frame a user reads at a glance while holding an arrow key,
- * so it also gets a rule underneath that survives a monochrome terminal.
+ * A rule under the bar keeps the active tab visible on monochrome terminals,
+ * where colour alone would carry it.
  */
 export function renderTabBar(
   tabs: readonly PickTab[],
@@ -124,11 +76,10 @@ export function renderTabBar(
   // and tabs is non-empty here.
   const activeLabel = labels[active] as string;
 
-  // Too narrow for every name: name the active one and say where it sits.
-  // Wrapping the bar would cost more than the other names are worth.
+  // When too narrow, show only the active tab and its position, since wrapping
+  // the bar costs more.
   if (labels.join(" │ ").length > budget) {
     const position = `(${active + 1}/${tabs.length})`;
-    // `‹ ` and ` › ` around the name, and the space before the position.
     const name = truncateEnd(activeLabel, budget - 5 - position.length);
     return [
       `${palette.dim("‹")} ${palette.accent(name)} ${palette.dim("›")} ${palette.dim(position)}`,
@@ -141,24 +92,21 @@ export function renderTabBar(
     )
     .join(" │ ");
 
-  // The rule is positioned from the *unstyled* widths: escape sequences carry
-  // no width, so measuring the styled string puts the rule in the wrong place.
+  // Measure unstyled widths: escape sequences have no width, so styled lengths
+  // misplace the rule.
   let offset = 0;
   for (let index = 0; index < active; index++) {
-    // SAFETY: index < active < labels.length, the same bound as above.
-    offset += (labels[index] as string).length + 3; // label + " │ "
+    // SAFETY: index < active < labels.length.
+    offset += (labels[index] as string).length + 3;
   }
   const rule = `${" ".repeat(offset)}${"━".repeat(activeLabel.length)}`;
   return [bar, rule];
 }
 
 /**
- * `Search: rev█` on the left, `2 of 7` on the right.
- *
- * A query the user keeps typing is the one string in the frame that grows
- * without limit, so it is the one the line gives up first. The count goes
- * before it, and the query then loses its head rather than its tail: the caret
- * and the characters just typed are what the user is watching.
+ * The count is dropped first. If the line is still too long, the query loses
+ * its head (`truncateStart`), so the caret and the latest keystrokes stay
+ * visible.
  */
 export function renderSearchLine(
   query: string,
@@ -176,11 +124,6 @@ export function renderSearchLine(
   return `${SEARCH_PROMPT}${truncateStart(query, room)}█`;
 }
 
-/**
- * The row lines, with per-kind headings when the state calls for them.
- *
- * Returns at most `height` lines, windowed so the cursor is always visible.
- */
 export function renderRows(frame: PickFrame): string[] {
   const palette = frame.palette ?? PLAIN_PALETTE;
   const budget = bodyBudget(frame.columns);
@@ -189,13 +132,8 @@ export function renderRows(frame: PickFrame): string[] {
     frame.query,
   );
 
-  // Lay the headings out first, then window the result.
-  //
-  // Windowing the rows and inserting headings afterwards spends more lines
-  // than `height` allows: the grouped `All` view could add one heading per
-  // kind, turning a budget of 10 into as many as 17 lines and pushing the
-  // frame past a 24-row terminal. `height` has to bound what is drawn, so it
-  // is applied to the drawn sequence.
+  // Lay out headings before windowing so `height` bounds the drawn lines;
+  // windowing rows first overflows the terminal.
   const display: DisplayItem[] = [];
   let cursorLine = -1;
   let previousKind: string | null = null;
@@ -227,9 +165,8 @@ export function renderRows(frame: PickFrame): string[] {
       }),
     );
   }
-  // A heading is the label for the rows under it, so one at the bottom edge
-  // labels nothing. Dropping it costs a line of the budget and removes a
-  // group name that appears to have no members.
+  // Drop a trailing heading at the bottom edge since it would label no visible
+  // rows.
   const last = display[window.end - 1];
   if (lines.length > 0 && last && "heading" in last) lines.pop();
   return lines;
@@ -248,8 +185,6 @@ function renderRow(
   },
 ): string {
   const { palette } = opts;
-  // Everything before the ref: the pointer column, the heading indent, the
-  // checkbox, and the space after it. The gutter is already out of the budget.
   const prefixCells = POINTER.length + opts.indent.length + 2;
   const usable = opts.budget - prefixCells;
 
@@ -263,9 +198,8 @@ function renderRow(
   const label = disabled
     ? palette.disabled(clamped.text)
     : highlightRef(clamped.text, clamped.positions, palette.accent);
-  // The hint is drawn only for the focused row. Every row carrying its own
-  // description would push the refs apart and turn the list into prose, and
-  // building one costs a collapse and a truncation of the whole description.
+  // Hint only on the focused row; per-row descriptions would spread refs apart
+  // and cost a truncation per row.
   const tail = hintTail(
     opts.focused ? pickRowHint(entry.row) : undefined,
     usable - clamped.cells - 2,
@@ -276,13 +210,8 @@ function renderRow(
 }
 
 /**
- * `text`, cut to `limit` code points with an ellipsis when it does not fit.
- *
- * Code points, to match what `fuzzy.ts` counts and what `highlightRef` walks.
- * Slicing the string directly could cut a surrogate pair in half.
- *
- * A limit under two cannot hold a character and the ellipsis that says one was
- * dropped, and a negative slice would take from the end, so it yields nothing.
+ * Counts code points to match fuzzy.ts and avoid splitting surrogate pairs; a
+ * limit under 2 yields empty since a negative slice would take from the end.
  */
 function truncateEnd(text: string, limit: number): string {
   const chars = [...text];
@@ -291,7 +220,6 @@ function truncateEnd(text: string, limit: number): string {
   return `${chars.slice(0, limit - 1).join("")}…`;
 }
 
-/** `text`, cut to `limit` code points, keeping the tail rather than the head. */
 function truncateStart(text: string, limit: number): string {
   const chars = [...text];
   if (chars.length <= limit) return text;
@@ -300,12 +228,8 @@ function truncateStart(text: string, limit: number): string {
 }
 
 /**
- * Shorten a ref that cannot fit, and drop the highlight positions that fall
- * outside what is left.
- *
- * A row wider than the terminal wraps onto a second line, and the redraw then
- * counts one line where two were drawn, so the frame walks up the screen on
- * every keystroke. Losing the tail of a rare long name is the smaller cost.
+ * Clamp refs because a wrapped line makes the redraw rewind miscount and the
+ * frame climb the screen each keystroke.
  */
 interface ClampedRef {
   text: string;
@@ -330,12 +254,8 @@ function clampRef(
 }
 
 /**
- * The dim text after the focused row's ref, cut to what the line has left.
- *
- * Padding every row to the longest ref aligned a single hint against nothing
- * and stranded it far from the item it describes, and left every other row
- * carrying trailing blanks. A hint with almost no room is dropped rather than
- * shown as a stub.
+ * Hint is not padded to the longest ref, which would strand it from its item; a
+ * hint with little room is dropped.
  */
 function hintTail(
   hint: string | undefined,
@@ -346,12 +266,6 @@ function hintTail(
   return `  ${palette.dim(truncateEnd(hint, available))}`;
 }
 
-/**
- * The slice of a list to draw so that `cursor` is inside it.
- *
- * Scrolls by whole steps at the edges rather than re-centring on every move,
- * so a list that fits does not shift under the cursor.
- */
 export interface VisibleWindow {
   start: number;
   end: number;
@@ -373,13 +287,8 @@ export function visibleWindow(
 }
 
 /**
- * The key legend under the list, in the longest form that fits.
- *
- * A legend that wraps breaks the redraw for the whole frame, so a narrow
- * terminal gets fewer words rather than a second line. `action` is the verb
- * Enter performs — `install` for the shelf, `share` and `promote` for the
- * publication pickers — because a legend naming the wrong verb teaches the
- * wrong thing.
+ * A wrapped legend breaks the redraw, so narrow terminals get fewer words
+ * rather than a second line.
  */
 const SHORTEST_LEGEND = "tab · enter";
 
@@ -400,7 +309,6 @@ export function renderLegend(
   return palette.dim(text);
 }
 
-/** Assemble every part into the lines the prompt draws. */
 export function renderPickBody(frame: PickFrame): string[] {
   const palette = frame.palette ?? PLAIN_PALETTE;
   const budget = bodyBudget(frame.columns);

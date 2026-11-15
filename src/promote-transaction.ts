@@ -43,14 +43,12 @@ export interface InstalledReconciliation {
 }
 
 /**
- * Replace `target` with the folder that `prepare` writes. `prepare` gets the
- * mount points inside `target`: they stay in place, so it must not write a
- * path on one. It returns the row-4 units to carry across: each one moves
- * from the old folder into the new one with a rename, so its bytes are never
- * read. A read-only unit cannot move to a new parent, so it stays in place
- * like a mount point. Without mounts and held units, the folder itself moves
- * with one rename each way. `scope` confines `target`, its parent, and the
- * scratch folder.
+ * Replace `target` with the folder that `prepare` writes. Mount points stay in
+ * place, so `prepare` must not write a path on one. Carried units move from the
+ * old folder into the new one by rename, so their bytes are never read. A
+ * read-only unit cannot change parent, so it stays in place like a mount.
+ * Without mounts and held units the folder moves with one rename each way.
+ * `scope` confines `target`, its parent, and the scratch folder.
  */
 export async function beginDirectoryReplacement(
   target: string,
@@ -64,20 +62,17 @@ export async function beginDirectoryReplacement(
   await ensureDir(parent, scope);
   await assertInScope(scope, target);
   const mounts = await readMountLayout(target);
-  // The mount points, plus the units that stay in place.
   let layout = mounts;
   const transactionDir = await mkdtemp(join(parent, ".capshelf-materialize-"));
   const replacement = join(transactionDir, "replacement");
   const backup = join(transactionDir, "original");
   let detached = false;
-  // True once `target` may hold entries of the new tree.
   let attachStarted = false;
   let units: readonly string[] = [];
 
-  // The rollback order matters: units go back to the old folder first, so the
-  // clear of `target` never deletes one. `target` is cleared only after the
-  // attach started, because before that it holds only pinned folders and
-  // mount points, or nothing.
+  // Units go back first so clearing `target` never deletes one; `target` is
+  // cleared only after attach started, since before that it holds only pinned
+  // folders and mounts.
   const restore = async () => {
     if (detached) {
       await returnUnits(units, [target, replacement], backup, scope);
@@ -125,9 +120,8 @@ export async function beginDirectoryReplacement(
 }
 
 /**
- * Remove the scratch folder after a commit. The new tree is in place by then,
- * and a rollback can no longer run, so a failure here is a warning and not
- * an error: an error would report a write that did happen as failed.
+ * A failure here is a warning, not an error: the new tree is in place and an
+ * error would report a write that happened as failed.
  */
 async function removeCommittedScratch(
   path: string,
@@ -143,10 +137,10 @@ async function removeCommittedScratch(
 }
 
 /**
- * Move the contents of `target` to `backup`. If that fails part way, move
- * back what moved, so `target` is as it was, and rethrow. With mounts, this
- * creates `backup` first: when that fails, nothing moved, and a path that was
- * already there is never taken for moved entries.
+ * Move the contents of `target` to `backup`. If that fails part way, move back
+ * what moved, so `target` is as it was, and rethrow. With mounts, create
+ * `backup` first: a failure there means nothing moved, and a path already there
+ * is never taken for moved entries.
  */
 async function detachOrUndo(
   target: string,
@@ -176,8 +170,8 @@ async function detachOrUndo(
 }
 
 /**
- * Run `restore`. If it fails, keep the scratch folder, because it holds the
- * previous install, and say where it is.
+ * Run `restore`. If it fails, keep the scratch folder because it holds the
+ * previous install, and name its path in the error.
  */
 async function restoreOrKeep(
   restore: () => Promise<void>,
@@ -195,17 +189,16 @@ async function restoreOrKeep(
   }
 }
 
-/** One installed entry the reconciliation keeps. `content` is null for a non-regular entry. */
 export interface KeptInstalledEntry {
   path: string;
   content: Buffer | null;
 }
 
 /**
- * The installed entries `beginInstalledReconciliation` keeps: it copies the
- * whole folder, deletes only `localFiles`, and writes `mergedFiles`. So every
- * entry that is in neither list stays. A consent point reads these beside
- * the merged files, from this rule and not from a parallel one.
+ * The installed entries that `beginInstalledReconciliation` keeps: it deletes
+ * only `localFiles` and writes `mergedFiles`, so every entry in neither list
+ * stays. A consent point reads these beside the merged files, from this rule
+ * and not from a parallel one.
  */
 export async function keptByInstalledReconciliation(
   installedDir: string,
@@ -242,8 +235,6 @@ export async function beginInstalledReconciliation(
   const mounts = await readMountLayout(installedDir);
   const managedPaths = [...localFiles, ...mergedFiles].map((file) => file.path);
   await assertNoManagedPathOnMount(installedDir, mounts, managedPaths);
-  // Everything this write neither deletes nor writes stays. It moves back by
-  // rename, and only the managed entries are copied.
   const inventory = await inventoryLocalTree(installedDir);
   const managed = new Set(managedPaths);
   const split = await splitMovableUnits(
@@ -258,7 +249,6 @@ export async function beginInstalledReconciliation(
     }),
   );
   const units = split.movable;
-  // The mount points, plus the read-only units that stay in place.
   const layout = holding(mounts, split.held);
   const parent = dirname(installedDir);
   await assertInScope(scope, parent);
@@ -266,7 +256,7 @@ export async function beginInstalledReconciliation(
   const backup = join(backupDir, "original");
   let detached = false;
   // After the detach, `installedDir` holds only what this write put there,
-  // beside pinned folders and mount points, so the clear is safe.
+  // beside pinned folders and mounts, so the clear is safe.
   const restore = async () => {
     if (!detached) return;
     await returnUnits(units, [installedDir], backup, scope);
@@ -282,8 +272,6 @@ export async function beginInstalledReconciliation(
         localFiles,
         mergedFiles,
       );
-    // With no units, `copyTree` copies the whole folder to a missing path, as
-    // before. With units, the folder must exist to receive them.
     if (units.length > 0) await ensureDir(installedDir, scope);
     await moveUnits(units, backup, installedDir, scope);
     await copyTree(backup, installedDir, holding(layout, units), scope);
