@@ -93,6 +93,21 @@ async function migratedProject(prefix: string): Promise<{
   return { project, dataRepo, run };
 }
 
+async function setLockVersion(project: string, version: number) {
+  for (const path of [LOCK, LOCAL_LOCK]) {
+    const full = join(project, path);
+    const lock = await readJsonObject(full);
+    lock.version = version;
+    await writeFile(full, `${JSON.stringify(lock, null, 2)}\n`);
+  }
+}
+
+async function lockBytes(project: string): Promise<string[]> {
+  return Promise.all(
+    [LOCK, LOCAL_LOCK].map((path) => readFile(join(project, path), "utf-8")),
+  );
+}
+
 describe("capshelf lock migrate", () => {
   test(
     "converts the project and local locks together and is a no-op afterwards",
@@ -373,6 +388,137 @@ describe("capshelf lock migrate", () => {
       const blocked = await run(["lock", "migrate"]);
       expect(blocked.exitCode).toBe(3);
       expect(blocked.stdout.toString()).toContain("filter=git-crypt");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "a version 5 lock refuses --repin and --remove-item",
+    async () => {
+      const { project, run } = await migratedProject(
+        "capshelf-migrate-v5-flags",
+      );
+      const before = await lockBytes(project);
+
+      const remove = await run([
+        "lock",
+        "migrate",
+        "--remove-item",
+        "skills/alpha",
+      ]);
+      expect(remove.exitCode).toBe(3);
+      expect(remove.stderr.toString()).toContain("--remove-item");
+      expect(remove.stderr.toString()).toContain("capshelf rm <ref>");
+      expect(remove.stderr.toString()).toContain("capshelf update <ref>");
+
+      const repin = await run([
+        "lock",
+        "migrate",
+        "--repin",
+        "skills/alpha",
+        "--json",
+      ]);
+      expect(repin.exitCode).toBe(3);
+      expect(await lockBytes(project)).toEqual(before);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "a version 4 lock refuses --repin and --remove-item but still converts without them",
+    async () => {
+      const { project, run } = await migratedProject(
+        "capshelf-migrate-v4-flags",
+      );
+      await setLockVersion(project, 4);
+      const before = await lockBytes(project);
+
+      const remove = await run([
+        "lock",
+        "migrate",
+        "--remove-item",
+        "skills/alpha",
+      ]);
+      expect(remove.exitCode).toBe(3);
+      expect(remove.stderr.toString()).toContain("version 4");
+      expect(remove.stderr.toString()).toContain("capshelf rm <ref>");
+      expect(await lockBytes(project)).toEqual(before);
+      expect(before[0]).toContain("data/skills/alpha");
+
+      const repin = await run([
+        "lock",
+        "migrate",
+        "--repin",
+        "skills/alpha",
+        "--dry-run",
+      ]);
+      expect(repin.exitCode).toBe(3);
+      expect(await lockBytes(project)).toEqual(before);
+
+      expect((await run(["lock", "migrate"])).exitCode).toBe(0);
+      expect((await file(join(project, LOCK)).json()).version).toBe(5);
+      expect((await file(join(project, LOCAL_LOCK)).json()).version).toBe(5);
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "a ref that matches no lock entry is refused and writes nothing",
+    async () => {
+      const { project, dataRepo, run } = await migratedProject(
+        "capshelf-migrate-typo",
+      );
+      await downgradeToV3(project, dataRepo, [
+        {
+          file: LOCK,
+          kind: "skills",
+          name: "alpha",
+          repoRelPath: "skills/alpha",
+        },
+        {
+          file: LOCAL_LOCK,
+          kind: "skills",
+          name: "beta",
+          repoRelPath: "skills/beta",
+        },
+      ]);
+      const before = await lockBytes(project);
+
+      const remove = await run([
+        "lock",
+        "migrate",
+        "--remove-item",
+        "skills/alhpa",
+      ]);
+      expect(remove.exitCode).toBe(3);
+      expect(remove.stderr.toString()).toContain(
+        "--remove-item skills/alhpa matches no lock entry",
+      );
+      expect(await lockBytes(project)).toEqual(before);
+
+      const repin = await run([
+        "lock",
+        "migrate",
+        "--repin",
+        "skills/alhpa",
+        "--dry-run",
+      ]);
+      expect(repin.exitCode).toBe(3);
+      expect(repin.stderr.toString()).toContain(
+        "--repin skills/alhpa matches no lock entry",
+      );
+      expect(await lockBytes(project)).toEqual(before);
+
+      const matched = await run([
+        "lock",
+        "migrate",
+        "--remove-item",
+        "local/skills/beta",
+      ]);
+      expect(matched.exitCode).toBe(0);
+      expect(
+        (await file(join(project, LOCAL_LOCK)).json()).items,
+      ).not.toHaveProperty("data/skills/beta");
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );

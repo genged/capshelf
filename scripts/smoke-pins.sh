@@ -124,6 +124,15 @@ assert_fixed_contains 'Dry run; nothing written.' "$TMP/dry.txt"
 assert_fixed_contains 'repaired legacy identity   1' "$TMP/migrated.txt"
 (cd "$PROJECT" && "${CLI[@]}" lock migrate > "$TMP/again.txt")
 assert_fixed_contains 'already version 5' "$TMP/again.txt"
+set +e
+(cd "$PROJECT" && "${CLI[@]}" lock migrate --remove-item skills/csv-report > "$TMP/refused.txt" 2>&1)
+REFUSED=$?
+set -e
+[ "$REFUSED" -eq 3 ] || {
+  echo "expected exit 3 from lock migrate --remove-item, got $REFUSED" >&2
+  exit 1
+}
+assert_fixed_contains 'capshelf rm' "$TMP/refused.txt"
 (cd "$PROJECT" && "${CLI[@]}" status --strict >/dev/null)
 
 # The same lifecycle in a project that is not a Git repository at all: PIN-5
