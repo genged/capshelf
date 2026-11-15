@@ -14,11 +14,6 @@ import { ItemDetail } from "./ItemDetail";
 import { ItemRow } from "./ItemRow";
 import { Icon } from "./icons";
 
-/**
- * Every finding on the machine in one list, grouped by project. The terminal
- * shows one project at a time; this view is the reason the UI exists. With
- * nothing selected, the first finding opens.
- */
 export function FindingsView({
   statuses,
   pending,
@@ -32,17 +27,13 @@ export function FindingsView({
   dataOverride,
 }: {
   statuses: UiProjectStatus[];
-  /** Projects still loading, so an empty list is not called all clear. */
   pending: number;
   /**
-   * Registered projects with no current status: a missing manifest, a failed
-   * read, or a failed refresh. Their findings are unknown, so the view is
-   * never all clear while one exists.
+   * Unread projects have unknown findings, so the view is never all clear while
+   * one exists.
    */
   unread: string[];
-  /** The overview has not arrived, so the project count is unknown. */
   discovering: boolean;
-  /** The session's --data override, repeated on every printed command. */
   dataOverride: string | undefined;
   project: string | null;
   item: string | null;
@@ -62,7 +53,6 @@ export function FindingsView({
   const selected =
     selectedGroup?.rows.find((row) => row.id === item) ??
     (project === null ? (selectedGroup?.rows[0] ?? null) : null);
-  // The read the group came from, so its diff names the same snapshot.
   const selectedStatus =
     statuses.find((status) => status.project === selectedGroup?.project) ??
     null;
@@ -140,8 +130,8 @@ export function FindingsView({
       </section>
       {selected && selectedGroup && selectedStatus ? (
         <ItemDetail
-          // The snapshot remounts the detail after a refresh, so its diff is
-          // read again, as in the project view.
+          // The snapshot in the key remounts the detail after a refresh so its
+          // diff is read again.
           key={`${selectedGroup.project}\t${selected.id}\t${selectedStatus.snapshot}`}
           item={selected}
           projectName={selectedGroup.name}

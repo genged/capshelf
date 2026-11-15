@@ -1,7 +1,3 @@
-/**
- * The hook that follows `window.location.hash`. The route shapes and their
- * parsing live in `../shared/route`, which tests import without Preact.
- */
 import { useEffect, useState } from "preact/hooks";
 import { parseRoute, type Route, routeHash } from "../shared/route";
 

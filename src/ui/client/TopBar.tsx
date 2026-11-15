@@ -4,17 +4,12 @@ import { Icon } from "./icons";
 
 export type TopView = "projects" | "shelf" | "machine";
 
-/** Which top-level view a route belongs to. */
 export function topView(route: Route): TopView {
   if (route.view === "shelf") return "shelf";
   if (route.view === "machine") return "machine";
   return "projects";
 }
 
-/**
- * Brand, the three views, the jump field, the read-only badge, and refresh.
- * The host and the shelf live in the rail now, so the bar stays short.
- */
 export function TopBar({
   view,
   projectsHref,

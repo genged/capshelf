@@ -57,7 +57,6 @@ interface ShelfRow {
   detail: string;
 }
 
-/** Bundles first, then one section per kind, as `ls` prints them. */
 interface ShelfGroup {
   id: ItemKind | "bundles";
   label: string;
@@ -74,11 +73,6 @@ const SECTIONS: ReadonlyArray<{
   { id: "coverage", label: "Coverage", icon: "folder" },
 ];
 
-/**
- * The shelf in the B1 frame. The rail picks the shelf and the section:
- * Items, Rollouts, or Coverage. Rollouts and Coverage join the shelf's usage
- * with each project's status rows, so the state per project is the CLI's.
- */
 export function ShelfView({
   overview,
   route,
@@ -91,32 +85,27 @@ export function ShelfView({
   route: ShelfRoute;
   navigate: (route: Route) => void;
   statuses: ReadonlyMap<string, UiProjectStatus>;
-  /** Projects on their first status read; see `usageState`. */
   pending: ReadonlySet<string>;
   /**
-   * Changes on every dashboard refresh. The shelf's usage and pins must be
-   * read again with the statuses they are joined to.
+   * Changes on every dashboard refresh so the shelf's usage and pins are
+   * re-read together with the statuses they are joined to.
    */
   generation: number;
 }): preact.JSX.Element {
   const repo = route.repo ?? overview?.shelves[0]?.dataRepo ?? null;
-  // Every printed command repeats the session's --data override, as the
-  // server's own actions do (src/status-actions.ts).
   const dataOverride = commandDataOverride(overview?.dataOverride, repo);
   const [shelf, setShelf] = useState<Load<UiShelf>>({ state: "idle" });
   const [query, setQuery] = useState("");
 
-  // `generation` is in the dependencies as the refresh trigger.
   useEffect(() => {
     if (repo === null) return;
-    // A refresh keeps the last read of the same shelf on screen.
     setShelf((previous) =>
       previous.state === "ready" && previous.data.dataRepo === repo
         ? previous
         : { state: "loading" },
     );
-    // A reply for a shelf the user has left must not replace the shelf on
-    // screen, so a reply that arrives after the cleanup is dropped.
+    // Drop replies that arrive after cleanup so a shelf the user left does not
+    // replace the one on screen.
     let current = true;
     apiGet<UiShelf>("/api/shelf", { repo }).then(
       (data) => {
@@ -164,8 +153,6 @@ export function ShelfView({
     );
   }
 
-  // The phone's stand-in for the rail: the shelf, when there is more than
-  // one, and the view.
   const picker = (
     <div class="rail-picker-group">
       {overview.shelves.length > 1 ? (
@@ -256,9 +243,8 @@ export function ShelfView({
   }
 
   const data = shelf.data;
-  // A phone shows the detail only for an entry that still exists. A rollout
-  // that an update finished, or an item a refresh removed, falls back to the
-  // list and its picker instead of an empty page.
+  // On a phone, a vanished entry (finished rollout, removed item) falls back to
+  // the list instead of an empty detail page.
   const ref = route.ref;
   const selectionExists =
     ref !== null &&
@@ -590,8 +576,8 @@ function ItemList({
 }
 
 /**
- * `rankRows` highlights positions in the ref (`skills/quick-review`); the
- * row shows the name, so the positions shift by the kind prefix.
+ * rankRows positions index the ref, which has a kind prefix the row's name
+ * lacks, so they shift by the prefix length.
  */
 function positionsInName(row: ShelfRow, positions: number[]): number[] {
   const offset = row.ref.length - row.name.length;
@@ -600,7 +586,6 @@ function positionsInName(row: ShelfRow, positions: number[]): number[] {
     .map((position) => position - offset);
 }
 
-/** The reader before a click: the shelf itself, its projects, its commits. */
 function ShelfOverview({
   shelf,
   rollouts,
@@ -715,8 +700,8 @@ const USAGE_WORDS: Record<
   },
   kept: { icon: "notequal", tone: "kept", word: "Kept local" },
   other: { icon: "bang", tone: "attention", word: "Needs attention" },
-  // From the lock only, while the first status read runs: a pin fact, not a
-  // state of the installed copy.
+  // These come from the lock alone while the first status read runs, so they
+  // are pin facts, not installed-copy state.
   "pin-current": {
     icon: "question",
     tone: "kept",
@@ -730,10 +715,9 @@ const USAGE_WORDS: Record<
   unknown: { icon: "question", tone: "kept", word: "No status" },
 };
 
-/** A usage state as an icon and a word, never by color alone. */
+/** Shows state as icon plus word so it is never conveyed by color alone. */
 function UsageBadge({ usage }: { usage: ProjectUsage }): preact.JSX.Element {
   const words = USAGE_WORDS[usage.state];
-  // A read row draws the icon the project list draws for the same state.
   const icon =
     usage.rowState === null
       ? words.icon
@@ -767,7 +751,6 @@ function ItemReader({
   statuses: ReadonlyMap<string, UiProjectStatus>;
   pending: ReadonlySet<string>;
   dataOverride: string | undefined;
-  /** Changes on every dashboard refresh; see `ShelfView`. */
   generation: number;
   onSelect: (ref: string) => void;
   onBack: () => void;
@@ -776,16 +759,12 @@ function ItemReader({
   const [detail, setDetail] = useState<Load<UiShelfItemDetail>>({
     state: "loading",
   });
-  // `generation` is in the dependencies as the refresh trigger.
   useEffect(() => {
-    // A refresh keeps the last read of the same item on screen.
     setDetail((previous) =>
       previous.state === "ready" && previous.data.ref === itemRef
         ? previous
         : { state: "loading" },
     );
-    // A reply for a file or item the user has left is dropped, as in
-    // `ShelfView`.
     let current = true;
     apiGet<UiShelfItemDetail>("/api/shelf/item", {
       repo,
@@ -797,10 +776,8 @@ function ItemReader({
       },
       (cause: unknown) => {
         if (!current) return;
-        // A refresh can remove the selected file while the item stays. The
-        // server answers 404 for that, so the reader falls back to the
-        // item's main file. A missing item answers 404 again without a file,
-        // and that shows as the error.
+        // A refresh can remove the selected file; the server 404s, so fall back
+        // to the main file (a missing item 404s again and shows as the error).
         if (
           file !== null &&
           cause instanceof ApiError &&
@@ -822,7 +799,7 @@ function ItemReader({
   }, [repo, itemRef, file, generation]);
 
   if (detail.state !== "ready") {
-    // On a phone the list is hidden here, so the back link must stay.
+    // The list is hidden on a phone here, so the back link must stay.
     return (
       <article class="detail" aria-label={itemRef}>
         <div class="detail-body">
@@ -1054,8 +1031,8 @@ function ItemReader({
 }
 
 /**
- * Where an add command runs. Without `--data`, `add` reads the shelf the
- * project is bound to, which may not be the shelf on screen.
+ * Without `--data`, `add` reads the shelf the project is bound to, which may
+ * differ from the shelf on screen.
  */
 function AddNote({
   dataOverride,
@@ -1156,7 +1133,6 @@ function RolloutList({
 }: {
   picker: ComponentChildren;
   rollouts: Rollout[];
-  /** Projects with an old pin and no current status; see `unreadOldPins`. */
   unread: string[];
   selected: string | null;
   onSelect: (ref: string) => void;
@@ -1240,10 +1216,8 @@ function RolloutDetail({
     return <section class="detail detail-empty" aria-hidden="true" />;
   }
   const clean = rollout.projects.filter((entry) => entry.state === "behind");
-  // One command per clean project, with its cd, because each project takes
-  // the update on its own. A project still loading has no cd command yet.
-  // The update part is built like the server's own action: the same prefix,
-  // the ref quoted, and --local after it (src/status-actions.ts).
+  // One command per clean project because each takes the update on its own;
+  // projects still loading have no cd command yet.
   const commands = clean.flatMap((entry) => {
     const cd = statuses.get(entry.project)?.cdCommand;
     if (!cd) return [];

@@ -1,7 +1,3 @@
-/**
- * One stroke, one weight. The state icons stand in for the CLI glyphs, and
- * every one of them sits beside a word.
- */
 import type { StateIconName } from "../shared/state-label";
 
 export type IconName =
@@ -53,10 +49,6 @@ const STROKE = {
   "stroke-linejoin": "round",
 } as const;
 
-/**
- * With a `label` the icon is an image with that name; without one it is
- * decoration beside text and hidden from assistive technology.
- */
 export function Icon({
   name,
   label,
