@@ -37,12 +37,10 @@ async function readJson(path: string): Promise<JsonObject> {
   return asObject(parseJsonText(await readFile(path, "utf-8"), path), path);
 }
 
-/** The server table of a `.mcp.json` document. */
 function servers(mcp: JsonObject): JsonObject {
   return asObject(mcp.mcpServers, "mcpServers");
 }
 
-/** The `command` of one server in a `.mcp.json` document. */
 function serverCommand(mcp: JsonObject, name: string): string {
   const server = asObject(servers(mcp)[name], `mcpServers.${name}`);
   return asString(server.command, `mcpServers.${name}.command`);
@@ -98,7 +96,6 @@ test(
         "internal-db",
       ]);
 
-      // Upstream moves; the project's own values still do not.
       await world.git.writeAndCommit(
         shelf,
         {
@@ -112,7 +109,6 @@ test(
       expect(serverCommand(updated, "github")).toBe("github-mcp-v2");
       expect(serverCommand(updated, "internal-db")).toBe("internal-db-mcp");
 
-      // Null second run: reconciling again changes nothing.
       const converged = await captureOwnedState(world, {
         projectFiles: project,
         projectGit: project,
@@ -131,7 +127,6 @@ test(
         "second apply",
       );
 
-      // Removal reconciles the managed contribution and nothing else.
       expectExit(
         await world.capshelf(project, ["rm", "mcp/github", "--yes"]),
         0,
@@ -175,8 +170,8 @@ test(
       expectExit(await world.capshelf(project, ["init", "--data", shelf]), 0);
       expectExit(await world.capshelf(project, ["add", "mcp/github"]), 0);
 
-      // Both outputs must have real work to do, or the target that is meant
-      // to fail is skipped as already-current and the test proves nothing.
+      // Both outputs need pending work, or the failing target is skipped as
+      // already-current and the test proves nothing.
       await world.git.writeAndCommit(
         shelf,
         {
@@ -242,8 +237,6 @@ test(
         await chmod(codexDir, 0o755);
       }
 
-      // With the target writable again the same command converges, and the
-      // project's own value is still there.
       expectExit(
         await world.capshelf(project, ["update", "mcp/github", "--yes"]),
         0,
@@ -287,9 +280,8 @@ test(
       expectExit(await world.capshelf(project, ["init", "--data", shelf]), 0);
       expectExit(await world.capshelf(project, ["add", "mcp/github"]), 0);
 
-      // Both managed contributions are removed by hand, so apply has real
-      // work to do in each output. Without that the failing target is skipped
-      // as already-current and the test proves nothing.
+      // Both outputs need pending work, or the failing target is skipped as
+      // already-current and the test proves nothing.
       await writeFile(join(project, ".mcp.json"), `${PROJECT_MCP}\n`);
       await writeFile(
         join(project, ".codex", "config.toml"),
@@ -317,11 +309,8 @@ test(
             include: [".capshelf", ".mcp.json", ".codex"],
           },
         });
-        // "Commands that reconcile multiple fragment outputs preflight every
-        // target before writing any of them. If a later output swap fails,
-        // earlier swaps are rolled back" (docs/cli.md:449-457). A partial
-        // write leaves one runtime disagreeing with the lock, which is the
-        // failure the rule exists to prevent.
+        // A partial write leaves one runtime disagreeing with the lock, so
+        // earlier swaps must roll back when a later one fails.
         const failed = await world.capshelf(project, [
           "apply",
           "--yes",
@@ -342,7 +331,6 @@ test(
         await chmod(codexDir, 0o755);
       }
 
-      // With the target writable again the same command converges.
       expectExit(await world.capshelf(project, ["apply", "--yes"]), 0);
       const mcp = await readJson(join(project, ".mcp.json"));
       expect(Object.keys(servers(mcp)).sort()).toEqual([

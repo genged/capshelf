@@ -188,7 +188,6 @@ test(
         "owned state changed",
       );
 
-      // A required-absence selection is itself an assertion.
       await expect(
         captureOwnedState(world, {
           requiredAbsent: [join(repo, "README.md")],

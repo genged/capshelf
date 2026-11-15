@@ -57,7 +57,6 @@ import termios
 TERMINAL_ROWS = 24
 TERMINAL_COLUMNS = 80
 
-# How often the wait for raw mode re-checks the terminal, in seconds.
 RAW_POLL_INTERVAL = 0.02
 
 
@@ -113,10 +112,8 @@ def main() -> int:
     if answer and not pending:
         os.write(master, answer)
     if pending:
-        # Output is drained while waiting, so a chatty command cannot fill the
-        # terminal's buffer and block before it ever reaches its prompt. A
-        # command that exits without raw mode ends the wait; the answer is
-        # then undeliverable and is dropped.
+        # Drain output while waiting so a chatty command can't fill the terminal
+        # buffer and block before its prompt.
         while pending:
             ready, _, _ = select.select([master], [], [], RAW_POLL_INTERVAL)
             if ready:

@@ -13,11 +13,6 @@ import {
 } from "./command";
 import { type GitWorld, createGitWorld } from "./git";
 
-/**
- * Directory-name flavors for the path dimension of the environment matrix. The
- * actor workflow is identical in every flavor; only the directory the world
- * lives in changes.
- */
 export const PATH_FLAVORS = {
   plain: "stage",
   spaces: "stage with spaces",
@@ -27,25 +22,16 @@ export const PATH_FLAVORS = {
 export type PathFlavor = keyof typeof PATH_FLAVORS;
 
 export interface WorldOptions {
-  /**
-   * Declared extra environment inputs for one matrix cell. The baseline world
-   * carries the allowlist below and nothing else; a cell adds exactly the one
-   * input it is named for.
-   */
   env?: Readonly<Record<string, string>>;
   pathFlavor?: PathFlavor;
   /**
-   * Declared global Git settings for one matrix cell, as `section.key` (or
-   * `section.subsection.key`) pairs. The baseline world has an empty global
-   * config; a cell adds only the settings it is named for, so a failure names
-   * the user condition that caused it.
+   * A cell adds only the settings it is named for, so a failure names the user
+   * condition that caused it.
    */
   gitConfig?: Readonly<Record<string, string>>;
-  /** Applied to every command this world starts. */
   timeoutMs?: number;
 }
 
-/** The complete child environment of one world: every variable is set. */
 export interface WorldEnvironment {
   [name: string]: string;
 }
@@ -53,31 +39,24 @@ export interface WorldEnvironment {
 export interface CommandOptions {
   timeoutMs?: number;
   stdin?: string;
-  /** Extra inputs for one command, on top of the world environment. */
   env?: Readonly<Record<string, string>>;
-  /** Octal file-creation mask for this command, for example "077". */
   umask?: string;
 }
 
 export interface World {
   readonly name: string;
-  /** Temporary root; removed on success unless KEEP_E2E_TMP=1. */
   readonly root: string;
-  /** Where repositories live. Carries the path flavor of this cell. */
   readonly stage: string;
   readonly home: string;
   readonly binary: string;
   readonly env: Readonly<Record<string, string>>;
   readonly git: GitWorld;
-  /** Absolute path under this world's stage directory. */
   path(...parts: string[]): string;
-  /** Actor action: run the compiled capshelf executable. */
   capshelf(
     cwd: string,
     args: readonly string[],
     options?: CommandOptions,
   ): Promise<CommandResult>;
-  /** Actor action: run any other program, for example git. */
   run(
     cwd: string,
     command: readonly string[],
@@ -86,10 +65,9 @@ export interface World {
   describe(result: CommandResult, notes?: readonly string[]): string;
 }
 
-/** What the Git helper needs from a world. Keeps the two modules acyclic. */
+/** Narrow interface that keeps the world and Git modules acyclic. */
 export interface WorldRunner {
   readonly stage: string;
-  /** The world environment, so a helper can extend `PATH` for one command. */
   readonly env: Readonly<Record<string, string>>;
   path(...parts: string[]): string;
   run(
@@ -101,9 +79,8 @@ export interface WorldRunner {
 }
 
 /**
- * Per-test budget for a whole scenario, which runs many compiled commands and
- * real Git operations. This is a safety deadline, not a performance
- * assertion — Bun's 5 s default would fail slow filesystems, not defects.
+ * Safety deadline for a whole scenario, not a performance assertion; Bun's 5 s
+ * default would fail slow filesystems.
  */
 export const E2E_TEST_TIMEOUT_MS = 180_000;
 
@@ -114,10 +91,8 @@ export function shouldKeepWorlds(): boolean {
 }
 
 /**
- * Build the child environment from an allowlist rather than from
- * `process.env`. An inherited `CAPSHELF_HOME`, `CODEX_HOME`, `GIT_DIR`,
- * credential helper, or proxy setting would be an undeclared input, and the
- * test would stop describing the user it claims to describe.
+ * Allowlist rather than process.env: an inherited variable would be an
+ * undeclared input to the test.
  */
 function baseEnvironment(paths: {
   home: string;
@@ -139,17 +114,14 @@ function baseEnvironment(paths: {
     TZ: "UTC",
     TERM: "dumb",
     NO_COLOR: "1",
-    // On a terminal, capshelf asks Homebrew whether an update exists. Every
-    // world has a fresh HOME, so that check always misses its cache and runs
-    // a cold `brew`, which took 3 s per terminal command. It also made the
-    // lane depend on whether the host has Homebrew.
+    // Skip the Homebrew update check: a fresh HOME makes it run a cold `brew`
+    // every time and ties the lane to the host.
     CAPSHELF_NO_SELF_UPDATE: "1",
   };
 }
 
 /**
- * Render `section.key` / `section.subsection.key` pairs as a Git config file.
- * The subsection is everything between the first and last segment, so
+ * The subsection is everything between first and last segment, so
  * `url.https://example.invalid/.insteadOf` keeps its dots.
  */
 function renderGitConfig(entries: Readonly<Record<string, string>>): string {
@@ -195,9 +167,8 @@ export async function createWorld(
   await mkdir(xdgConfig, { recursive: true });
   await mkdir(xdgCache, { recursive: true });
   await mkdir(xdgData, { recursive: true });
-  // An explicit empty file, not /dev/null: every supported platform then has
-  // one real path, and a test that wants a named global setting can write to
-  // its own copy in its own world.
+  // An empty file rather than /dev/null gives every platform one real path a
+  // test can write to.
   await writeFile(gitConfig, renderGitConfig(options.gitConfig ?? {}));
 
   const env: WorldEnvironment = {
@@ -273,9 +244,8 @@ export async function destroyWorld(world: World): Promise<void> {
 }
 
 /**
- * Each test owns one world and cleans it up in `finally`. On failure the world
- * is described to stderr *before* cleanup, because CI deletes the evidence and
- * keeps only the log.
+ * Describe the world to stderr before cleanup, because CI deletes the evidence
+ * and keeps only the log.
  */
 export async function withWorld<T>(
   name: string,

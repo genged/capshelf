@@ -46,10 +46,6 @@ test(
     });
 
     await withWorld(SCENARIO, async (world) => {
-      // The third-party plugin repository: two plugins under one Claude
-      // catalog, one of them (heavy) holding a skill that reaches outside its
-      // own directory through the plugin-root variable and a backticked
-      // agent reference.
       const upstream = await world.git.createBareRemote("plugin-host");
       const upstreamWork = await world.git.createDataRepo({
         name: "plugin-host-work",
@@ -79,7 +75,6 @@ test(
         0,
       );
 
-      // List: both plugins, and the worker skill's exact facts.
       const listed = await world.capshelf(project, [
         "add",
         upstream.url,
@@ -103,8 +98,6 @@ test(
         WORKER_USES_PLUGIN_PARTS,
       );
 
-      // Refuse a plugin root at --path. Safe failure: the project, Git
-      // included, does not change.
       const beforeRefusal = await captureOwnedState(world, {
         projectFiles: project,
         projectGit: project,
@@ -128,8 +121,8 @@ test(
         "a plugin-root refusal at --path",
       );
 
-      // Install the one plugin skill. `--yes` authorizes the facts warning,
-      // which prints to stderr, never stdout, so `--json` still parses.
+      // The facts warning goes to stderr, never stdout, so `--json` output
+      // still parses.
       const installed = await world.capshelf(project, [
         "add",
         upstream.url,
@@ -153,16 +146,12 @@ test(
         asString(asObject(installPayload.plugin, "plugin").name, "plugin.name"),
       ).toBe("heavy");
 
-      // Independent observation: the skill directory installed, and the
-      // plugin's agent file did not come with it — "the skill directory
-      // only" (docs/cli.md, Remote skills).
       const installDir = join(project, ".agents", "skills", "worker");
       expect(await readFile(join(installDir, "SKILL.md"), "utf-8")).toBe(
         WORKER_SKILL,
       );
       expect(await readdir(installDir)).toEqual(["SKILL.md"]);
 
-      // The null second run: byte-stable, and strict status stays clean.
       const afterInstall = await captureOwnedState(world, {
         projectFiles: project,
         projectGit: project,
