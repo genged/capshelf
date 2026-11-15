@@ -1,9 +1,3 @@
-/**
- * Test coverage and Oxlint for the checkout. The latest run leads each
- * card; the runs inside the selected range draw a small step history once
- * there are two of them. A run measures the working tree now, so the card
- * names the commit and says when the tree had uncommitted changes.
- */
 import type { JSX } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import {
@@ -444,10 +438,6 @@ type HistoryKey = "lines" | "functions" | "errors" | "warnings";
 
 const MINI = { width: 320, height: 64, top: 6, bottom: 6, left: 2, right: 2 };
 
-/**
- * A small step chart of the runs inside the range, two series in the
- * card's own gray and ink so it never borrows the prod and test colors.
- */
 function MiniHistory({
   history,
   series,
@@ -480,7 +470,6 @@ function MiniHistory({
   const values = points.flatMap((point) =>
     series.map((entry) => point[entry.key]).filter((value) => value !== null),
   );
-  // Air above and below, so a flat series never lies on the baseline.
   const floor = unit === "percent" ? Math.min(...values) : 0;
   const ceiling = Math.max(...values);
   const air = (ceiling - floor || (unit === "percent" ? 0.01 : 1)) * 0.15;

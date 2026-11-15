@@ -1,8 +1,6 @@
 /**
- * Bundle the web UI client into `src/ui/generated/`, where `src/ui/assets.ts`
- * inlines it. `bun run build` and `bun run test` run this first, and
- * `postinstall` runs it after `bun install`, so a source run
- * (`bun run src/cli.ts`) always finds the files.
+ * Also runs on postinstall so a source run (`bun run src/cli.ts`) always finds
+ * the generated files.
  */
 import { mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";

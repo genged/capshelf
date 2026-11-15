@@ -1,13 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Refuse to publish when the tag no longer names the commit that was validated.
-#
-# The release gate approves one commit and every job builds that commit. A tag
-# can be moved in between, and the release about to be created would then
+# A tag can move after the gate approves a commit, and publishing then would
 # describe bytes nobody validated.
-#
-# Usage: require-unmoved-tag.sh <repository> <tag> <validated-sha>
 
 repository="${1:?repository is required, for example owner/name}"
 tag="${2:?tag is required}"
