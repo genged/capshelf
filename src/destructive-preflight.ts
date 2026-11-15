@@ -41,12 +41,10 @@ export interface PlannedDestruction {
 export async function planCopyDirectoryDestruction(opts: {
   project: string;
   /**
-   * Where the current entry's bytes are, or null when they cannot be read. The
-   * caller builds it, so an item whose root is not the canonical layout plans
+   * Built by the caller so an item whose root is not the canonical layout plans
    * against the tree it actually installs from.
    */
   currentSource: ContentSource | null;
-  /** Where the selected entry's bytes are, or null when they cannot be read. */
   selectedSource: ContentSource | null;
   manifest?: Manifest;
   kind: CopyDirectoryItemKind;
@@ -57,27 +55,21 @@ export async function planCopyDirectoryDestruction(opts: {
   selectedEntry: LockEntry;
   reviewCommand: string;
   /**
-   * PIN-8. `update` alone sets this: its target is the *selected* commit, so
-   * an unprovable previous pin is a thing to repair rather than a reason to
-   * refuse. Reading the previous entry here is classification, not target
-   * verification, so when it fails the plan is rebuilt against the selected
-   * entry — every installed file that differs from the incoming content is
-   * still reported as loss, and ignored local state is still preserved.
-   *
-   * `apply` and `revert` leave it unset: the previous entry *is* their
-   * target, so a failure to read it must reach the caller.
+   * Set by `update` and `lock migrate`: an unreadable previous pin is repaired
+   * by planning against the selected entry rather than refused. `apply` and
+   * `revert` leave it unset because the previous entry is their target, so a
+   * failure to read it must reach the caller.
    */
   repairUnresolvableCurrent?: boolean;
-  /** The command's read memo, for the data-repo content reads. */
   memo?: GitReadMemo;
 }): Promise<PlannedDestruction> {
   const readReconciliationFiles = async (
     entry: LockEntry,
     candidate: ContentSource | null,
   ) => {
-    // Inside the promise, deliberately: an unreadable current entry is what
-    // `repairUnresolvableCurrent` catches below, and a source that is missing
-    // is one way for it to be unreadable.
+    // Called inside the async function on purpose: a missing source then
+    // rejects like an unreadable current entry, which
+    // `repairUnresolvableCurrent` catches below.
     const source = requireContentSource(candidate, opts.kind, opts.name);
     return await copyDirectoryReconciliationFiles({
       project: opts.project,
@@ -118,19 +110,12 @@ export async function planCopyDirectoryDestruction(opts: {
     );
   }
 
-  // A system entry records what capshelf last wrote, not something it can read
-  // back: the binary carries one copy of the bundled tree, so once that content
-  // moves, the superseded bytes are gone. Per-file classification therefore
-  // compares the install against the *incoming* bundle, which would report
-  // every routine bundled update as managed-content loss.
-  //
-  // The aggregate question the entry can still answer is the one that matters:
-  // an install that still hashes to `currentEntry.sha` holds exactly the bytes
-  // capshelf wrote, so replacing them with a newer bundle destroys nothing. Any
-  // edit to a managed file changes that hash, so a real local change still
-  // reaches the consent boundary. This is the same comparison `status` uses to
-  // call an item drifted — capshelf prompts for a bundled update exactly when
-  // `status` says the install diverged.
+  // A system entry records only a hash, and the bundled bytes it described are
+  // gone once the bundle moves. Per-file classification against the incoming
+  // bundle would report every bundled update as loss. Instead, an install that
+  // still hashes to `currentEntry.sha` holds exactly what capshelf wrote and
+  // counts as pristine, as in `status` drift. Any edit changes the hash, so a
+  // real local change still reaches consent.
   const currentSource = requireContentSource(
     opts.currentSource,
     opts.kind,
@@ -149,11 +134,9 @@ export async function planCopyDirectoryDestruction(opts: {
     current.expected.map((file) => [file.path, file]),
   );
   const preservedPaths = new Set(current.preserved.map((entry) => entry.path));
-  // What the *selected* entry will write. Managed paths are still classified
-  // against the current entry — otherwise every routine content update would
-  // read as loss — but a path that is local state today and pinned by the
-  // selected entry really is destroyed by the write, and only the selected
-  // entry knows that.
+  // Managed paths are classified against the current entry to avoid reporting
+  // routine updates as loss, but only the selected entry knows a local-state
+  // path it pins will be destroyed.
   const selectedPaths =
     opts.currentEntry === opts.selectedEntry
       ? null
@@ -167,11 +150,9 @@ export async function planCopyDirectoryDestruction(opts: {
   for (const path of inventory.files) {
     seen.add(path);
     const fullPath = join(root, ...path.split("/"));
-    // D4: a kept ignored file is not destroyed, so its bytes are not part of
-    // what consent authorizes. The snapshot records its type only, so a cache
-    // write during the command does not fail it. A path the selected entry
-    // writes is destroyed, and a plugin manifest decides what runs, so both
-    // keep their digest.
+    // A kept ignored file is recorded by type only so cache writes don't
+    // invalidate consent; paths the selected entry writes and plugin manifests
+    // keep their digest because they are destroyed or decide what runs.
     if (
       preservedPaths.has(path) &&
       selectedPaths?.has(path) !== true &&
@@ -188,9 +169,6 @@ export async function planCopyDirectoryDestruction(opts: {
     snapshotParts.push(`copy:${fullPath}:${mode}:${contentDigest(content)}`);
     const expected = expectedByPath.get(path);
     if (expected) {
-      // PIN-6 stage 2, free here: both sides are already in memory. The
-      // classification explains what is being asked, and changes nothing about
-      // whether it is asked.
       const difference = classifyInstalledFile({
         path,
         installed: content,
@@ -225,9 +203,9 @@ export async function planCopyDirectoryDestruction(opts: {
     snapshotParts.push(
       await irregularSnapshotPart(root, object.path, object.type),
     );
-    // Preserved symlinks are carried across the replacement, so they are not
-    // destroyed. Anything else here was already refused by the reconciliation
-    // preflight above; listing it keeps the plan honest if that ever changes.
+    // Preserved symlinks survive replacement; unpreserved symlinks require
+    // consent because replacement deletes them. Reconciliation refuses other
+    // non-regular objects because replacement cannot recreate them.
     if (!preservedPaths.has(object.path)) {
       changes.push(
         copyChange(
@@ -247,11 +225,10 @@ export async function planCopyDirectoryDestruction(opts: {
       snapshotParts.push(`copy:${join(root, ...path.split("/"))}:missing`);
   }
   return {
-    // Only content claims are dropped: the sha witnesses bytes, so an
-    // executable-mode flip or an extra local path is still real loss the user
-    // has to authorize. `snapshotParts` is built from the installed tree in
-    // both cases, so `assertDestructivePlanUnchanged` still catches an edit
-    // made between the plan and the write.
+    // For a pristine bundled install only content claims are dropped, because
+    // its hash matching the entry's sha witnesses bytes alone. Mode flips and
+    // extra local paths stay real loss. `snapshotParts` still catches edits
+    // between plan and write.
     changes: pristineSystemInstall
       ? changes.filter((change) => change.reason !== "managed_content")
       : changes,
@@ -260,22 +237,14 @@ export async function planCopyDirectoryDestruction(opts: {
 }
 
 /**
- * Inventory every object that removal would delete, including ignored files
- * and symlinks.
- *
- * Untracking must not depend on the data repo. The locked file set is only
- * used to label a path as reproducible managed content rather than unique
- * local state, so when the source is unreachable — a deleted clone, a
- * garbage-collected or squash-orphaned `sourceCommit` — every installed path
- * degrades to `extra_local_path` and the user consents to the full deletion
- * list. Failing the command instead would strand the item: those are exactly
- * the situations where `rm` is what the user needs.
+ * Removal must not depend on the data repo: when the source is unreachable
+ * every path becomes `extra_local_path` and needs consent, since failing would
+ * strand the item.
  */
 export async function planCopyDirectoryRemoval(opts: {
   project: string;
   /**
-   * Where the entry's bytes are, or null when they cannot be read. Null is the
-   * degrade path described above, not an error: every installed path becomes
+   * Null means the bytes are unreadable: every installed path becomes
    * `extra_local_path`, is named in the prompt, and is deleted only with
    * consent.
    */
@@ -319,9 +288,9 @@ export async function planCopyDirectoryRemoval(opts: {
   );
   const seen = new Set<string>();
   const changes: DestructiveChange[] = [];
-  // D7: removal keeps a mounted volume and everything on it, so those paths
-  // are neither listed as loss nor read. The layout is part of the snapshot,
-  // so a mount attached or removed after consent refuses the write.
+  // Removal keeps mounted volumes, so mount paths are neither listed nor read,
+  // and the layout is snapshotted so a mount change after consent refuses the
+  // write.
   const layout = await readMountLayout(root);
   const snapshotParts: string[] = [`mounts:${[...layout.mounts].join(",")}`];
   const inventory = await inventoryLocalTree(root);
@@ -347,10 +316,8 @@ export async function planCopyDirectoryRemoval(opts: {
       changes.push(copyChange(opts, fullPath, "executable_mode"));
     }
   }
-  // Symlinks and other non-regular objects are deleted with the tree, so the
-  // user must see them. Recording a symlink's target in the snapshot — not a
-  // content digest, which a link does not have — is what lets
-  // assertDestructivePlanUnchanged notice a retarget between prompt and write.
+  // A symlink's target, not a content digest, is recorded in the snapshot so a
+  // retarget between prompt and write is detected.
   for (const object of inventory.irregular) {
     seen.add(object.path);
     if (isOnMount(layout, object.path)) continue;
@@ -393,9 +360,7 @@ export async function planSubagentDestruction(opts: {
   currentEntry: DataLockEntry;
   selectedEntry: DataLockEntry;
   reviewCommand: string;
-  /** PIN-8, as in `planCopyDirectoryDestruction`. */
   repairUnresolvableCurrent?: boolean;
-  /** The calling command's memo for reads at a full commit id. */
   memo?: GitReadMemo;
 }): Promise<PlannedDestruction> {
   const repairable =
@@ -410,11 +375,9 @@ export async function planSubagentDestruction(opts: {
     dryRun: true,
     memo: opts.memo,
   });
-  // The commit the installed bytes are compared against. Normally the previous
-  // pin, because that is what capshelf last wrote; when that pin cannot be
-  // resolved and the caller is repairing it, the selected commit — so a target
-  // that already holds the incoming bytes is not reported as loss and every
-  // other one still is.
+  // Compare against the previous pin, or the selected commit when that pin is
+  // unresolvable and being repaired, so a target already holding the incoming
+  // bytes isn't reported as loss.
   const basisEntry = repairable
     ? await subagentSourcesAtCommit(
         opts.project,
@@ -496,11 +459,9 @@ export function planFragmentDestruction(opts: {
         ...(reviewCommand && { reviewCommand }),
       });
     }
-    // Only `gate` targets reach the consent boundary. For strict-JSON targets
-    // the comments were already stopping the consuming tool from loading the
-    // file, so the rewrite repairs it — `applyFragmentOutputPlans` announces
-    // that instead of asking the user to authorize keeping it broken. See
-    // `commentLossPolicy`.
+    // Only `gate` targets need consent; for strict-JSON targets the comments
+    // already break loading, so the rewrite repairs it (see
+    // `commentLossPolicy`).
     if (plan.commentLoss && plan.commentPolicy === "gate") {
       changes.push({
         scope: "project",

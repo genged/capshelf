@@ -26,28 +26,14 @@ import {
 import type { InstalledTarget, PinTreeEntry } from "./pin";
 
 /**
- * True when this entry's identity is the committed tree (lock version 4)
- * rather than a hash of the data repo's working copy (versions 2 and 3).
- *
- * This is a question about the lock version, not about where the bytes come
- * from: `ContentSource` answers that one. It reads `source` only because a
- * system entry has no `sourcePinDigest` field to read.
- *
- * Comparisons must never mix the two identity models: they answer different
- * questions, and a silent mix would recreate exactly the disagreement version 4
- * removes.
+ * Never mix the two identity models in one comparison: they answer different
+ * questions, and a silent mix recreates the disagreement that lock version 4
+ * removed.
  */
 export function isTreePinned(entry: LockEntry): boolean {
   return entry.source === "data" && entry.sourcePinDigest !== undefined;
 }
 
-/**
- * Where each pinned entry of an item lands in the project.
- *
- * A copy-directory item installs its tree verbatim under one root. A subagent
- * has no single root: each canonical source is written to its own runtime
- * output file, so the mapping goes through `itemOutputTargets`.
- */
 export function installedTargetsForItem(
   project: string,
   kind: ItemKind,
@@ -73,8 +59,8 @@ export function installedTargetsForItem(
     }
     return targets;
   }
-  // Fragments are merged into shared outputs, so no installed file corresponds
-  // to a pinned source. Their installation axis is the contribution state.
+  // Fragments merge into shared outputs, so no installed file maps to a pinned
+  // source.
   return null;
 }
 
@@ -88,29 +74,17 @@ export type InstallationAxis =
 
 export interface InstallationReport {
   axis: InstallationAxis;
-  /** The installed tree's identity, in the pin's own shape. */
   currentSha: string | null;
-  /** The pin's identity at the commit that was read. */
   pinnedSha: string;
   differences: InstallDifference[];
-  /** Present but unpinned paths the project's own rules hide (S11). */
   hiddenExtras: string[];
   /**
-   * Present but unpinned paths the project sees in Git (row 3). `update` and
-   * `apply` delete them under consent, so `status` shows them (D12).
+   * `status` shows visible extras because `update` and `apply` delete them
+   * under consent.
    */
   visibleExtras: string[];
 }
 
-/**
- * The installation axis of PIN-6, in two stages.
- *
- * Stage 1 compares blob ids and reads **no Git objects**: the pinned ids came
- * from `ls-tree`, and the installed ids are computed from bytes already on
- * disk. A clean project settles here. Stage 2 fetches the pinned blobs for the
- * differing paths only — the same set `--diff` is about to render — and names
- * the kind of each difference.
- */
 export async function describeInstallation(
   project: string,
   source: GitTreeSource,
@@ -230,15 +204,9 @@ export async function describeInstallation(
 }
 
 /**
- * The unpinned paths inside a managed directory, split by the shared
- * visibility rule (`installedVisiblePaths`).
- *
- * S11: a hidden extra is one the project's own rules hide. Reconciliation
- * preserves it, so it is not drift, but an agent that loads a skill by
- * enumerating its directory reads it, which is why the axis says so.
- *
- * D12: a visible extra is row 3. Reconciliation deletes it under consent, so
- * `status` must not call the item clean while one exists.
+ * Hidden extras are preserved, so not drift, but still readable by agents
+ * enumerating the directory; visible extras get deleted under consent, so
+ * `status` must not call the item clean.
  */
 async function unpinnedExtraPaths(
   project: string,
@@ -273,13 +241,9 @@ async function unpinnedExtraPaths(
 }
 
 /**
- * The installed identity of a tree-pinned item, in the same shape as the pin,
- * so a clean install digests to exactly `entry.sourcePinDigest`.
- *
- * PIN-6 stage 1: this reads the installed files and names them with Git's own
- * blob-id formula. It reads **no Git objects at all**, because the pinned ids
- * came from `ls-tree`. Naming the *kind* of a difference is stage 2, and it
- * runs only for the paths already known to differ.
+ * Installed files are named with Git's own blob-id formula, and no blob is
+ * read, because the pinned ids come from ls-tree. A clean install therefore
+ * digests to exactly `entry.sourcePinDigest`.
  */
 export async function installedTreeIdentity(
   project: string,

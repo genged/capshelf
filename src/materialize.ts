@@ -97,9 +97,8 @@ export interface MaterializeHooks {
 }
 
 /**
- * A lock entry and the content source its bytes are read through. The two
- * travel together so a caller cannot hand one function an entry and another
- * entry's source.
+ * Entry and source travel together so a caller cannot pair one entry with
+ * another entry's source.
  */
 export interface SourcedEntry {
   entry: LockEntry;
@@ -110,68 +109,47 @@ export interface MaterializeOptions {
   project: string;
   source: ContentSource;
   manifest?: Manifest;
-  /**
-   * The item this writes. It used to be parsed out of `key`, which forced every
-   * writer to hold a capshelf lock key; a record kept in another document has
-   * none, and its identity key is not what selects the item.
-   */
   kind: ItemKind;
   name: string;
-  /** The row identity, carried into the result. */
   key: string;
   entry: LockEntry;
-  /** Previous lock snapshot used to distinguish stale managed paths from
-   * ignored local-only files while replacing a directory. */
   previous?: SourcedEntry;
   /**
-   * Lock scope the entry came from — not inferable from `entry.local`, which
-   * records intentional divergence. Local-scope installs are Git-excluded, so
-   * their current-state hashing must not consult project Git visibility.
+   * Lock scope the entry came from. It is not inferable from `entry.local`,
+   * which records intentional divergence. Local-scope installs are
+   * Git-excluded, so their current-state hashing must not consult project Git
+   * visibility.
    */
   scope: Scope;
   ignoreLocal?: boolean;
   dryRun?: boolean;
   hooks?: MaterializeHooks;
-  /** The command's read memo. Content reads at a full commit id reuse it. */
   memo?: GitReadMemo;
 }
 
 /**
- * Row 4 of the object-model table in `master.ts`: ignored local state under a
- * managed directory, carried across a directory replacement as-is. This is
- * deliberately not `NamedFile` — these paths never cross a Git boundary, so
- * they keep their real `stat` mode instead of collapsing to `100644`/`100755`,
- * and a symlink is recreated by target rather than refused. `NamedFile` stays
- * the Git-boundary type shared with merge-tree, promote, and the tree code.
+ * Not `NamedFile`: these paths never cross a Git boundary, so they keep real
+ * `stat` modes and symlinks are recreated by target rather than refused.
  */
 export type PreservedEntry =
   | {
       kind: "file";
       path: string;
-      /**
-       * Read only for a plugin consent point (`installedPreservedEntries`).
-       * A folder replacement moves the file by rename and never reads it.
-       */
       content?: Buffer;
     }
   | { kind: "symlink"; path: string; target: string };
 
 export interface CopyDirectoryReconciliationFiles {
-  /** Rows 1–3: managed content, Git modes, Git rules. */
   expected: NamedFile[];
-  /** Rows 4–5. */
   preserved: PreservedEntry[];
-  /** The pinned tree entries `expected` was read from; empty for a system item. */
   entries: readonly PinTreeEntry[];
 }
 
 export async function materializeLockEntry(
   opts: MaterializeOptions,
 ): Promise<MaterializeResult> {
-  // `key` answers "which row is this", and the caller answers "which item does
-  // this write". The name check moves with the second question: `parseLockKey`
-  // still validates the key it is given, but it no longer sees the name that
-  // reaches `installedPath`.
+  // The name check follows the caller-supplied item, since `parseLockKey`
+  // validates the key but no longer sees the name reaching `installedPath`.
   const { source: keySource } = parseLockKey(opts.key);
   const { kind, name } = opts;
   assertSafeItemName(name, `${kind} item`);
@@ -238,10 +216,8 @@ export async function materializeLockEntry(
       throw new Error(`system item no longer bundled: ${kind}/${name}`);
     }
     assertCanMaterializeInstalled(opts.project, kind, name);
-    // The one bundle-versus-lock check for a system item, and the reason
-    // `copyDirectoryReconciliationFiles` does not repeat it. Superseded bundled
-    // content is unrecoverable by design, so this cannot be repaired by
-    // retrying — say what the state is and name the command that re-pins it.
+    // Superseded bundled content is unrecoverable, so retrying cannot fix this;
+    // report the state and name the command that re-pins it.
     const sourceSha = await shaOfSystemItem(item);
     if (sourceSha !== opts.source.sha) {
       throw new Error(
@@ -262,16 +238,10 @@ export async function materializeLockEntry(
     memo: opts.memo,
   });
 
-  // PIN-5: the installed identity is filesystem work over the *managed* path
-  // set. It used to route through project Git, which meant an edit to the
-  // project's `.gitignore` could move an item's computed state and a
-  // `--local` item — deliberately listed in `.git/info/exclude` — hashed as if
-  // it were empty.
-  // Reported as `current:` next to `planned:`, so it names the install in the
-  // model of the entry the install was written from — the previous pin when
-  // there is one. Naming it in the incoming entry's model instead would make
-  // an untouched install look drifted for the ordinary reason that the
-  // upstream content changed.
+  // Identity is computed from the filesystem over the managed path set, not
+  // project Git, so `.gitignore` edits and `--local` excludes can't change it;
+  // it is named in the previous entry's model so an upstream content change
+  // doesn't look like drift.
   const before = await installedIdentityForEntry(
     dst,
     previous.entry,
@@ -311,15 +281,10 @@ export async function materializeLockEntry(
     await ensureInstallAliases(opts.project, kind, name);
   }
 
-  // The transactional writer verifies both selected managed bytes and copied-
-  // forward local bytes. The reported sha remains the selected lock sha;
-  // intentionally ignored local-only files are outside that content identity.
-  //
-  // `dataBeforeMatches` is the only convergence signal, deliberately: it byte-
-  // compares every expected and preserved path. Comparing the Git-visible
-  // installed sha against the lock sha instead would report permanent
-  // `would-reconcile` for any item whose managed content includes paths the
-  // project's own .gitignore hides, making --dry-run disagree with apply.
+  // Preserved files move by rename, so convergence checks their types and
+  // symlink targets rather than their bytes. Managed bytes and modes are
+  // compared directly so project ignore rules cannot make dry-run disagree
+  // with apply.
   const changed = !dataBeforeMatches;
   return {
     key: opts.key,
@@ -344,16 +309,6 @@ export async function materializeLockEntry(
   };
 }
 
-/**
- * The installed identity of a copy-directory item, expressed in whichever
- * model the entry itself uses, so `currentSha` and `plannedSha` in a report are
- * always comparable values rather than two different kinds of hash.
- *
- * Version 4 names the install the way Git names a tree — a blob id and mode per
- * pinned path — so a clean install digests to exactly `sourcePinDigest`.
- * Version 3 and system entries keep the legacy content hash over the same
- * managed path set.
- */
 async function installedIdentityForEntry(
   root: string,
   entry: LockEntry,
@@ -366,9 +321,6 @@ async function installedIdentityForEntry(
       hashWidthOf(content.entries),
     );
   }
-  // Legacy model: hash the managed paths that are actually present, which is
-  // what the version-3 install hash always did — an absent managed file simply
-  // does not participate, and the resulting mismatch is the drift signal.
   const present: Array<{ name: string; content: Buffer }> = [];
   for (const file of content.files) {
     const fullPath = join(root, ...file.path.split("/"));
@@ -400,24 +352,11 @@ export async function copyDirectoryReconciliationFiles(opts: {
     opts.memo,
   );
   const expected = content.files;
-  // Only a data entry carries a retrieval to verify: its files are read back
-  // from `sourceCommit`, so a mismatch means the retrieval returned the wrong
-  // bytes. A system entry has no retrieval — `filesForEntry` returns the
-  // running binary's bundled tree whatever the entry says — so comparing that
-  // tree to `entry.sha` does not check anything this function did. It asks
-  // whether the current bundle happens to be the one the entry pins, which is
-  // the caller's policy question: `materializeLockEntry` answers it above,
-  // before any write, and `planCopyDirectoryDestruction` must be able to plan
-  // against a superseded entry without it. `sameSourceContent` below states the
-  // same assumption for the previous-entry read.
-  //
-  // Two halves, deliberately: the source says a retrieval happened, and the
-  // entry says which recorded identity to check it against. A bundled source
-  // retrieves nothing, and a system entry records no source identity.
+  // System entries are not verified here: `filesForEntry` returns the running
+  // binary's bundled tree regardless of the entry, so comparing it to
+  // `entry.sha` checks no retrieval; `materializeLockEntry` enforces that
+  // policy before any write.
   if (isGitTree(opts.source) && opts.entry.source === "data") {
-    // The entries were read by the call above and cached with the bytes, so
-    // verification adds no subprocess: version 4 digests what is already in
-    // hand, and version 3 hashes the bytes it already holds.
     assertSourceMatchesEntry(
       opts.kind,
       opts.name,
@@ -432,18 +371,12 @@ export async function copyDirectoryReconciliationFiles(opts: {
     return { expected, preserved: [], entries: content.entries };
   }
 
-  // Reading the previous tree is one `git ls-tree` plus one `git show` per
-  // file. `apply` and `revert` always pass the same entry twice, so aliasing
-  // rather than re-reading removes half the source reads on those paths.
-  //
-  // PIN-8: the previous entry is not this function's target — it only names
-  // which installed paths were managed before, so ignored local state can be
-  // told apart from stale managed content. An unresolvable previous pin (a
-  // garbage-collected commit, a contradictory digest) therefore degrades to
-  // "nothing was managed before" rather than failing the command that is
-  // trying to replace it. The consequence is that a stale managed path the
-  // project ignores is preserved instead of deleted, which is the safe
-  // direction, and every Git-visible one still reaches the consent boundary.
+  // The previous entry only names which installed paths were managed before, so
+  // ignored local state can be told apart from stale managed content. An
+  // unresolvable previous pin therefore degrades to 'nothing was managed
+  // before' and does not block the command replacing it. A stale managed path
+  // that the project ignores is preserved, not deleted. Every Git-visible one
+  // still reaches the consent boundary.
   const previous = sameContentSource(opts.source, opts.previous.source)
     ? expected
     : await itemContentForSource(
@@ -458,9 +391,8 @@ export async function copyDirectoryReconciliationFiles(opts: {
         () => [],
       );
   const previousPaths = new Set(previous.map((file) => file.path));
-  // PIN-5's set operation. The pinned path set is always managed — an ignore
-  // rule cannot hide a pinned path or change its drift result — so only the
-  // *extras* are classified, and only they can be owned by the user.
+  // Pinned paths are always managed, since an ignore rule cannot hide them, so
+  // only extras are classified as possibly user-owned.
   const managedPaths = new Set([
     ...expected.map((file) => file.path),
     ...previousPaths,
@@ -500,11 +432,8 @@ export async function copyDirectoryReconciliationFiles(opts: {
 }
 
 /**
- * Row 4 and row 5 of an installed directory: the local paths that a
- * directory replacement carries across. `managedPaths` are the pinned paths
- * of the old and the new tree. A path outside them that the project does not
- * see in Git is kept, and so is the metadata sidecar. Refuses a fifo, socket,
- * or device node, because a replacement cannot put one back.
+ * Refuses a fifo, socket, or device node because a directory replacement cannot
+ * put one back.
  */
 export async function preservedLocalEntries(opts: {
   project: string;
@@ -526,7 +455,6 @@ async function classifyInstalledEntries(opts: {
   managedPaths: ReadonlySet<string>;
   scope: Scope;
   readContent?: boolean;
-  /** The files the write installs. See `installedVisiblePaths`. */
   incoming?: readonly NamedFile[];
 }): Promise<{ preserved: PreservedEntry[]; installedPaths: string[] }> {
   const inventory = await inventoryLocalTree(opts.dst);
@@ -548,7 +476,7 @@ async function classifyInstalledEntries(opts: {
   for (const path of inventory.files) {
     // Row 5: the sidecar is excluded from hashing and materialization
     // everywhere, so it is carried across regardless of Git visibility. Every
-    // other Git-visible extra is row 3, drift the caller reconciles away.
+    // other Git-visible extra is row 3 drift, which the caller reconciles away.
     if (!isMetadataSidecarPath(path) && visibleExtras.has(path)) continue;
     if (opts.managedPaths.has(path)) continue;
     preserved.push({
@@ -560,9 +488,9 @@ async function classifyInstalledEntries(opts: {
     });
   }
   for (const object of inventory.irregular) {
-    // A non-recreatable object is refused whatever its ignore status: a
-    // directory replacement cannot put a fifo, socket, or device node back,
-    // and deleting one silently is not a thing consent can authorize.
+    // Non-recreatable objects are refused regardless of ignore status: a
+    // replacement cannot restore them and consent cannot authorize silent
+    // deletion.
     if (object.type !== "symlink") {
       throw new PreconditionError(
         `${opts.dst} contains an unsupported filesystem object: ${object.path}; fifos, sockets, and device nodes cannot be recreated by a directory replacement`,
@@ -571,8 +499,8 @@ async function classifyInstalledEntries(opts: {
         },
       );
     }
-    // A Git-visible symlink is an extra the project owns through its own
-    // policy, so reconciliation removes it (row 3) rather than carrying it.
+    // A Git-visible symlink is owned by the project's own policy, so
+    // reconciliation removes it instead of carrying it across.
     if (visibleExtras.has(object.path)) continue;
     if (opts.managedPaths.has(object.path)) continue;
     const fullPath = join(opts.dst, ...object.path.split("/"));
@@ -587,10 +515,10 @@ async function classifyInstalledEntries(opts: {
 }
 
 /**
- * D5: a replacement around a mount cannot delete a path on the mounted
- * volume. So a path there that the write would delete refuses before
- * consent: a Git-visible extra, or a path the previous version managed.
- * A managed path that the new version writes there refuses too.
+ * A replacement around a mount cannot delete a path on the mounted volume. So a
+ * path there that the write would delete refuses before consent: a Git-visible
+ * extra, or a path the previous version managed. A managed path that the new
+ * version writes there refuses too.
  */
 async function assertNothingToDeleteOnMount(opts: {
   dst: string;
@@ -621,11 +549,6 @@ async function assertNothingToDeleteOnMount(opts: {
   );
 }
 
-/**
- * `preservedLocalEntries` for an installed item, or none when its folder is
- * missing. A plugin consent point reads these with the new pinned files: the
- * write keeps them, so they are part of the tree Claude Code loads.
- */
 export async function installedPreservedEntries(opts: {
   project: string;
   kind: CopyDirectoryItemKind;
@@ -636,9 +559,9 @@ export async function installedPreservedEntries(opts: {
   const dst = installedPath(opts.project, opts.kind, opts.name);
   if (!existsSync(dst)) return [];
   const entries = await preservedLocalEntries({ ...opts, dst });
-  // The plugin runs reader needs the bytes of kept files, but only for a
-  // plugin. A skill with no manifest path anywhere is not one, so its
-  // ignored state (a whole node_modules) is not read.
+  // Kept-file bytes are read only for a plugin, or for an item with a plugin
+  // manifest path. A skill with no manifest path anywhere is not one, so its
+  // ignored state (e.g. node_modules) is not read.
   const mayBePlugin =
     opts.kind === "plugins" ||
     [...opts.managedPaths, ...entries.map((entry) => entry.path)].some((path) =>
@@ -680,9 +603,9 @@ export async function assertNoPreservedPathCollisions(opts: {
 
 /**
  * The managed file set a lock entry selects, without touching the project.
- * Removal planning needs it to tell managed content apart from local state,
- * but must not depend on the reconciliation preflight: `rm` has to work when
- * the data repo is gone or the source commit was garbage-collected.
+ * Removal planning needs it to tell managed content from local state. It must
+ * not depend on the reconciliation preflight, because `rm` has to work when the
+ * data repo is gone or the source commit was garbage-collected.
  */
 export async function lockedCopyDirectoryFiles(opts: {
   source: ContentSource;
@@ -696,17 +619,8 @@ export async function lockedCopyDirectoryFiles(opts: {
 }
 
 /**
- * Item content at a commit, memoized for the life of the process.
- *
- * A commit's tree is immutable and content-addressed, so a second read can
- * only ever return the same bytes. Without this, one `apply` reads the whole
- * source tree once per plan/revalidate/materialize pass and once per planner
- * within each — one `git ls-tree` plus one `git show` per file, every time.
- * The local filesystem is deliberately NOT cached: revalidation exists to
- * notice that it changed.
- *
- * Peak memory becomes the managed content one command touches rather than one
- * item's worth; for the item kinds capshelf manages that is kilobytes.
+ * Memoized per process because a commit's tree is immutable; the local
+ * filesystem is deliberately not cached since revalidation must see changes.
  */
 const atCommitFiles = new Map<string, CommitItemContent>();
 
@@ -727,12 +641,8 @@ interface CommitItemContent {
 }
 
 /**
- * PIN-3: one `ls-tree` for the entries, one `cat-file --batch` for the bytes.
- *
- * `cat-file` reads objects directly and applies no smudge filter, so what
- * lands in the project is exactly what the commit holds — and, because `add`
- * now comes through here too, byte-identical to what `apply` writes by
- * construction rather than by agreement.
+ * `cat-file` applies no smudge filter, so installed bytes are exactly what the
+ * commit holds, identical for `add` and `apply`.
  */
 async function readItemContentAtCommit(
   source: GitTreeSource,
@@ -742,20 +652,16 @@ async function readItemContentAtCommit(
   hooks?: MaterializeHooks,
   memo?: GitReadMemo,
 ): Promise<CommitItemContent> {
-  // The item root is part of the key, so a read at a root other than the
-  // canonical one cannot collide with a canonical read of the same commit.
   const cacheKey = `${source.repo}\0${source.commit}\0${source.itemRoot}`;
   const cached = atCommitFiles.get(cacheKey);
   if (cached) {
-    // Hooks still fire on a cache hit: they are how the transaction tests
-    // inject a failure at a specific source read, and skipping them would
-    // make a cached pass behave differently from a cold one.
+    // Hooks still fire on cache hits because transaction tests inject failures
+    // through them, and a cached pass must behave like a cold one.
     for (const [index, entry] of cached.entries.entries()) {
       await hooks?.beforeSourceRead?.(entry.repoRelPath, index);
     }
-    // A fresh array per caller, on both the hit and the miss path: the entries
-    // are immutable content, but callers own their list and one of them
-    // sorting in place must not reorder another's.
+    // Return a fresh array per caller so in-place sorting by one caller cannot
+    // reorder another's.
     return { entries: [...cached.entries], files: [...cached.files] };
   }
 
@@ -790,14 +696,9 @@ async function readItemContentAtCommit(
 }
 
 /**
- * The one place a data entry's recorded identity is checked against what the
- * repository actually holds.
- *
- * Version 4 compares the committed tree's `sourcePinDigest` — no file content
- * is read to answer it, and no working-tree state can change the answer.
- * Version 3 keeps the legacy working-tree hash so a project that has not run
- * `lock migrate` can still `apply`; the two are never mixed, because a lock
- * file carries exactly one of them.
+ * v4 compares the committed tree's `sourcePinDigest` so no working-tree state
+ * can affect it; v3 keeps the legacy hash so projects that haven't run `lock
+ * migrate` can still apply.
  */
 function assertSourceMatchesEntry(
   kind: CopyDirectoryItemKind,
@@ -849,9 +750,8 @@ async function materializeCopyDirectory(
         await chmod(out, mode);
         await hooks?.afterStagedChmod?.(file.path, index);
       }
-      // Row 4 moves by rename after the old folder is set aside, so its bytes
-      // are never read. A unit is a whole folder when nothing in it is
-      // managed, visible, or mounted.
+      // A folder with nothing managed, visible, or mounted is moved whole by
+      // rename, so its bytes are never read.
       const inventory = existsSync(dst)
         ? await inventoryLocalTree(dst)
         : { files: [], irregular: [] };
@@ -914,11 +814,6 @@ async function materializeCopyDirectory(
   }
 }
 
-/**
- * The managed files a content source selects. The repository, the commit, and
- * the root are inside the source, so an ambient `dataRepo` argument can no
- * longer disagree with the entry that named it.
- */
 async function itemContentForSource(
   source: ContentSource,
   kind: CopyDirectoryItemKind,
@@ -941,9 +836,6 @@ async function itemContentForSource(
   if (!item || item.kind !== kind) {
     throw new Error(`system item no longer bundled: ${kind}/${name}`);
   }
-  // A system item has no commit and therefore no tree entries: its identity
-  // stays the bundled `sha`, checked by `materializeLockEntry` before any
-  // write.
   return {
     entries: [],
     files: item.files
@@ -982,10 +874,9 @@ function throwMissingCommit(
 }
 
 /**
- * PIN-8. `apply` and `revert` take the locked commit as their target, so they
- * cannot repair a pin that commit does not support: consent cannot create
- * missing bytes or choose between two contradictory identities. `update`
- * selects a new commit, which is a verified target, so it can.
+ * `apply` and `revert` target the locked commit and cannot repair an unprovable
+ * pin, since consent cannot create missing bytes; `update` selects a new
+ * verified commit and can.
  */
 function unprovablePinGuidance(
   kind: CopyDirectoryItemKind,
@@ -1025,10 +916,7 @@ async function installedFilesMatch(opts: {
   const unknown = [
     ...inventory.files,
     ...inventory.irregular.map((object) => object.path),
-  ].filter(
-    // The sidecar is catalog data, never managed content and never drift.
-    (path) => !knownPaths.has(path) && !isMetadataSidecarPath(path),
-  );
+  ].filter((path) => !knownPaths.has(path) && !isMetadataSidecarPath(path));
   const visibleUnknown = await installedVisiblePaths({
     project: opts.project,
     root,
@@ -1053,9 +941,10 @@ async function installedFilesMatch(opts: {
   if (!namedFilesEqual(current, expected)) return false;
 
   // Row 4 moves by rename, which keeps the bytes, so a byte compare proves
-  // nothing. A kept path must keep its type. One the user deleted is gone.
-  // The walk above already read each type, so a kept path needs no lstat of
-  // its own: an ignored tree can hold many thousands of files.
+  // nothing. A kept path must keep its type, and a symlink must keep its
+  // target. A folder at the path fails the check. One the user deleted is gone.
+  // The walk above already read each type, so a kept path needs no lstat of its
+  // own: an ignored tree can hold many thousands of files.
   const types = new Map<string, string>([
     ...inventory.files.map((path): [string, string] => [path, "file"]),
     ...inventory.irregular.map((object): [string, string] => [
@@ -1067,7 +956,6 @@ async function installedFilesMatch(opts: {
     const fullPath = join(root, ...entry.path.split("/"));
     const type = types.get(entry.path);
     if (type === undefined) {
-      // Gone, or a folder now: the walk lists files and links, not folders.
       if ((await lstatOrNullAsync(fullPath))?.isDirectory() === true) {
         return false;
       }
