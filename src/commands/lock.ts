@@ -158,6 +158,28 @@ async function runMigrate(
   const manifest = await loadManifest(project);
   const snapshots = await readLockSnapshots(project);
 
+  const givenFlags = [
+    ...(opts.repin !== undefined ? ["--repin"] : []),
+    ...(opts.removeItem !== undefined ? ["--remove-item"] : []),
+  ];
+  if (
+    givenFlags.length > 0 &&
+    snapshots.every(
+      (snapshot) =>
+        snapshot.lock.version === 4 || snapshot.lock.version === LOCK_VERSION,
+    )
+  ) {
+    const state = snapshots.every((snapshot) => isWritableLock(snapshot.lock))
+      ? `already version ${LOCK_VERSION}`
+      : "version 4";
+    throw new PreconditionError(
+      `${givenFlags.join(" and ")} cannot apply: the locks are ${state}. The flags apply only when a version 2 or 3 migration is blocked.`,
+      {
+        hint: `To remove an item, run \`${PRODUCT_NAME} rm <ref>\`. To move its pin, run \`${PRODUCT_NAME} update <ref>\`.`,
+      },
+    );
+  }
+
   if (snapshots.every((snapshot) => isWritableLock(snapshot.lock))) {
     if (opts.json) {
       console.log(
@@ -377,6 +399,7 @@ async function planMigration(input: {
   const blocked: Blocker[] = [];
   const changes: DestructiveChange[] = [];
   const candidates = new Map<MigrationScope, WritableLock>();
+  const matched = new Set<string>();
 
   for (const snapshot of input.snapshots) {
     const candidate: WritableLock = { version: LOCK_VERSION, items: {} };
@@ -390,6 +413,7 @@ async function planMigration(input: {
       const parsed = parseLockKey(key);
       const ref = `${parsed.kind}/${parsed.name}`;
       const scopedRef = `${snapshot.scope}/${ref}`;
+      matched.add(ref).add(scopedRef);
 
       if (
         input.selection.remove.has(ref) ||
@@ -430,6 +454,24 @@ async function planMigration(input: {
       }
     }
     candidates.set(snapshot.scope, candidate);
+  }
+
+  const unmatched = [
+    ...[...input.selection.repin]
+      .filter((ref) => !matched.has(ref))
+      .map((ref) => `--repin ${ref}`),
+    ...[...input.selection.remove]
+      .filter((ref) => !matched.has(ref))
+      .map((ref) => `--remove-item ${ref}`),
+  ];
+  if (unmatched.length > 0) {
+    throw new PreconditionError(
+      unmatched
+        .sort()
+        .map((flagRef) => `${flagRef} matches no lock entry`)
+        .join("\n"),
+      { hint: "Check the ref with `capshelf ls`." },
+    );
   }
 
   // Strict-parse both complete candidates before anything is published. A

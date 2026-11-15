@@ -1656,6 +1656,12 @@ pass and nothing is written. Three explicit choices resolve one:
   source, through the ordinary consent boundary;
 - `--remove-item <ref>` drops the entry.
 
+`--repin` and `--remove-item` apply only to a version 2 or 3 migration. On a
+version 4 or 5 lock, capshelf refuses them with exit 3 and writes nothing,
+also with `--dry-run`. Use `capshelf rm <ref>` to remove an item. Use
+`capshelf update <ref>` to move its pin. A ref that matches no lock entry is
+also refused with exit 3, and nothing is written.
+
 A re-pin moves a pin to new content, so it asks plugin consent the way
 `update` does (point 2). It compares the installed folder with the new tree
 and the ignored local files that the write keeps. With no terminal or with
