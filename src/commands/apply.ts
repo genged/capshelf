@@ -99,9 +99,7 @@ interface ApplyError {
   name: string;
   action: "error";
   error: string;
-  /** A `CliError` hint, printed under the error. */
   hint?: string;
-  /** A `CliError` exit code. Not printed. */
   exitCode?: number;
 }
 
@@ -115,11 +113,7 @@ interface ApplyExternalSkip {
   message: string;
 }
 
-/**
- * A remote skill's row. `MaterializeResult.source` is an `ItemSource`, which a
- * remote row is not, so the reporting row is its own variant rather than a
- * widening of the writer's result type.
- */
+/** Separate variant because a remote row is not an `ItemSource`. */
 interface ApplyRemoteResult {
   scope: "local";
   key: string;
@@ -147,7 +141,6 @@ interface ApplyPreflightInput {
   localLock: Lock;
   dataRepo: string | undefined;
   targets: ScopedTarget[];
-  /** Remote skills, resolved outside the capshelf locks by A3. */
   remoteTargets: RemoteApplyTarget[];
   remotes: RemotesLock;
   externalSkillNames: Set<string>;
@@ -187,10 +180,9 @@ export function registerApply(program: Command): void {
           await loadProjectContext({ cmd });
         assertNoScopeCollisions(projectLock, localLock, "applying");
         const remotes = await loadRemotesLock(project);
-        // A remote row is resolved before the shared resolver runs: passing a
-        // ref it cannot see would throw `not tracked in this project`. Every
-        // remote row is local scope by D5, and `apply` has no project-only
-        // flag, so a bare run and `--local` both include them.
+        // Resolve remote rows before the shared resolver, which would throw
+        // `not tracked in this project` for them; they are local scope, so a
+        // bare run and `--local` both include them.
         const remoteTargets: RemoteApplyTarget[] = (
           itemRef === undefined
             ? Object.keys(remotes.items)
@@ -275,12 +267,9 @@ export function registerApply(program: Command): void {
           }
           return;
         }
-        // All-or-nothing only for fragment targets: they share output files
-        // (.claude/settings.json, .mcp.json, .codex/config.toml), so a
-        // partial write leaves the runtime diverged from the lock.
-        // Independent copy items share nothing, so one stale pin must not
-        // cost the project `apply` — including self-healing of the bundled
-        // system items.
+        // Only fragment targets are all-or-nothing, since they share output
+        // files and a partial write diverges the runtime from the lock; copy
+        // items are independent.
         const fragmentPreflightFailed = preflight.results.some(
           (result) =>
             result.action === "error" && isFragmentKindName(result.kind),
@@ -290,8 +279,8 @@ export function registerApply(program: Command): void {
             project,
             dataRepo,
             dryRun: false,
-            // Nothing ran, so reporting the preflight's `would reconcile`
-            // previews as if they were outcomes would be a lie.
+            // Show only the errors: nothing ran, so `would reconcile` previews
+            // would misreport outcomes.
             results: preflight.results.filter(
               (result) => result.action === "error",
             ),
@@ -406,11 +395,6 @@ export function registerApply(program: Command): void {
               `no apply strategy for ${parsed.kind}/${parsed.name}`,
             );
           }
-          // D2 guard 5: before the write loop replaces this folder. Outside
-          // the per-item `try` below, mirroring the skills.sh check above —
-          // an explicit `apply <ref>` refuses (exit 3 through
-          // `PreconditionError`); a bare sweep records the item as failed
-          // and converges the rest.
           if (installsAtSkillTarget(parsed.kind)) {
             try {
               await assertSkillTargetFree(
@@ -499,17 +483,12 @@ export function registerApply(program: Command): void {
           }
         }
 
-        // A remote row converges to the pin the user already accepted, so
-        // `apply` never re-consents: A9 covers a pin *move*, and this is not
-        // one. The destructive plan above still gated any local loss.
+        // A remote row converges to a pin the user already accepted, so no
+        // re-consent; the destructive plan still gates local loss.
         for (const target of remoteTargets) {
           const entry = remotes.items[target.key]!;
-          // The same external-ownership boundary the shelf loop applies above.
-          // A remote row installs to `.agents/skills/<name>`, the same path
-          // skills.sh writes, and skills.sh can claim a name after the pull —
-          // `add <url>` only checks at install time. Reconciling regardless
-          // would overwrite another tool's content, which is the one thing the
-          // no-co-management rule forbids.
+          // skills.sh can claim the name after the pull, and reconciling anyway
+          // would overwrite another tool's content.
           const external = externalSkillNames.has(target.name)
             ? await findSkillsShSkill(project, target.name)
             : null;
@@ -525,8 +504,6 @@ export function registerApply(program: Command): void {
             });
             continue;
           }
-          // D2 guard 5, as the shelf loop applies it: an explicit ref refuses
-          // with exit 3, and a sweep records the row as failed.
           try {
             await assertSkillTargetFree(
               project,
@@ -613,16 +590,9 @@ export function registerApply(program: Command): void {
 }
 
 /**
- * Write every fragment output as one transaction.
- *
- * Fragment outputs share files, so a write that fails after an earlier write
- * succeeded leaves one runtime disagreeing with the lock. One
- * `applyFragmentOutputPlans` call over all the plans rolls the earlier writes
- * back (docs/cli.md:449-457); a call per target cannot, because each call is
- * its own transaction.
- *
- * The failure is returned as a result row, not raised, so `apply --json` keeps
- * its `items` array and the command keeps exit 1 (docs/cli.md:253).
+ * Apply all fragment outputs in one `applyFragmentOutputPlans` call so a
+ * failure rolls earlier writes back; the error is returned as a row so `--json`
+ * keeps its `items` and exit 1.
  */
 async function reconcileFragmentTargets(input: {
   memo: GitReadMemo;
@@ -654,14 +624,12 @@ async function reconcileFragmentTargets(input: {
       results.push(fragmentApplyError(target, error));
     }
   }
-  // A target that cannot be planned stops the batch. The outputs are
-  // reconciled together, so writing the rest would leave the set half applied.
+  // Stop the batch on an unplannable target: outputs reconcile together, so
+  // writing the rest would leave the set half applied.
   if (planFailed) return results;
 
-  // The plan whose write is in flight, so the failure names the target that
-  // produced it. The preflight read inside `applyFragmentOutputPlans` runs
-  // before the first write, so it can fail with no plan in flight; report that
-  // one under the first target, as `update` does.
+  // The preflight read can fail before any plan is in flight; report that under
+  // the first target, as `update` does.
   let attempted: FragmentTarget | undefined;
   try {
     const applied = await applyFragmentOutputPlans(plans, {
@@ -689,7 +657,6 @@ async function planApplyPreflight(
   const fragmentTargets = new Set<FragmentTarget>();
   const fragmentItems = new Map<FragmentTarget, Set<string>>();
 
-  // Every data item reads its blobs at its pin. One read covers them all.
   if (input.dataRepo !== undefined) {
     await prefetchItemBlobs(
       input.dataRepo,
@@ -792,13 +759,9 @@ async function planApplyPreflight(
             path: applied.paths.join(", "),
             sha: before,
             currentSha: before,
-            // Deliberately not `entryIdentity(entry)`. `currentSha` is a
-            // legacy content hash of the installed files, and every apply
-            // result keeps the pair in one scheme so a consumer can compare
-            // them; a v4 pin digest here would always look different, even for
-            // `already-current`. Under v4 this is simply absent — a real gap,
-            // recorded in local/TODO.md, whose fix is a hash of the desired
-            // bytes (`shaOfSubagentAtCommit`), not the pin.
+            // Deliberately not `entryIdentity(entry)`: `currentSha` is a legacy
+            // content hash, so a pin digest here would never match it, even for
+            // `already-current`.
             plannedSha: entry.sha,
             dryRun: true,
           }),
@@ -926,16 +889,13 @@ async function planApplyPreflight(
     snapshotParts.push(...planned.snapshotParts);
   }
 
-  // Remote skills, after the shelf pass. Their bytes are in the clone cache,
-  // so the planner takes a git-tree source at the recorded subpath: before the
-  // caller supplied one it would have planned against `skills/<name>` in the
-  // cache, which is a different tree or no tree at all.
+  // Remote bytes live in the clone cache, so plan against a git-tree source at
+  // the recorded subpath, not `skills/<name>`.
   for (const target of input.remoteTargets) {
     const entry = input.remotes.items[target.key]!;
     try {
-      // D2 guard 5 before the plan: another owner's content must not enter
-      // this row's destructive plan, and an explicit ref refuses before any
-      // prompt.
+      // Check before planning so another owner's content never enters the
+      // destructive plan, and an explicit ref refuses before any prompt.
       await assertSkillTargetFree(
         input.project,
         target.kind,
@@ -981,8 +941,6 @@ async function planApplyPreflight(
       changes.push(...planned.changes);
       snapshotParts.push(...planned.snapshotParts);
     } catch (error) {
-      // A named target's failure is the command's failure, the way a
-      // skills.sh-owned name is. A sweep records it and converges the rest.
       if (input.explicit) throw error;
       results.push({
         scope: "local",
@@ -1005,7 +963,6 @@ async function planApplyPreflight(
   };
 }
 
-/** The cache tree a remote row reads, or the refusal that names the fetch. */
 function remoteApplySource(
   kind: RemoteItemKind,
   name: string,
@@ -1091,8 +1048,8 @@ function printApplyOutput(opts: {
     return;
   }
   printApplyResults(opts.results);
-  // Once per run, not per item: the marker is now cleared by exactly one
-  // command, so a project with several marked items should say so once.
+  // Say it once per run: one command clears the marker, so several marked items
+  // shouldn't repeat it.
   const keptLocal = opts.results.filter(
     (result) => result.action === "kept-local",
   );

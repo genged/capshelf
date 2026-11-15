@@ -69,19 +69,13 @@ export function registerSearch(program: Command): void {
     .description(
       "search available items (data repo + system) by name, tags, description, and content",
     )
-    .option(
-      "-k, --kind <kind>",
-      // Derived, not hand-copied: the copied list silently omitted `subagents`.
-      `filter by kind (${ITEM_KINDS.join("|")})`,
-    )
+    .option("-k, --kind <kind>", `filter by kind (${ITEM_KINDS.join("|")})`)
     .option("--json", "output JSON")
     .action(async (queryParts: string[], opts: SearchOptions, cmd: Command) => {
       const kind = opts.kind ? parseItemKind(opts.kind) : undefined;
       const query = queryParts.join(" ");
       const terms = splitTerms(query);
 
-      // Browse-only: works inside a project or anywhere with --data /
-      // $CAPSHELF_HOME, so a shelf can be searched before it is adopted.
       const project = findProjectRoot();
       const manifest = project ? await loadManifest(project) : null;
       const dataRepo = await resolveDataRepo({
@@ -141,11 +135,9 @@ export function registerSearch(program: Command): void {
         ),
       );
 
-      // Bundles score with the same weights: name 8 / tags 4 / description 2,
-      // and member refs as the content field (weight 1) via a synthetic
-      // SearchableItem — `search postgres` surfaces the bundle delivering
-      // mcp/postgres-local. Suppressed under --kind (bundles are not a kind);
-      // malformed bundles are excluded (read path warns).
+      // Bundles score via a synthetic SearchableItem with member refs as
+      // content, so `search postgres` surfaces the bundle delivering
+      // mcp/postgres-local.
       const bundleResults: BundleSearchResult[] = [];
       if (!kind) {
         const listing = await listBundles(dataRepo);
@@ -201,8 +193,8 @@ export function registerSearch(program: Command): void {
                   ...(match.file !== undefined && { file: match.file }),
                 })),
               })),
-              // Append-only: `results` stays items-only (no new `source`
-              // enum value); bundles ride a sibling top-level key.
+              // Bundles go in a sibling key so `results` stays items-only and
+              // existing JSON consumers don't break.
               ...(bundleResults.length > 0 && {
                 bundles: bundleResults.map((result) => ({
                   name: result.bundle.name,
@@ -228,8 +220,6 @@ export function registerSearch(program: Command): void {
         return;
       }
 
-      // Zero matches exit 0: search is a query, not a lookup — an empty
-      // shelf-section is a valid answer.
       const total = results.length + bundleResults.length;
       if (total === 0) {
         console.log("(no matches)");
@@ -238,8 +228,6 @@ export function registerSearch(program: Command): void {
       const plural = total === 1 ? "match" : "matches";
       console.log(`${total} ${plural} in ${homeRelative(dataRepo)} (+ system)`);
       console.log("");
-      // One ranked list: bundles interleave with items by score, name as the
-      // deterministic tie-break.
       const rows: Array<
         | { type: "item"; score: number; name: string; item: SearchResult }
         | {
@@ -296,9 +284,8 @@ function systemContentFiles(item: SystemItem): SearchContentFile[] {
 }
 
 /**
- * Content files for a data item, read from the data repo working tree.
- * Fragments search only their canonical source files — never the installed
- * merged outputs, which would attribute other fragments' text to this one.
+ * Fragments search only their canonical sources, since installed merged outputs
+ * would attribute other fragments' text to this one.
  */
 async function dataContentFiles(
   dataRepo: string,
