@@ -1,13 +1,7 @@
 /**
- * Bundle install pipeline: a pure planner (`planBundleInstall`), read-only
- * async preflight checks (`preflightBundleChecks`), and the executor
- * (`executeBundleInstall`). Every deterministic refusal is caught before any
- * write, so `add bundles/<name>` is all-or-nothing without rollback
- * machinery. The executor is also the skip gate for already-installed
- * members: the shared single-item installer deliberately keeps standalone
- * `add`'s implicit re-apply (it recomputes the pin and rewrites `appliedAt`),
- * and a bundle that means "ensure these are present" must never bump existing
- * pins — pin movement belongs to `capshelf update`.
+ * The executor skips already-installed members because the shared installer
+ * re-applies and rewrites `appliedAt`; a bundle means "ensure present" and pin
+ * movement belongs to `capshelf update`.
  */
 import type { Bundle } from "./bundles";
 import { memberRef } from "./bundles";
@@ -66,33 +60,19 @@ export type MemberPlanStatus =
 export interface MemberPlan {
   kind: ItemKind;
   name: string;
-  /** Kind-qualified ref, e.g. "skills/security-review". */
   ref: string;
   status: MemberPlanStatus;
-  /** Failure detail for refused/cross-scope members (may be multi-line). */
   reason?: string;
-  /** Extra context lines printed under the reason (e.g. declaring sidecar). */
   detail?: string[];
 }
 
 export interface BundlePlan {
   scope: BundleScope;
-  /** ITEM_KINDS order across kinds; bundle-file order within a kind. */
   members: MemberPlan[];
-  /**
-   * Fragment member refs that block `--local`, collected into ONE aggregated
-   * bundle-level refusal rather than throwing on the first unsupported member.
-   */
   localUnsupportedMembers: string[];
-  /**
-   * Unmet `requires` per member, computed against installed items ∪ the
-   * bundle's own members — a requirement satisfied by a sibling member that
-   * is about to be installed does not warn.
-   */
   missingRequiresByMember: Map<string, string[]>;
 }
 
-/** Members whose state refuses the whole bundle (all-or-nothing). */
 export function planFailures(plan: BundlePlan): MemberPlan[] {
   return plan.members.filter(
     (m) =>
@@ -108,16 +88,9 @@ export interface PlanBundleInstallOptions {
   projectLock: Lock;
   localLock: Lock;
   scope: BundleScope;
-  /** Metadata for data items (members and installed), keyed by kind/name. */
   metadataByRef: Map<string, ItemMetadata>;
 }
 
-/**
- * The pure half of preflight: resolution, scope ownership, `--local`
- * aggregation, the symmetric conflicts-with check (vs installed items AND vs
- * sibling members), and `requires` against installed ∪ members. Filesystem
- * and git checks live in `preflightBundleChecks`.
- */
 export function planBundleInstall(opts: PlanBundleInstallOptions): BundlePlan {
   const { bundle, scope } = opts;
   const targetLock = scope === "local" ? opts.localLock : opts.projectLock;
@@ -125,8 +98,8 @@ export function planBundleInstall(opts: PlanBundleInstallOptions): BundlePlan {
   const masterByRef = new Map(
     opts.masterItems.map((item) => [`${item.kind}/${item.name}`, item]),
   );
-  // Stable sort: ITEM_KINDS order across kinds, file order within a kind
-  // (fragments merge in manifest order, so authors control precedence).
+  // Fragments merge in manifest order, so file order within a kind lets authors
+  // control precedence.
   const ordered = [...bundle.members].sort(
     (a, b) => ITEM_KINDS.indexOf(a.kind) - ITEM_KINDS.indexOf(b.kind),
   );
@@ -134,8 +107,6 @@ export function planBundleInstall(opts: PlanBundleInstallOptions): BundlePlan {
   const installedRefs = new Set<string>();
   for (const lock of [opts.projectLock, opts.localLock]) {
     for (const key of Object.keys(lock.items)) {
-      // Lock keys are <source>/<kind>/<name>; relations use <kind>/<name>
-      // and match both data and system sources, exactly as `add` does.
       installedRefs.add(key.slice(key.indexOf("/") + 1));
     }
   }
@@ -194,7 +165,6 @@ export function planBundleInstall(opts: PlanBundleInstallOptions): BundlePlan {
   for (const m of plan.members) {
     if (m.status !== "install") continue;
     const meta = opts.metadataByRef.get(m.ref);
-    // Forward direction: this member declares the conflict.
     const installedHit = meta?.conflictsWith.find(
       (ref) => ref !== m.ref && installedRefs.has(ref),
     );
@@ -209,10 +179,9 @@ export function planBundleInstall(opts: PlanBundleInstallOptions): BundlePlan {
       m.detail = declaredBy(m.ref);
       continue;
     }
-    // Reverse direction: conflict relations are symmetric, so an installed
-    // item's (or a sibling member's) declaration against this member refuses
-    // too. Items deleted upstream have no metadata here — skipped, never
-    // failed, matching standalone add.
+    // Conflicts are symmetric, so an installed item's or sibling member's
+    // declaration against this member refuses too. Items deleted upstream have
+    // no metadata and are skipped, as in standalone add.
     for (const [declRef, declMeta] of opts.metadataByRef) {
       if (declRef === m.ref) continue;
       if (!declMeta.conflictsWith.includes(m.ref)) continue;
@@ -244,25 +213,12 @@ export interface BundlePreflightContext {
   project: string;
   dataRepo: string;
   manifest: Manifest;
-  /** Target-scope lock; the base for the prospective fragment lock. */
   lock: Lock;
   masterByRef: Map<string, MasterItem>;
-  /** Injectable for tests; defaults to fragments.ts planFragmentOutput. */
   planFragmentOutputFn?: typeof planFragmentOutput;
-  /**
-   * D2 guard 5: every existing owner population. Defaults to the target-scope
-   * lock, an empty other lock, and the project's remote rows.
-   */
   skillTargetLocks?: SkillTargetLocks;
 }
 
-/**
- * The read-only filesystem/git half of preflight, mirroring the standalone
- * `add` checks per member: skills.sh ownership, dirty data-repo paths,
- * untracked-target collisions, local install paths, and the fragment
- * unmanaged-collision dry-run. Failures flip members to `refused`; nothing
- * is written.
- */
 export async function preflightBundleChecks(
   plan: BundlePlan,
   ctx: BundlePreflightContext,
@@ -328,11 +284,8 @@ export async function preflightBundleChecks(
 }
 
 /**
- * D2 guard 5 across the whole bundle, before any member runs. Two members
- * whose names fold to one install folder (`skills/foo` and `plugins/foo`)
- * both refuse, and so does a member whose folder already has another owner.
- * A refused member refuses the whole bundle, so a deterministic conflict
- * never leaves a partial install.
+ * Checked across the whole bundle before any member runs so a deterministic
+ * folder conflict never leaves a partial install.
  */
 async function preflightSkillTargetOwners(
   plan: BundlePlan,
@@ -374,14 +327,9 @@ async function preflightSkillTargetOwners(
 }
 
 /**
- * Preflight the fragment unmanaged-collision refusal without writing:
- * `planFragmentOutput({ dryRun: true })` runs `assertNoUnmanagedCollisions`
- * before any write, called once per affected fragment target with a
- * PROSPECTIVE nextLock/nextManifest containing ALL non-skipped bundle
- * fragment members — not just the members preceding the one under check,
- * because collisions must be judged against the full post-bundle merge. The
- * plain Error it throws is wrapped in a PreconditionError and attributed to
- * the offending member(s).
+ * Uses a prospective lock/manifest with all non-skipped fragment members,
+ * because collisions must be judged against the full post-bundle merge, not
+ * just preceding members.
  */
 async function preflightFragmentCollisions(
   plan: BundlePlan,
@@ -439,8 +387,6 @@ async function preflightFragmentCollisions(
               err instanceof Error ? err.message : String(err),
               { cause: err },
             );
-      // Attribute to the member(s) whose canonical source path the collision
-      // message names; fall back to every member feeding this target.
       const offenders = fragmentPlans.filter(
         (m) =>
           isFragmentItemKind(m.kind) &&
@@ -469,17 +415,13 @@ export interface ExecuteBundleContext<R> {
   projectLock: Lock;
   localLock: Lock;
   scope: BundleScope;
-  /** The extracted single-item installer (persists manifest+lock itself). */
   installItem(member: MemberPlan): Promise<R>;
 }
 
 /**
- * Install every planned member through the shared single-item installer,
- * which persists manifest + lock after each member, so a mid-install I/O
- * failure (the only failure preflight cannot rule out) leaves a consistent
- * prefix that a re-run converges past. This function is the skip gate: it
- * checks both locks and never invokes the installer for an already-installed
- * member — see the module comment.
+ * The shared installer persists manifest and lock after each member, so a
+ * mid-install I/O failure leaves a consistent prefix that a re-run converges
+ * past.
  */
 export async function executeBundleInstall<R>(
   plan: BundlePlan,

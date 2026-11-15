@@ -14,13 +14,6 @@ import type {
   FragmentValue,
 } from "./fragments";
 
-/**
- * Resolve a --pick argument to output config path segments. Paths split on
- * dots (`permissions.allow`). For mcp fragments a pick that does not start
- * with the server container key is sugar for a server name, so
- * `--pick github` means `mcpServers.github` (claude) or
- * `mcp_servers.github` (codex).
- */
 export function pickPathSegments(
   source: FragmentSource,
   pick: string,
@@ -36,18 +29,12 @@ export function pickPathSegments(
   return segments;
 }
 
-/**
- * Output key that holds the server table, per mcp source target. The single
- * definition of the two container constants — `share-catalog.ts` derives its
- * per-output key from this too.
- */
 export function mcpServerContainerKey(
   sourceTarget: FragmentSourceTarget | undefined,
 ): string {
   return sourceTarget === "codex" ? "mcp_servers" : "mcpServers";
 }
 
-/** Current output minus every locked fragment's contribution. */
 export function unmanagedRemainder(
   current: ConfigObject,
   managed: ConfigObject,
@@ -57,11 +44,9 @@ export function unmanagedRemainder(
 }
 
 /**
- * Extract the picked paths from the generated output's unmanaged remainder
- * (current output minus every locked fragment's contribution). Decomposing
- * *managed* values back into a fragment is ambiguous, but unmanaged values
- * have exactly one owner — the project — so extracting them into a new
- * fragment is deterministic and leaves the output semantically unchanged.
+ * Only unmanaged values are extracted because they have a single owner, the
+ * project, so extraction is deterministic; decomposing managed values is
+ * ambiguous.
  */
 export function extractPickedFragment(opts: {
   source: FragmentSource;
@@ -118,7 +103,6 @@ function valueAtPath(
 }
 
 function nestAtPath(segments: string[], value: ConfigValue): ConfigObject {
-  // `pickPathSegments` never yields an empty list, so the leaf always exists.
   const leaf = segments.at(-1);
   if (leaf === undefined) {
     throw new Error("a pick path needs at least one segment");

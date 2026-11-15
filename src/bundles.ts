@@ -1,14 +1,7 @@
 /**
- * Bundles: named sets of items defined as `bundles/<name>.yml` files at the
- * data repo root. A bundle is a manifest macro, not a versioning unit — it is
- * never hashed, locked, or materialized; `add bundles/<name>` expands it into
- * ordinary per-item manifest and lock entries.
- *
- * Parsing follows the metadata.ts conventions: read paths warn-and-degrade so
- * a broken bundle stays visible on the shelf, while the install path
- * (`loadBundleStrict`) refuses anything that would make the member set
- * ambiguous — silently installing a different set than the author curated is
- * worse than an error.
+ * Read paths warn and degrade so a broken bundle stays visible; install refuses
+ * ambiguity because silently installing a different set than curated is worse
+ * than an error.
  */
 import { existsSync } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
@@ -33,23 +26,13 @@ export interface BundleMember {
 
 export interface Bundle {
   name: string;
-  /** Absolute path of the bundle file. */
   path: string;
   description?: string;
   tags: string[];
-  /** Deduped members in ITEM_KINDS order, file order preserved within a kind. */
   members: BundleMember[];
-  /** Parse/salvage warnings, already labeled with the bundle ref. */
   warnings: string[];
-  /** `includes` keys this capshelf version does not recognize as kinds. */
   unknownKinds: string[];
-  /**
-   * Known `includes` kinds whose member set could not be read unambiguously
-   * (non-list value or an invalid entry). Read paths drop them with a
-   * warning; the install path refuses.
-   */
   invalidIncludes: string[];
-  /** File-level parse failure (invalid YAML, non-mapping, oversize). */
   malformed?: string;
 }
 
@@ -57,11 +40,7 @@ export function memberRef(member: BundleMember): string {
   return `${member.kind}/${member.name}`;
 }
 
-/**
- * Returns the bundle name for a `bundles/<name>` ref, or null when the input
- * is not a valid bundle ref. Callers (`add`, `show`) must test this BEFORE
- * `parseItemRef`, which rejects `bundles` as an item kind.
- */
+/** Test this before `parseItemRef`, which rejects `bundles` as an item kind. */
 export function isBundleRef(input: string): string | null {
   const raw = input.trim();
   if (!raw.startsWith(`${BUNDLES_DIR}/`)) return null;
@@ -70,9 +49,9 @@ export function isBundleRef(input: string): string | null {
 }
 
 /**
- * Bundle names follow item-name rules (non-empty, no `/`, not `.`/`..`) plus
- * the federation reservation: `:` is rejected so bundle names stay
- * addressable under a future shelf-qualified ref grammar.
+ * Bundle names follow item-name rules (non-empty, no `/`, not `.`/`..`). `:` is
+ * also rejected so bundle names stay addressable under a future shelf-qualified
+ * ref grammar.
  */
 export function isValidBundleName(name: string): boolean {
   if (!isSafeItemName(name)) return false;
@@ -81,7 +60,6 @@ export function isValidBundleName(name: string): boolean {
   return true;
 }
 
-/** Human listing summary: `4 skills · 2 settings · 2 mcp`. */
 export function memberCountSummary(bundle: Bundle): string {
   const parts: string[] = [];
   for (const kind of ITEM_KINDS) {
@@ -91,11 +69,6 @@ export function memberCountSummary(bundle: Bundle): string {
   return parts.join(" · ");
 }
 
-/**
- * Parse a bundle file. Never throws: failures land in `malformed`,
- * `unknownKinds`, `invalidIncludes`, and `warnings`, so read commands can
- * keep a broken bundle visible while `assertBundleInstallable` refuses it.
- */
 export function parseBundleText(
   text: string,
   name: string,
@@ -131,12 +104,6 @@ export function parseBundleText(
   return bundle;
 }
 
-/**
- * Read every `bundles/*.yml` in the data repo working tree. Never throws
- * (read path): broken bundles come back with `malformed`/`warnings` set, and
- * `*.yaml` files produce a listing-level warning. A missing `bundles/`
- * directory means no bundles.
- */
 export async function listBundles(
   dataRepo: string,
 ): Promise<{ bundles: Bundle[]; warnings: string[] }> {
@@ -170,10 +137,6 @@ export async function listBundles(
   return { bundles, warnings };
 }
 
-/**
- * Load one bundle for read commands (`show`). Returns null when the bundle
- * file does not exist; parse failures degrade into the returned Bundle.
- */
 export async function loadBundle(
   dataRepo: string,
   name: string,
@@ -183,11 +146,6 @@ export async function loadBundle(
   return await readBundleFile(path, name);
 }
 
-/**
- * Load one bundle for the install path. Missing bundle → NotFoundError
- * (exit 2); malformed file, unknown `includes` kinds, or ambiguous member
- * lists → PreconditionError (exit 3).
- */
 export async function loadBundleStrict(
   dataRepo: string,
   name: string,
@@ -206,7 +164,6 @@ export async function loadBundleStrict(
   return bundle;
 }
 
-/** The strict half of the validation table: reads degrade, installs refuse. */
 export function assertBundleInstallable(bundle: Bundle): void {
   if (bundle.malformed) {
     throw new PreconditionError(
@@ -316,9 +273,8 @@ function readIncludes(raw: ConfigObject, bundle: Bundle, label: string): void {
   for (const kind of ITEM_KINDS) {
     readMemberList(includes[kind], kind, bundle, seen, label);
   }
-  // Unknown kinds (including a hypothetical `bundles:` — no nesting) are
-  // warned on read but refuse on install: an old binary must never silently
-  // install a subset of a bundle authored for a newer one.
+  // Unknown kinds warn on read but refuse on install so an old binary never
+  // silently installs a subset of a bundle authored for a newer one.
   for (const key of Object.keys(includes)) {
     if (isItemKind(key)) continue;
     bundle.unknownKinds.push(key);

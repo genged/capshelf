@@ -9,29 +9,17 @@ import { projectRoot } from "./paths";
 import { resolveDataRepo } from "./data-repo";
 import { assertNoScopeCollisions } from "./status-core";
 
-/**
- * The state every project command loads before it does anything: the project
- * root (discovered upward from cwd), the portable manifest, and both lockfiles.
- * Ten commands used to retype this sequence inline; loading it in one place
- * keeps them consistent and gives cross-cutting guards (scope-collision, data
- * repo resolution) a single home.
- */
 export interface ProjectContext {
   project: string;
   manifest: Manifest;
   projectLock: Lock;
   localLock: Lock;
-  /** Present only when `dataRepo: true` was requested. */
   dataRepo?: string;
 }
 
 export interface LoadContextOptions {
-  /** The command, used to read the global `--data` override. */
   cmd: Command;
-  /** Resolve the data repo (honoring --data / local.json / env) and assert it
-   *  is a git repo. Omit when the command resolves it conditionally itself. */
   dataRepo?: boolean;
-  /** Refuse when an item is owned by both project and local scope. */
   assertScopes?: boolean;
 }
 
@@ -54,9 +42,8 @@ export async function loadProjectContext(
 }
 
 /**
- * Resolve the data repo for a project and assert it is a usable git repo. Split
- * out so commands that decide whether they need a data repo (apply/update only
- * need one when a target is a data item) can call it after that decision.
+ * Split out so commands that need a data repo only conditionally (apply/update)
+ * can resolve it after deciding.
  */
 export async function resolveProjectDataRepo(
   project: string,
