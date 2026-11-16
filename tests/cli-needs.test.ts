@@ -183,8 +183,6 @@ describe("declared needs CLI lifecycle", () => {
     const lockPath = join(project, ".capshelf", "capshelf.lock.json");
     const lock = await file(lockPath).json();
     const entry = lock.items["data/skills/hello"];
-    // A genuine version-2 entry: identity is the working-tree hash, and there
-    // is no needs snapshot at all.
     lock.items["data/skills/hello"] = {
       source: "data",
       sha: await shaOfGitVisibleItem(dataRepo, "skills/hello"),
@@ -204,9 +202,6 @@ describe("declared needs CLI lifecycle", () => {
     expect(row.lockedNeeds).toBeNull();
     expect((await file(lockPath).json()).version).toBe(2);
 
-    // PIN-12: no ordinary lock write migrates. `update` refuses and names the
-    // one command that converts the project, and the lock is byte-identical
-    // afterwards.
     const refused = await run(["update", "skills/hello"]);
     expect(refused.exitCode).toBe(3);
     expect(refused.stderr.toString()).toContain("capshelf lock migrate");
@@ -298,8 +293,8 @@ describe("declared needs CLI lifecycle", () => {
       expect(await file(installed).text()).toBe("export default 1;\n");
       expect((await file(localLockPath).json()).items[key].local).toBe(true);
 
-      // The marker records intent, not content state, so revert restores bytes
-      // and leaves it set: apply keeps skipping until it is explicitly cleared.
+      // The marker records intent, not content state, so revert leaves it set
+      // and apply keeps skipping until it is cleared.
       await writeFile(installed, "export default 3;\n");
       expect((await run(["apply", "--local"])).exitCode).toBe(0);
       expect(await file(installed).text()).toBe("export default 3;\n");

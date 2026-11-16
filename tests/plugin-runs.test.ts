@@ -410,12 +410,9 @@ describe("pluginRunsAtCommit", () => {
       gitTreeSource({ repo, kind: "plugins", name: "p", commit: "HEAD" }),
       "plugins",
     );
-    // SAFETY: `itemTreeEntriesAtCommit` never actually returns this mode for
-    // hooks/hooks.json — assertRegularBlobEntries (src/git.ts:697-712)
-    // refuses a symlink or gitlink before pin.ts builds a PinTreeEntry, and
-    // GitFileMode's type only admits "100644"/"100755". This cast simulates
-    // a caller that bypasses that guard, to prove pluginRunsAtCommit does
-    // not depend on it.
+    // SAFETY: the type admits only regular modes and assertRegularBlobEntries
+    // rejects symlinks upstream; this cast simulates a caller bypassing that
+    // guard to prove pluginRunsAtCommit doesn't rely on it.
     const tampered: PinTreeEntry[] = entries.map((entry) =>
       entry.path === "hooks/hooks.json"
         ? { ...entry, mode: "120000" as PinTreeEntry["mode"] }

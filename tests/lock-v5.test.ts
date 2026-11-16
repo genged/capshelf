@@ -57,8 +57,6 @@ describe("lock version 5", () => {
   test(
     "lock migrate moves a version 4 project to 5 with entries unchanged",
     async () => {
-      // Arrange: init a project, add one shelf skill, then rewrite both lock
-      // files with version 4 and the same items.
       const project = await tempRepo("capshelf-migrate-v5-project-");
       const dataRepo = await tempRepo("capshelf-migrate-v5-data-");
       const run = runInProcess(project);
@@ -85,16 +83,12 @@ describe("lock version 5", () => {
         );
       }
 
-      // Act: run `lock migrate --yes --json`, with the data repo directory
-      // renamed away, which proves the 4-to-5 step does not read the data
-      // repo.
+      // Data repo is renamed away to prove the 4-to-5 step never reads it.
       const movedDataRepo = `${dataRepo}-moved-away`;
       await rename(dataRepo, movedDataRepo);
       const migrated = await run(["lock", "migrate", "--yes", "--json"]);
       expect(migrated.exitCode).toBe(0);
 
-      // Assert: both files have version 5 and items deep-equal the version 4
-      // items.
       const projectAfter = await file(projectPath).json();
       const localAfter = await file(localPath).json();
       expect(projectAfter.version).toBe(5);
@@ -102,7 +96,6 @@ describe("lock version 5", () => {
       expect(projectAfter.items).toEqual(projectBefore.items);
       expect(localAfter.items).toEqual(localBefore.items);
 
-      // Assert: the second run reports action "already-current".
       const second = await run(["lock", "migrate", "--json"]);
       expect(second.exitCode).toBe(0);
       expect(JSON.parse(second.stdout.toString()).action).toBe(
@@ -115,9 +108,6 @@ describe("lock version 5", () => {
   test(
     "lock migrate moves a version 4 project lock to 5 when no local lock file exists",
     async () => {
-      // Arrange: init a project, add one shelf skill in project scope only
-      // — no `--local` add, so `.capshelf/local.lock.json` is never
-      // written — then rewrite the project lock with version 4.
       const project = await tempRepo("capshelf-migrate-v5-no-local-");
       const dataRepo = await tempRepo("capshelf-migrate-v5-no-local-data-");
       const run = runInProcess(project);
@@ -137,15 +127,11 @@ describe("lock version 5", () => {
         `${JSON.stringify({ ...projectBefore, version: 4 }, null, 2)}\n`,
       );
 
-      // Act: `loadLocalLock` reads a missing file as an empty version-5
-      // lock (`emptyLock()`), so this snapshot pair is version 4 (project)
-      // beside version 5 (local, implicit) — the mixed case the fast path
-      // must also take, not just the uniform-v4 case above.
+      // A missing local lock loads as an empty v5 lock, so this is the mixed
+      // v4/v5 case the fast path must also handle.
       const migrated = await run(["lock", "migrate", "--yes", "--json"]);
       expect(migrated.exitCode).toBe(0);
 
-      // Assert: the project lock becomes version 5 with items unchanged,
-      // and no local.lock.json is created.
       const projectAfter = await file(projectPath).json();
       expect(projectAfter.version).toBe(5);
       expect(projectAfter.items).toEqual(projectBefore.items);

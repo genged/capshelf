@@ -249,8 +249,6 @@ describe("subagent validation and identity", () => {
     const spawns = () => reads.mock.calls.filter((call) => call[4]).length;
     try {
       await materializeSubagent(options);
-      // One ls-tree for target presence and the pin digest, which list the
-      // same two paths, and one cat-file --batch for the bytes.
       expect(spawns()).toBe(2);
       reads.mockClear();
       await materializeSubagent(options);
@@ -262,7 +260,6 @@ describe("subagent validation and identity", () => {
         memo,
       );
       expect(spawns()).toBe(0);
-      // A later command starts with an empty memo and asks Git again.
       await materializeSubagent({ ...options, memo: new GitReadMemo() });
       expect(spawns()).toBe(2);
     } finally {
@@ -839,8 +836,8 @@ describe("subagent CLI lifecycle", () => {
 
     await mkdir(join(project, ".claude", "agents"), { recursive: true });
     await writeFile(join(project, ".claude", "agents", "reviewer.md"), CLAUDE);
-    // A version-3 lock: `share` writes lock version 4, and the refusal must
-    // land while the data repo is still untouched.
+    // The legacy lock must be rejected before publication can change the data
+    // repo.
     await writeFile(
       join(project, ".capshelf", "capshelf.lock.json"),
       JSON.stringify({ version: 3, items: {} }),

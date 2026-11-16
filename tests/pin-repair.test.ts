@@ -14,18 +14,6 @@ import {
   readJsonObject,
 } from "./cli-fixtures";
 
-/**
- * PIN-8: only `update` repairs an unprovable pin.
- *
- * `apply` and `revert` take the locked commit as their target, so a commit
- * that cannot supply their bytes leaves them with no target at all. `update`
- * selects a *new* commit, which is a verified target, so it can replace both
- * pin fields after consent. These tests pin that split, and the one that
- * matters most in practice: a single wedged item must not stop the rest of
- * the project from being written.
- */
-
-/** A well-formed object name that no repository contains. */
 const ABSENT_COMMIT = "0123456789abcdef0123456789abcdef01234567";
 
 function lockFile(project: string): string {
@@ -66,7 +54,6 @@ describe("PIN-8 unprovable pin repair", () => {
       const applyText = applied.stdout.toString();
       expect(applyText).toContain("the locked source cannot supply a verified");
       expect(applyText).toContain("capshelf update skills/hello");
-      // Refusal before any write: the install is untouched.
       expect(
         await readFile(
           join(project, ".agents", "skills", "hello", "SKILL.md"),
@@ -119,8 +106,6 @@ describe("PIN-8 unprovable pin repair", () => {
         expect((await run(["add", `skills/${name}`])).exitCode).toBe(0);
       }
 
-      // Before PIN-8 the planner's throw escaped `planUpdatePreflight`, so
-      // this one wedged pin left alpha and gamma unwritten too.
       await breakSourceCommit(project, "data/skills/beta");
       for (const name of ["alpha", "beta", "gamma"]) {
         await writeFile(join(dataRepo, "skills", name, "SKILL.md"), "v2\n");
@@ -156,8 +141,6 @@ describe("PIN-8 unprovable pin repair", () => {
         expect((await run(["add", `skills/${name}`])).exitCode).toBe(0);
       }
 
-      // A target-side failure, not a repairable pin: the item was deleted
-      // upstream, so `update` has no replacement source to select.
       await Bun.$`git -C ${dataRepo} rm -r -q skills/beta`.quiet();
       await commitAll(dataRepo, "drop beta");
       for (const name of ["alpha", "gamma"]) {
@@ -197,10 +180,9 @@ describe("PIN-8 unprovable pin repair", () => {
       await writeFile(join(dataRepo, "skills", "hello", "SKILL.md"), "v2\n");
       await commitAll(dataRepo, "hello v2");
 
-      // The pin cannot be proved, so classification against the *previous*
-      // commit is impossible — but the loss is still real and must be asked
-      // about. Reporting the item as a planning error instead would let the
-      // write proceed with no prompt at all.
+      // An unprovable pin can't be classified against the previous commit, but
+      // the loss is real and must still prompt rather than surface as a
+      // planning error.
       const refused = await run(["update", "skills/hello"]);
       expect(refused.exitCode).toBe(3);
       expect(refused.stderr.toString()).toContain(
@@ -228,8 +210,6 @@ describe("PIN-8 unprovable pin repair", () => {
 
       await breakSourceCommit(project, "data/settings/base");
 
-      // The refusal is a precondition, and the per-item row keeps its exit
-      // code (D9).
       const updated = await run(["update", "settings/base"]);
       expect(updated.exitCode).toBe(3);
       const text = updated.stdout.toString();

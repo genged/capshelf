@@ -443,14 +443,13 @@ describe("loadSystemItemMetadata", () => {
 
 describe("truncatedDescription", () => {
   test("truncates by code points so an emoji at the boundary survives", () => {
-    // 59 ASCII chars + one emoji = 60 code points but 61 UTF-16 code units;
-    // a code-unit slice would cut the surrogate pair in half.
+    // 59 ASCII chars plus an emoji is 60 code points but 61 UTF-16 units; a
+    // code-unit slice would split the surrogate pair.
     const head = `${"a".repeat(59)}😀`;
     expect(truncatedDescription(`${head} trailing text`)).toBe(`${head}…`);
     expect(truncatedDescription(`${head} trailing text`).isWellFormed()).toBe(
       true,
     );
-    // Exactly 60 code points: returned unchanged.
     expect(truncatedDescription(head)).toBe(head);
   });
 

@@ -15,14 +15,6 @@ import type { DestructiveConfirmationContext } from "../src/destructive-change";
 import { setPickContext } from "../src/pick";
 import type { PickContext, PickRequest } from "../src/pick";
 
-/**
- * The interactive share and promote paths, driven through the `setPickContext`
- * and `setDestructiveConfirmationContext` seams rather than a pseudo-terminal.
- * The terminal itself is covered end-to-end in `e2e/environments/`; what these
- * tests hold is which rows reach the picker, how marks group into share and
- * promote invocations, and what happens to the result.
- */
-
 let installedPick = false;
 let previousPick: PickContext | null = null;
 let installedConfirmation = false;
@@ -37,7 +29,6 @@ interface PromptLog {
   asked: string[];
 }
 
-/** A terminal-backed context that answers the name prompt from a queue. */
 function installNamePrompt(answers: string[]): PromptLog {
   const asked: string[] = [];
   previousConfirmation = setDestructiveConfirmationContext({
@@ -72,7 +63,6 @@ interface PickLog {
   seen: PickRequest[];
 }
 
-/** Install a picker that records the request and answers with row ids chosen by `select`. */
 function answerWith(select: (request: PickRequest) => string[]): PickLog {
   const seen: PickRequest[] = [];
   installPick({
@@ -117,8 +107,8 @@ describe("share with no item — refusals and empty state", () => {
       expect(picked.exitCode).toBe(3);
       expect(picked.stderr.toString()).toContain("require an item");
 
-      // Explicitly empty is still explicitly supplied: commander stores
-      // `--from ""` as an empty string, which truthiness would miss.
+      // Commander stores `--from ""` as an empty string, which a truthiness
+      // check would miss.
       const emptyFrom = await run(["share", "--from", ""]);
       expect(emptyFrom.exitCode).toBe(3);
       expect(emptyFrom.stderr.toString()).toContain("require an item");
@@ -129,7 +119,6 @@ describe("share with no item — refusals and empty state", () => {
   test(
     "without a terminal the offer is refused with the non-interactive form",
     async () => {
-      // `runInProcess` installs a non-TTY pick context by default.
       const { run } = await initializedProject("capshelf-sharenotty-");
       const refused = await run(["share"]);
       expect(refused.exitCode).toBe(3);
@@ -153,8 +142,6 @@ describe("share with no item — refusals and empty state", () => {
         "nothing to share: no unmanaged values or untracked items in",
       );
       expect(stdout).toContain(".mcp.json (absent)");
-      // The scanned item locations too: tracked system skills contribute no
-      // rows, so an initialized project is still empty.
       expect(stdout).toContain(".agents/skills");
       expect(stdout).toContain(".claude/agents (absent)");
       expect(seen).toHaveLength(0);
@@ -184,7 +171,6 @@ describe("share with no item — the picker flow", () => {
       const result = await run(["share"]);
       expect(result.exitCode).toBe(0);
 
-      // The catalog offered every node of the remainder, parents included.
       expect(seen[0]?.rows.map((row) => row.ref)).toEqual([
         "permissions",
         "permissions.allow",
@@ -193,7 +179,6 @@ describe("share with no item — the picker flow", () => {
         "env.FOO",
       ]);
 
-      // The fragment holds exactly the marked paths.
       const fragment = JSON.parse(
         await file(join(dataRepo, "settings", "perms", "settings.json")).text(),
       );
@@ -201,7 +186,6 @@ describe("share with no item — the picker flow", () => {
         permissions: SETTINGS.permissions,
       });
 
-      // The printed command is the non-interactive form that repeats this.
       const stdout = result.stdout.toString();
       expect(stdout).toContain(
         "capshelf share settings/perms --pick permissions.allow --pick permissions.deny",
@@ -209,7 +193,6 @@ describe("share with no item — the picker flow", () => {
       expect(stdout).toContain("✓ shared project/data/settings/perms @");
       expect(stdout).toContain("1 shared");
 
-      // The unmarked value stayed unmanaged in the output.
       const output = JSON.parse(
         await file(join(project, ".claude", "settings.json")).text(),
       );
@@ -294,9 +277,8 @@ describe("share with no item — the picker flow", () => {
         join(project, ".claude", "settings.json"),
         JSON.stringify(SETTINGS),
       );
-      // The picker holds the terminal for an unbounded time. Mutate the marked
-      // value from inside the prompt, which is exactly a concurrent tool
-      // writing into the output while the frame is open.
+      // Mutates the marked value inside the prompt to simulate a concurrent
+      // tool writing to the output while the picker is open.
       answerWith((request) => {
         writeFileSync(
           join(project, ".claude", "settings.json"),
@@ -313,8 +295,6 @@ describe("share with no item — the picker flow", () => {
       const stderr = result.stderr.toString();
       expect(stderr).toContain("env.FOO changed while the picker was open");
       expect(stderr).toContain("retry: capshelf share settings/envs");
-      // Nothing was committed from the stale mark: the consent was for the
-      // value the frame showed, not for whatever arrived afterwards.
       expect(existsSync(join(dataRepo, "settings"))).toBe(false);
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
@@ -347,19 +327,16 @@ describe("share with no item — the picker flow", () => {
 
       const result = await run(["share", "-m", "reviewed config"]);
       expect(result.exitCode).toBe(0);
-      // github appears once per output file; posthog once.
       const refs = seen[0]?.rows.map((row) => row.ref) ?? [];
       expect(refs.filter((ref) => ref === "github")).toHaveLength(2);
       expect(refs.filter((ref) => ref === "posthog")).toHaveLength(1);
 
-      // Both github rows marked: the item covers both outputs, no --target.
       expect(existsSync(join(dataRepo, "mcp", "github", "claude.json"))).toBe(
         true,
       );
       expect(existsSync(join(dataRepo, "mcp", "github", "codex.toml"))).toBe(
         true,
       );
-      // One posthog row marked: the command carries its target.
       expect(existsSync(join(dataRepo, "mcp", "posthog", "claude.json"))).toBe(
         true,
       );
@@ -368,8 +345,6 @@ describe("share with no item — the picker flow", () => {
       );
 
       const stdout = result.stdout.toString();
-      // The equivalent command carries the explicit commit message: the
-      // command claims to repeat the share, and the message is part of it.
       expect(stdout).toContain(
         "capshelf share mcp/github -m 'reviewed config'\n",
       );
@@ -377,7 +352,6 @@ describe("share with no item — the picker flow", () => {
         "capshelf share mcp/posthog --target claude -m 'reviewed config'",
       );
       expect(stdout).toContain("2 shared");
-      // The guidance prints once for the whole run, not once per item.
       expect(stdout.split("committed to local data repo:").length - 1).toBe(1);
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
@@ -394,8 +368,8 @@ describe("share with no item — the picker flow", () => {
         join(project, ".claude", "settings.json"),
         JSON.stringify(SETTINGS),
       );
-      // A version-3 lock. The refusal must land before the picker holds the
-      // terminal and before `shareFragment` can commit to the data repo.
+      // The legacy-lock refusal must happen before the picker takes the
+      // terminal and before shareFragment can commit.
       await writeFile(
         join(project, ".capshelf", "capshelf.lock.json"),
         JSON.stringify({ version: 3, items: {} }),
@@ -436,7 +410,6 @@ describe("share with no item — the picker flow", () => {
       const broken = rows.find((row) => row.ref === ".codex/config.toml");
       expect(broken?.disabled).toBe(true);
       expect(broken?.detail).toContain("cannot read this output");
-      // The other output's values stayed shareable.
       expect(
         existsSync(join(dataRepo, "settings", "envs", "settings.json")),
       ).toBe(true);
@@ -447,8 +420,8 @@ describe("share with no item — the picker flow", () => {
   test(
     "an explicit --data override survives into the equivalent command",
     async () => {
-      // Without the flag, a rerun would resolve the machine-local binding —
-      // a different repository than the one this share committed to.
+      // Without the flag a rerun would resolve the machine-local binding, a
+      // different repository than the one this share committed to.
       const { project, dataRepo, run } = await initializedProject(
         "capshelf-sharedata-",
       );
@@ -476,10 +449,9 @@ describe("share with no item — the picker flow", () => {
   test(
     "a forged mark of an unaddressable server name fails at the ref boundary",
     async () => {
-      // The catalog disables a reserved server name, but a mark is data, and
-      // `shareFragment` takes the name without re-parsing. Returning the
-      // disabled row's id from an injected context stands in for any path
-      // that bypasses the frame.
+      // The catalog disables reserved names, but shareFragment takes the name
+      // unparsed, so an injected context returning the disabled row id
+      // simulates any bypass.
       const { project, dataRepo, run } = await initializedProject(
         "capshelf-sharebadname-",
       );
@@ -524,7 +496,6 @@ describe("share with no item — the picker flow", () => {
         "capshelf share settings/perms --pick permissions.allow",
       );
 
-      // Run the printed command, word for word, in a fresh project.
       const second = await initializedProject("capshelf-sharert2-");
       await mkdir(join(second.project, ".claude"), { recursive: true });
       await writeFile(
@@ -535,7 +506,6 @@ describe("share with no item — the picker flow", () => {
       const repeated = await second.run(args);
       expect(repeated.exitCode).toBe(0);
 
-      // Same data-repo tree for the item: identical blob content.
       const firstBlob = await file(
         join(first.dataRepo, "settings", "perms", "settings.json"),
       ).text();
@@ -574,13 +544,9 @@ describe("share with no item — untracked items", () => {
       expect(row?.kind).toBe("skills");
       expect(row?.detail).toContain(".agents/skills/hello");
       expect(row?.detail).toContain("1 file");
-      // Tracked system skills contribute no rows: the scanner offers only
-      // what no lock entry claims.
       expect(rows.filter((r) => r.kind === "skills")).toHaveLength(1);
 
       const stdout = result.stdout.toString();
-      // The named command's default scope for skills is local, so the printed
-      // command needs no --to flag to repeat this share.
       expect(stdout).toContain("✓ shared local/data/skills/hello @");
       expect(stdout).toContain("capshelf share skills/hello");
       expect(stdout).toContain("1 shared");
@@ -616,8 +582,8 @@ describe("share with no item — untracked items", () => {
         'name = "reviewer"\ndescription = "reviews"\ndeveloper_instructions = "review"\n',
       );
       await writeFile(join(claudeAgents, "solo.md"), frontmatter("solo"));
-      // An invalid source would fail every time after selection, so it must
-      // be a visible, disabled row instead of an enabled trap.
+      // An invalid source would fail after selection every time, so it is shown
+      // as a disabled row rather than an enabled trap.
       await writeFile(join(claudeAgents, "broken.md"), "no frontmatter\n");
       const { seen } = answerWith((request) =>
         request.rows
@@ -639,8 +605,6 @@ describe("share with no item — untracked items", () => {
       expect(broken?.disabled).toBe(true);
       expect(broken?.detail).toContain("frontmatter");
 
-      // One of two reviewer outputs marked: the share carries its target and
-      // commits only that canonical source.
       expect(
         existsSync(join(dataRepo, "subagents", "reviewer", "claude.md")),
       ).toBe(true);
@@ -651,7 +615,6 @@ describe("share with no item — untracked items", () => {
       expect(stdout).toContain(
         "capshelf share subagents/reviewer --target claude",
       );
-      // solo's only output was marked, so its command needs no flag.
       expect(stdout).toContain("capshelf share subagents/solo\n");
       expect(existsSync(join(dataRepo, "subagents", "solo", "claude.md"))).toBe(
         true,
@@ -667,7 +630,6 @@ describe("share with no item — untracked items", () => {
       const { project, dataRepo, run } = await initializedProject(
         "capshelf-shareitemrefused-",
       );
-      // Already on the shelf under the same name.
       await mkdir(join(dataRepo, "skills", "taken"), { recursive: true });
       await writeFile(join(dataRepo, "skills", "taken", "SKILL.md"), "x\n");
       await $`git -C ${dataRepo} add skills`.quiet();
@@ -679,7 +641,6 @@ describe("share with no item — untracked items", () => {
         join(project, ".agents", "skills", "taken", "SKILL.md"),
         "local\n",
       );
-      // A directory that is not a valid skill.
       await mkdir(join(project, ".agents", "skills", "noskill"), {
         recursive: true,
       });
@@ -775,7 +736,6 @@ describe("promote with no item", () => {
       const { project, dataRepo, run } = await initializedProject(
         "capshelf-promotepick-",
       );
-      // Two tracked fragments: one will stay clean, one gets a source edit.
       await mkdir(join(project, ".claude"), { recursive: true });
       await writeFile(
         join(project, ".claude", "settings.json"),
@@ -815,7 +775,6 @@ describe("promote with no item", () => {
       expect(stdout).toContain("✓ promoted data/settings/perms @");
       expect(stdout).toContain("1 promoted");
       expect(stdout).toContain("committed to local data repo:");
-      // The data repo actually has the commit.
       const log = await $`git -C ${dataRepo} log --oneline`.quiet().text();
       expect(log).toContain("capshelf: settings/perms");
       const porcelain = await $`git -C ${dataRepo} status --porcelain`
@@ -861,10 +820,8 @@ describe("promote with no item", () => {
   test(
     "an index flag on a copy item's source file relabels its clean row too",
     async () => {
-      // The porcelain blind spot is not a fragment property. A flagged file
-      // inside a skill's directory leaves `git status` silent, the state
-      // machine says `ok`, and without the relabel the row would claim
-      // "nothing to promote" for a hidden edit.
+      // A flagged file inside a skill directory leaves `git status` silent, so
+      // the state would read `ok` without a relabel.
       const { dataRepo, run } = await initializedProject(
         "capshelf-promoteskillflag-",
       );
@@ -890,10 +847,9 @@ describe("promote with no item", () => {
   test(
     "a hidden path disables the row even when another edit would offer it",
     async () => {
-      // With one file flagged and the installed copy edited, the state is
-      // `drifted_local` and would be offered — but promoting would rewrite
-      // the canonical tree while git silently discards the hidden worktree
-      // edit. The hidden path wins: the row is disabled and names it.
+      // Promoting would rewrite the canonical tree while git silently discards
+      // the hidden worktree edit, so the hidden path wins and the row is
+      // disabled.
       const { project, dataRepo, run } = await initializedProject(
         "capshelf-promotehiddenedit-",
       );
@@ -924,9 +880,8 @@ describe("promote with no item", () => {
   test(
     "a flag set while the picker was open fails the row before anything is written",
     async () => {
-      // The catalog's hidden-path check goes stale during the unbounded
-      // prompt wait. Setting the flag from inside the prompt stands in for a
-      // concurrent process doing it while the frame is open.
+      // The hidden-path check goes stale during the prompt wait; setting the
+      // flag inside the prompt simulates a concurrent process.
       const { project, dataRepo, run } = await initializedProject(
         "capshelf-promotelateflag-",
       );
@@ -959,7 +914,6 @@ describe("promote with no item", () => {
       expect(result.stderr.toString()).toContain(
         `git is not watching ${relPath}`,
       );
-      // One commit only — the share's own. The promote wrote nothing.
       const log = await $`git -C ${dataRepo} log --oneline`.quiet().text();
       expect(log.split("capshelf: settings/perms").length - 1).toBe(1);
     },
@@ -969,11 +923,9 @@ describe("promote with no item", () => {
   test(
     "one item's broken state degrades its own row and leaves the rest promotable",
     async () => {
-      // Deriving fragment `a`'s state loads every settings fragment for its
-      // output, so fragment `b`'s unreachable commit throws inside `a`'s
-      // derivation. The catalog must not abort: `a` degrades to a disabled
-      // row naming the failure, `b` gets its own row, and an unrelated dirty
-      // skill stays offered — a named promote of that skill would succeed.
+      // Deriving one settings fragment's state loads all fragments for its
+      // output, so another's unreachable commit throws there; the catalog must
+      // degrade that row, not abort.
       const { project, dataRepo, run } = await initializedProject(
         "capshelf-promotedegrade-",
       );
@@ -998,7 +950,6 @@ describe("promote with no item", () => {
         join(project, ".agents", "skills", "hello", "SKILL.md"),
         "hello v2\n",
       );
-      // Corrupt b's pinned commit. Explicitly a lock fixture for this test.
       const lockPath = join(project, ".capshelf", "capshelf.lock.json");
       const lock = JSON.parse(await file(lockPath).text());
       lock.items["data/settings/b"].sourceCommit =
@@ -1030,9 +981,8 @@ describe("promote with no item", () => {
   test(
     "an ordinary untracked canonical source stays offered, not called unwatched",
     async () => {
-      // The precision half: `git status` reports a plain new file as `??`, so
-      // it is publishable and the row must stay markable. Only an ignore rule
-      // or an index flag makes a path genuinely invisible.
+      // `git status` reports a plain new file as `??`, so it stays publishable;
+      // only an ignore rule or index flag makes a path invisible.
       const { project, dataRepo, run } = await initializedProject(
         "capshelf-promoteuntracked-",
       );

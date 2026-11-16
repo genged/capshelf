@@ -85,9 +85,8 @@ describe("PIN-6 install classification", () => {
   });
 
   test("a normalized edit is labelled by its bytes, not by its cause", () => {
-    // A user who deliberately converts a file to CRLF for a Windows tool
-    // produces bytes indistinguishable from a checkout that did it. The label
-    // says so as a possibility, and PIN-7 keeps the prompt either way.
+    // A deliberate CRLF conversion is byte-identical to a checkout rewrite, so
+    // the label says 'may have rewritten' and the prompt stays.
     const difference = classify("a,b\r\n", "a,b\n");
     expect(installDifferenceLabel(difference)).toContain("may have rewritten");
     expect(isDestructiveDifference(difference.kind)).toBe(true);
@@ -140,7 +139,6 @@ describe("PIN-7 gating", () => {
       expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
       expect((await run(["add", "skills/csv-report"])).exitCode).toBe(0);
 
-      // Exactly what a Windows teammate's checkout produces.
       const installed = join(
         project,
         ".agents",
@@ -163,7 +161,6 @@ describe("PIN-7 gating", () => {
       expect(message).toContain(
         "line endings differ — a checkout may have rewritten this file",
       );
-      // Nothing was written without consent.
       expect(await readFile(installed, "utf-8")).toBe("a,b\r\nc,d\r\n");
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
@@ -185,9 +182,7 @@ describe("PIN-7 gating", () => {
       expect((await run(["add", "skills/hello"])).exitCode).toBe(0);
 
       const installed = join(project, ".agents", "skills", "hello");
-      // A managed file that is simply absent: writing it destroys nothing.
       await Bun.$`rm ${join(installed, "extra.md")}`.quiet();
-      // A local file the project's own ignore rules hide: preserved, untouched.
       await writeFile(join(project, ".gitignore"), "*.local.md\n");
       await mkdir(installed, { recursive: true });
       await writeFile(join(installed, "notes.local.md"), "mine\n");

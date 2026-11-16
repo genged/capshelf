@@ -7,12 +7,6 @@ import * as gitMeasure from "../src/git-measure";
 import { GitReadMemo } from "../src/git-read-memo";
 import { tempRepo } from "./cli-fixtures";
 
-/**
- * One history walk answers `log -1 <head> -- <pathspecs>` for many items.
- * These tests compare each answer with the item's own `log -1` on random
- * linear histories, from several heads.
- */
-
 const COPY_ITEMS = ["skills/a", "skills/ab", "skills/a-b", "skills/café"];
 const FILE_ITEMS = [
   ["subagents/s/claude.md", "subagents/s/codex.toml"],
@@ -48,7 +42,6 @@ async function exists(repo: string, path: string): Promise<boolean> {
   );
 }
 
-/** One random change, staged. Some changes touch only a sidecar. */
 async function change(repo: string, next: () => number, round: number) {
   const path = FILES[Math.floor(next() * FILES.length)]!;
   const full = join(repo, path);
@@ -101,7 +94,6 @@ function pathspecLists(): string[][] {
     ...COPY_ITEMS.map((item) => git.contentCommitPathspecs(item)),
     ...FILE_ITEMS.map((paths) => paths.map(git.literalPathspec)),
     ["settings/f/settings.json"].map(git.literalPathspec),
-    // Lists with no commit that touches them.
     git.contentCommitPathspecs("skills/never"),
     ["subagents/none/claude.md", "subagents/none/codex.toml"].map(
       git.literalPathspec,
@@ -159,8 +151,6 @@ test("callers read the walked answers with no Git process", async () => {
         .catch(() => undefined);
     }
     const spawned = reads.mock.calls.filter((call) => call[4]);
-    // Only an item that the history never touched outside its sidecar falls
-    // back to its own unfiltered walk.
     for (const call of spawned) {
       expect(call[2]).not.toContain(":(literal,exclude)skills/a/.capshelf.yml");
     }
@@ -225,8 +215,6 @@ test("a gitlink change under a submodule ignore setting selects its commit", asy
   await $`git -C ${repo} update-index --cacheinfo 160000,${third},skills/a/mod`.quiet();
   await $`git -C ${repo} commit -qm c4`.quiet();
   const head = (await $`git -C ${repo} rev-parse HEAD`.text()).trim();
-  // `.gitmodules` sets `ignore = all` for every round. The second round also
-  // sets `diff.ignoreSubmodules` in the repository configuration.
   for (const setting of ["none", "all"]) {
     await $`git -C ${repo} config --local diff.ignoreSubmodules ${setting}`.quiet();
     const memo = new GitReadMemo();
@@ -245,8 +233,6 @@ test("a gitlink change under a submodule ignore setting selects its commit", asy
 
 test("a long history in many output chunks gives the same answers", async () => {
   const repo = await tempRepo("capshelf-walk-long-");
-  // fast-import writes 3,000 commits quickly. Each touches one of 40 items,
-  // and five items are touched only in the first commit.
   const items = Array.from({ length: 40 }, (_, i) => `skills/item-${i}`);
   const lines: string[] = [];
   for (let n = 0; n < 3000; n++) {
@@ -280,7 +266,6 @@ test("a long history in many output chunks gives the same answers", async () => 
     expect(memo.lastTouching.get(key)).toBe(expected.get(key)!);
   }
 
-  // The reader gives the same answers for any chunk boundaries.
   const requests = items.map((item) => ({
     key: JSON.stringify([repo, head, git.contentCommitPathspecs(item)]),
     include: [item],
@@ -319,7 +304,6 @@ test("a merge older than every answer does not stop the walk", async () => {
   ).trim();
   await $`git -C ${repo} checkout -q ${branch}`.quiet();
   await $`git -C ${repo} merge -q --no-ff -m merge side`.quiet();
-  // After the merge, both items change, so their answers are newer.
   for (const item of ["skills/a", "skills/ab"]) {
     await mkdir(join(repo, item), { recursive: true });
     await writeFile(join(repo, item, "SKILL.md"), `${item} after merge\n`);
@@ -339,7 +323,6 @@ test("a merge older than every answer does not stop the walk", async () => {
       await direct(repo, head, pathspecs),
     );
   }
-  // An item last changed before the merge needs the walk to read past it.
   const past = new GitReadMemo();
   await git.prefetchLastTouchingCommits(
     repo,

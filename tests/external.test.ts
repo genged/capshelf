@@ -172,7 +172,6 @@ describe("Claude plugin settings reader", () => {
     );
 
     const plugins = await listClaudePlugins(project, { managed: [], user });
-    // Keyed by id so the assertion does not depend on sort order.
     expect(
       Object.fromEntries(
         plugins.map((p) => [
@@ -181,19 +180,15 @@ describe("Claude plugin settings reader", () => {
         ]),
       ),
     ).toEqual({
-      // No '@' at all: the whole id is the name.
       plain: { name: "plain", marketplace: undefined },
-      // Leading '@' is part of the name, not a marketplace separator.
       "@scoped": { name: "@scoped", marketplace: undefined },
-      // Trailing '@' would leave an empty marketplace; keep the full id.
       "trailing@": { name: "trailing@", marketplace: undefined },
-      // The last '@' splits, even when the name itself starts with '@'.
       "@scope/tool@market": { name: "@scope/tool", marketplace: "market" },
     });
   });
 
-  // findClaudePlugin offers no settings-path injection, so it also scans the
-  // real user/managed settings. Unique names keep this isolated in practice.
+  // `findClaudePlugin` has no settings-path injection and scans real
+  // user/managed settings, so tests use unique names.
   test("findClaudePlugin matches by short name or full id", async () => {
     const project = await tempDir();
     const projectSettings = join(project, ".claude", "settings.json");

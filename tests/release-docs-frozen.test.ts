@@ -33,10 +33,6 @@ function check(repo: string, args: string[] = []): Result {
   };
 }
 
-/**
- * A repo holding both families for a shipped 1.0.0: the concise GitHub
- * release note and the detailed What's New page.
- */
 async function notesRepo(): Promise<string> {
   const repo = await tempDir("capshelf-frozen-notes-");
   await initRepo(repo);
@@ -59,7 +55,6 @@ describe("release documentation freeze", () => {
       const repo = await notesRepo();
       expect(check(repo, ["--base", "v1.0.0"]).exitCode).toBe(0);
 
-      // Adding a note is exactly how a release introduces one.
       await writeFile(
         join(repo, "docs", "release-notes", "release-notes-1.1.0.md"),
         "# 1.1.0\n",
@@ -78,8 +73,6 @@ describe("release documentation freeze", () => {
       const note = "docs/release-notes/release-notes-1.0.0.md";
       const edited = "# 1.0.0\n\n- edited\n";
 
-      // All three states diverge from the tag, so all three are caught — the
-      // check does not depend on the edit having been committed yet.
       const unstaged = await notesRepo();
       await writeFile(join(unstaged, note), edited);
       const dirty = check(unstaged);
@@ -104,8 +97,8 @@ describe("release documentation freeze", () => {
     async () => {
       const note = "docs/release-notes/release-notes-1.0.0.md";
 
-      // The contract users can observe is the tagged tree, so the failure must
-      // survive the edit being committed and the branch moving on.
+      // The failure must survive the edit being committed, since the contract
+      // is the tagged tree.
       const repo = await notesRepo();
       await writeFile(
         join(repo, note),
@@ -120,7 +113,6 @@ describe("release documentation freeze", () => {
       expect(drifted.exitCode).toBe(1);
       expect(drifted.stdout).toContain("has changed since v1.0.0 was tagged");
 
-      // Restoring the shipped bytes clears it.
       await $`git -C ${repo} checkout v1.0.0 -- ${note}`.quiet();
       await $`git -C ${repo} commit -qam ${"restore the shipped note"}`.quiet();
       expect(check(repo).exitCode).toBe(0);
@@ -137,16 +129,13 @@ describe("release documentation freeze", () => {
       await $`git -C ${repo} commit -qam ${"rewrite a shipped note"}`.quiet();
       expect(check(repo).exitCode).toBe(1);
 
-      // Putting the shipped bytes back still reads as an edit, and should.
-      // An unpushed mistake is corrected by dropping it from the commit that
-      // made it; a pushed one is already live, so there is nothing to restore
-      // to. Exempting a "restore" would just be a hole in the rule.
+      // A restore still counts as an edit: an unpushed mistake is fixed by
+      // amending the commit, and a pushed one is already live.
       await $`git -C ${repo} checkout v1.0.0 -- ${note}`.quiet();
       const restored = check(repo);
       expect(restored.exitCode).toBe(1);
       expect(restored.stdout).toContain(`${note} modified`);
 
-      // Correcting the commit itself is what clears it.
       await $`git -C ${repo} reset -q --soft HEAD~1`.quiet();
       await $`git -C ${repo} reset -q`.quiet();
       expect(check(repo).exitCode).toBe(0);
@@ -163,7 +152,6 @@ describe("release documentation freeze", () => {
       await $`git -C ${repo} add -A`.quiet();
       await $`git -C ${repo} commit -qm ${"add 9.9.9 draft"}`.quiet();
 
-      // No tag governs it, so the working-tree rule is what holds the line.
       await writeFile(join(repo, draft), "# 9.9.9\n\n- edited\n");
       const edited = check(repo);
       expect(edited.exitCode).toBe(1);
@@ -206,10 +194,9 @@ describe("release documentation freeze", () => {
   test(
     "grandfathers What's New pages from before the policy",
     async () => {
-      // Several pre-0.6 pages were revised after their tag. Freezing a breach
-      // nobody can fix would just leave the gate permanently red, so the line
-      // is held from 0.6 on. Release notes have no such history and are
-      // enforced from the first one.
+      // Pre-0.6 pages were revised after tagging and can't be fixed, so
+      // freezing them would leave the gate permanently red; release notes are
+      // enforced from the first.
       const repo = await notesRepo();
       await mkdir(join(repo, "docs", "release-notes"), { recursive: true });
       await writeFile(join(repo, "docs", "whats-new-0.5.md"), "# 0.5\n");
@@ -228,7 +215,6 @@ describe("release documentation freeze", () => {
       await $`git -C ${repo} commit -qam ${"revise an old page"}`.quiet();
       expect(check(repo).exitCode).toBe(0);
 
-      // The release note for the same old version is still enforced.
       await writeFile(
         join(repo, "docs", "release-notes", "release-notes-0.5.0.md"),
         "# 0.5.0\n\nlater\n",
@@ -244,8 +230,8 @@ describe("release documentation freeze", () => {
   test(
     "refuses removing the notes directory wholesale",
     async () => {
-      // The most destructive case, and the one an early "nothing to check"
-      // exit used to wave through: the check reads from tags, not the worktree.
+      // The check reads from tags, not the worktree, so a deleted notes
+      // directory must still fail.
       const repo = await notesRepo();
       await rm(join(repo, "docs", "release-notes"), { recursive: true });
       const result = check(repo);
@@ -261,11 +247,9 @@ describe("release documentation freeze", () => {
       const repo = await notesRepo();
       const note = "docs/release-notes/release-notes-1.0.0.md";
 
-      // Edited before the version was tagged...
       await writeFile(join(repo, note), "# 1.0.0\n\n- drafted\n");
       await $`git -C ${repo} commit -qam ${"draft edit"}`.quiet();
       await $`git -C ${repo} tag -f v1.0.0`.quiet();
-      // ...and again after.
       await writeFile(join(repo, note), "# 1.0.0\n\n- late edit\n");
       await $`git -C ${repo} commit -qam ${"late edit"}`.quiet();
 
@@ -275,7 +259,6 @@ describe("release documentation freeze", () => {
       expect(audit.stdout).toContain("before v1.0.0 was tagged");
       expect(audit.stdout).toContain("after v1.0.0 was tagged");
 
-      // A never-tagged version is reported without a false tag claim.
       const untagged = await notesRepo();
       const draft = "docs/release-notes/release-notes-9.9.9.md";
       await writeFile(join(untagged, draft), "# 9.9.9\n");
