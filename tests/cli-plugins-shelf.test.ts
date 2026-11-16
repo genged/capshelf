@@ -1,8 +1,3 @@
-/**
- * A plugin on the shelf (`plugins/<n>` in the data repo): `add`, `move`,
- * `update`, `promote`, `status`, and `share --adopt` (spec D3, D7 points 1
- * to 3, D9, D11, M2, M3, M4).
- */
 import { describe, expect, test } from "bun:test";
 import { $ } from "bun";
 import { existsSync } from "node:fs";
@@ -63,7 +58,6 @@ async function writeUnder(
   await writeFile(target, content);
 }
 
-/** One shelf plugin: a manifest, a skill, and the extra files given. */
 async function writeShelfPlugin(
   dataRepo: string,
   name: string,
@@ -91,11 +85,6 @@ interface ShelfWorld {
   run: (args: string[]) => Promise<CliResult>;
 }
 
-/**
- * A data repo with `plugins/gh-cli` (one hook), `plugins/quiet` (no hooks),
- * and `plugins/broken` (an unparseable `hooks/hooks.json`), committed, and a
- * project bound to it with `init --data <repo> --no-upstream`.
- */
 async function shelfWorld(): Promise<ShelfWorld> {
   const project = await tempRepo("capshelf-plugins-shelf-project-");
   const dataRepo = await tempRepo("capshelf-plugins-shelf-data-");
@@ -114,7 +103,6 @@ async function shelfWorld(): Promise<ShelfWorld> {
   return { project, dataRepo, run };
 }
 
-/** Run with a terminal that answers each prompt from `answers`. */
 async function runWithTerminal(
   world: ShelfWorld,
   args: string[],
@@ -208,14 +196,12 @@ describe("shelf add plugins/<n> (D7 points 1 and 3)", () => {
         "not installing plugins/gh-cli without consent — it runs 1 hook in every Claude Code session in this project",
       );
       expect(err).toContain("bash hooks/setup.sh");
-      // Point 3 in the same refusal: project scope is the default.
       expect(err).toContain("every teammate's");
       expect(err).toContain(
         "Claude Code session after they trust this workspace",
       );
       expect(err).toContain("--yes");
       expect(err).toContain("capshelf show plugins/gh-cli");
-      // Refused before any write.
       expect(existsSync(pluginFolder(world.project, "gh-cli"))).toBe(false);
       expect(await readFile(manifestPath(world.project))).toEqual(
         manifestBefore,
@@ -247,7 +233,6 @@ describe("shelf add plugins/<n> (D7 points 1 and 3)", () => {
       const world = await shelfWorld();
       const r = await world.run(["add", "plugins/gh-cli", "--yes"]);
       expect(r.exitCode).toBe(0);
-      // `--yes` skips the question, so what it runs goes to stderr.
       expect(r.stderr.toString()).toContain("bash hooks/setup.sh");
       const manifest = await readJsonObject(manifestPath(world.project));
       expect(manifest.plugins).toEqual(["gh-cli"]);
@@ -436,8 +421,6 @@ describe("bundle consent pins (D7 point 1)", () => {
         await $`git -C ${world.dataRepo} rev-parse HEAD`.quiet().text()
       ).trim();
 
-      // While the gh-cli prompt is open, a commit turns plain into a plugin
-      // with a hook. The prompt never listed that hook.
       const { result } = await runWithTerminalDuring(
         world,
         ["add", "bundles/pair"],
@@ -462,7 +445,6 @@ describe("bundle consent pins (D7 point 1)", () => {
       ).toBe(false);
       if (result.exitCode === 0) {
         expect(existsSync(join(plainFolder, "SKILL.md"))).toBe(true);
-        // The needs were read with the inspected pin, not at the later HEAD.
         const lock = await readJsonObject(
           join(world.project, ".capshelf", "capshelf.lock.json"),
         );
@@ -477,7 +459,6 @@ describe("bundle consent pins (D7 point 1)", () => {
   );
 });
 
-/** Run with a terminal whose first prompt runs `during`, then answers yes. */
 async function runWithTerminalDuring(
   world: ShelfWorld,
   args: string[],
@@ -846,8 +827,6 @@ describe("shelf update plugins/<n> (D3, D7 point 2)", () => {
         stderrIsTTY: true,
         prompt: async (message) => {
           prompts.push(message);
-          // A commit lands after the user saw the prompt and before the
-          // merge reads the data repo.
           await writeUnder(
             world.dataRepo,
             "plugins/gh-cli/hooks/hooks.json",
@@ -981,7 +960,6 @@ describe("status of a shelf plugin row (D11)", () => {
         .find((line) => line.includes("data/plugins/gh-cli"));
       expect(ghLine).toContain("hooks: 1");
 
-      // A drifted row reports what Claude Code loads: the installed tree.
       await writeFile(
         join(pluginFolder(world.project, "gh-cli"), "hooks", "hooks.json"),
         JSON.stringify(TWO_HOOKS),
@@ -1036,11 +1014,6 @@ interface AdoptWorld {
   run: (args: string[]) => Promise<CliResult>;
 }
 
-/**
- * `plugins/gh-cli` installed from an upstream as a remote row (Task 8).
- * `rootLicense` commits a LICENSE at the upstream root, outside the plugin,
- * before the install.
- */
 async function remotePluginWorld(
   opts: { rootLicense?: boolean; pluginLicense?: boolean } = {},
 ): Promise<AdoptWorld> {
@@ -1129,7 +1102,6 @@ describe("share plugins/<n> --adopt (D9, M3, M4)", () => {
       );
       const remotes = await readJsonObject(remotesLockPath(world.project));
       expect(objectField(remotes, "items")).toEqual({});
-      // M3: the sidecar stays on the shelf, never in the installed copy.
       expect(existsSync(join(installed, ".capshelf.yml"))).toBe(false);
       expect(
         await readFile(join(installed, "hooks", "setup.sh"), "utf-8"),
@@ -1170,7 +1142,6 @@ describe("share plugins/<n> --adopt (D9, M3, M4)", () => {
       expect(r.stderr.toString()).toContain(
         ".agents/skills/gh-cli is already installed by skills.sh",
       );
-      // D9: the skills.sh row is never found and never released.
       expect(await readFile(skillsLock)).toEqual(before);
       expect(await readFile(remotesLockPath(world.project))).toEqual(
         remotesBefore,
@@ -1230,7 +1201,6 @@ describe("share plugins/<n> --adopt (D9, M3, M4)", () => {
       expect(r.stdout.toString()).toContain(
         "✓ adopted project/data/plugins/gh-cli @ ",
       );
-      // `--yes` skips the question, so the authorized runs go to stderr.
       expect(r.stderr.toString()).toContain("every teammate's");
       expect(await lockKeys(world.project)).toContain("data/plugins/gh-cli");
       const manifest = await readJsonObject(manifestPath(world.project));
@@ -1388,7 +1358,6 @@ describe("share plugins/<n> --adopt (D9, M3, M4)", () => {
       const r = await run(["share", "plugins/gh-cli", "--adopt", "--yes"]);
       expect(r.exitCode).toBe(0);
       const err = r.stderr.toString();
-      // The edited URL has no warm cache, so the "no license" line names it.
       expect(err).toContain("no license file in the remote item or at the ");
       expect(err).not.toContain("\u001b");
       expect(r.stdout.toString()).toContain("upstream:       ");
@@ -1400,9 +1369,6 @@ describe("share plugins/<n> --adopt (D9, M3, M4)", () => {
   test(
     "a retry after an interrupted adopt releases remote/plugins/<n> only",
     async () => {
-      // Constructed state, as in the skill test: the adopt runs to
-      // completion, then the remotes lock is written back by hand. A second
-      // remote row shows the retry releases only the plugin's own row.
       const { world, run } = await remotePluginWorld();
       const skillUpstream = await upstreamWith([["skills/pdf", "Extract"]]);
       expect(

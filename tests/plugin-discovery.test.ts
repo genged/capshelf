@@ -65,8 +65,8 @@ test("a bare name resolves via the document's metadata.pluginRoot", async () => 
   expect(inventory.plugins.map((p) => p.source)).toEqual(["plugins/b"]);
 });
 
-// Claude Code itself refuses a bare name with no metadata.pluginRoot, so
-// capshelf does not resolve it from the repository root either.
+// Claude Code refuses a bare name without metadata.pluginRoot, so capshelf
+// doesn't fall back to the repository root.
 test("a bare name with no metadata.pluginRoot is skipped as unsafe-path", async () => {
   const repo = await tempRepo("capshelf-plugin-bare-noroot-");
   await writePlugins(repo, [], {
@@ -80,8 +80,6 @@ test("a bare name with no metadata.pluginRoot is skipped as unsafe-path", async 
   ]);
 });
 
-// A pluginRoot that is not a string, or that normalizes to null, skips
-// the bare name the same way — no silent fallback to the repository root.
 test("a non-string or unsafe metadata.pluginRoot skips the bare name as unsafe-path", async () => {
   const nonString = await tempRepo("capshelf-plugin-bare-badroot-");
   await writePlugins(nonString, [], {
@@ -263,9 +261,6 @@ test("a Codex path under codex/generated is dropped and is not in skipped", asyn
   expect(inventory.skipped).toEqual([]);
 });
 
-// A Codex local path that normalizes to the repository root is
-// legacy, the same as a Claude source that normalizes to ".": no plugin, and
-// not reported in skipped.
 test("a Codex local path that normalizes to the root is legacy: no plugin, not skipped", async () => {
   const repo = await tempRepo("capshelf-plugin-codex-root-");
   await writePlugins(repo, [], {
@@ -277,9 +272,6 @@ test("a Codex local path that normalizes to the root is legacy: no plugin, not s
   expect(inventory.skipped).toEqual([]);
 });
 
-// "local" is this source kind's own shape, not another
-// runtime's — a missing or non-string path is a malformed local source, not
-// an external one.
 test("a Codex local source with no path is skipped as unsafe-path, not external-source", async () => {
   const repo = await tempRepo("capshelf-plugin-codex-local-nopath-");
   await writePlugins(repo, [], {
@@ -379,8 +371,6 @@ test("a manifest skills path that is unsafe or leaves the plugin warns and adds 
   ]);
 });
 
-// D14: a manifest that is present but a symlink or gitlink warns with the
-// same text as a catalog that is not a regular file, and contributes nothing.
 test("a symlinked manifest warns and contributes nothing", async () => {
   const repo = await tempRepo("capshelf-plugin-symlink-manifest-");
   await writePlugins(
@@ -432,9 +422,6 @@ test("the plugin name comes from the manifest, then the catalog, then the direct
   const i = inventory.plugins.find((p) => p.source === "plugins/i");
   expect(h?.name).toBe("from-manifest");
   expect(i?.name).toBe("beta");
-  // The directory's last segment ("i") is only the final fallback for
-  // the chosen name — it never counts as a disagreeing name, so plugin "i"
-  // (named only by its catalog entry) gets no warning at all.
   expect(inventory.warnings).toEqual([
     {
       path: "plugins/h",
@@ -539,14 +526,9 @@ test("a Claude catalog that does not parse warns, and the Codex catalog still li
   await commitAll(repo, "bad claude catalog");
   const inventory = await discover(repo);
   expect(inventory.plugins.map((p) => p.source)).toEqual(["plugins/l"]);
-  // A hardcoded literal oracle, not a comparison against another code path.
-  // The expected text is `loadClaudeMarketplaceAtCommit`'s actual thrown
-  // message for this exact fixture, captured by running it against the code
-  // before plugin discovery, at `d8b8168`, with this repository's own
-  // `node_modules` (zod 3.25.76, pinned identically at `d8b8168` and here —
-  // `git show d8b8168:bun.lock` and `git show HEAD:bun.lock` agree). That
-  // function is unchanged since: `git diff d8b8168 HEAD --
-  // src/claude-marketplace.ts` only adds an `export` keyword, no body change.
+  // Hardcoded literal oracle: the expected text is the message
+  // loadClaudeMarketplaceAtCommit threw for this fixture before plugin
+  // discovery existed, not a comparison against another code path.
   expect(inventory.warnings).toEqual([
     {
       path: ".claude-plugin/marketplace.json",

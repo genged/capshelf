@@ -38,7 +38,7 @@ describe("shareCatalogRows", () => {
       pick: "permissions.allow",
     });
     // The digest fingerprints the value the row showed, so the post-prompt
-    // staleness check can tell "still what the user saw" from "changed".
+    // check can detect a change.
     expect(mark?.digest).toBe(JSON.stringify(["ls"]));
   });
 
@@ -53,13 +53,10 @@ describe("shareCatalogRows", () => {
     ]);
     const github = rows.filter((row) => row.ref === "github");
     expect(github).toHaveLength(2);
-    // Two rows, one label: the identity is the id, not the ref.
     expect(github[0]?.id).not.toBe(github[1]?.id);
     expect(picks.get(pickRowId(github[0]!))?.sourceTarget).toBe("claude");
     expect(picks.get(pickRowId(github[1]!))?.sourceTarget).toBe("codex");
     expect(rows.filter((row) => row.ref === "posthog")).toHaveLength(1);
-    // The detail names the output file, because that is what distinguishes
-    // the two rows.
     expect(github[0]?.detail).toContain(".mcp.json");
     expect(github[1]?.detail).toContain(".codex/config.toml");
   });
@@ -95,8 +92,8 @@ describe("shareCatalogRows", () => {
         mcpServers: {
           "a.b": { command: "x" },
           "-dash": { command: "y" },
-          // The parser splits on `/` and trims, so neither of these can round
-          // trip as `mcp/<name>`; `capshelf` is a reserved system item name.
+          // The parser splits on `/` and trims, so these names can't round-trip
+          // as `mcp/<name>`; `capshelf` is reserved.
           "a/b": { command: "x" },
           " padded": { command: "x" },
           capshelf: { command: "x" },
@@ -112,8 +109,8 @@ describe("shareCatalogRows", () => {
   });
 
   test("a non-server key in .mcp.json is a disabled row, not silence", () => {
-    // `.mcp.json` rows are servers, so this key has no representation, and
-    // without a row a file holding only it would read as "nothing to share".
+    // Without a row for this key, a file holding only it would read as "nothing
+    // to share".
     const { rows } = shareCatalogRows([
       output("claude-mcp", ".mcp.json", {
         mcpServers: {},
@@ -127,10 +124,8 @@ describe("shareCatalogRows", () => {
   });
 
   test("a malformed server table or entry is a disabled row, not silence or a trap", () => {
-    // The share validators require the container and each server to be plain
-    // objects. An enabled row for a scalar entry would fail every time after
-    // selection, and a silently dropped scalar container would let the output
-    // read as "nothing to share".
+    // Share validators require plain objects, so scalar entries get no enabled
+    // row, and dropping a scalar container would read as "nothing to share".
     const { rows } = shareCatalogRows([
       output("claude-mcp", ".mcp.json", {
         mcpServers: { github: "npx", ok: { command: "z" } },
@@ -148,10 +143,8 @@ describe("shareCatalogRows", () => {
   });
 
   test("the synthetic $schema key is not offered", () => {
-    // `normalizeClaudeSettingsOutput` writes `$schema` into the generated
-    // output, so it is capshelf's artifact, not project config. A schema-only
-    // file contributes no rows at all, which is what lets the empty state
-    // report "nothing to share".
+    // `$schema` is written by capshelf's normalizer, so it is an artifact, not
+    // project config; schema-only files must yield no rows.
     const { rows } = shareCatalogRows([
       output("claude-settings", ".claude/settings.json", {
         $schema: "https://json.schemastore.org/claude-code-settings.json",
@@ -168,11 +161,9 @@ describe("shareCatalogRows", () => {
   });
 
   test("a top-level key --pick cannot name is a disabled row, not silence", () => {
-    // A control-bearing path would carry a raw ESC into a printed command
-    // (`shellArg` quotes without stripping bytes), and a dotted key has no
-    // pick syntax at all. With no ancestor row to cover a top-level key,
-    // dropping it silently would let a nonempty output read as "nothing to
-    // share" -- so each one stays visible, sanitized, and unmarkable.
+    // Control-bearing paths would carry a raw ESC into a printed command
+    // (`shellArg` doesn't strip) and dotted keys have no pick syntax, so they
+    // stay visible, sanitized and unmarkable instead of being dropped.
     const { rows, picks } = shareCatalogRows([
       output("claude-settings", ".claude/settings.json", {
         "evil\u001b[2Jkey": "x",
@@ -185,8 +176,6 @@ describe("shareCatalogRows", () => {
       ["dotted.key", true],
       ["plain", false],
     ]);
-    // A disabled key is not a pick: a forged mark of its id resolves to
-    // nothing.
     const disabledIds = rows.filter((row) => row.disabled).map(pickRowId);
     for (const id of disabledIds) expect(picks.get(id)).toBeUndefined();
   });
@@ -220,8 +209,8 @@ describe("plannedSharesFromMarks", () => {
         target: null,
       },
     ]);
-    // Dropped descendants stay in `marks`: the staleness check covers every
-    // value the user saw, not only the picks the command will pass.
+    // Dropped descendants stay in `marks` because the staleness check covers
+    // every value the user saw.
     expect(planned[0]?.marks.map((m) => m.pick)).toEqual([
       "permissions",
       "permissions.allow",
@@ -263,14 +252,12 @@ describe("changedMarks", () => {
     ];
     const [planned] = plannedSharesFromMarks(original);
     const fresh = new Map([
-      // env.FOO changed under the open picker; env.BAR did not.
       [original[0]!.id, { ...original[0]!, digest: "new" }],
       [original[1]!.id, original[1]!],
     ]);
     expect(
       changedMarks(planned!, fresh).map((changedMark) => changedMark.pick),
     ).toEqual(["env.FOO"]);
-    // A vanished row is a changed value too.
     fresh.delete(original[1]!.id);
     expect(changedMarks(planned!, fresh).map((m) => m.pick)).toEqual([
       "env.FOO",

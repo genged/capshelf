@@ -2,11 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { fuzzyMatchV1, fuzzyTerms, isCaseSensitive } from "../src/fuzzy";
 
 /**
- * The ranking cases below are not invented. Each one is stated in the header
- * comment of `src/algo/algo.go` in junegunn/fzf, the published description
- * this module is ported from, where the preferred string is marked with
- * backticks underneath it. They are the reason a ported algorithm is worth
- * more than a hand-tuned one: the spec ships its own acceptance tests.
+ * Ranking cases come from the header of fzf's `src/algo/algo.go`, which this
+ * module ports, so the spec supplies its own acceptance tests.
  */
 describe("fuzzyMatchV1 against the published algo.go examples", () => {
   const scoreOf = (pattern: string, text: string): number => {
@@ -16,42 +13,30 @@ describe("fuzzyMatchV1 against the published algo.go examples", () => {
   };
 
   test("prefers more characters at word boundaries", () => {
-    // e.g. "fuzzyfinder" vs. "fuzzy-finder" on "ff" -> fuzzy-finder
     expect(scoreOf("ff", "fuzzy-finder")).toBeGreaterThan(
       scoreOf("ff", "fuzzyfinder"),
     );
   });
 
   test("doubles the bonus when the first pattern character is at a boundary", () => {
-    // e.g. "fo-bar" vs. "foob-r" on "br" -> fo-bar
     expect(scoreOf("br", "fo-bar")).toBeGreaterThan(scoreOf("br", "foob-r"));
   });
 
   test("the gap penalty cancels the boundary bonus past ~8 characters", () => {
-    // e.g. "fuzzyfinder" vs. "fuzzy-blurry-finder" on "ff" -> fuzzyfinder.
-    //
-    // This is an exact tie on score, and that is the documented design: the
-    // constants "were chosen that the bonus is cancelled when the gap between
-    // the acronyms grows over 8 characters". fzf resolves it with its default
-    // --tiebreak=length (man fzf: "Default is length"), which `pick-core.ts`
-    // reproduces. Asserting the tie pins the cancellation point; asserting a
-    // winner here would silently pass if the scoring drifted either way.
+    // Exact tie is the documented design (bonus cancels past 8 chars) and fzf
+    // breaks it by length; asserting a winner would pass if scoring drifted.
     expect(scoreOf("ff", "fuzzyfinder")).toBe(
       scoreOf("ff", "fuzzy-blurry-finder"),
     );
   });
 
   test("the consecutive bonus keeps a tight match ahead of a boundary one", () => {
-    // e.g. "foobar" vs. "foo-bar" on "foob" -> foobar. Without the consecutive
-    // bonus this ranking inverts, which algo.go calls out as the anomaly the
-    // bonus exists to correct.
     expect(scoreOf("foob", "foobar")).toBeGreaterThan(
       scoreOf("foob", "foo-bar"),
     );
   });
 
   test("a chunk's bonus is set by its first character", () => {
-    // e.g. "foobar" vs. "out-of-bound" on "oob" -> out-of-bound.
     expect(scoreOf("oob", "out-of-bound")).toBeGreaterThan(
       scoreOf("oob", "foobar"),
     );
@@ -78,9 +63,8 @@ describe("fuzzyMatchV1", () => {
   });
 
   test("the backward pass tightens the match to the trailing word", () => {
-    // A forward-only scan would spread `review` across the whole ref, because
-    // r, e, v, i, e, w are all available inside "security" and earlier. The
-    // backward pass is what recovers the contiguous trailing word.
+    // A forward-only scan would spread `review` across the ref; the backward
+    // pass recovers the contiguous trailing word.
     const match = fuzzyMatchV1("review", "skills/security-review");
     expect(match?.positions).toEqual([16, 17, 18, 19, 20, 21]);
   });
@@ -117,9 +101,8 @@ describe("fuzzyTerms", () => {
 
 describe("Unicode", () => {
   /**
-   * Positions are counted in code points. Indexing a JavaScript string walks
-   * UTF-16 halves instead, which made one emoji report two match positions and
-   * let a highlighter paint half a character.
+   * Positions count code points because indexing a JS string walks UTF-16
+   * halves, splitting an emoji in two.
    */
   test("a character outside the basic plane is one position, not two", () => {
     const match = fuzzyMatchV1("🎨", "skills/🎨-design");
@@ -136,9 +119,8 @@ describe("Unicode", () => {
   });
 
   test("a letter is not a word boundary, whatever its script", () => {
-    // The classes earn the boundary bonuses. Treating every non-ASCII
-    // character as a non-word character made each one look like a separator
-    // and inflated the score of any text that used them.
+    // Non-ASCII letters must keep their word classes; treating them as non-word
+    // characters makes each look like a separator and inflates scores.
     const midWord = fuzzyMatchV1("б", "Аб")?.score ?? -1;
     const afterDelimiter = fuzzyMatchV1("б", "-б")?.score ?? -1;
     expect(afterDelimiter).toBeGreaterThan(midWord);
@@ -152,7 +134,6 @@ describe("Unicode", () => {
   test("smart case applies to non-ASCII, so a capital still narrows", () => {
     expect(isCaseSensitive("жук")).toBe(false);
     expect(isCaseSensitive("Жук")).toBe(true);
-    // All caps means case-sensitive, so this must not match lowercase text.
     expect(fuzzyMatchV1("ЖУК", "жук")).toBeNull();
   });
 

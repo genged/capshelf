@@ -106,8 +106,8 @@ describe("Git and filesystem semantics", () => {
 
   test("exclusion pathspecs isolate metacharacter item names", async () => {
     const repo = await baselineRepo("capshelf-exclude-paths-");
-    // Each excluded name is a glob that would swallow its sibling if the
-    // exclusion were rendered without `literal`.
+    // Each excluded name is a glob that would swallow its sibling unless
+    // rendered with `literal`.
     const pairs = [
       ["a*", "abc"],
       ["q?", "qa"],
@@ -193,9 +193,8 @@ describe("Git and filesystem semantics", () => {
     );
     expect(promoted.action).toBe("promoted");
     expect(executable(join(dataSkill, "SKILL.md"))).toBe(true);
-    // PIN-1 puts the mode inside identity, where it used to sit outside: an
-    // executable-bit flip is a real content change, so promoting one produces
-    // a different pin rather than the same one with a separate mode flag.
+    // The mode is part of pin identity: an executable-bit flip is a real
+    // content change, so promoting one yields a different pin.
     expect(promoted.sha).not.toBe(sha);
     expect(promoted.sha).toBe(
       await currentPinDigest(dataRepo, "skills", "mode"),

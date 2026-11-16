@@ -4,19 +4,8 @@ import { join } from "node:path";
 import { commitAll, runInProcess, tempRepo } from "./cli-fixtures";
 
 /**
- * Lock version 4 replaced the identity a data entry records: `sha`, a content
- * hash of the working tree, became `sourcePinDigest`, a digest over the
- * committed Git tree. `entryIdentity` (`src/lock.ts`) reads either. The
- * reconciliation code moved onto it; several *display* paths did not, and read
- * `entry.sha` directly.
- *
- * That fails two ways, neither of them loudly:
- *   - in a template literal, a missing field renders the text "undefined";
- *   - in an object, `JSON.stringify` drops the key entirely, so a script sees
- *     no field at all rather than an error.
- *
- * It stayed hidden because the populations that still carry `sha` are exactly
- * the ones tests reach for: system items, and unmigrated v2/v3 locks.
+ * System and legacy entries retain `sha`, so fixtures using only those entries
+ * would miss display failures for data entries without `sha`.
  */
 describe("lock v4 identity reaches every display path", () => {
   interface Fixture {
@@ -58,7 +47,6 @@ describe("lock v4 identity reaches every display path", () => {
       );
       const entry = lock.items[key];
       expect(entry).toBeDefined();
-      // The point of the whole class: a v4 data entry has no `sha`.
       expect(entry.sha).toBeUndefined();
       expect(entry.sourcePinDigest).toBeString();
       return entry.sourcePinDigest;
@@ -70,9 +58,8 @@ describe("lock v4 identity reaches every display path", () => {
   test("no command prints the literal string undefined", async () => {
     const { run } = await fixture("identity-sweep");
 
-    // The blunt assertion, on purpose: it catches the class rather than the
-    // three sites that happened to be found. A missing field in a template
-    // literal renders as this exact text.
+    // Asserts the literal text "undefined" is absent, since a missing field in
+    // a template literal renders that way.
     for (const args of [
       ["ls", "--here"],
       ["ls"],
@@ -119,8 +106,8 @@ describe("lock v4 identity reaches every display path", () => {
       (await run(["add", "mcp/deepwiki", "--json"])).stdout.toString(),
     );
     expect(parsed.action).toBe("already-installed");
-    // `JSON.stringify` drops an undefined value, so the regression is a missing
-    // key rather than a wrong one — assert presence, not just the value.
+    // JSON.stringify drops undefined values, so assert the key is present, not
+    // just the value.
     expect(Object.keys(parsed)).toContain("sha");
     expect(parsed.sha).toBe(mcp);
   });
@@ -139,10 +126,8 @@ describe("lock v4 identity reaches every display path", () => {
   test("show does not claim an update right after a clean add", async () => {
     const { run } = await fixture("identity-show");
 
-    // `masterSha` hashes the data repo's working tree; the lock holds a digest
-    // over a committed tree. They can never be equal, so comparing them
-    // reported an update for every item forever. `status` owns update
-    // detection — and reports these same items as up-to-date.
+    // `masterSha` hashes the working tree while the lock holds a committed-tree
+    // digest, so they never match; `status` owns update detection.
     for (const ref of ["mcp/deepwiki", "skills/demo"]) {
       const shown = await run(["show", ref, "--no-content"]);
       expect(shown.exitCode).toBe(0);

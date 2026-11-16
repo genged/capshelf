@@ -143,11 +143,6 @@ describe("decideSync state table", () => {
   });
 
   test("exhaustive: every fact combination yields a documented state with consistent outputs", () => {
-    // Enumerate the full cross product of the discrete fact dimensions.
-    // The precedence order itself is pinned by the point tests above; here we
-    // assert the invariants that hold across the whole input space: decideSync
-    // is total, each state carries its documented exit code, and only
-    // fast_forwarded integrates.
     const exits: Record<SyncState, 0 | 1 | 3 | 4> = {
       up_to_date: 0,
       fast_forwarded: 0,
@@ -320,11 +315,6 @@ async function configUser(repo: string): Promise<void> {
   await setTestIdentity(repo);
 }
 
-/**
- * A local bare origin plus two clones: `seed` (used to advance origin) and
- * `clone` (the bound data repo syncData operates on). Both start at the same
- * single commit on main, with `clone` tracking origin/main.
- */
 async function syncFixture(prefix: string): Promise<{
   seed: string;
   clone: string;
@@ -349,7 +339,6 @@ async function syncFixture(prefix: string): Promise<{
   return { seed, clone };
 }
 
-/** Commit `file` in the seed clone and push, advancing origin/main. */
 async function advanceOrigin(
   seed: string,
   file: string,
@@ -386,7 +375,6 @@ describe("syncData I/O orchestration", () => {
     expect(report.behind).toBe(1);
     expect(report.dirty).toBe(false);
 
-    // HEAD actually moved and the new commit's content landed in the worktree.
     expect(await headOf(clone)).toBe(upstreamSha);
     expect(await Bun.file(join(clone, "new-skill.md")).text()).toBe("v2\n");
   });
@@ -406,8 +394,6 @@ describe("syncData I/O orchestration", () => {
     expect(report.before).toBe(before);
     expect(report.after).toBe(before);
 
-    // HEAD did not move, the dirty file is untouched, and the upstream
-    // commit's file was not materialized in the worktree.
     expect(await headOf(clone)).toBe(before);
     expect(await Bun.file(join(clone, "skills.md")).text()).toBe(
       "local edit\n",
@@ -418,8 +404,8 @@ describe("syncData I/O orchestration", () => {
 
 describe("syncGuidance", () => {
   test("names the remedial action for each state", () => {
-    // guidance ships verbatim in the --json report, so each state must point
-    // the user at its actual remedy.
+    // Guidance ships verbatim in the --json report, so each state must name its
+    // actual remedy.
     const g = (state: SyncState) => syncGuidance(state, "/data");
     expect(g("up_to_date")).toContain("up to date");
     expect(g("fast_forwarded")).toContain("capshelf status");

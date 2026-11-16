@@ -23,18 +23,12 @@ interface SupersededProject {
   project: string;
   installed: string;
   lockPath: string;
-  /** The sha the lock pins: content this binary no longer bundles. */
   supersededSha: string;
 }
 
 /**
- * A project whose system item is pinned to bundled content the running binary
- * no longer carries, with the install still holding exactly that content.
- *
- * This is the state an ordinary capshelf upgrade produces, and it cannot be
- * built by driving the CLI: the binary bundles one version of the skill, so the
- * superseded one has to be written directly. Editing the lock is the documented
- * fixture exception — the entry is what is under test.
+ * The binary bundles only one skill version, so the superseded state cannot be
+ * produced through the CLI and the lock is written directly.
  */
 async function supersededSystemProject(
   prefix: string,
@@ -68,9 +62,8 @@ describe("update moves a system item off superseded bundled content", () => {
         "capshelf-superseded-pristine",
       );
 
-      // runInProcess is non-interactive: any reported destructive change would
-      // refuse with exit 3 instead of prompting, so exit 0 is the assertion
-      // that the pristine rule fired.
+      // runInProcess is non-interactive, so any destructive change would refuse
+      // with exit 3; exit 0 proves the pristine rule fired.
       const updated = await run(["update", "skills/capshelf", "--json"]);
       expect(updated.exitCode).toBe(0);
       const report = jsonOutput(updated);

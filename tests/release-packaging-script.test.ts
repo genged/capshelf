@@ -15,11 +15,8 @@ const SCRIPTS = join(import.meta.dir, "..", "scripts");
 const SCRIPT = "package-homebrew-artifacts.sh";
 
 /**
- * A stand-in for `bun` that stubs only `bun build --compile` — the slow part —
- * and the web UI bundle it inlines, and delegates every other call to the
- * real binary. The script reads its platform list through `bun -e`, so
- * stubbing that too would leave the part that decides which platforms ship
- * untested.
+ * The platform-list evaluation must use real Bun so the test exercises which
+ * platforms the script packages.
  */
 const BUN_STUB = `#!/usr/bin/env bash
 set -euo pipefail
@@ -50,7 +47,7 @@ interface Result {
 
 /**
  * The script derives its root from its own location, so a copy in a temp
- * `scripts/` directory keeps the run away from the repository's `dist/`.
+ * `scripts/` keeps it off the repo's `dist/`.
  */
 async function run(
   platforms: PlatformRow[],
@@ -96,7 +93,6 @@ interface PlatformRow {
   runner: string;
 }
 
-/** The flags of one `bun build` call, without the per-call target and output. */
 function sharedBuildFlags(argv: string): string[] {
   return argv
     .split(/\s+/)
@@ -115,8 +111,8 @@ function platform(name: string): PlatformRow {
 
 describe("package-homebrew-artifacts.sh", () => {
   test("packages every declared platform, including the last one", async () => {
-    // The release workflow derives its validation matrix from the whole file,
-    // so a platform dropped here becomes a validation job with no candidate.
+    // The release workflow derives its validation matrix from this file, so a
+    // dropped platform becomes a job with no candidate.
     const names = ["linux-x64", "linux-arm64", "darwin-arm64", "darwin-x64"];
     const { root, exitCode, stderr } = await run(names.map(platform));
 
@@ -141,8 +137,8 @@ describe("package-homebrew-artifacts.sh", () => {
   });
 
   test("compiles each release binary with the flags of the build script", async () => {
-    // Release binaries and `bun run build` must start the same way. Bytecode
-    // in particular changes only startup time, so no other test notices drift.
+    // Release binaries and `bun run build` must start the same way; bytecode
+    // only changes startup time, so no other test notices drift.
     const { root, exitCode } = await run([platform("linux-x64")]);
     expect(exitCode).toBe(0);
 

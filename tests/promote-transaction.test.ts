@@ -66,7 +66,6 @@ describe("beginDirectoryReplacement", () => {
 
 const runningAsRoot = process.getuid?.() === 0;
 
-/** A target with a managed file and a read-only ignored folder `cache`. */
 async function targetWithReadOnlyUnit(prefix: string) {
   const parent = await mkdtemp(join(tmpdir(), prefix));
   const target = join(parent, "hello");
@@ -180,7 +179,6 @@ describe("read-only units", () => {
           return true;
         },
       );
-      // The scratch folder is in `parent`, so a read-only parent keeps it.
       await chmod(parent, 0o555);
       try {
         await transaction.commit();

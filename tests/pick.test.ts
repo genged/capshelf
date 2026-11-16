@@ -51,8 +51,6 @@ describe("pickItems terminal gating", () => {
   });
 
   test("reports unavailable without a stderr terminal", async () => {
-    // stderr is where the prompt draws, so a redirected stderr is as fatal to
-    // it as a redirected stdin.
     const result = await pickItems(
       { rows: ROWS, message: "pick" },
       context({ stderrIsTTY: false, prompt: never }),
@@ -79,8 +77,6 @@ describe("pickItems terminal gating", () => {
   });
 
   test("a cancel is distinct from an unavailable picker", async () => {
-    // The two mean different things to a caller: `init` stays quiet about a
-    // cancel and explains an unavailable one.
     const result = await pickItems(
       { rows: ROWS, message: "pick" },
       context({ prompt: async () => ({ kind: "cancelled" }) }),
@@ -132,8 +128,6 @@ describe("setPickContext", () => {
 
 describe("pickTerminalUnavailable", () => {
   test("reports the reason without needing any rows", () => {
-    // Callers ask this before reading the data repo, so it must not depend on
-    // a row list that is expensive, and refusable, to build.
     expect(pickTerminalUnavailable(context())).toBeNull();
     expect(pickTerminalUnavailable(context({ stdinIsTTY: false }))).toBe(
       "no-terminal",
@@ -146,17 +140,16 @@ describe("pickTerminalUnavailable", () => {
 
 describe("dumb terminals", () => {
   test("a terminal without capabilities is refused, not drawn on", () => {
-    // Measured on TERM=dumb: readline ignores the key argument to its own
-    // `write`, so the clear that restores the query never runs. Typing `re`,
-    // `←`, `v` left `rerev`, and `Tab` arrived as a literal tab instead of
-    // marking a row. A clear refusal beats a prompt that quietly misbehaves.
+    // On TERM=dumb, readline ignores the key argument to `write`, so the query
+    // clear never runs and Tab arrives as a literal tab.
     expect(pickTerminalUnavailable(context({ capableTerminal: false }))).toBe(
       "dumb-terminal",
     );
   });
 
   test("an injected context is capable unless it says otherwise", () => {
-    // Otherwise every in-process test would depend on the developer's TERM.
+    // Injected contexts default to capable so tests do not depend on the
+    // developer's TERM.
     expect(pickTerminalUnavailable(context())).toBeNull();
   });
 
@@ -198,16 +191,11 @@ describe("pickUnavailableMessage", () => {
 
 describe("borrowTerminalWidth", () => {
   /**
-   * `@clack/core` measures wrapping and cursor rewind with
-   * `process.stdout.columns`, not with the stream it draws on. The picker draws
-   * on stderr, so `capshelf add > out.txt` left that number undefined and every
-   * redraw rewound too few lines. Measured on a 40-column terminal: 49 lines
-   * rewound with stdout on the terminal against 40 with it redirected.
+   * `@clack/core` measures wrapping and rewind with `process.stdout.columns`,
+   * so a redirected stdout makes the stderr picker rewind too few lines.
    */
-  // Read and write through accessors: assigning `undefined` to a typed local
-  // narrows it, and the assertions below compare against a number.
-  // SAFETY: Node declares `columns` on a tty stream as a number, but a
-  // redirected stdout has none, and this test puts `undefined` back.
+  // SAFETY: Node types `columns` on a tty as number, but a redirected stdout
+  // has none and this test restores `undefined`.
   const columns = (): number | undefined =>
     (process.stdout as { columns?: number }).columns;
   const setColumns = (value: number | undefined): void => {
@@ -229,8 +217,6 @@ describe("borrowTerminalWidth", () => {
   });
 
   test("leaves a real stdout width alone", () => {
-    // Borrowing over a genuine width would report the wrong terminal size for
-    // whatever else writes to stdout.
     const original = columns();
     setColumns(123);
     try {

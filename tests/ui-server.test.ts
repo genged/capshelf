@@ -64,21 +64,17 @@ async function request(
   return await fetch(url, { headers, method: options.method ?? "GET" });
 }
 
-/** A JSON API response. Every `/api/` route and error answers JSON. */
 async function get<T>(
   path: string,
   params: Record<string, string> = {},
   options: RequestOptions = {},
 ): Promise<{ status: number; body: T }> {
   const response = await request(path, params, options);
-  // SAFETY: every /api route is owned by src/ui/api.ts, which returns the
-  // payload type the caller names, and `errorResponse` in src/ui/server.ts
-  // answers every refusal with `UiError`. The server and this test are one
-  // build.
+  // SAFETY: every /api route returns the payload type the caller names, and
+  // refusals answer with `UiError`.
   return { status: response.status, body: (await response.json()) as T };
 }
 
-/** A static asset: the shell, its script, or its stylesheet. */
 async function getText(
   path: string,
 ): Promise<{ status: number; body: string }> {
@@ -204,8 +200,6 @@ describe("capshelf ui server", () => {
       const system = clean.body.items.find((item) => item.source === "system");
       expect(system?.ref).toBe("skills/capshelf");
 
-      // A local edit: the row drifts, the command list names the three
-      // resolutions, and the installed comparison shows the edit.
       await writeFile(
         join(world.project, ".agents", "skills", "hello", "SKILL.md"),
         "# hello\n\nfirst line\nedited line\n",
@@ -245,8 +239,6 @@ describe("capshelf ui server", () => {
       });
       expect(noUpstream.body.diff).toBeNull();
 
-      // The shelf moves too: both comparisons exist, and the merge command
-      // leads the list.
       await addSkill(
         world.dataRepo,
         "hello",
@@ -426,9 +418,8 @@ describe("capshelf ui server", () => {
   test(
     "a remote skill reaches the client as source: remote",
     async () => {
-      // Its own project and its own server: the shared world above is the
-      // fixture every other test in this file reads, and a remote row in it
-      // would change their counts.
+      // Uses its own project and server because a remote row in the shared
+      // world would change other tests' counts.
       const upstream = await upstreamWith([["skills/pdf", "Extract text"]]);
       const remoteWorld = await initRemoteProject();
       expect(
@@ -468,8 +459,6 @@ describe("capshelf ui server", () => {
   );
 
   test("the item id, not a second status run, selects the diff row", async () => {
-    // A diff request for a project the server has not loaded yet computes
-    // the rows first, then answers from them.
     const server = startUiServer({
       registryPath: world.registryPath,
       token: TOKEN,
@@ -494,8 +483,8 @@ describe("capshelf ui server", () => {
   });
 
   test("a diff answers from the status read it names, not the last one", async () => {
-    // Two reads of one project can overlap, and the older one can finish
-    // last. The client keeps the newer read, so its diff names that read.
+    // Overlapping reads can finish out of order; the client keeps the newer
+    // read, so its diff must name that read.
     const skill = join(world.project, ".agents", "skills", "hello", "SKILL.md");
     const id = "project/data/skills/hello";
     const api = createUiApi({ registryPath: world.registryPath });
@@ -504,7 +493,6 @@ describe("capshelf ui server", () => {
     await writeFile(skill, "# hello\n\nfirst line\nedited line\n");
     const edited = await api.projectStatus(world.project);
     expect(clean.snapshot).not.toBe(edited.snapshot);
-    // The last read is the edited one, but the clean read's row has no diff.
     expect(
       (await api.projectDiff(world.project, id, "installed", clean.snapshot))
         .diff,
@@ -513,7 +501,6 @@ describe("capshelf ui server", () => {
       (await api.projectDiff(world.project, id, "installed", edited.snapshot))
         .diff?.text,
     ).toContain("+edited line");
-    // A snapshot the server no longer keeps, or of another project, is a 404.
     await expect(
       api.projectDiff(world.project, id, "installed", "no-such-read"),
     ).rejects.toThrow("no longer kept");
@@ -525,8 +512,8 @@ describe("capshelf ui server", () => {
   test(
     "reads of other projects never drop a project's current read",
     async () => {
-      // The limit is per project. With one limit across all projects, a
-      // refresh of enough projects drops the read that some project shows.
+      // The limit is per project; a global limit would let refreshing enough
+      // projects evict a read another project still shows.
       const other = await tempDir("capshelf-ui-other-");
       const run = runInProcess(other);
       expect(
@@ -546,7 +533,6 @@ describe("capshelf ui server", () => {
         (await api.projectDiff(world.project, id, "installed", first.snapshot))
           .item,
       ).toBe(id);
-      // Newer reads of the same project do drop it, so the store stays small.
       for (let read = 0; read < 6; read += 1) {
         await api.projectStatus(world.project);
       }
@@ -558,9 +544,9 @@ describe("capshelf ui server", () => {
   );
 
   test("a relative --data override is printed as the resolved repository", async () => {
-    // `capshelf --data ../shelf ui` resolves the override against the
-    // directory it started in, but each printed command runs from a project
-    // root. The command must name the repository the dashboard read.
+    // The `--data` override resolves against the start directory but printed
+    // commands run from a project root, so they must name the absolute
+    // repository.
     await writeFile(
       join(world.project, ".agents", "skills", "hello", "SKILL.md"),
       "# hello\n\nfirst line\nedited line\n",
@@ -580,8 +566,8 @@ describe("capshelf ui server", () => {
   });
 
   test("a relative --data override is absolute even when it names no repository", async () => {
-    // With no repository at the path, status has no dataRepo to fall back
-    // on, so the override itself must already be absolute.
+    // With no repository at the path there is no dataRepo to fall back on, so
+    // the override itself must be absolute.
     const api = createUiApi({
       registryPath: world.registryPath,
       dataOverride: "../no-such-shelf",
@@ -591,7 +577,7 @@ describe("capshelf ui server", () => {
   });
 
   test("an empty --data is no override, as in the CLI", async () => {
-    // The CLI ignores `--data ""`. Made absolute, "" would name the start
+    // The CLI ignores `--data ""`; making it absolute would name the start
     // directory and replace every project's own binding.
     const empty = createUiApi({
       registryPath: world.registryPath,
@@ -610,5 +596,4 @@ describe("capshelf ui server", () => {
   });
 });
 
-// Keep the shell dependency visible: the fixtures above run real git.
 void $;

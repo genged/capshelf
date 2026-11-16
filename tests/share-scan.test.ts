@@ -38,12 +38,11 @@ describe("untrackedItemRows", () => {
     ]);
     const reviewer = rows.filter((row) => row.ref === "reviewer");
     expect(reviewer).toHaveLength(2);
-    // Two rows, one label: the identity is the id, not the ref.
     expect(reviewer[0]?.id).not.toBe(reviewer[1]?.id);
     expect(reviewer[0]?.detail).toContain(".claude/agents/reviewer.md");
     expect(reviewer[1]?.detail).toContain(".codex/agents/reviewer.toml");
-    // Each pick knows every shareable output, so the mark grouping can tell
-    // "all of them" from "one of them".
+    // Each pick knows every shareable output so mark grouping can tell "all"
+    // from "one".
     for (const row of reviewer) {
       expect(picks.get(pickRowId(row))?.presentTargets).toEqual([
         "claude",
@@ -97,8 +96,8 @@ describe("untrackedItemRows", () => {
   });
 
   test("labels and details are sanitized for the live frame", () => {
-    // The name and the label come from the user's filesystem, not from a
-    // validated lock, and the frame is live: a raw ESC must never render.
+    // Names and labels come from the user's filesystem, not a validated lock,
+    // and the frame is live, so a raw ESC must never render.
     const { rows } = untrackedItemRows([
       candidate({
         kind: "skills",
@@ -149,8 +148,8 @@ describe("plannedItemSharesFromMarks", () => {
     expect(planned).toMatchObject([
       { kind: "subagents", name: "both", target: null },
       { kind: "subagents", name: "one-of-two", target: "claude" },
-      // The named command shares every present output by default, so the one
-      // present output marked needs no flag.
+      // The named command shares every present output by default, so a single
+      // present output needs no flag.
       { kind: "subagents", name: "only-output", target: null },
     ]);
     // Every mark stays attached for the staleness check.

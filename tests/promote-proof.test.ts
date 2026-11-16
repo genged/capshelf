@@ -15,12 +15,9 @@ import { PreconditionError } from "../src/errors";
 import { assertCommittedTreeEqualsCandidate } from "../src/promote-proof";
 
 /**
- * PIN-11 and the lock-writer gate.
- *
- * The proof is `A == B`: what the project held equals the tree the commit
- * produced. A destination-side check cannot see the difference, because a
- * `pre-commit` hook rewrites the worktree *and* the commit, so both sides of
- * that check agree on content the project never had.
+ * The proof compares project contents to the commit's tree because a
+ * destination-side check can't see a `pre-commit` hook rewriting both worktree
+ * and commit.
  */
 describe("promote proves the commit equals the selected candidate (PIN-11)", () => {
   test(
@@ -63,7 +60,6 @@ describe("promote proves the commit equals the selected candidate (PIN-11)", () 
         "the committed content is not the selected publication content",
       );
 
-      // Rolled back: HEAD, the worktree, and the lock are all where they were.
       expect(
         (await $`git -C ${dataRepo} rev-parse HEAD`.quiet()).stdout
           .toString()
@@ -94,8 +90,6 @@ describe("promote proves the commit equals the selected candidate (PIN-11)", () 
       expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
       expect((await run(["add", "settings/base"])).exitCode).toBe(0);
 
-      // A fragment promote commits the user's own edit where it already lives
-      // in the data repo. Its candidate is those exact canonical bytes.
       await writeFile(
         join(dataRepo, "settings", "base", "settings.json"),
         `${JSON.stringify({ env: { A: "2" } }, null, 2)}\n`,
@@ -229,8 +223,6 @@ describe("a file the data repo ignores refuses the publication before the commit
       );
       await writeFile(join(installed, ".gitignore"), "*.log\n");
       await writeFile(join(installed, "notes.log"), "log");
-      // Project scope reads what project Git tracks, so a tracked file stays
-      // selected even when the item's own `.gitignore` matches it.
       await $`git -C ${project} add -f .agents/skills/hello/.gitignore .agents/skills/hello/notes.log`.quiet();
 
       const promoted = await run(["promote", "skills/hello", "-m", "publish"]);
@@ -342,8 +334,6 @@ describe("the PIN-11 refusal names an ignore rule for an absent row", () => {
     async () => {
       const dataRepo = await tempRepo("capshelf-proof-rule-data-");
       const root = await addSkill(dataRepo, "s", "v1\n");
-      // Anchored to the item directory: it matches only the full repo path
-      // `skills/s/x.pyc`, never the item-relative `x.pyc`.
       await writeFile(join(root, ".gitignore"), "/x.pyc\n*.log\n!keep.log\n");
       await commitAll(dataRepo, "skill");
       const commit = (
@@ -431,10 +421,8 @@ describe("a refused share leaves the data repo as it was (GIT-7)", () => {
           .toString()
           .trim(),
       ).toBe(headBefore);
-      // No leftover source: `share` refuses a canonical path that already
-      // exists, so leaving one behind would make the retry impossible. The
-      // empty parent directory is left, which git does not track and the
-      // next attempt does not see.
+      // No canonical source is left behind because `share` refuses a path that
+      // already exists, which would make retry impossible.
       expect(existsSync(join(dataRepo, "mcp", "server", "claude.json"))).toBe(
         false,
       );
@@ -499,8 +487,6 @@ describe("a refused fragment promote restores only the index (GIT-7)", () => {
           .toString()
           .trim(),
       ).toBe(headBefore);
-      // The edit being promoted is the user's own file: it survives, and the
-      // command that failed leaves nothing staged for them to clean up.
       expect(await readFile(source, "utf-8")).toBe(
         `${JSON.stringify({ env: { A: "2" } })}\n`,
       );
@@ -564,8 +550,6 @@ describe("a refused fragment promote restores only the index (GIT-7)", () => {
           await $`git -C ${dataRepo} diff --cached --name-only`.quiet().text()
         ).trim(),
       ).toBe("");
-      // The transaction never restores the worktree. It leaves the hook's
-      // edit visible, but it does not accept or record that edit.
       expect(await readFile(source, "utf-8")).toBe(
         `${JSON.stringify({ env: { A: "3" } })}\n`,
       );
@@ -617,7 +601,6 @@ describe("ordinary lock writers refuse an unmigrated lock", () => {
         expect(output).toContain("capshelf lock migrate");
       }
 
-      // Nothing was written by any of them.
       expect(await readFile(lockPath, "utf-8")).toBe(legacyBytes);
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,

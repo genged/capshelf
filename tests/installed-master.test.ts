@@ -114,13 +114,9 @@ describe("installed item paths and hashes", () => {
     await $`git -C ${project} add .`.quiet();
     await $`git -C ${project} commit -qm baseline`.quiet();
 
-    // PIN-5 reversed this. `shaOfInstalled` used to hash the *Git-visible*
-    // file list, so an ignore rule silently removed a file from the item's
-    // computed identity — and a `--local` item, excluded wholesale by
-    // capshelf, hashed as if it were empty. It is now a plain filesystem walk,
-    // so a new file changes the hash whatever `.gitignore` says. Deciding who
-    // owns an unpinned file is a separate question, answered by the extra
-    // classifier in reconciliation.
+    // The installed identity is a plain filesystem walk, so ignore rules cannot
+    // drop a file from the hash; ownership of unpinned files is decided by the
+    // extra classifier.
     const before = await shaOfInstalled(project, "skills", "hello");
     await writeFile(join(skill, ".env.local"), "secret\n");
 
@@ -152,9 +148,8 @@ describe("installed item paths and hashes", () => {
 
   test("installedPath refuses a destination that escapes the project root", async () => {
     const project = await tempDir();
-    // Even if a traversal name reached installedPath directly (bypassing the
-    // manifest/lock validators), the containment invariant must reject it
-    // before any destructive rm/write uses the path.
+    // Containment must hold even if a traversal name bypasses the manifest/lock
+    // validators, before any destructive rm/write.
     expect(() => installedPath(project, "skills", "../../../evil")).toThrow(
       /outside project/,
     );
@@ -164,9 +159,8 @@ describe("installed item paths and hashes", () => {
     const project = await tempDir();
     const victim = await tempDir("capshelf-victim-");
     await mkdir(join(project, ".claude", "skills"), { recursive: true });
-    // A stray/hostile alias pointing at an unrelated directory. Materialize
-    // would rm+rewrite whatever installedPath returns, so returning the victim
-    // path here means data loss. It must throw instead.
+    // A hostile alias must throw because materialize would rm and rewrite
+    // whatever installedPath returns.
     await symlink(victim, join(project, ".claude", "skills", "hello"), "dir");
 
     expect(() => installedPath(project, "skills", "hello")).toThrow(
@@ -326,8 +320,6 @@ describe("system item registry", () => {
       "skills/capshelf",
     );
 
-    // The bundled hash must equal the hash of a fresh install, or status
-    // would report drift for untouched system items.
     const project = await tempDir();
     await installSystemItem(project, item!);
     expect(await shaOfInstalled(project, item!.kind, item!.name)).toBe(
@@ -364,8 +356,8 @@ describe("parseLockKey", () => {
   });
 
   test("rejects traversal, absolute, and option-like names", () => {
-    // The name becomes a filesystem path segment and a git pathspec; a hostile
-    // lockfile must not be able to escape the project or data-repo item dir.
+    // Names become path segments and git pathspecs, so a hostile lockfile must
+    // not escape the project or item dir.
     for (const key of [
       "data/skills/../../etc/profile.d",
       "data/skills/foo/../bar",
@@ -482,8 +474,6 @@ describe("master item discovery and hashing", () => {
     await $`git -C ${dataRepo} commit -qm baseline`.quiet();
     const before = await currentPinDigest(dataRepo, "skills", "hello");
 
-    // Adding and editing a root sidecar (untracked, then committed) is
-    // metadata-only and must not change the content sha.
     await writeFile(join(item, ".capshelf.yml"), "tags: [a]\n");
     expect(await currentPinDigest(dataRepo, "skills", "hello")).toBe(before);
     await $`git -C ${dataRepo} add .`.quiet();
@@ -491,10 +481,8 @@ describe("master item discovery and hashing", () => {
     await writeFile(join(item, ".capshelf.yml"), "tags: [a, b]\n");
     expect(await currentPinDigest(dataRepo, "skills", "hello")).toBe(before);
 
-    // A nested sub/.capshelf.yml is item content (no basename matching).
-    // The pin reads the committed tree, so the change has to be committed
-    // before it can move the identity — which is the point: an uncommitted
-    // edit in the data repo cannot change what consumers receive.
+    // The pin reads the committed tree, so an uncommitted data-repo edit cannot
+    // change what consumers receive.
     await mkdir(join(item, "sub"), { recursive: true });
     await writeFile(join(item, "sub", ".capshelf.yml"), "content\n");
     expect(await currentPinDigest(dataRepo, "skills", "hello")).toBe(before);
@@ -518,9 +506,6 @@ describe("master item discovery and hashing", () => {
     expect(await shaOfItem(item)).not.toBe(before);
   });
 
-  // PIN-5: the installed identity is filesystem work over the pinned path
-  // set. It must be the same value whether the project is a Git repository or
-  // a plain directory, and the project's own ignore rules must not reach it.
   for (const projectKind of ["git worktree", "plain directory"] as const) {
     test(`the installed identity equals the pin in a ${projectKind}`, async () => {
       const dataRepo = await tempRepo("capshelf-sidecar-data-");
@@ -539,7 +524,6 @@ describe("master item discovery and hashing", () => {
       await mkdir(installed, { recursive: true });
       await writeFile(join(installed, "SKILL.md"), "hello\n");
       await writeFile(join(installed, ".capshelf.yml"), "tags: [a]\n");
-      // An ignore rule covering the whole managed tree must change nothing.
       await writeFile(join(project, ".gitignore"), ".agents/\n");
 
       expect(

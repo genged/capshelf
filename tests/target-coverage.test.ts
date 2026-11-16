@@ -13,7 +13,6 @@ import {
 import { commitAll, tempDir, tempRepo } from "./cli-fixtures";
 
 describe("target coverage", () => {
-  /** A claude-only `mcp/deepwiki`, the fixture every commit-reading case uses. */
   async function writeClaudeOnlyMcp(dataRepo: string): Promise<void> {
     await mkdir(join(dataRepo, "mcp", "deepwiki"), { recursive: true });
     await writeFile(
@@ -23,9 +22,8 @@ describe("target coverage", () => {
   }
 
   test("the project-less candidate list agrees with the two that need a project", () => {
-    // `subagentCandidates` exists so presence can be read without a project.
-    // A second definition of the canonical paths is a drift risk, so the three
-    // that name them are pinned against each other here rather than by care.
+    // A second definition of the canonical paths risks drift, so the three that
+    // name them are pinned against each other.
     expect(subagentCandidates("reviewer").map((c) => c.relPath)).toEqual(
       allCanonicalItemRelPaths("subagents", "reviewer"),
     );
@@ -53,7 +51,6 @@ describe("target coverage", () => {
       ["claude", false],
       ["codex", true],
     ]);
-    // One candidate target: no coverage to report.
     expect(
       itemTargetCoverageInPaths(null, "settings", "base", [
         "settings/base/settings.json",
@@ -79,11 +76,9 @@ describe("target coverage", () => {
     expect(readable?.state).toBe("known");
     expect(readable?.rows.map((row) => row.present)).toEqual([true, false]);
 
-    // Drop the item's tree object. The commit still resolves — so the
-    // "locked commit unreachable" gate passes — but its content cannot be
-    // read. Probing each canonical path with `git show` cannot tell that
-    // apart from a genuinely missing file and would report a known absence,
-    // which is what suppresses the Codex trust warning.
+    // With the tree object dropped the commit still resolves but its content is
+    // unreadable; probing paths with `git show` would misreport a known
+    // absence, suppressing the Codex trust warning.
     const tree = (
       await $`git -C ${dataRepo} rev-parse HEAD:mcp/deepwiki`.text()
     ).trim();
@@ -109,7 +104,7 @@ describe("target coverage", () => {
       origin: null,
     });
     await writeClaudeOnlyMcp(dataRepo);
-    // Git stores this as a blob with mode 120000, so an object-type filter
+    // Git stores a symlink as a blob with mode 120000, so an object-type filter
     // would count it as a Codex source.
     await symlink(
       "claude.json",
@@ -127,7 +122,6 @@ describe("target coverage", () => {
     );
     expect(report?.state).toBe("known");
     expect(report?.rows.map((row) => row.present)).toEqual([true, false]);
-    // Coverage must never promise a target the pin refuses to name.
     expect(
       pinItemAtCommit(
         gitTreeSource({
