@@ -2,16 +2,9 @@ import { isTerminalControlCode } from "./assert";
 import type { IgnoreRule } from "./git";
 
 /**
- * The refusal text for files that a publication commit must contain but that
- * the data repo ignores. Pure, so the guard in `git.ts` and the tests share
- * one rendering.
- *
- * The fix depends on where the rule lives. A `.gitignore` under an owned root
- * is one the commit itself writes, from the project item or from a canonical
- * skill that a projection copies, so editing the data-repo copy is undone by
- * the next try. Any other rule can be removed in the data repo. Deleting the
- * file works only when the item supplies it: capshelf writes some files
- * itself, such as the adopt provenance sidecar.
+ * A `.gitignore` under an owned root is written by the commit itself, so
+ * editing the data-repo copy is undone on the next try; deleting a file only
+ * works if the item supplies it.
  */
 export function ignoredPublicationMessage(
   paths: readonly string[],
@@ -56,14 +49,13 @@ export function ignoredPublicationMessage(
   return lines.join("\n");
 }
 
-/** The row line that names an ignore rule, shared with the PIN-11 refusal. */
 export function ignoreRuleLine(rule: IgnoreRule): string {
   return `      ignored by ${displayText(rule.source)}:${rule.line}  ${displayText(rule.pattern)}`;
 }
 
 /**
- * A path or ignore pattern from Git can hold any byte but NUL. A terminal
- * control code in it must not reach the terminal.
+ * Git paths and ignore patterns can hold any byte but NUL, so each terminal
+ * control code is replaced with a space before display.
  */
 function displayText(text: string): string {
   return [...text]

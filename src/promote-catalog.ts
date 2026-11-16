@@ -1,18 +1,3 @@
-/**
- * The promote picker's catalog: one row per tracked data item, marked
- * promotable or not by the same state machine `status` reports.
- *
- * The states come from `deriveState` (`status-core.ts`), and the facts feeding
- * it come from the helpers `status` itself reads (`upstreamFactsForItem`,
- * `describeInstallation`, `fragmentContributionState`), so the picker and the
- * report cannot disagree about what a state means. `promoteRowDisposition` is
- * the pure half: which states offer a row and which disable it, exhaustively.
- *
- * A disabled row stays visible and names its reason in the detail column. The
- * detail is where this picker earns its place: it names the file behind the
- * state, so a user who edited `.mcp.json` and expected a promote reads which
- * canonical source `promote` actually publishes.
- */
 import { existsSync } from "node:fs";
 import { join, relative } from "node:path";
 import { assertNever } from "./assert";
@@ -47,17 +32,8 @@ import { upstreamFactsForItem } from "./upstream-facts";
 
 export type PromoteDisposition =
   | { offered: true; reason?: undefined }
-  /** The disabled reason, present exactly when the row is not offered. */
   | { offered: false; reason: string };
 
-/**
- * Whether one status state has something `promote` can publish.
- *
- * Four states are offered: the two local-edit states, the dirty canonical
- * source, and its output-drift combination. Everything else is a state
- * `promote` would refuse or no-op on, and the reason tells the user which
- * command acts on it instead.
- */
 export function promoteRowDisposition(state: State): PromoteDisposition {
   switch (state) {
     case "drifted_local":
@@ -122,14 +98,9 @@ export async function loadPromoteCatalog(
     .map((key) => ({ key, ...parseLockKey(key) }))
     .filter((item) => item.source === "data");
 
-  // One `git ls-files -v` over every item's canonical paths, not one call per
-  // item: an index flag or an ignore rule makes `git status` blind to a real
-  // change, so a flagged row's "nothing to promote" would be the wrong reason.
-  // Every kind is covered — a copy item's directory pathspec lists the tracked
-  // files beneath it — because the blind spot is a property of porcelain, not
-  // of fragments. The batched answer relabels exactly those rows. The ignore
-  // probe covers file-path kinds only — a copy item's expected file set
-  // cannot be enumerated from the catalog.
+  // One batched `git ls-files -v` for all items: an index flag or ignore rule
+  // makes `git status` blind to real changes, and the ignore probe skips copy
+  // items because their file set cannot be enumerated.
   const { hidden, ignoredHidden } = await gitBlindSpots(
     opts.dataRepo,
     items.flatMap((item) => allCanonicalItemRelPaths(item.kind, item.name)),
@@ -138,10 +109,8 @@ export async function loadPromoteCatalog(
       .flatMap((item) => allCanonicalItemRelPaths(item.kind, item.name)),
   );
 
-  // Items are independent reads, so their states derive concurrently; the map
-  // keeps the row order. The cache holds one fragment-contribution answer per
-  // target for this load — the contribution is a property of the target, not
-  // of the item asking.
+  // Fragment contribution is a property of the target, not the item, so one
+  // cached answer per target serves every item in this load.
   const contributionCache: FragmentContributionCache = new Map();
   const rows = await Promise.all(
     items.map((item) =>
@@ -162,10 +131,7 @@ async function catalogRow(
   const entry = opts.lock.items[key];
   if (entry?.source !== "data") return null;
   // Per item, not all-or-nothing: deriving one item's state can throw for
-  // reasons that belong to that item alone (a missing source commit pulled
-  // in through another fragment's contribution, an unreadable object), and
-  // a named promote of an unrelated dirty item would still succeed. The
-  // broken item degrades to a disabled row naming the failure.
+  // item-specific reasons, and that must not block promoting unrelated items.
   let state: State;
   try {
     state = await itemState(opts, kind, name, entry, contributionCache);
@@ -184,12 +150,9 @@ async function catalogRow(
   }
   const disposition = promoteRowDisposition(state);
 
-  // A path git is not watching disables the row in *every* state, not only
-  // `ok`. The states come from `git status`, which cannot see these paths:
-  // an `ok` row's "nothing to promote" would be the wrong reason, and an
-  // offered row would invite a promote that rewrites the canonical tree
-  // while git silently discards the hidden worktree edit. The row names the
-  // path instead, which is the repairable fact.
+  // A path git is not watching disables the row in every state: `git status`
+  // cannot see it, so "nothing to promote" would be wrong and a promote would
+  // discard the hidden edit.
   const unwatched = unwatchedPaths(kind, name, hidden, ignoredHidden);
   let detail: string;
   if (unwatched.length > 0) {
@@ -213,13 +176,9 @@ async function catalogRow(
 }
 
 /**
- * The paths git is not watching among an item set's canonical paths, from
- * fresh reads: index-flagged tracked files among `flagPaths`, plus the
- * ignore-hidden files among `probePaths`. A probed file that is present,
- * untracked, and one `git status` stays silent about even when asked for
- * every untracked file is under an ignore rule, and `git add` refuses such a
- * path, so promote cannot publish it. An ordinary untracked source is
- * reported `??`, stays out of the set, and promotes normally.
+ * Untracked files under an ignore rule are silent in `git status` and refused
+ * by `git add`, so promote cannot publish them; ordinary untracked files show
+ * as `??` and promote normally.
  */
 async function gitBlindSpots(
   dataRepo: string,
@@ -254,13 +213,10 @@ async function gitBlindSpots(
 }
 
 /**
- * The unwatched paths of one item, from fresh git reads.
- *
- * The catalog's batched answer goes stale while the picker holds the terminal
- * for an unbounded time, so the interactive loop re-asks per marked item just
- * before acting. This narrows the window; the enforcement inside the promote
- * transaction itself belongs to the deferred blind-spots patch, and the named
- * command's behavior is unchanged.
+ * The batched answer goes stale while the picker holds the terminal, so the
+ * interactive loop re-reads it per marked item just before acting. This narrows
+ * the window but does not close it, because the promote transaction does not
+ * enforce it.
  */
 export async function unwatchedPathsForItem(
   dataRepo: string,
@@ -268,7 +224,6 @@ export async function unwatchedPathsForItem(
   name: string,
 ): Promise<string[]> {
   const canonical = allCanonicalItemRelPaths(kind, name);
-  // The same ignore-probe scope as the loader: file-path kinds only.
   const { hidden, ignoredHidden } = await gitBlindSpots(
     dataRepo,
     canonical,
@@ -278,16 +233,9 @@ export async function unwatchedPathsForItem(
 }
 
 /**
- * The item's canonical paths that git is not watching: index-flagged tracked
- * files (any kind — a copy item's flagged file matches by directory prefix),
- * plus the ignore-hidden files the loader probed for the file-path kinds.
- *
- * An ignored *untracked* file beneath a copy item's directory is deliberately
- * out of scope. `promote` has always replaced the managed directory
- * wholesale, and routine ignored junk (`.DS_Store`, editor droppings) is
- * present in most such directories — a probe would disable nearly every copy
- * row for files nobody wants preserved, and precious-versus-junk is not
- * decidable here.
+ * Ignored untracked files under a copy item's directory are out of scope:
+ * promote replaces the directory wholesale and junk like `.DS_Store` would
+ * disable nearly every copy row.
  */
 function unwatchedPaths(
   kind: ItemKind,
@@ -311,7 +259,6 @@ type FragmentContributionCache = Map<
   Promise<FragmentContributionState>
 >;
 
-/** The same facts `status` gathers for one row, fed to the same state machine. */
 async function itemState(
   opts: LoadPromoteCatalogOptions,
   kind: ItemKind,
@@ -446,13 +393,6 @@ async function sourceFiltered(
   }
 }
 
-/**
- * The detail for an offered row: which file the promote reads.
- *
- * A local-edit state names the installed path the user edited; a dirty-source
- * state names the data-repo canonical file, which is the fact `promote --help`
- * never states.
- */
 async function offeredDetail(
   opts: LoadPromoteCatalogOptions,
   kind: ItemKind,
@@ -487,8 +427,7 @@ function installedLabel(project: string, kind: ItemKind, name: string): string {
     return outputs.length > 0 ? outputs.join(", ") : `${kind}/${name}`;
   }
   if (isFragmentKind(kind)) {
-    // Offered fragment states never reach here (`drifted_local` cannot derive
-    // for a fragment kind), so this is a defensive label only.
+    // Defensive label only: `drifted_local` cannot derive for a fragment kind.
     return `${kind}/${name}`;
   }
   return relative(project, installedPath(project, kind, name));

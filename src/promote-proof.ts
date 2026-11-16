@@ -10,11 +10,6 @@ import {
 } from "./pin";
 import type { PinnedSource } from "./pin";
 
-/**
- * PIN-11 for a selected candidate. The candidate can come from a project
- * snapshot, a merge, or canonical fragment source bytes. The commit must hold
- * exactly that candidate.
- */
 export async function assertCommittedTreeEqualsCandidate(opts: {
   dataRepo: string;
   kind: ItemKind;
