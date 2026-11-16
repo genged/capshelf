@@ -11,10 +11,8 @@ deps:
 build: deps
 	bun run build
 
-# Install copies to a temp name and renames it. A plain cp overwrites the old
-# file in place and keeps its inode. macOS then still holds the code-signature
-# verdict cached for the previous contents, so the kernel rejects the new
-# binary and kills it on exec. A rename gives the binary a fresh inode.
+# Rename instead of overwrite: macOS caches the code-signature verdict per inode
+# and kills a binary overwritten in place.
 install: build
 	mkdir -p $(BIN_DIR)
 	cp dist/capshelf $(BIN_DIR)/capshelf.new
@@ -36,19 +34,12 @@ lint:
 
 check: typecheck lint check-release-docs check-doc-citations test smoke e2e
 
-# End-to-end scenarios against the compiled binary. Runs after the
-# source-level suites: a packaging fault is cheaper to read once unit, smoke,
-# and type checks are green.
 e2e: deps
 	@bun run e2e
 
-# Release notes describe a version that has shipped; once a note is committed
-# it must not change. Run with --audit for a full-history inventory.
 check-release-docs:
 	@./scripts/check-release-docs-frozen.sh
 
-# A reader cannot act on a source line number, and it is wrong as soon as
-# anyone edits the file above it. Published docs state behavior instead.
 check-doc-citations:
 	@./scripts/check-doc-citations.sh
 

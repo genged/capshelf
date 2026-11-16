@@ -4,32 +4,18 @@ set -euo pipefail
 ROOT="${CAPSHELF_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 CLI=(bun run "$ROOT/src/cli.ts")
 
-# Isolate git from the machine's global/system config so smoke runs are
-# hermetic — a global url.<x>.insteadOf rewrite (proxies, SSH-rewrite setups)
-# would otherwise rewrite seeded clone origins and trip upstream checks.
+# Isolate git from global/system config: a global url.<x>.insteadOf rewrite
+# would rewrite seeded clone origins and trip upstream checks.
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_NOSYSTEM=1
 
-# Detach the whole suite from the terminal's input. `init` offers the picker
-# when stdin and stderr are both terminals, so a smoke run started from an
-# interactive shell drew the prompt and waited for a keystroke that never
-# came. Every script sources this file before its first CLI call, so the
-# redirect binds here once instead of each `init` remembering `--no-pick`.
-#
-# This is the layer boundary, not only a fix: smoke proves non-interactive
-# behavior and passes `--yes` for consent, while the picker is terminal
-# behavior that only the end-to-end pseudo-terminal cells can prove.
+# Detach stdin because `init` offers the picker when stdin and stderr are
+# terminals; smoke proves non-interactive behavior and only the e2e pty cells
+# prove the picker.
 exec < /dev/null
 
-# Each script keeps its scratch files in `$TMP`, which `smoke_make_tmp`
-# creates. A passing script removes that directory, because a full run
-# otherwise leaves thousands of files in the temporary directory. A failing
-# script keeps it for inspection and prints its path.
-# `CAPSHELF_KEEP_SMOKE_TMP=1` keeps it always. A script that sets its own
-# EXIT handler sets this one again when its handler is no longer needed.
-#
-# The handler removes only the directory that `smoke_make_tmp` created. A
-# `TMP` that the caller's shell exported is never removed.
+# A passing script removes its `$TMP` to avoid leaving thousands of files; a
+# failing one keeps it, and a caller-exported `TMP` is never removed.
 SMOKE_OWNED_TMP=""
 smoke_make_tmp() {
   SMOKE_OWNED_TMP="$(mktemp -d)"

@@ -13,7 +13,6 @@ mkdir -p "$HOME" "$DATA/mcp/github" "$DATA/mcp/deepwiki" "$A/sub"
 cat > "$DATA/mcp/github/claude.json" <<'JSON'
 {"mcpServers":{"github":{"command":"github-mcp","args":["stdio"]}}}
 JSON
-# Claude-only: the reported gap and the canonical path a Codex source needs.
 cat > "$DATA/mcp/deepwiki/claude.json" <<'JSON'
 {"mcpServers":{"deepwiki":{"command":"deepwiki-mcp"}}}
 JSON
@@ -40,8 +39,6 @@ if [[ -e "$A/.agents/mcp/github" ]]; then
 fi
 assert_contains '"targetCoverage"' "$TMP/mcp-add.json"
 
-# A claude-only item: `add` names the target it does not cover and where the
-# missing source belongs; `status` repeats it as a gap sub-line.
 (cd "$A" && "${CLI[@]}" add mcp/deepwiki > "$TMP/deepwiki-add.txt")
 assert_fixed_contains 'Codex   absent   no codex source in this item' "$TMP/deepwiki-add.txt"
 assert_fixed_contains 'Codex reads mcp/deepwiki/codex.toml in your data repo.' "$TMP/deepwiki-add.txt"

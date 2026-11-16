@@ -1,8 +1,3 @@
-/**
- * Pure functions between the history the server sends and what the client
- * draws. Nothing here touches the DOM or git, so every rule about ranges,
- * carry-forward, ticks, and number formats is a unit test.
- */
 import type { LocCommit, SeriesId } from "./types";
 
 export const DAY_MS = 86_400_000;
@@ -26,9 +21,7 @@ export const PRESETS: ReadonlyArray<{
 ];
 
 export interface Range {
-  /** Milliseconds since the epoch, inclusive. */
   start: number;
-  /** Milliseconds since the epoch, exclusive. */
   end: number;
 }
 
@@ -68,7 +61,6 @@ export function sameSelection(a: RangeSelection, b: RangeSelection): boolean {
   return selectionHash(a) === selectionHash(b);
 }
 
-/** A custom range never runs backwards; swapped dates are put in order. */
 export function normalizeCustom(from: string, to: string): RangeSelection {
   if (!DATE_RE.test(from) || !DATE_RE.test(to)) return DEFAULT_SELECTION;
   return from <= to
@@ -76,7 +68,6 @@ export function normalizeCustom(from: string, to: string): RangeSelection {
     : { kind: "custom", from: to, to: from };
 }
 
-/** Local midnight at the start of a `YYYY-MM-DD` day. */
 export function dayStart(day: string): number {
   const [year, month, date] = day.split("-").map(Number);
   return new Date(year ?? 1970, (month ?? 1) - 1, date ?? 1).getTime();
@@ -89,9 +80,8 @@ export function toDay(ms: number): string {
 }
 
 /**
- * The window the selection names. Presets end now. "All" starts at the
- * first commit, or now when there is none, so an empty repository still
- * has a range to draw.
+ * With no commits, "all" starts one day before now, so an empty repository
+ * still has a range to draw.
  */
 export function resolveRange(
   selection: RangeSelection,
@@ -118,9 +108,7 @@ export function commitTime(commit: LocCommit): number {
 }
 
 export interface Slice {
-  /** Commits inside the range, ascending. */
   inside: LocCommit[];
-  /** The last commit before the range; its values carry into the range. */
   carried: LocCommit | null;
 }
 
@@ -144,12 +132,9 @@ export interface SeriesValues {
 }
 
 export interface Summary {
-  /** The values at the start of the range, or null before the first commit. */
   start: SeriesValues | null;
-  /** The values at the end of the range, or null when nothing exists yet. */
   end: SeriesValues | null;
   commits: number;
-  /** Whole days the range spans, at least one. */
   days: number;
 }
 
@@ -172,9 +157,8 @@ export function ratio(value: SeriesValues): number | null {
 }
 
 /**
- * The points a series draws: a carried value at the left edge, every commit
- * inside, and the last value held to the right edge, because the count does
- * not change between commits.
+ * The last value is held to the right edge because the count does not change
+ * between commits.
  */
 export interface Point {
   time: number;
@@ -205,7 +189,6 @@ export function seriesPoints(
   return points;
 }
 
-/** Round tick steps: 1, 2, 5 times a power of ten, spanning the domain. */
 export function niceTicks(min: number, max: number, target = 5): number[] {
   if (!(max > min)) return [min];
   const span = max - min;
@@ -224,10 +207,6 @@ export function niceTicks(min: number, max: number, target = 5): number[] {
   return ticks;
 }
 
-/**
- * The y domain: the data's extent with a little air above and below, and
- * tick values that land on round numbers. The floor never goes below zero.
- */
 export interface ValueDomain {
   min: number;
   max: number;
@@ -269,10 +248,6 @@ const MONTHS = [
   "Dec",
 ];
 
-/**
- * Time ticks at local midnights: every day, every few days, every week, or
- * the first of each month, chosen so no more than `maxCount` labels appear.
- */
 export function timeTicks(range: Range, maxCount: number): TimeTick[] {
   const days = (range.end - range.start) / DAY_MS;
   const stepDays = [1, 2, 3, 7, 14].find((step) => days / step <= maxCount);
@@ -358,7 +333,6 @@ export function formatPercent(delta: number, base: number): string {
   return `${percent > 0 ? "+" : percent < 0 ? "−" : "±"}${rounded.replace("-", "")}%`;
 }
 
-/** Binary search for the commit nearest to a time, by x distance. */
 export function nearestIndex(times: number[], time: number): number {
   if (times.length === 0) return -1;
   let low = 0;

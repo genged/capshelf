@@ -1,8 +1,3 @@
-/**
- * Count non-blank lines in a byte stream, one chunk at a time, so a blob
- * never has to be held whole. A line is blank when it holds only spaces,
- * tabs, and carriage returns. A final line without a newline still counts.
- */
 const NEWLINE = 10;
 const CARRIAGE_RETURN = 13;
 const SPACE = 32;
@@ -24,7 +19,6 @@ export class LineCounter {
     }
   }
 
-  /** Close the last line; returns the total. */
   finish(): number {
     if (this.lineHasContent) this.lines += 1;
     this.lineHasContent = false;

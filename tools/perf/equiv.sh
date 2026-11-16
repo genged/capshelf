@@ -1,15 +1,4 @@
 #!/usr/bin/env bash
-# Prove that two binaries behave the same on one tricky fixture.
-#
-# Usage: tools/perf/equiv.sh <old-binary> <new-binary>
-# Shape: SKILLS, SUBAGENTS, SETTINGS, SPLIT, EXTRA (see tools/perf/lib.sh).
-#        The defaults here are small: 6 skills, 3 subagents, 2 settings.
-# Work:  PERF_WORK (default: a new temporary directory, removed at the end).
-#
-# Both binaries run the same command sequence on a fixture built at the same
-# path. The tool compares stdout, stderr, exit code, the lock, the executable
-# bits, and the hash of every installed file. Timestamps are masked. It exits
-# 0 when all of them are equal and 1 when any differs.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SKILLS="${SKILLS:-6}" SUBAGENTS="${SUBAGENTS:-3}" SETTINGS="${SETTINGS:-2}"
@@ -25,8 +14,8 @@ exec < /dev/null
 W="$WORK_ROOT/fixture"
 OUT="$WORK_ROOT/out"
 
-# The command sequence. CLEAN commits nothing: it drops the data-repo edits,
-# because `update` refuses a dirty data repo.
+# CLEAN drops data-repo edits without committing, because `update` refuses a
+# dirty data repo.
 STEPS=(
   "status --json" "status --diff" "apply --dry-run --json" "ls --json" "ls"
   "status skills/skill-4 --diff" "status skills/skill-5 --diff --json"
@@ -38,26 +27,22 @@ STEPS=(
   "apply --dry-run"
 )
 
-# The extra shapes on top of the shared fixture.
 tricky_fixture() {
   local bin="$1" data project
   perf_fixture "$bin" "$W"
   data="$W/data"
   project="$W/project"
-  # A unicode item, a unicode file name, an executable, and a deep tree.
   mkdir -p "$data/skills/café/sub/deeper"
   printf -- '---\nname: café\ndescription: Unicode.\n---\n' > "$data/skills/café/SKILL.md"
   printf 'x\n' > "$data/skills/café/sub/deeper/naïve.md"
   printf '#!/bin/sh\necho hi\n' > "$data/skills/café/run.sh"
   chmod +x "$data/skills/café/run.sh"
-  # An item that later declares a filter driver, which a re-pin must refuse.
   mkdir -p "$data/skills/filtered"
   printf -- '---\nname: filtered\ndescription: F.\n---\n' > "$data/skills/filtered/SKILL.md"
   git -C "$data" add -A
   git -C "$data" commit -qm "extra shapes"
   (cd "$project" && "$bin" add skills/café --yes > /dev/null 2>&1)
   (cd "$project" && "$bin" add skills/filtered --yes > /dev/null 2>&1)
-  # Upstream changes: a filter attribute, a sidecar-only change, content.
   printf 'skills/filtered/** filter=crypt\n' > "$data/.gitattributes"
   printf 'needs:\n  bin: [jq]\n' > "$data/skills/skill-1/.capshelf.yml"
   echo "change" >> "$data/skills/skill-2/SKILL.md"
@@ -67,7 +52,6 @@ tricky_fixture() {
   rm -f "$data/settings/frag-1/settings.json.bak"
   git -C "$data" add -A
   git -C "$data" commit -qm "upstream changes"
-  # A dirty data repo, a drifted install, and a deleted installed file.
   echo "dirty" >> "$data/skills/skill-3/SKILL.md"
   echo "drift" >> "$project/.claude/skills/skill-4/SKILL.md"
   rm -f "$project/.claude/skills/skill-5/refs/a.md"

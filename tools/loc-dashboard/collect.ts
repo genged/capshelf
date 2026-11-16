@@ -1,9 +1,3 @@
-/**
- * Read a repository's first-parent history and count production and test
- * lines at every commit. Blob counts are cached by blob id, so a commit
- * costs one `git ls-tree` plus a `git cat-file --batch` pass over the blobs
- * no earlier commit already counted.
- */
 import { homedir } from "node:os";
 import { LineCounter } from "./count";
 import { classify, groupDirectory, ruleTexts } from "./rules";
@@ -160,7 +154,6 @@ export class LocCollector {
     return entries;
   }
 
-  /** Count every blob in `entries` that the cache does not hold yet. */
   private async ensureCounts(entries: TreeEntry[]): Promise<void> {
     const missing = new Set<string>();
     for (const entry of entries) {
@@ -200,9 +193,7 @@ async function git(cwd: string, args: string[]): Promise<string> {
 }
 
 /**
- * One `git cat-file --batch` run over many blobs. The output is a header
- * line `<sha> blob <size>` followed by the bytes and one newline; it is
- * parsed as it streams, so the process never holds more than a chunk.
+ * Output is parsed as it streams, so the process never holds more than a chunk.
  */
 export async function countBlobs(
   repo: string,

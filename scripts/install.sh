@@ -1,16 +1,6 @@
 #!/bin/sh
-# Install the latest capshelf release binary from GitHub releases.
-#
-#   curl -fsSL https://raw.githubusercontent.com/genged/capshelf/main/scripts/install.sh | sh
-#
-# Homebrew (brew install genged/tap/capshelf) remains the primary install
-# path; this script is for hosts without Homebrew. Release artifacts are
-# capshelf-<version>-<os>-<arch>.tar.gz plus a capshelf-<version>.sha256
-# checksum manifest, both published by .github/workflows/release.yml.
-#
-# Environment overrides:
-#   CAPSHELF_VERSION  release tag to install (for example v0.3.0); defaults to latest
-#   CAPSHELF_BIN_DIR  install directory; defaults to ~/.local/bin
+# Homebrew (brew install genged/tap/capshelf) is the primary install path; this
+# script is for hosts without Homebrew.
 set -eu
 
 REPO="genged/capshelf"
@@ -46,7 +36,6 @@ if [ -z "$tag" ]; then
     head -n 1)"
 fi
 [ -n "$tag" ] || fail "could not determine the latest release tag"
-# Accept CAPSHELF_VERSION with or without the leading v.
 tag="v${tag#v}"
 version="${tag#v}"
 
