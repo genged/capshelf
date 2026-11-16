@@ -1,19 +1,13 @@
 #!/usr/bin/env bash
-# Shared parts of the performance tools. Source this file; do not run it.
-#
-# Every tool builds its fixture from scratch. Commit dates are fixed, so two
-# builds of one shape give the same commit ids, and the outputs of two
-# binaries can be compared byte for byte.
+# Commit dates are fixed so equal shapes yield identical commit ids, letting
+# binary outputs be compared byte for byte.
 
-# Shape of the fixture. Override any of these in the environment.
-SKILLS="${SKILLS:-30}"         # copy-directory items (skills)
-SUBAGENTS="${SUBAGENTS:-10}"   # copy-target-file items (subagents)
-SETTINGS="${SETTINGS:-3}"      # fragment items (settings)
-SPLIT="${SPLIT:-0}"            # 1: one data-repo commit per item
-EXTRA="${EXTRA:-0}"            # non-item files in the data repo
+SKILLS="${SKILLS:-30}"
+SUBAGENTS="${SUBAGENTS:-10}"
+SETTINGS="${SETTINGS:-3}"
+SPLIT="${SPLIT:-0}"
+EXTRA="${EXTRA:-0}"
 
-# An isolated environment: no user Git configuration, no self-update check,
-# no terminal, and fixed commit dates.
 perf_env() {
   local work="$1"
   export HOME="$work/home"
@@ -24,9 +18,6 @@ perf_env() {
   mkdir -p "$HOME"
 }
 
-# perf_fixture <binary> <work-dir>
-# Builds <work-dir>/data (the data repo) and <work-dir>/project (a project
-# with every item installed and committed). Removes <work-dir> first.
 perf_fixture() {
   local bin="$1" work="$2" data project item dir i
   rm -rf "$work"
@@ -87,7 +78,6 @@ perf_fixture() {
   git -C "$project" commit -qm "install items" || true
 }
 
-# perf_change_upstream <work-dir>: one data-repo commit that changes every item.
 perf_change_upstream() {
   local data="$1/data" dir
   shopt -s nullglob

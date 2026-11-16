@@ -1,7 +1,3 @@
-/**
- * Where the lines live at the end of the range, one row per directory, and
- * how far each moved since the start of the range.
- */
 import type { JSX } from "preact";
 import { useEffect, useState } from "preact/hooks";
 import { formatInt, formatSigned } from "../shared/series";

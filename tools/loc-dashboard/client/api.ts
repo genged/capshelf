@@ -1,4 +1,3 @@
-/** The client's one door to `serve.ts`. Local only, so no token rides along. */
 import type { ApiErrorBody } from "../shared/types";
 
 export class ApiError extends Error {
@@ -35,7 +34,7 @@ export async function apiGet<T>(
     let body: ApiErrorBody | null = null;
     try {
       // SAFETY: serve.ts answers every non-2xx status with an ApiErrorBody
-      // envelope; a body of another shape falls through to the status text.
+      // envelope.
       body = (await response.json()) as ApiErrorBody;
     } catch {
       body = null;
@@ -46,7 +45,7 @@ export async function apiGet<T>(
       body?.error.hint,
     );
   }
-  // SAFETY: the only server is serve.ts in this directory, and each route
-  // writes the type its caller names from shared/types.ts.
+  // SAFETY: the only server is serve.ts, and each route returns the type its
+  // caller names from shared/types.ts.
   return (await response.json()) as T;
 }

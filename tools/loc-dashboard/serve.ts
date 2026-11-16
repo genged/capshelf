@@ -1,16 +1,4 @@
 #!/usr/bin/env bun
-/**
- * The localhost server behind the LOC dashboard, a helper that is not part
- * of the capshelf release. It binds 127.0.0.1, bundles the client into
- * memory at start, reads git through `collect.ts`, and writes nothing.
- *
- *   bun run tools/loc-dashboard/serve.ts [--repo <path>] [--branch <name>]
- *                                       [--port <n>] [--no-measure]
- *
- * Measures (test coverage and Oxlint) run once at start unless the store
- * already holds a run for the current clean HEAD or `--no-measure` is set.
- * `POST /api/measures/run` starts another run.
- */
 import { join } from "node:path";
 import { GitError, LocCollector } from "./collect";
 import { Measures } from "./measures";
@@ -156,8 +144,6 @@ async function main(): Promise<void> {
   }
   const bundle = await buildClient();
 
-  // One git read at a time; the browser's refresh and breakdown calls queue
-  // behind the first full read, which starts before the URL prints.
   let chain: Promise<unknown> = Promise.resolve();
   const serial = <T>(task: () => Promise<T>): Promise<T> => {
     const next = chain.then(task, task);

@@ -16,9 +16,8 @@ build_dir="$ROOT/dist/homebrew-build"
 rm -rf "$out_dir" "$build_dir"
 mkdir -p "$out_dir" "$build_dir"
 
-# The one list of release platforms. The release workflow builds its
-# validation matrix from the same file, so an archive cannot be produced
-# without a native runner to prove it works.
+# The release workflow builds its validation matrix from this same file, so an
+# archive cannot ship without a native runner validating it.
 platforms_file="$ROOT/scripts/release-platforms.json"
 
 declared_count="$(bun -e '
@@ -26,9 +25,8 @@ declared_count="$(bun -e '
   process.stdout.write(String(platforms.length));
 ' "$platforms_file")"
 
-# `read` returns non-zero on a final line with no newline, so the `|| [ -n ... ]`
-# keeps the last platform. Without it the loop drops it and the release ships a
-# short manifest while the validation matrix still expects the archive.
+# `read` returns non-zero on a final line with no newline; the `|| [ -n ... ]`
+# keeps the last platform, which would otherwise be dropped from the manifest.
 targets=()
 while IFS= read -r target || [ -n "$target" ]; do
   [ -n "$target" ] && targets+=("$target")
@@ -51,8 +49,8 @@ if [ "${#targets[@]}" -ne "$declared_count" ]; then
   exit 1
 fi
 
-# The web UI is inlined into every binary, so it is built once, before
-# the per-platform compiles.
+# The web UI is inlined into every binary, so build it once before the
+# per-platform compiles.
 bun run build:ui
 
 for target in "${targets[@]}"; do
@@ -62,9 +60,8 @@ for target in "${targets[@]}"; do
   package_dir="$build_dir/capshelf-$version-$platform"
   tarball="$out_dir/capshelf-$version-$platform.tar.gz"
 
-  # `--bytecode` stores precompiled code, so a command does not parse the
-  # bundle at startup. It needs `--format=esm` because `src/cli.ts` uses a
-  # top-level await. Keep these flags the same as the `build` script.
+  # `--format=esm` is required because `src/cli.ts` uses top-level await; keep
+  # these flags identical to the `build` script.
   bun build --compile --minify --bytecode --format=esm --target="$bun_target" ./src/cli.ts --outfile="$binary"
   mkdir -p "$package_dir"
   cp "$binary" "$package_dir/capshelf"
@@ -81,9 +78,8 @@ done
   fi
 )
 
-# The release workflow greps this manifest for one line per platform in its
-# matrix. A short manifest only surfaces there, as a validation job that cannot
-# find its candidate, so prove the count here instead.
+# A short manifest otherwise only surfaces in the release workflow as a
+# validation job that cannot find its candidate.
 manifest_count="$(grep -c . "$out_dir/capshelf-$version.sha256")"
 if [ "$manifest_count" -ne "$declared_count" ]; then
   printf 'checksum manifest lists %s of the %s declared platforms\n' \

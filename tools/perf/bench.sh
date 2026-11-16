@@ -1,13 +1,4 @@
 #!/usr/bin/env bash
-# Time a fixed command sequence and count the Git processes of each command.
-#
-# Usage: tools/perf/bench.sh <binary> [<binary> ...]
-# Shape: SKILLS, SUBAGENTS, SETTINGS, SPLIT, EXTRA (see tools/perf/lib.sh).
-# Work:  PERF_WORK (default: a new temporary directory, removed at the end).
-#
-# Each binary gets its own fixture of the same shape. The columns show wall
-# seconds and Git processes. `CAPSHELF_GIT_MEASURE=1` makes capshelf print the
-# process count on stderr when it exits.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=tools/perf/lib.sh
@@ -34,7 +25,6 @@ STEPS=(
   "apply (after update)|apply --yes"
 )
 
-# run_one <binary> <work-dir> <args...>: prints "seconds spawns".
 run_one() {
   local bin="$1" work="$2" err t0 t1 spawns rc=0
   shift 2
