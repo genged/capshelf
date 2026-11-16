@@ -1,9 +1,3 @@
-/**
- * `capshelf share`: registers the command, then sends a named item to
- * `share-named.ts` and no item to the picker in `share-interactive.ts`. The
- * picker calls the named path, so the entry is the only module that imports
- * both.
- */
 import type { Command } from "commander";
 import { PreconditionError, ResultExitError } from "../errors";
 import { pickUnavailableMessage } from "../pick";
@@ -56,18 +50,12 @@ export function registerShare(program: Command): void {
     );
 }
 
-/**
- * The no-item branch: the interactive picker over unmanaged config values and
- * the untracked skills, Pi extensions, and subagents found on disk.
- */
 async function shareWithoutItem(
   opts: ShareOptions,
   cmd: Command,
 ): Promise<void> {
-  // These flags describe one named share. With no item there is nothing for
-  // them to describe, and silently ignoring a flag installs the wrong habit.
-  // `!== undefined`, not truthiness: commander stores `--from ""` as an empty
-  // string, and an explicitly supplied flag must refuse like any other.
+  // Compare with `!== undefined`, not truthiness: commander stores `--from ""`
+  // as an empty string, which must still refuse.
   if (
     opts.from !== undefined ||
     opts.pick !== undefined ||
@@ -80,7 +68,6 @@ async function shareWithoutItem(
       "share --from, --pick, --target, --to, --adopt, and --yes require an item; run capshelf share with no flags to pick interactively",
     );
   }
-  // `--json` names a scripted caller, and a script cannot answer a prompt.
   if (opts.json) {
     throw new PreconditionError(
       "share --json requires an item; the interactive picker needs a terminal",
@@ -98,8 +85,6 @@ async function shareWithoutItem(
       },
     );
   }
-  // Any failed item is a refusal the user needs a non-zero code for; each one
-  // already printed its reason and its retry command.
   if (summary.outcome === "shared" && summary.failed.length > 0) {
     throw new ResultExitError(3);
   }

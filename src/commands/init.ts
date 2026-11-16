@@ -96,16 +96,14 @@ export function registerInit(program: Command): void {
       const installMode = resolveInstallMode(manifest.installMode, opts);
       const lock = await loadLock(project);
 
-      // CLI-local --data wins, else global --data, else existing local/env
-      // binding, else the committed upstream can bootstrap a cloned project.
       const input = opts.data ?? globalOpts(cmd).data;
       let dataRepo: string;
       let bootstrap: BootstrapInfo | undefined;
       if (input !== undefined) {
         const resolved = resolveDataInput(input, { dataDir: opts.dataDir });
         if (resolved.kind === "remote-bootstrap") {
-          // A mismatched --upstream would bind the project to an upstream its
-          // own clone can never satisfy; fail before cloning or writing state.
+          // Fail before cloning or writing state: a mismatched --upstream can
+          // never be satisfied by the clone.
           assertUpstreamFlagMatchesBootstrap(opts, resolved.upstream);
           const { cloned } = await ensureClone(
             resolved.url,
@@ -175,8 +173,8 @@ export function registerInit(program: Command): void {
         }
       }
 
-      // Fail BEFORE writing any state if the data repo isn't a usable git repo.
-      // Otherwise we'd silently bind the project to a bad path that ls/add can't use.
+      // Fail before writing state, or the project binds to a path that `ls` and
+      // `add` can't use.
       await assertDataRepoRoot(dataRepo);
 
       manifest.installMode = installMode;
@@ -193,17 +191,14 @@ export function registerInit(program: Command): void {
           installMode,
         );
         if (lock.items[key] !== undefined || !conflict) continue;
-        // A re-run after an interrupted init finds its own bundled content
-        // sitting there with no lock entry. That is the recovery path, not an
-        // unmanaged target — refusing it would strand the project. The test is
-        // deliberately exact, so a leftover from an *older* capshelf (whose
-        // bundled content differs) or a torn write still refuses; the message
-        // below says that deleting it is safe, because init reinstalls it.
+        // Matching bundled content from an interrupted init is the recovery
+        // path, not an unmanaged target; leftovers whose content differs from
+        // the bundled item still refuse.
         if (await installedMatchesSystemItem(project, item, installMode)) {
           continue;
         }
-        // What `rm` or a failed write leaves for an item with a mounted
-        // volume: the write fills it and keeps the volume.
+        // `rm` or a failed write leaves a bare mount point for items with a
+        // mounted volume; the write fills it and keeps the volume.
         if (await holdsOnlyMountPoints(conflict)) continue;
         throw new PreconditionError(
           `not installing system/${item.kind}/${item.name} — target already exists but is not managed by capshelf\n` +
@@ -220,11 +215,9 @@ export function registerInit(program: Command): void {
         dst: string;
         runtimeWarnings?: RuntimeWarning[];
       }[] = [];
-      // The system items go through the same writer as `update`, so a
-      // re-run keeps ignored local state and mounted volumes in the folder
-      // instead of deleting it. That writer reads the install mode from the
-      // manifest, so the manifest is saved first. `local.json` still comes
-      // last (see below).
+      // System items use the `update` writer, which keeps ignored local state
+      // and mounted volumes and reads the install mode from the manifest, so
+      // save the manifest first.
       await saveManifest(project, manifest);
       for (const item of SYSTEM_ITEMS) {
         const key = systemKey(item.kind, item.name);
@@ -275,13 +268,8 @@ export function registerInit(program: Command): void {
         });
       }
 
-      // `local.json` is written LAST, because the guard at the top of this
-      // command keys on its existence. Writing it earlier let an interruption
-      // (ENOSPC, read-only .capshelf/, Ctrl-C, a concurrent process) leave a
-      // project that init refuses as "already initialized" while `apply`
-      // reports nothing tracked, with no supported way out. With this order
-      // "already initialized" is true exactly when init finished, and a plain
-      // re-run is the recovery.
+      // Write `local.json` last: the already-initialized guard keys on it, so
+      // an interruption leaves the project re-runnable.
       await saveManifest(project, manifest);
       await saveLock(project, assertWritableLock(lock, "capshelf init"));
       await saveLocalConfig(project, {
@@ -292,9 +280,8 @@ export function registerInit(program: Command): void {
         settings: [],
         mcp: [],
       });
-      // The web UI lists projects from a machine-wide registry. A registry
-      // write failure must not fail an init that already succeeded, so it is
-      // reported and the project stays initialized.
+      // A registry write failure is reported but must not fail an init that
+      // already succeeded.
       const registryPath = projectRegistryPath();
       let registryError: string | null = null;
       try {
@@ -378,19 +365,11 @@ export function registerInit(program: Command): void {
           console.log(`  ${manifest.dataRepoUpstream}`);
         }
       }
-      // The offer runs HERE, after `local.json` — the completion marker this
-      // command's own guard keys on — is already on disk. Everything below is
-      // an ordinary `add` against a project that is fully initialized, so a
-      // cancelled picker, a refused item, or a Ctrl-C at the prompt leaves a
-      // working project whose recovery is `capshelf add`. Running it before
-      // the writes would put an interactive prompt inside the window where an
-      // interruption strands the project, which is the failure mode the write
-      // order was designed to remove.
+      // Offer after `local.json` is written so a cancelled picker or Ctrl-C
+      // leaves a working project recoverable with `capshelf add`.
       console.log("");
       const picked =
         opts.pick === false ? null : await offerShelf(cmd, dataRepo);
-      // An absent terminal is not an error here. `init` still succeeded, and
-      // the hints below are the non-interactive path to the same place.
       if (picked?.outcome === "unavailable") {
         console.log(
           `(skipping the picker — ${pickUnavailableMessage(picked.reason)})`,
@@ -416,15 +395,8 @@ export function registerInit(program: Command): void {
 }
 
 /**
- * Offer the shelf, and never fail the init for it.
- *
- * Everything above this point has already been written and reported as
- * successful, so a throw here would print `✗` under a `✓` and exit non-zero
- * for a project that is correctly initialized. The offer is also the one part
- * of `init` that reads the *data repo's* catalog, which has its own refusals —
- * an unsafe item name, an unreadable sidecar — that belong to `ls` and `add`,
- * where the user asked for the shelf. Report and carry on; `capshelf add`
- * afterwards surfaces the same failure with the right exit code.
+ * Never fail init for the offer: everything is already written, and catalog
+ * refusals belong to `ls` and `add`.
  */
 async function offerShelf(
   cmd: Command,
@@ -435,8 +407,8 @@ async function offerShelf(
       add: {},
       cmd,
       message: "Select items to install from the shelf",
-      // The path init just resolved, cloned, and checked. Never the raw
-      // `--data` value, which may be a remote URL.
+      // Pass the resolved path, not the raw `--data` value, which may be a
+      // remote URL.
       dataRepo,
     });
   } catch (error) {
