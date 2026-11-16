@@ -1,11 +1,6 @@
 /**
- * The consent text for a whole plugin (spec D6, D7, D13).
- *
- * Pure: these functions return lines and print nothing. `add <url>` prints
- * them today; the remote `update` and the shelf `add` reuse them. Every
- * repository-controlled string goes through `safe` (`sanitizeDisplayText`),
- * because this text is the one gate before third-party code runs with the
- * user's permissions.
+ * Every repository-controlled string goes through `safe`, because this text is
+ * the only gate before third-party code runs with the user's permissions.
  */
 import { confirmationContext } from "./destructive-change";
 import { PreconditionError } from "./errors";
@@ -15,7 +10,6 @@ import type { PluginRunHook, PluginRuns, PluginRunServer } from "./plugin-runs";
 import { formatBytes, plural, safe } from "./remote-list-render";
 
 export interface PluginConsentFile {
-  /** Plugin-relative, POSIX-separated. */
   path: string;
   bytes: number;
 }
@@ -24,17 +18,12 @@ export interface PluginConsentInput {
   repo: string;
   ref: string;
   commit: string;
-  /** The plugin directory inside the repository. */
   path: string;
-  /** The manifest name, which is also the item name (D3). */
   name: string;
-  /** The manifest `version`, or null when it has none. */
   version: string | null;
-  /** The text after the `install` label: the folder and its scope. */
   install: string;
   files: readonly PluginConsentFile[];
   runs: PluginRuns;
-  /** The text after the `license` label. */
   license: string;
   description: string | null;
 }
@@ -42,21 +31,13 @@ export interface PluginConsentInput {
 const HOOKS_WARNING =
   "These hooks run in every Claude Code session in this project.";
 
-/** Names shown in a `skills`/`agents` block before "… and N more". */
 const MAX_NAMES_SHOWN = 20;
 
-/** The column where a multi-line field's later lines start. */
 const CONTINUATION = "            ";
 
 /**
- * The consent block, in the order D6 gives: repo, ref, commit, path,
- * plugin, install, files by top-level directory, the named-item blocks
- * (`skills`, `agents`, …), runs, codex, license, the description, and the
- * closing line. The caller adds the question.
- *
- * `width` is the column count of the terminal the block prints under (80
- * when that stream is not a terminal). It is threaded in rather than read
- * from `process` here, so the layout stays testable at a chosen width.
+ * `width` is passed in rather than read from `process` so layout is testable at
+ * a chosen width.
  */
 export function renderPluginConsent(
   input: PluginConsentInput,
@@ -75,8 +56,8 @@ export function renderPluginConsent(
     ...fileGroupLines(input.files),
     ...namedGroupBlocks(input.name, input.files, width),
     ...pluginRunsField(input.runs),
-    // D13: capshelf writes nothing for Codex, so the prompt does not claim
-    // that Codex runs the agents or the hooks.
+    // capshelf writes nothing for Codex, so the prompt must not claim Codex
+    // runs the agents or hooks.
     "  codex     sees the skills only",
     `  license   ${safe(input.license)}`,
     "",
@@ -87,12 +68,6 @@ export function renderPluginConsent(
   ];
 }
 
-/**
- * What the plugin runs with no request from the agent (D6). The first line is
- * the summary; detail lines start with two spaces. With hooks, the last line
- * says where they run. Lines carry no field label, so a caller can put them
- * under `runs` or under its own label.
- */
 export function pluginRunsLines(runs: PluginRuns): string[] {
   const { hooks, mcpServers, unknown } = runs;
   if (hooks.length === 0 && mcpServers.length === 0 && unknown.length === 0) {
@@ -118,26 +93,16 @@ export function pluginRunsLines(runs: PluginRuns): string[] {
   return lines;
 }
 
-/**
- * `pluginRunsLines` under the `runs` label of the consent block. A `--yes`
- * install and a consent refusal print the same lines.
- */
 export function pluginRunsField(runs: PluginRuns): string[] {
   return labelledLines("runs", pluginRunsLines(runs));
 }
 
-/**
- * The runs entries a pin move adds (D7 point 2), under `label`: `runs` in
- * the update prompt, `would ask` in a dry run. The summary line starts with
- * `+` when it counts new hooks or MCP servers.
- */
 export function newPluginRunsField(label: string, runs: PluginRuns): string[] {
   const [first = "", ...rest] = pluginRunsLines(runs);
   const counted = runs.hooks.length > 0 || runs.mcpServers.length > 0;
   return labelledLines(label, [counted ? `+ ${first}` : first, ...rest]);
 }
 
-/** Lines under a field label, with later lines at the value column. */
 function labelledLines(label: string, lines: readonly string[]): string[] {
   const [first = "", ...rest] = lines;
   return [
@@ -146,10 +111,6 @@ function labelledLines(label: string, lines: readonly string[]): string[] {
   ];
 }
 
-/**
- * The reason a consent refusal gives (D7): what the plugin runs, or the
- * general warning when the reader found nothing.
- */
 export function pluginConsentReason(runs: PluginRuns): string {
   const parts = [
     ...(runs.hooks.length > 0
@@ -170,14 +131,8 @@ export function pluginConsentReason(runs: PluginRuns): string {
   return "capshelf does not review this content, and your agent runs it with your permissions";
 }
 
-/**
- * One write that puts a plugin's commands in reach of Claude Code (D7).
- * `install` and `project-scope` carry everything the plugin runs; `pin-move`
- * carries only the entries the new tree adds.
- */
 export interface PluginConsentPoint {
   kind: "install" | "pin-move" | "project-scope";
-  /** `plugins/<name>`. */
   ref: string;
   runs: PluginRuns;
 }
@@ -186,23 +141,12 @@ export interface PluginConsentOptions {
   yes?: boolean;
   json?: boolean;
   dryRun?: boolean;
-  /**
-   * What the refusal tells the user to do, for a write that cannot take
-   * `--yes`. The default is `review it first, then authorize with --yes`.
-   */
   advice?: string;
 }
 
 /**
- * Asks once for every point that has an entry (D7, M2). Returns true when
- * the write may go on: no point has an entry, `--yes` is set, the user
- * answered yes, or this is a dry run (the caller reports the points as
- * `would ask`). Returns false when the user answered no. With `--json` or no
- * terminal, and no `--yes`, it refuses with exit 3.
- *
- * A point with an empty runs set asks nothing, but a non-empty `unknown`
- * list always asks: a declaration the reader could not read is not proof
- * that the plugin runs nothing (D6).
+ * A non-empty `unknown` list needs consent like a hook or server does, because
+ * a declaration the reader could not read is not proof the plugin runs nothing.
  */
 export async function confirmPluginConsent(
   points: readonly PluginConsentPoint[],
@@ -213,9 +157,8 @@ export async function confirmPluginConsent(
   if (first === undefined || opts.dryRun === true) return true;
   const lines = consentLines(asking);
   if (opts.yes === true) {
-    // `--yes` skips the question, so what the write authorizes goes to
-    // stderr, where `--json` cannot see it. A `--yes` remote add does the
-    // same.
+    // With `--yes` the authorization goes to stderr, where `--json` output
+    // cannot see it.
     for (const line of lines) console.error(line);
     return true;
   }
@@ -247,10 +190,6 @@ export async function confirmPluginConsent(
   return false;
 }
 
-/**
- * The block a consent point shows. Point 3 repeats no runs list when point 1
- * for the same plugin already shows one: one prompt, one list.
- */
 function consentLines(points: readonly PluginConsentPoint[]): string[] {
   const listed = new Set(
     points
@@ -287,7 +226,6 @@ function pointLines(
   ];
 }
 
-/** D7 point 3: what project scope means for a plugin's commands (R2, R3). */
 function teammateLines(runs: PluginRuns): string[] {
   const subject =
     runs.hooks.length > 0 && runs.mcpServers.length > 0
@@ -303,7 +241,6 @@ function teammateLines(runs: PluginRuns): string[] {
   ];
 }
 
-/** `5 hooks`, `1 hook and 1 MCP server`, or null when it counts neither. */
 function runsCounts(runs: PluginRuns): string | null {
   const parts = [
     ...(runs.hooks.length > 0
@@ -318,7 +255,6 @@ function runsCounts(runs: PluginRuns): string | null {
   return parts.length > 0 ? parts.join(" and ") : null;
 }
 
-/** `runs 5 hooks`, or the unknown case. */
 function runsSummary(runs: PluginRuns): string {
   const counts = runsCounts(runs);
   return counts === null
@@ -334,11 +270,6 @@ interface ConsentWords {
   cancelled: string;
 }
 
-/**
- * The refusal, the question, and the cancel line, chosen by the write the
- * points belong to: an update moves a pin, an add installs, and a move
- * commits to the project.
- */
 function consentWords(
   first: PluginConsentPoint,
   points: readonly PluginConsentPoint[],
@@ -391,7 +322,6 @@ function serverCells(server: PluginRunServer): string[] {
   ];
 }
 
-/** Rows of cells, sanitized, padded to aligned columns, indented two spaces. */
 function columns(rows: readonly string[][]): string[] {
   const cleaned = rows.map((row) => row.map(safe));
   const widths: number[] = [];
@@ -411,12 +341,6 @@ interface FileGroupRow {
   bytes: number;
 }
 
-/**
- * One line per top-level directory, with a file count and a size — never
- * item names; those move to `namedGroupBlocks`. Files at the plugin root
- * form the `./` group: one file shows its own name as the label, several
- * show `(plugin root)` instead of listing them.
- */
 function fileGroupLines(files: readonly PluginConsentFile[]): string[] {
   const groups = new Map<string, PluginConsentFile[]>();
   for (const file of files) {
@@ -453,13 +377,6 @@ function compare(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-/**
- * The file-group table: label (left-aligned), count (the digits
- * right-aligned, the "file"/"files" word left as-is), size (the whole
- * formatted value right-aligned in one shared column — spec rule: "sizes
- * right-aligned in one column, counts aligned"). Two-space gaps throughout,
- * the same gap the `skills`/`agents` name columns use.
- */
 function formatFileGroupRows(rows: readonly FileGroupRow[]): string[] {
   if (rows.length === 0) return [];
   const labelWidth = Math.max(...rows.map((row) => row.label.length));
@@ -482,12 +399,6 @@ const NAMED_GROUPS: ReadonlyMap<string, { noun: string; pattern: RegExp }> =
     ["agents/", { noun: "agent", pattern: /^agents\/([^/]+)\.md$/ }],
   ]);
 
-/**
- * The `skills` block, and the `agents` block when the plugin has agents, in
- * that order: how Claude Code calls each item (`<plugin>:<name>`), then the
- * bare names in columns. A group with no match prints nothing, so a
- * commands-only plugin shows neither block.
- */
 function namedGroupBlocks(
   pluginName: string,
   files: readonly PluginConsentFile[],
@@ -505,19 +416,12 @@ function namedGroupBlocks(
   return lines;
 }
 
-/**
- * The gutter a name row and the "… and N more" line carry in addition to
- * `CONTINUATION`, so they start at the same column as a file-group row
- * (`formatFileGroupRows` adds this same two-space gutter before
- * `fileGroupLines` applies `CONTINUATION`).
- */
 const NAME_ROW_GUTTER = "  ";
 
 /**
- * One named-item block. Sanitizes every name first, then sorts and counts
- * the sanitized text. Sanitizing turns two different control characters
- * into the same space. A sort of the raw text could order two names one
- * way, then show them sanitized in the other order.
+ * Names are sanitized before sorting and counting, because distinct control
+ * characters collapse to the same space and a raw sort could order differently
+ * than what is shown.
  */
 function namedGroupBlock(
   noun: string,
@@ -536,11 +440,6 @@ function namedGroupBlock(
   ]);
 }
 
-/**
- * `shown`, padded to the widest name and laid out row-major in as many
- * columns as fit `width` minus the continuation indent and the row's own
- * gutter, two spaces between columns.
- */
 function nameColumns(shown: readonly string[], width: number): string[] {
   if (shown.length === 0) return [];
   const available = Math.max(
@@ -563,10 +462,6 @@ function nameColumns(shown: readonly string[], width: number): string[] {
   return rows;
 }
 
-/**
- * Greedy word-wrap: as many words as fit on a line, one word alone on its
- * own line when even that word does not fit.
- */
 function wrapWords(text: string, width: number): string[] {
   const words = text.split(/\s+/).filter((word) => word.length > 0);
   const lines: string[] = [];
@@ -585,12 +480,8 @@ function wrapWords(text: string, width: number): string[] {
 }
 
 /**
- * The description, split into paragraphs on its own blank lines *before*
- * sanitizing — `safe` turns every control character, a bare `\n` included,
- * into a space, so finding the paragraph breaks has to happen first or
- * there would be none left to find. Each paragraph is then sanitized,
- * reflowed, and word-wrapped at `width` minus the 2-space indent every line
- * carries; a blank line separates wrapped paragraphs.
+ * Paragraphs are split before sanitizing, because `safe` turns every control
+ * character, including a bare `\n`, into a space and would erase the breaks.
  */
 function wrapDescription(description: string, width: number): string[] {
   const innerWidth = Math.max(width - 2, 1);

@@ -1,23 +1,6 @@
 /**
- * The terminal shell around `pick-core.ts`: an fzf-style filter list, grouped
- * by item type, where the user types to narrow, `←/→` switch type, `Tab`
- * marks, and `Enter` installs the marked rows.
- *
- * This drives `@clack/core`'s `AutocompletePrompt` directly rather than
- * `@clack/prompts`' `autocompleteMultiselect`. The wrapper renders a flat
- * option list and takes no `render` hook, so a type menu across the top cannot
- * be drawn through it. The core class takes `render`, which returns the whole
- * frame, and still supplies what is genuinely hard: raw mode, keypress
- * decoding, redraw diffing, and the cancel path. Every line the frame contains
- * is built as plain strings in `pick-frame.ts`.
- *
- * The prompt draws on stderr, never stdout. Every capshelf command keeps
- * stdout for its result — `--json` above all — and a prompt that scribbled on
- * it would break the pipe that a script reads.
- *
- * `setPickContext` is the same seam `destructive-change.ts` uses for its
- * consent prompt: the one way to exercise this path in a test without a
- * pseudo-terminal, while the shipped code still runs the real prompt.
+ * Uses `@clack/core` directly for its `render` hook; draws on stderr so stdout
+ * stays clean for `--json` results.
  */
 import { AutocompletePrompt, isCancel } from "@clack/core";
 import type { Key } from "node:readline";
@@ -35,45 +18,32 @@ import type { PickTab } from "./pick-tabs";
 import { highlightTerminalDiff, truncateAnsiLine } from "./terminal-diff";
 
 export interface PickPreview {
-  /** One or more unified file diffs. */
   text: string;
-  /** Opaque caller data that binds a displayed preview to a later action. */
   version?: string;
 }
 
 export interface PickRequest {
   rows: PickRow[];
-  /** The question above the list. */
   message: string;
-  /**
-   * Tab and browse order for the catalog's kinds. Absent means the shelf
-   * catalog's order, which is what `add` and `init` want.
-   */
   kindOrder?: readonly PickKind[];
-  /** The verb Enter performs, for the key legend. Absent means `install`. */
   action?: string;
-  /** Load the focused row's diff when the user presses Ctrl-V. */
   preview?: (row: PickRow) => Promise<PickPreview>;
 }
 
-/** Why a picker could not be shown. A code, not prose, so callers can branch. */
 export type PickUnavailableReason =
   | "no-terminal"
   | "dumb-terminal"
   | "empty-shelf";
 
 export type PickOutcome =
-  /** `refs` holds `pickRowId` per marked row — the `ref` unless the row set an `id`. */
   | {
       kind: "picked";
       refs: string[];
-      /** Versions for selected rows whose preview finished rendering. */
       previewVersions?: Record<string, string>;
     }
   | { kind: "cancelled" }
   | { kind: "unavailable"; reason: PickUnavailableReason };
 
-/** The message for an unavailable picker, phrased for a human. */
 export function pickUnavailableMessage(reason: PickUnavailableReason): string {
   switch (reason) {
     case "no-terminal":
@@ -86,15 +56,9 @@ export function pickUnavailableMessage(reason: PickUnavailableReason): string {
 }
 
 /**
- * Whether `TERM` declares a terminal that cannot run a full-screen prompt.
- *
- * `dumb` is the standard way to say "no capabilities", and the prompt needs
- * more than none. Measured on one: `readline` ignores the key argument to its
- * own `write`, so the clear that restores the query never happens and typing
- * `re`, `←`, `v` left `rerev`, while `Tab` arrived as a literal tab character
- * instead of marking a row. Refusing gives the same clear message an absent
- * terminal does; rendering anyway gives a prompt that silently does the wrong
- * thing.
+ * A dumb, empty, or unset TERM is refused. On `dumb`, readline ignores the key
+ * argument to `write`, so the query clear never happens and `Tab` arrives as a
+ * literal tab.
  */
 function isDumbTerminal(term = process.env.TERM): boolean {
   return term === undefined || term === "" || term === "dumb";
@@ -104,9 +68,8 @@ export interface PickContext {
   stdinIsTTY: boolean;
   stderrIsTTY: boolean;
   /**
-   * Whether the terminal can run a full-screen prompt. Absent means yes, so an
-   * injected context never depends on the ambient `TERM`; the real context
-   * sets it from `TERM`.
+   * Defaults to capable so an injected context never depends on the ambient
+   * `TERM`.
    */
   capableTerminal?: boolean;
   prompt(request: PickRequest): Promise<PickOutcome>;
@@ -123,22 +86,16 @@ const TERMINAL_PALETTE: PickPalette = {
   disabled: (text) => `${DISABLED}${text}${RESET}`,
 };
 
-/** List lines to draw, leaving room for the bar, the search line, and the legend. */
 const LIST_HEIGHT = 10;
 
 /**
- * A value no query can hold, used to force clack to recompute a list it
- * believes is unchanged. See `resetInputState`.
+ * Clack skips recomputing its option list when the query looks unchanged; this
+ * value no real query can hold forces the recompute.
  */
 const TAB_SWITCH_SENTINEL = "\u0000";
 
 let installedPickContext: PickContext | null = null;
 
-/**
- * Replace the picker context, or restore the default with `null`. Returns the
- * context that was installed before, so a caller can restore it instead of
- * clobbering an outer one.
- */
 export function setPickContext(
   context: PickContext | null,
 ): PickContext | null {
@@ -148,12 +105,8 @@ export function setPickContext(
 }
 
 /**
- * Offer the shelf and return the refs the user marked.
- *
- * Never throws for an absent terminal: a picker is an offer, and a caller in a
- * pipe or a CI job must be able to carry on with its non-interactive output.
- * `unavailable` is that answer, and it is distinct from `cancelled`, which
- * means a user saw the list and declined.
+ * Returns `unavailable` instead of throwing so callers in pipes or CI can fall
+ * back to non-interactive output; distinct from `cancelled`.
  */
 export async function pickItems(
   request: PickRequest,
@@ -168,21 +121,14 @@ export async function pickItems(
 }
 
 /**
- * Whether a terminal exists, without needing any rows.
- *
- * Callers ask this *before* reading the data repo. Building the row list walks
- * the whole shelf and parses every sidecar, and that walk can legitimately
- * refuse — an unsafe item name in the catalog is a trust boundary `ls` and
- * `add` are right to fail on. Doing that work behind an offer nobody can see
- * turns a refusal that belongs to `ls` into a failure of whatever command
- * merely tried to be helpful.
+ * Check before reading the data repo: building rows can refuse on unsafe
+ * catalog names, which should fail `ls`/`add`, not a command that merely
+ * offered a picker.
  */
 export function pickTerminalUnavailable(
   context: PickContext = installedPickContext ?? defaultPickContext(),
 ): PickUnavailableReason | null {
   if (!context.stdinIsTTY || !context.stderrIsTTY) return "no-terminal";
-  // Defaults to capable, so an injected context never depends on the ambient
-  // `TERM`. The real context below reports what `TERM` actually says.
   return (context.capableTerminal ?? true) ? null : "dumb-terminal";
 }
 
@@ -191,7 +137,6 @@ interface PickOption {
   label: string;
 }
 
-/** The Ctrl-V diff overlay: which row it shows and how far it has scrolled. */
 interface PreviewPane {
   rowId: string;
   ref: string;
@@ -208,62 +153,42 @@ interface ClackPromptInternals {
 }
 
 /**
- * The one place this module reaches past clack's type surface. Both members
- * are optional here, so a future clack release that drops one degrades to a
- * no-op instead of a crash.
+ * Members are optional so a clack release that drops one degrades to a no-op
+ * instead of crashing.
  */
 function clackInternals(
   prompt: AutocompletePrompt<PickOption> | ClackPromptInternals,
 ): ClackPromptInternals {
-  // SAFETY: `Prompt` in @clack/core 1.4.3 declares `rl` and `render` as
-  // private instance members (dist/index.d.mts:215 and :263) and assigns both
-  // in its constructor and `prompt()` (dist/index.mjs). The private modifier
-  // hides them from the type, not from the object.
+  // SAFETY: `rl` and `render` are `private` in @clack/core 1.4.3 types but
+  // exist at runtime; the modifier hides them from the type, not the object.
   return prompt as ClackPromptInternals;
 }
 
 /**
- * The prompt: a type menu, a ranked list, and a caret that stays at the end.
- *
- * `←/→` are rebound from moving the text caret to switching type. Node's
- * `readline` owns the insertion point and still moves it on those keys, so
- * without `restoreCaret` the next character would land wherever the caret
- * stopped — typing `ab`, pressing `←`, then `x` produced `axb`. Clearing and
- * rewriting the same text through the two protected hooks puts the insertion
- * point back at the end without reaching into `readline` itself.
+ * `←/→` switch tabs, but readline still moves its insertion point.
+ * `resetInputState` moves it to the end, then clears and rewrites the text, so
+ * the next character lands at the end.
  */
 class TypePickPrompt extends AutocompletePrompt<PickOption> {
   tabs: PickTab[];
   activeTab = 0;
-  /** Ranked rows behind the current options, for the frame to draw. */
   ranked: RankedPickRow[] = [];
-  /** Every row on the shelf; each tab is a view of these. */
   private allRows: PickRow[] | undefined;
-  /** The kind order for the tab bar and the browse ordering. */
   private kindOrder: readonly PickKind[] | undefined;
-  /** The verb Enter performs, for the key legend. */
   private action: string | undefined;
-  /** The promote picker's on-demand diff provider. */
   private previewProvider: ((row: PickRow) => Promise<PickPreview>) | undefined;
   private previewPane: PreviewPane | undefined;
   private previewVersions = new Map<string, string>();
-  /** The query the option list was last built for; see `buildOptions`. */
   private renderedQuery: string | null = null;
   /**
-   * One finder per tab, built lazily. Rows never change during a session, so
-   * the copy-and-sort inside `createPickFinder` runs once per tab instead of
-   * once per keystroke — `find` alone is the per-keystroke path, which is the
-   * split `pick-core.ts` documents.
+   * Built lazily per tab so the copy-and-sort runs once per tab, not once per
+   * keystroke.
    */
   private finders = new Map<string, PickFinder>();
   /**
-   * Row ids `Tab` must ignore. This is the picker's own rule, not clack's:
-   * marking `disabled: true` on the option made clack's cursor walk skip the
-   * row (`findCursor` in `@clack/core`), so a disabled row could never be
-   * focused, its reason in the detail column could never be read, and a list
-   * where every row was disabled — a promote picker with nothing to promote —
-   * had a cursor that refused to move at all. Every row stays focusable;
-   * `toggleSelected` below is where unmarkable stays unmarkable.
+   * Not `disabled: true` on options, because clack's cursor walk then skips the
+   * row and its reason can never be focused or read; `toggleSelected` enforces
+   * unmarkable.
    */
   private unmarkableIds = new Set<string>();
 
@@ -275,27 +200,18 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
     action?: string;
     preview?: (row: PickRow) => Promise<PickPreview>;
   }) {
-    // These two hooks must be `function`, not arrows, and nothing may precede
-    // `super()`.
-    //
-    // An arrow here closes over the derived `this`, which does not exist until
-    // `super()` returns, and an earlier version used a `let self` alias before
-    // the call for the same purpose. Both forms threw "'super()' must be
-    // called in derived constructor before accessing |this|" in the compiled
-    // binary while running fine from source, so only the end-to-end layer
-    // caught it. `AutocompletePrompt` invokes both hooks with the prompt as
-    // their receiver, so a plain method reads `this` correctly.
+    // These hooks must be `function`, not arrows, with nothing before
+    // `super()`: arrows touching `this` threw in the compiled binary though
+    // fine from source.
     super({
       multiple: true,
       output: opts.output,
-      // Replaces clack's substring default, which it applies even to a custom
-      // option getter. The getter below already filtered and ranked, so this
-      // passes its result through untouched.
+      // Passes every option through: the options getter below already filtered
+      // and ranked, so clack must not filter again.
       filter: () => true,
       options(this: AutocompletePrompt<PickOption>) {
-        // SAFETY: `AutocompletePrompt` calls this hook with the prompt as its
-        // receiver, and `TypePickPrompt` is the only prompt built with these
-        // hooks (`defaultPickContext` below).
+        // SAFETY: clack calls this hook with the prompt as receiver, and only
+        // `TypePickPrompt` is built with these hooks.
         return (this as TypePickPrompt).buildOptions();
       },
       render(this: AutocompletePrompt<PickOption>) {
@@ -308,16 +224,12 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
     this.action = opts.action;
     this.previewProvider = opts.preview;
     this.tabs = pickTabs(opts.rows, opts.kindOrder);
-    // Prime the list. The base constructor reads `options` before any of this
-    // subclass's fields exist, so it got an empty list and focused nothing.
-    // Without this the first frame is blank until the user types.
+    // Prime the list here: the base constructor calls `options` before this
+    // subclass's fields exist, so it got an empty list.
     this.filteredOptions = this.buildOptions();
-    // Index 0, exactly where clack's own private cursor starts. An earlier
-    // version preferred the first *markable* row, which desynchronized the
-    // two: the frame pointed at the markable row while the next arrow key
-    // navigated from index 0, jumping the pointer backwards. Opening on a
-    // disabled first row is fine — the cursor rests there and its reason
-    // shows; `Tab` is simply inert until the cursor reaches a markable row.
+    // Start at index 0, where clack's private cursor starts, so the pointer and
+    // arrow navigation stay in sync. A disabled first row is fine: its reason
+    // shows, and Tab does nothing until the cursor reaches a markable row.
     this.focusedValue = this.filteredOptions[0]?.value;
     this.on("key", (_char, key) => this.onTypeKey(key));
   }
@@ -329,7 +241,6 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
     return this.previewPane === undefined && super._shouldSubmit(char, key);
   }
 
-  /** `Tab` on a disabled row does nothing; the row is browsable, not markable. */
   override toggleSelected(value: string): void {
     // Optional chaining: the base constructor can call this before the field
     // initialisers run, and at that point nothing is unmarkable yet.
@@ -347,19 +258,13 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
   }
 
   private buildOptions(): PickOption[] {
-    // The base constructor calls this once, before this subclass's field
-    // initialisers have run, so there is nothing to build yet. The constructor
-    // primes the list itself immediately afterwards.
+    // The base constructor calls this before subclass fields are initialised;
+    // the constructor primes the list afterwards.
     if (this.allRows === undefined) return [];
     const query = this.userInput ?? "";
-    // Snap the cursor to the best match whenever the query changes.
-    //
-    // clack keeps the cursor on whatever row was focused before, by looking it
-    // up in the newly filtered list and following it to its new position. That
-    // is right for a static list. It is wrong for a ranked one: typing exists
-    // to bring the best match to the top, and the row focused a keystroke ago
-    // is usually not it. Clearing `focusedValue` makes clack's lookup fall
-    // through to index 0. Marks live in `selectedValues` and are untouched.
+    // Clear `focusedValue` on query change: clack otherwise follows the
+    // previously focused row, but a ranked list should put the best match at
+    // the top.
     if (this.renderedQuery !== null && query !== this.renderedQuery) {
       this.focusedValue = undefined;
     }
@@ -377,12 +282,11 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
         .filter((entry) => isPickRowDisabled(entry.row))
         .map((entry) => pickRowId(entry.row)),
     );
-    // No `disabled` flag on the options: clack would then skip the row when
-    // moving the cursor, and a row nobody can focus is a row whose reason
-    // nobody can read. See `unmarkableIds`.
+    // No `disabled` flag: clack would skip the row when moving the cursor, so
+    // its reason could never be read.
     return this.ranked.map((entry) => ({
-      // The identity, not the label: a share catalog offers one mcp server
-      // once per output file, and both rows carry the server name as `ref`.
+      // Use the row identity, not the label: a share catalog offers one mcp
+      // server per output file, all with the same `ref`.
       value: pickRowId(entry.row),
       label: entry.row.ref,
     }));
@@ -390,12 +294,8 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
 
   private onTypeKey(key: Key): void {
     const name = key.name;
-    // Ctrl-V, not Ctrl-D: `0x04` is EOF to the readline layer under this
-    // prompt. Measured through a pty — the toggle keypress arrived once, then
-    // readline closed, stdin stopped delivering keys, and raw mode was
-    // restored, so the pane opened dead and the terminal echoed `^[[A` for
-    // every arrow. Readline does not own Ctrl-V, so it reaches only this
-    // handler.
+    // Ctrl-V, not Ctrl-D: `0x04` is EOF to readline, which closes and stops
+    // delivering keys; readline doesn't own Ctrl-V.
     if (
       this.previewProvider &&
       name === "v" &&
@@ -424,17 +324,9 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
       return;
     }
     if (name === "up" || name === "down") {
-      // Leave navigation mode as soon as the arrow is handled.
-      //
-      // `AutocompletePrompt` treats Space as "mark the focused row" while
-      // `isNavigating` is set, which `↑`/`↓` set. That silently breaks the
-      // documented query syntax and installs things nobody chose: typing
-      // `sec`, pressing `↓`, then Space and `rev` swallowed the separator,
-      // leaving `secrev`, and marked whichever row happened to be focused.
-      // Enter then installed it. Clearing the flag here — after the base
-      // handler has moved the cursor, before the next key — makes Space
-      // ordinary text again. Tab still marks, because it does not consult
-      // this flag.
+      // Clear `isNavigating` after arrows: clack treats Space as 'mark focused
+      // row' while it is set, which swallows the space in queries and marks a
+      // row.
       this.isNavigating = false;
       return;
     }
@@ -444,28 +336,15 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
       this.activeTab,
       name === "right" ? 1 : -1,
     );
-    // A different tab is a different row set, so the cursor belongs at its top.
     this.focusedValue = undefined;
     this.renderedQuery = null;
     this.resetInputState();
   }
 
   /**
-   * Rebuild the row list and the cursor after a tab change, and put the text
-   * insertion point back at the end.
-   *
-   * Both halves are needed, and the sentinel is what makes the first one work.
-   * clack recomputes its filtered list and its internal cursor only when the
-   * *value* of the input changes, and switching tab usually leaves the query
-   * exactly as it was — so the new tab's rows were never built, and the frame
-   * drew the previous tab's list under the new tab's heading, counting `6 of
-   * 1`. Passing a value no query can equal forces that recomputation; the two
-   * calls after it restore the real query. No frame is drawn in between.
-   *
-   * The write also fixes the caret. `readline` owns the insertion point and
-   * still moves it on `←`/`→`, so without rewriting the text the next
-   * character would land where the caret stopped: typing `ab`, pressing `←`,
-   * then `x` produced `axb`.
+   * The sentinel forces clack to recompute: it only rebuilds its list and
+   * cursor when the input value changes, and a tab switch leaves the query as
+   * it was.
    */
   private resetInputState(): void {
     const text = this.userInput;
@@ -483,30 +362,16 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
   }
 
   /**
-   * Put `readline`'s own insertion point at the end of the line.
-   *
-   * This has to happen before `_clearUserInput`, which sends Ctrl-U — and
-   * Ctrl-U deletes only what is left of the cursor. After a `←` the cursor sits
-   * inside the query, so the suffix survived the clear and the rewrite landed
-   * in front of it: typing `ab`, pressing `←`, then `x` produced `abxb`. An
-   * earlier check used `→`, which is a no-op at the end of the text, and so
-   * never exercised the failing direction.
-   *
-   * `Prompt` keeps its readline instance private and offers no accessor, so
-   * this reaches it through a narrow structural type rather than `any`, and
-   * does nothing if the shape ever changes.
+   * Move to end before the clear: Ctrl-U deletes only left of the cursor, so
+   * after `←` the suffix would survive.
    */
   private moveLineCursorToEnd(): void {
     clackInternals(this).rl?.write(null, { ctrl: true, name: "e" });
   }
 
   /**
-   * The index the pointer is drawn at, taken from `focusedValue` rather than
-   * clack's cursor.
-   *
-   * `focusedValue` is the row `Tab` toggles, so deriving the pointer from it
-   * makes the marked row provably the pointed-at one. Reading the numeric
-   * cursor instead lets the two disagree whenever the list is rebuilt.
+   * Derived from `focusedValue`, the row `Tab` toggles, so the pointer and the
+   * marked row can't disagree after a list rebuild.
    */
   private cursorFromFocus(): number {
     if (this.focusedValue === undefined) return -1;
@@ -525,17 +390,15 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
       cursor: this.cursorFromFocus(),
       marked: new Set(this.selectedValues),
       height: LIST_HEIGHT,
-      // The stream the frame is drawn on decides how wide a line may be. A
-      // stream that is not a terminal has no width, and `bodyBudget` reads
-      // that as unlimited.
+      // Width comes from stderr, where the frame is drawn; a non-terminal
+      // stream has no width, which `bodyBudget` treats as unlimited.
       columns: process.stderr.columns,
       palette: TERMINAL_PALETTE,
       ...(this.action !== undefined && { action: this.action }),
       preview: this.previewProvider !== undefined,
     });
-    // The header sits above lines the frame already fitted, so it answers to
-    // the same budget. `init` supplies a message long enough to wrap a
-    // 40-column terminal on its own.
+    // The header sits above already-fitted lines, so it gets the same budget;
+    // `init` messages can wrap a 40-column terminal alone.
     const budget = bodyBudget(process.stderr.columns);
     const header = [...message].slice(0, budget).join("");
     return [
@@ -625,8 +488,6 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
   }
 
   private previewPageHeight(): number {
-    // Header, position, legend, and closing rule use four rows. Keep a useful
-    // pane on terminals that do not report their height.
     return Math.max(4, (process.stderr.rows ?? 20) - 4);
   }
 
@@ -642,42 +503,29 @@ class TypePickPrompt extends AutocompletePrompt<PickOption> {
     );
   }
 
-  /** Ask clack to draw after an asynchronous preview load finishes. */
   private forceRedraw(): void {
-    // The preview resolves after the keypress redraw, so it needs this narrow
-    // runtime seam to replace the loading pane.
+    // The preview resolves after the keypress redraw, so replacing the loading
+    // pane needs this runtime seam.
     clackInternals(this).render?.();
   }
 }
 
 /**
- * Lend `process.stdout` the terminal's width for the duration of the prompt,
- * and return the undo.
- *
- * `@clack/core` 1.4.3 measures line wrapping and cursor rewind with
- * `process.stdout.columns` (`dist/index.mjs`), not with the `output` stream it
- * was given. This prompt draws on stderr on purpose, so `capshelf add >
- * out.txt` leaves that number undefined while the terminal is on stderr, and
- * every redraw then rewinds too few lines. Measured on a 40-column terminal:
- * 49 lines rewound with stdout on the terminal against 40 with it redirected,
- * leaving nine wrapped rows of the previous frame on screen each keystroke.
- *
- * Refusing that invocation was the alternative. Writing the result to a file
- * while picking on the terminal is exactly what drawing on stderr is for, so
- * the width is borrowed instead, and only when stdout has none of its own.
+ * `@clack/core` measures wrapping with `process.stdout.columns`, not its
+ * `output`; with stdout redirected, redraws rewind too few lines, so borrow
+ * stderr's width.
  */
 export function borrowTerminalWidth(): () => void {
-  // SAFETY: Node declares `columns` on a tty `WriteStream` as a number, but a
-  // redirected stdout has none at runtime, and the undo below must put
-  // `undefined` back. The optional field is what the stream really carries.
+  // SAFETY: Node types `columns` as a number, but a redirected stdout has none
+  // at runtime and the undo must restore `undefined`.
   const stdout = process.stdout as { columns?: number };
   if (stdout.columns !== undefined) return () => {};
   const sync = (): void => {
     stdout.columns = process.stderr.columns;
   };
   sync();
-  // A resize mid-prompt changes the terminal, not the redirected stdout, so
-  // the borrowed value has to follow it or the rewind drifts again.
+  // Follow terminal resizes, or the borrowed width goes stale and the rewind
+  // drifts.
   process.stderr.on("resize", sync);
   return () => {
     process.stderr.off("resize", sync);
