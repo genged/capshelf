@@ -87,19 +87,13 @@ export function registerStatus(program: Command): void {
           project,
         });
 
-        // The one fetch `status` performs, and only when the flag asks for it.
-        // The freshness it measures is saved before the report is built, so
-        // the rows are computed from the record on disk.
         const check = opts.checkUpstream
           ? await checkRemoteUpstreams({ remotes: loadedRemotes })
           : null;
         if (check) {
           if (!opts.json) printFetches(check.fetches);
-          // Only when something was measured. `checkRemoteUpstreams` produces
-          // one entry per distinct upstream, so an empty list means the project
-          // holds no remote skills — and `saveRemotesLock` would then create the
-          // record *and* append a line to the committed `.capshelf/.gitignore`,
-          // leaving a dirty worktree behind a command that only reports.
+          // With no tracked remotes, saving would create the lock and modify
+          // `.capshelf/.gitignore`, dirtying the worktree during status.
           if (check.fetches.length > 0) {
             await saveRemotesLock(project, check.remotes);
           }
@@ -265,7 +259,6 @@ function printDiffs(diffs: StatusDiff[], needsChanged: boolean): void {
   }
 }
 
-/** One line per repository, before the report, the way `data sync` reports. */
 function printFetches(fetches: UpstreamFetchReport[]): void {
   for (const fetch of fetches) {
     const detail = !fetch.ok

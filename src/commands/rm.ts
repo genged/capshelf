@@ -109,9 +109,8 @@ export function registerRm(program: Command): void {
       const lock = opts.local
         ? await loadLocalLock(project)
         : await loadLock(project);
-      // PIN-12: the gate goes before any deletion. `rm --yes` would otherwise
-      // delete the installed files and only then discover it cannot write the
-      // lock, leaving the project inconsistent.
+      // Gate before any deletion: otherwise `rm --yes` deletes installed files
+      // and then fails to write the lock, leaving the project inconsistent.
       assertWritableLock(lock, `${PRODUCT_NAME} rm`);
       const localConfig = opts.local ? await loadLocalConfig(project) : null;
       const oldManifest = structuredClone(manifest);
@@ -122,10 +121,9 @@ export function registerRm(program: Command): void {
         return parsed.source === "data";
       });
 
-      // Before the skills.sh check. A tracked plugin row beside a skills.sh
-      // row is removed with the folder kept (D2 guard 5): skills.sh never
-      // installs a plugin, so the folder is the other tool's. A skill keeps
-      // the refusal, because skills.sh owns that skill.
+      // A plugin row beside a skills.sh row is removed with the folder kept,
+      // since skills.sh never installs plugins; a skill keeps the refusal
+      // because skills.sh owns it.
       const remotes = await loadRemotesLock(project);
       const remoteKeys = remoteKeysForNamedRef(remotes, ref);
       if (ref.kind === undefined || installsAtSkillTarget(ref.kind)) {
@@ -160,18 +158,9 @@ export function registerRm(program: Command): void {
         );
       }
 
-      // Before the not-tracked error: a remote row is in neither capshelf lock
-      // by A3, so `lockKeysForRef` above found nothing for one.
-      // Two populations count as much as two kinds, and `rm` is exactly the
-      // verb a user reaches for in the two-owner state. Whichever side won,
-      // the other was left orphaned: the shelf path deleted the install and
-      // its lock entry while the remote row survived pointing at a directory
-      // that no longer exists, and the remote path deleted the same install
-      // out from under a shelf entry that still tracked it.
-      //
-      // Both locks, not the one `--local` selected. An adopt lands in local
-      // scope by default, so the shelf half of this state is usually the one
-      // a bare `rm` does not load.
+      // Remote rows are in neither lock, and removing only one side of a
+      // two-owner state orphans the other, so check both locks, not just the
+      // one `--local` selects.
       assertRefNotSplitAcrossPopulations(
         await loadLock(project),
         await loadLocalLock(project),
@@ -211,8 +200,8 @@ export function registerRm(program: Command): void {
               "  remove local-only files manually, or repair the lock before running capshelf rm",
           );
         }
-        // The item may be installed at the other scope; a bare "not installed"
-        // would be a lie the user has no way to see through.
+        // The item may be installed at the other scope, so say so rather than a
+        // misleading "not installed".
         const otherLock = opts.local
           ? await loadLock(project)
           : await loadLocalLock(project);
@@ -242,11 +231,8 @@ export function registerRm(program: Command): void {
         throw new Error(`expected data lock entry for data/${kind}/${name}`);
       }
 
-      // D2 guard 5: computed before any plan or consent. A folder this item
-      // does not own must never enter the destructive-change preflight below
-      // — the other owner's content would be reported as this item's local
-      // edits, demanding `--yes` for drift this item did not create — and
-      // must never be deleted.
+      // Computed before any plan or consent so another owner's folder is never
+      // reported as this item's local edits or deleted.
       let keptBy: SkillTargetOwner | null = null;
       let excludesNeeded = false;
       if (isCopyDirectoryItemKind(kind) && installsAtSkillTarget(kind)) {
@@ -258,11 +244,9 @@ export function registerRm(program: Command): void {
           })
         ).filter(
           (owner) =>
-            // An unmanaged folded sibling is another folder: it does not
-            // keep this item's own folder.
             owner.owner !== "unmanaged" &&
-            // Only the selected scope's entry is this item. The same key in
-            // the other scope (an interrupted `move`) still owns the folder.
+            // Only the selected scope's entry is this item; the same key in the
+            // other scope (interrupted `move`) still owns the folder.
             !(
               owner.owner === (opts.local ? "local" : "project") &&
               owner.key === dataKey(kind, name)
@@ -274,11 +258,9 @@ export function registerRm(program: Command): void {
         );
       }
 
-      // Resolved lazily: fragment and subagent removal read the data repo to
-      // rebuild their outputs, but a copy directory is deleted from the
-      // project alone. Requiring it unconditionally made `rm` impossible in
-      // exactly the states it exists for — a deleted clone or a rewritten
-      // upstream — while rm.ts:140 still advertised it as the escape hatch.
+      // Resolved lazily: copy directories are deleted from the project alone,
+      // and requiring the data repo would make `rm` fail when the clone is gone
+      // or upstream rewritten.
       let cachedDataRepo: string | undefined;
       const requireDataRepo = async (): Promise<string> => {
         cachedDataRepo ??= await resolveProjectDataRepo(
@@ -369,10 +351,9 @@ export function registerRm(program: Command): void {
           changes.push(...planned.changes);
           snapshotParts.push(...planned.snapshotParts);
         } else if (isCopyDirectoryItemKind(kind)) {
-          // Kept: the folder belongs to another owner, so it is never part
-          // of this item's destructive-change plan. Planning it anyway would
-          // report that owner's content as this item's local edits and
-          // demand `--yes` for drift this item did not create.
+          // Skip planning for a folder another owner keeps: it would report
+          // that owner's content as this item's local edits and demand `--yes`
+          // for drift this item didn't create.
           if (keptBy) {
             snapshotParts.push(`kept-by:${JSON.stringify(keptBy)}`);
           } else {
@@ -445,10 +426,6 @@ export function registerRm(program: Command): void {
           entry,
           oldManifest,
         );
-        // Every reconciled output, not the first. `rm` reconciles each locked
-        // target, so naming one of two was reporting a target in place of a
-        // set — the same defect `add` carried. Matches the subagent branch
-        // below, which already joins its removed paths.
         path = targets
           .map((target) => fragmentOutputPath(project, target))
           .join(", ");
@@ -459,14 +436,9 @@ export function registerRm(program: Command): void {
         }
       } else if (isCopyDirectoryItemKind(kind)) {
         path = installedPath(project, kind, name, oldManifest.installMode);
-        // D2 guard 5: `keptBy` is computed above, before any plan or
-        // consent. When another owner still claims this folder, untrack
-        // this item but leave the folder — and its compatibility alias —
-        // alone; they are not this item's to delete.
         if (!keptBy) {
-          // The folder goes first. A failed delete then leaves the aliases and
-          // the lock row in place, so the item stays usable and a rerun can
-          // finish (G8).
+          // Delete the folder first so a failed delete leaves aliases and the
+          // lock row intact and a rerun can finish.
           if (existsSync(path)) {
             keptMountPoints = await deleteInstalledFolder(project, path);
             removed = true;
@@ -499,10 +471,9 @@ export function registerRm(program: Command): void {
       );
       if (opts.local) {
         if (!nextLocalConfig) throw new Error("expected local manifest");
-        // The exclude lines name the shared folder (`.agents/skills/<n>`,
-        // `.claude/skills/<n>`), identical for `skills/<n>` and
-        // `plugins/<n>`. They stay while a local-scope entry or a remote row
-        // still needs them. A project-scope owner needs none.
+        // The exclude lines name the shared folder, identical for skills and
+        // plugins, so keep them while a local-scope entry or remote row still
+        // needs them.
         if (!excludesNeeded) await removeLocalExcludes(project, kind, name);
         await saveLocalConfig(project, nextLocalConfig);
         await saveLocalLock(project, writableNextLock);
@@ -551,20 +522,9 @@ export function registerRm(program: Command): void {
 }
 
 /**
- * Remove a remote skill or plugin: the install, its compatibility alias, its
- * exclude lines, and its row.
- *
- * D2 guard 5, as the shelf path applies it: when another owner claims the
- * folder, `rm` keeps the folder and its alias, leaves them out of the
- * destructive plan, and deletes only the row. The exclude lines name the
- * shared folder, so they stay when a local-scope entry or another remote row
- * still needs them. A project-scope owner needs no exclude lines.
- *
- * A cold cache must not stop this. The locked file set is only used to label a
- * path as reproducible managed content rather than unique local state, so when
- * the cache is gone every installed path degrades to `extra_local_path`, is
- * named in the prompt, and is deleted only with consent. Failing instead would
- * strand the item in exactly the state `rm` exists for.
+ * A cold cache must not block removal: the locked file set only labels managed
+ * paths, so without it every path is treated as extra_local_path and deleted
+ * only with consent.
  */
 async function removeRemoteItem(input: {
   project: string;
@@ -696,10 +656,6 @@ async function removeRemoteItem(input: {
   printKeptMountPoints(project, path, keptMountPoints);
 }
 
-/**
- * Delete an installed item folder and keep each mounted volume in it. The
- * error names the folder, so the user can see what is left.
- */
 async function deleteInstalledFolder(
   project: string,
   path: string,
@@ -709,10 +665,9 @@ async function deleteInstalledFolder(
   } catch (err) {
     if (err instanceof CliError) throw err;
     const detail = err instanceof Error ? err.message : String(err);
-    // The delete already gave this user write access to each folder in the
-    // tree that it owns. A denial that is left comes from a folder of another
-    // user (for example one that a container wrote as root), from the parent
-    // folder, or from a process that holds a file open.
+    // A denial that survives the delete comes from a folder owned by another
+    // user (e.g. written as root by a container), the parent folder, or an open
+    // file.
     const cause =
       isErrno(err, "EACCES") || isErrno(err, "EPERM")
         ? "this user cannot write that directory, its parent, or a folder in it, or another process is using it. Fix the permissions or stop the process, then retry."

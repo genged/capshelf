@@ -20,10 +20,6 @@ export function buildSyncData(name: string): Command {
     .action(async (opts: SyncDataOptions, cmd: Command) => {
       const project = projectRoot();
       const manifest = await loadManifest(project);
-      // resolveDataRepo runs the standard upstream verification when the
-      // manifest declares dataRepoUpstream (wrong origin fails with exit 4
-      // before any fetch). A declared upstream is not required: sync-data
-      // syncs against whatever `origin` is.
       const dataRepo = await resolveDataRepo({
         override: globalOpts(cmd).data,
         manifest,
@@ -34,7 +30,6 @@ export function buildSyncData(name: string): Command {
       const report = await syncData(dataRepo);
       const { exitCode, ...json } = report;
       if (opts.json) {
-        // The full report always prints before any non-zero exit.
         console.log(JSON.stringify(json, null, 2));
       } else {
         console.log(formatSyncHuman(report).join("\n"));

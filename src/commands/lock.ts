@@ -89,7 +89,6 @@ interface RepairSelection {
 interface LockSnapshot {
   scope: MigrationScope;
   path: string;
-  /** The bytes on disk before planning, or null when the file is absent. */
   before: string | null;
   lock: Lock;
 }
@@ -182,12 +181,8 @@ async function runMigrate(
     return;
   }
 
-  // M10: every project moves to lock version 5, with or without plugins.
-  // When every snapshot is already version 4 or 5, every data entry already
-  // carries a full pin (`sourcePinDigest`, a full `sourceCommit`), so the
-  // version bump copies each entry unchanged and reads nothing from the data
-  // repo. It changes no installed file and no entry, so it asks for no
-  // consent.
+  // When every snapshot is already v4 or v5 the entries carry full pins, so the
+  // bump copies them unchanged, reads no data repo, and needs no consent.
   if (
     snapshots.every(
       (snapshot) =>
@@ -200,9 +195,8 @@ async function runMigrate(
       return;
     }
     await assertLockSnapshotsUnchanged(plan.snapshots);
-    // Nothing on this path is ever repinned, so `publishMigration`'s
-    // dataRepo parameter is never read; an empty string stands in because
-    // the data repo is deliberately never resolved here.
+    // Empty string stands in for the data repo: nothing is repinned here, so it
+    // is never read.
     await publishMigration(project, "", manifest, plan);
     printPlan(plan, { dryRun: false, json: opts.json === true });
     return;
@@ -227,8 +221,8 @@ async function runMigrate(
     throw new ResultExitError(3);
   }
 
-  // D7 point 2: a repin moves a pin to new content, as `update` does, so it
-  // asks the same consent before any write.
+  // A repin moves a pin to new content like `update`, so it asks the same
+  // consent before any write.
   const pluginPoints = await repinPluginPoints(project, dataRepo, plan);
   if (opts.dryRun) {
     printPlan(plan, {
@@ -260,18 +254,16 @@ async function runMigrate(
     return;
   }
 
-  // Planning completes before publication. Re-read the original bytes so a
-  // concurrent lock change aborts *before* anything is written rather than
-  // leaving one converted file behind.
+  // Re-read the originals so a concurrent lock change aborts before anything is
+  // written, not after one file converted.
   await assertLockSnapshotsUnchanged(plan.snapshots);
   await publishMigration(project, dataRepo, manifest, plan);
   printPlan(plan, { dryRun: false, json: opts.json === true });
 }
 
 /**
- * M10, the 4-to-5 step alone. A version 4 or 5 data entry already carries a
- * full pin, so this copies every entry across unchanged, with the version
- * number replaced, and builds no new pin. It never touches the data repo.
+ * A v4 or v5 data entry already carries a full pin, so the bump copies entries
+ * unchanged and never touches the data repo.
  */
 function buildVersionBumpPlan(snapshots: LockSnapshot[]): MigrationPlan {
   const converted: ConvertedEntry[] = [];
@@ -279,8 +271,6 @@ function buildVersionBumpPlan(snapshots: LockSnapshot[]): MigrationPlan {
   for (const snapshot of snapshots) {
     const { lock } = snapshot;
     if (lock.version !== 4 && lock.version !== LOCK_VERSION) {
-      // Unreachable: the caller only takes this path once every snapshot has
-      // already been checked to be version 4 or 5.
       throw new Error(
         `${snapshot.path} is version ${lock.version}, not 4 or 5`,
       );
@@ -301,8 +291,6 @@ function buildVersionBumpPlan(snapshots: LockSnapshot[]): MigrationPlan {
       items: lock.items,
     });
   }
-  // Strict-parse both complete candidates before anything is published, the
-  // same guard `planMigration` applies.
   for (const candidate of candidates.values()) serializeLock(candidate);
   return {
     snapshots,
@@ -353,16 +341,8 @@ async function assertLockSnapshotsUnchanged(
 }
 
 /**
- * PIN-12. The default migration **does not select new source content**: for
- * every data entry it resolves the recorded commit, reads the kind-specific
- * committed tree, checks committed filter attributes, builds the pin through
- * the one constructor, and carries every non-identity field across unchanged.
- *
- * The old `sha` is audit evidence, not an input. The legacy hash is recomputed
- * from the recorded commit and compared; a disagreement is reported as
- * `repaired-legacy-identity` rather than silently dropped, because it is
- * exactly the contradiction — a lock that no command could satisfy — this
- * design exists to remove.
+ * Default migration preserves recorded content, so a legacy-hash mismatch is
+ * reported as `repaired-legacy-identity` rather than silently discarded.
  */
 async function planMigration(input: {
   project: string;
@@ -432,8 +412,8 @@ async function planMigration(input: {
     candidates.set(snapshot.scope, candidate);
   }
 
-  // Strict-parse both complete candidates before anything is published. A
-  // serializer that dropped a digest has to fail here, not after a write.
+  // Strict-parse candidates before publishing so a serializer that drops a
+  // digest fails here, not after a write.
   for (const candidate of candidates.values()) serializeLock(candidate);
 
   return {
@@ -455,7 +435,6 @@ async function convertEntry(
   entry: DataLockEntry,
 ): Promise<ConvertedEntry> {
   if (entry.sourcePinDigest !== undefined) {
-    // Already version 4 — the other lock file is the one being converted.
     return { scope, key, ref, outcome: "converted", entry };
   }
   const parsed = parseLockKey(key);
@@ -495,7 +474,6 @@ async function convertEntry(
     outcome,
     entry: createDataLockEntry({
       pin,
-      // `appliedAt` is preserved: the migration did not apply content.
       appliedAt: entry.appliedAt,
       needs: entry.needs ?? { network: [], env: [], bin: [] },
       needsSourceCommit: entry.needsSourceCommit ?? resolved,
@@ -509,9 +487,8 @@ async function convertEntry(
 }
 
 /**
- * The legacy hash the entry recorded, recomputed from the commit it names.
- * A mismatch does not select different content — the commit was already what
- * `apply` materialized from — so it is reported, not repaired away silently.
+ * A mismatch is reported as `repaired-legacy-identity` but selects no different
+ * content, because the recorded commit is what `apply` materialized from.
  */
 async function auditLegacySha(
   input: { dataRepo: string; manifest: Manifest },
@@ -559,11 +536,8 @@ async function assertNeedsProvenance(
 }
 
 /**
- * An explicit `--repin`: update semantics inside the migration transaction.
- * It computes a new pin from the item's current committed source and captures
- * current needs. PIN-8 still forbids fragment repair — a fragment's former
- * contribution cannot be told apart from a project-local value once its commit
- * is gone.
+ * Fragments can't be repaired by repin: once its commit is gone, a fragment's
+ * former contribution is indistinguishable from a project-local value.
  */
 async function repinEntry(
   input: { dataRepo: string },
@@ -603,12 +577,6 @@ async function repinEntry(
   };
 }
 
-/**
- * The plugin consent points of the repinned skill-target entries. The old
- * side is the installed folder, which is what Claude Code runs now. The new
- * side is the repinned tree plus the ignored local files the write keeps.
- * A repinned tree that is not a plugin to Claude Code asks nothing.
- */
 async function repinPluginPoints(
   project: string,
   dataRepo: string,
@@ -710,9 +678,8 @@ function repairChoices(ref: string, kind: string): string[] {
 }
 
 /**
- * Publish. Installed-state repairs run first, then both lock files. On any
- * failure the original lock bytes are restored, so no completed command can
- * leave one converted lock beside an unconverted one.
+ * Restores the original lock bytes on failure to avoid leaving one lock
+ * converted beside an unconverted one.
  */
 async function publishMigration(
   project: string,
@@ -806,7 +773,6 @@ function printPlan(
   opts: {
     dryRun: boolean;
     json: boolean;
-    /** A dry run's consent points: what the real run would ask about. */
     wouldAsk?: readonly PluginConsentPoint[];
   },
 ): void {
