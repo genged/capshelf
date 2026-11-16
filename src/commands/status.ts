@@ -1,11 +1,15 @@
 import type { Command, Command as CmdType } from "commander";
 import { findProjectRoot, projectRoot } from "../paths";
 import { loadLocalLock, loadLock } from "../lock";
-import { loadRemotesLock, saveRemotesLock } from "../remotes-lock";
+import {
+  loadRemotesLock,
+  remoteKeysForRef,
+  saveRemotesLock,
+} from "../remotes-lock";
 import { checkRemoteUpstreams } from "../remote-status";
 import type { UpstreamFetchReport } from "../remote-status";
 import { loadManifest } from "../manifest";
-import { PreconditionError, ResultExitError } from "../errors";
+import { NotFoundError, PreconditionError, ResultExitError } from "../errors";
 import { CLI_VERSION } from "../bundled";
 import { globalOpts } from "../global-options";
 import { parseItemRef } from "../item-ref";
@@ -13,6 +17,7 @@ import { listUserSkills, withUserSkillShadows } from "../external";
 import type { ExternalUserSkill } from "../external";
 import type { StatusDiff, StatusDiffView } from "../status-diff";
 import { assertNoScopeCollisions } from "../status-core";
+import { matchRefAcrossScopes } from "../targets";
 import { formatStatusHuman, formatUserSkillsHuman } from "../status-format";
 import {
   buildStatusReport,
@@ -94,7 +99,6 @@ export function registerStatus(program: Command): void {
           ? await checkRemoteUpstreams({ remotes: loadedRemotes })
           : null;
         if (check) {
-          if (!opts.json) printFetches(check.fetches);
           // Only when something was measured. `checkRemoteUpstreams` produces
           // one entry per distinct upstream, so an empty list means the project
           // holds no remote skills — and `saveRemotesLock` would then create the
@@ -124,6 +128,21 @@ export function registerStatus(program: Command): void {
           externalUserSkills,
           personalClaudeExternal,
         } = report;
+
+        if (
+          ref &&
+          rows.length === 0 &&
+          external.length === 0 &&
+          externalClaudePlugins.length === 0 &&
+          externalUserSkills.length === 0 &&
+          personalClaudeExternal.length === 0 &&
+          matchRefAcrossScopes(projectLock, localLock, ref).length === 0 &&
+          remoteKeysForRef(remotes, ref).length === 0
+        ) {
+          throw new NotFoundError(`not tracked in this project: ${itemRef}`);
+        }
+
+        if (check && !opts.json) printFetches(check.fetches);
 
         const diffs: StatusDiff[] = opts.diff
           ? await collectStatusDiffs({
