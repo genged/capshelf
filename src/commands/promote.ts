@@ -1,9 +1,3 @@
-/**
- * `capshelf promote`: registers the command, then sends a named item to
- * `promote-named.ts` and no item to the picker in `promote-interactive.ts`.
- * The picker calls the named path, so the entry is the only module that
- * imports both.
- */
 import type { Command } from "commander";
 import { PreconditionError, ResultExitError } from "../errors";
 import { pickUnavailableMessage } from "../pick";
@@ -39,14 +33,12 @@ export function registerPromote(program: Command): void {
     );
 }
 
-/** The no-item branch: the interactive picker over the tracked items. */
 async function promoteWithoutItem(
   opts: PromoteOptions,
   cmd: Command,
 ): Promise<void> {
-  // These flags are per-item judgments. `--stale-ok` authorizes overwriting
-  // one item's newer upstream, and authorizing it for a pile of independent
-  // marks would be consent to losses nobody enumerated.
+  // --stale-ok is a per-item judgment; authorizing it across several marks
+  // would consent to losses nobody enumerated.
   if (opts.staleOk) {
     throw new PreconditionError("promote --stale-ok requires an item");
   }
@@ -68,8 +60,6 @@ async function promoteWithoutItem(
       },
     );
   }
-  // Any failed item is a refusal the user needs a non-zero code for; each one
-  // already printed its reason and its retry command.
   if (summary.outcome === "promoted" && summary.failed.length > 0) {
     throw new ResultExitError(3);
   }

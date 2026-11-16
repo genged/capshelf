@@ -92,13 +92,11 @@ export function registerKeepLocal(program: Command): void {
         throw new Error(`expected data lock entry for ${key}`);
       }
 
-      // keep-local accepts *existing* drift as intentional. Marking a
-      // non-drifted item silently flips it to "≠ kept local" and suppresses
-      // future update signals for no reason — refuse instead of doing that.
+      // Refuse marking a non-drifted item: it would flip to "≠ kept local" and
+      // suppress update signals for no reason.
       if (!opts.unset && entry.local !== true) {
-        // PIN-5: filesystem work over the pinned path set, in the entry's own
-        // identity model, so a `--local` item — which project Git is told to
-        // ignore — is compared against real bytes rather than an empty set.
+        // Compare real bytes in the entry's identity model, since a `--local`
+        // item is ignored by project Git.
         const dataRepo = await resolveProjectDataRepo(
           project,
           await loadManifest(project),

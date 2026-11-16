@@ -148,14 +148,12 @@ interface AddOptions {
   local?: boolean;
   target?: string;
   yes?: boolean;
-  /** Remote URL only. Refused on every shelf-item path below. */
   as?: string;
   ref?: string;
   path?: string;
   list?: boolean;
 }
 
-/** The four flags that mean nothing without a URL, for one shared refusal. */
 const REMOTE_ONLY_FLAGS = ["--as", "--ref", "--path", "--list"] as const;
 
 function assertNoRemoteOnlyFlags(opts: AddOptions, subject: string): void {
@@ -173,7 +171,6 @@ function assertNoRemoteOnlyFlags(opts: AddOptions, subject: string): void {
   }
 }
 
-/** Everything the single-item installer needs; loaded once per command. */
 export interface AddContext {
   project: string;
   dataRepo: string;
@@ -191,7 +188,6 @@ export interface InstallDataItemResult {
   dst: string;
   wasAlreadyInstalled: boolean;
   sources: FragmentSource[];
-  /** Runtime target coverage for `mcp` and `subagents`; null for other kinds. */
   targetCoverage: TargetCoverageReport | null;
   outputResults: FragmentApplyResult[];
   runtimeWarnings: RuntimeWarning[];
@@ -222,10 +218,8 @@ export function registerAdd(program: Command): void {
     .action(
       async (itemRef: string | undefined, opts: AddOptions, cmd: Command) => {
         if (itemRef === undefined) {
-          // The same refusal `addOne` makes. Without it here, the no-argument
-          // branch returns before either of those checks, so
-          // `capshelf add --target codex` opened the picker and installed
-          // every available runtime target while silently ignoring the flag.
+          // The no-argument branch returns before `addOne`'s checks, so repeat
+          // this refusal or `--target` is silently ignored.
           if (opts.target) {
             throw new PreconditionError(
               "add --target is not supported; subagents and bundles install all available targets",
@@ -235,9 +229,9 @@ export function registerAdd(program: Command): void {
             opts,
             `it names none (${REMOTE_ONLY_FLAGS.join(", ")} need a URL)`,
           );
-          // `--json` names a scripted caller, and a script cannot answer a
-          // prompt. Refusing beats printing a picker to stderr and an empty
-          // result to stdout, which reads as "the shelf is empty".
+          // A script cannot answer a prompt; refusing beats printing a picker
+          // to stderr and an empty result to stdout, which reads as an empty
+          // shelf.
           if (opts.json) {
             throw new PreconditionError(
               "add --json requires an item; the interactive picker needs a terminal",
@@ -259,8 +253,6 @@ export function registerAdd(program: Command): void {
               },
             );
           }
-          // Any failed item is a refusal the user needs a non-zero code for;
-          // each one already printed its reason and its retry command.
           if (summary.outcome === "installed" && summary.failed.length > 0) {
             throw new ResultExitError(3);
           }
@@ -271,15 +263,13 @@ export function registerAdd(program: Command): void {
     );
 }
 
-/** Install one explicitly named item ref, or expand one named bundle. */
 async function addOne(
   itemRef: string,
   opts: AddOptions,
   cmd: Command,
 ): Promise<void> {
-  // Bundle refs branch BEFORE parseItemRef: the parser rejects "bundles"
-  // as an item kind, so testing afterwards would be dead code behind an
-  // exit-1 throw.
+  // Check bundle refs before `parseItemRef`, which rejects "bundles" as an item
+  // kind.
   const bundleName = isBundleRef(itemRef);
   if (bundleName !== null) {
     if (opts.target) {
@@ -292,8 +282,8 @@ async function addOne(
     return;
   }
 
-  // A URL is classified before the ref parser runs, the same way a bundle ref
-  // is: the parser reserves ":" and would refuse every URL in its own argument.
+  // Classify URLs before the ref parser, which reserves ":" and would refuse
+  // every URL.
   if (isRemoteSkillUrl(itemRef)) {
     await addRemoteSkill(itemRef, opts, cmd);
     return;
@@ -394,9 +384,8 @@ async function addOne(
     console.log(`  ${result.dst}`);
   }
   if (item.kind === "plugins") {
-    // Spec D2 guard 4: a switch from `skills/<n>` changes the name Claude
-    // Code uses, and capshelf cannot see a switch across two commands, so
-    // every plugin add prints the name. The same line as `add <url>`.
+    // A switch from `skills/<n>` changes the name Claude Code uses and capshelf
+    // cannot see it across commands, so every plugin add prints the name.
     console.log(
       `  Claude Code loads it as ${item.name}@skills-dir in a trusted workspace`,
     );
@@ -407,14 +396,9 @@ async function addOne(
 }
 
 /**
- * `dataRepo` lets a caller supply a path it has already resolved and checked.
- *
- * `init` must: commander binds a `--data` written before the subcommand — and
- * a bare `capshelf init --data <url>` is parsed that way — to the *root*
- * command, so `globalOpts(cmd).data` can hold a remote URL. Resolving that
- * again here treats the URL as a filesystem path and fails on a directory
- * named `file:/...` under the project. `init` has already turned it into a
- * local clone path and asserted it is a git repo, so it passes that instead.
+ * `init` passes an already-resolved `dataRepo` because commander binds a
+ * `--data` URL before the subcommand to the root command, and resolving it
+ * again would treat the URL as a path.
  */
 async function loadAddContext(
   opts: AddOptions,
@@ -429,7 +413,6 @@ async function loadAddContext(
   const localConfig = await loadLocalConfig(base.project);
   return {
     ...base,
-    // Resolved above, or supplied by a caller that already resolved it.
     dataRepo: dataRepo ?? base.dataRepo!,
     localConfig,
     local: opts.local ?? false,
@@ -474,11 +457,9 @@ async function printAlreadyInstalled(
     parsed.kind,
     parsed.name,
   );
-  // This branch returns from the lock entry before any master item is
-  // resolved, and a locked sourceCommit can be unreachable — history
-  // rewritten upstream, or a clone that never fetched it. Coverage then
-  // degrades to `unknown` rather than crashing the most likely way a user
-  // checks what an item covers: re-running `add`.
+  // A locked sourceCommit can be unreachable (rewritten history, unfetched
+  // clone), so coverage degrades to `unknown` instead of crashing a re-run of
+  // `add`.
   const locked = contentSourceFor({
     entry,
     kind: parsed.kind,
@@ -543,10 +524,8 @@ async function printAlreadyInstalled(
       presentWord: "present",
       absentScope: "locked",
       tracked: true,
-      // Only for the state it describes. A squash-merged commit is re-pinned
-      // by `sync-data && update`; an object database that does not read is
-      // not, and pointing at that repair would send the user somewhere the
-      // problem is not.
+      // Only offer the re-pin guidance for the state it fixes; it would not
+      // help an unreadable object database.
       unknownGuidance:
         targetCoverage.reason === "locked commit unreachable"
           ? missingSourceCommitRepinGuidance(parsed.kind, parsed.name, "    ")
@@ -559,11 +538,8 @@ async function printAlreadyInstalled(
 }
 
 /**
- * The preflight plan and the pin it was built from. The pin travels to
- * `installDataItem` so the tree the user consented to is the tree that gets
- * written: pinning again after `assertDestructivePlanUnchanged` would let a
- * data-repo commit landing in that window add a target the consent gate never
- * saw, and TOML comment loss is gated, not announced.
+ * The pin travels to the install so the consented tree is the written tree;
+ * re-pinning after revalidation could add a target the consent gate never saw.
  */
 interface FragmentAddPreflight {
   plan: DestructiveChangePlan;
@@ -593,17 +569,10 @@ async function planStandaloneFragmentAdd(
   );
   const nextEntry = createDataLockEntry({ pin, ...snapshot });
   nextLock.items[dataKey(item.kind, item.name)] = nextEntry;
-  // Read the pin, not the worktree. `assertFragmentSourcesClean` cannot see a
-  // dirty deletion — `canonicalItemRelPaths` drops the missing path before the
-  // cleanliness check runs (`src/master.ts:355-357`,
-  // `src/fragments.ts:341-349`) — so a worktree read would plan no destruction
-  // for a target the install then writes from the pin, and a commented
-  // `.codex/config.toml` would be rewritten without the consent gate TOML
-  // comment loss requires (`src/fragments.ts:112-114`).
-  //
-  // The pin's own listing, not a second read of the same commit: this must be
-  // the exact target set `installDataItem` writes, or the consent gate covers
-  // a different set than the install does.
+  // Read the pin, not the worktree: a dirty deletion is invisible to the
+  // cleanliness check, so a worktree read would skip the consent gate for TOML
+  // comment loss. Use the pin's own listing so the gate covers exactly what
+  // `installDataItem` writes.
   await loadFragmentSourcesAtCommit({
     dataRepo: ctx.dataRepo,
     kind: item.kind,
@@ -652,13 +621,9 @@ async function planStandaloneFragmentAdd(
       ctx.memo,
     );
     contributionStates.set(target, contributionState);
-    // A review command only when `status --diff` can display the loss. Status
-    // reports lock entries, so it reaches this target's file only through an
-    // already-tracked contributor whose row has a diff to print — and only
-    // drifted parsed values give it one. On a first add nothing contributes,
-    // and comment-only loss parses identical to the managed output, so the
-    // named command would print "(no items tracked)" or
-    // "(no content differences)" under the prompt that cited it.
+    // Offer `status --diff` only when contribution is drifted: first-add and
+    // comment-only loss show nothing there, so the named command would
+    // contradict the prompt.
     if (contributionState === "drifted") {
       reviewCommands.set(target, "capshelf status --diff");
     }
@@ -681,21 +646,15 @@ async function planStandaloneFragmentAdd(
 export interface InstallDataItemOptions {
   memo?: GitReadMemo;
   /**
-   * Sidecar relations (`requires`/`conflicts-with`) enforcement. The bundle
-   * executor disables it: bundle preflight already ran the symmetric
-   * conflict check against installed items AND sibling members, and bundle
-   * `requires` warnings are computed against installed ∪ members.
+   * Bundle executor disables this: bundle preflight already ran the conflict
+   * and requires checks across installed items and siblings.
    */
   enforceRelations?: boolean;
-  /**
-   * The pin the destructive-change preflight was accepted against. Reusing it
-   * makes the approved tree the written tree; pinning again here would reopen
-   * the window between revalidation and the write.
-   */
+  /** Reusing the preflight pin makes the approved tree the written tree. */
   pin?: PinnedSource;
   /**
-   * The needs snapshot read with `pin`. The lock entry then pairs the files
-   * and the needs from one read, not needs from a later data-repo HEAD.
+   * Needs read with `pin`, so the lock entry pairs files and needs from one
+   * read rather than a later HEAD.
    */
   needs?: NeedsSnapshot;
 }
@@ -703,13 +662,8 @@ export interface InstallDataItemOptions {
 type NeedsSnapshot = Awaited<ReturnType<typeof captureCommittedItemNeeds>>;
 
 /**
- * The load/check/copy/lock core shared by standalone `add` and the bundle
- * executor. Persists manifest + lock before returning, so bundle expansion
- * leaves a consistent prefix after a mid-install failure.
- *
- * Deliberately has no internal skip guard: standalone `add` returns before
- * calling this for installed items, and the bundle executor likewise calls it
- * only for members whose plan status is `install`.
+ * Persists manifest and lock before returning so a mid-bundle failure leaves a
+ * consistent prefix; callers skip installed items, so it has no skip guard.
  */
 export async function installDataItem(
   ctx: AddContext,
@@ -733,9 +687,8 @@ export async function installDataItem(
     throw new Error(`no add strategy for ${item.kind}/${item.name}`);
   }
 
-  // Refuse to add from a dirty path. Otherwise the locked sha (hashed from
-  // working tree) would not match git show <sourceCommit> (the last commit
-  // touching the path), leaving apply/revert with the wrong content.
+  // An authoring check: a dirty path means the commit capshelf pins is stale
+  // against what the author sees.
   if (isFragmentItemKind(item.kind)) {
     await assertFragmentSourcesClean(dataRepo, item.kind, item.name);
   } else if (item.kind === "subagents") {
@@ -768,14 +721,9 @@ export async function installDataItem(
       localConfigNamesForKind(localConfig, item.kind).includes(item.name)
     : manifestNamesForKind(manifest, item.kind).includes(item.name);
   const alreadyInLock = lock.items[key] !== undefined;
-  // A worktree read, and safe here, unlike the fragment one it sits next to.
-  // Subagent cleanliness is checked over `allCanonicalItemRelPaths` — the
-  // static pair, not the `existsSync`-filtered list `assertFragmentSourcesClean`
-  // uses — so a dirty-deleted or uncommitted canonical source refuses the whole
-  // `add` above before this runs. The worktree and the pin therefore cannot
-  // disagree at this point. It feeds `dst` alone; the install itself is
-  // `materializeSubagent`, which resolves its targets with
-  // `subagentSourcesAtCommit` at the pinned commit (`src/subagents.ts:350-355`).
+  // A worktree read is safe here: cleanliness covers the static canonical
+  // paths, so a dirty or deleted source refused earlier and worktree and pin
+  // cannot disagree; it only feeds `dst`.
   const subagentSources =
     item.kind === "subagents"
       ? await currentSubagentSources(project, dataRepo, item.name)
@@ -788,10 +736,9 @@ export async function installDataItem(
         `not installing ${item.kind}/${item.name} — ${skillsShConflictMessage(external)}`,
       );
     }
-    // D2 guard 5: the folder-level check, ahead of `findInstallConflict`
-    // below. That check only sees whether a path exists, so a `plugins/<n>`
-    // add over an installed `skills/<n>` would otherwise fall into the
-    // recovery-adopt branch and silently claim the skill's folder.
+    // Folder-level check before `findInstallConflict`, which only sees path
+    // existence: a `plugins/<n>` add over an installed `skills/<n>` would
+    // silently adopt its folder.
     await assertSkillTargetFree(
       project,
       item.kind,
@@ -826,27 +773,19 @@ export async function installDataItem(
       ? []
       : await enforceItemRelations(dataRepo, item, projectLock, localLock);
 
-  // One pin, built in one place from the committed tree (PIN-1, PIN-2). The
-  // refusals it carries — an external filter driver (PIN-9), a symlink or
-  // gitlink in the tree — happen here, before any manifest or lock mutation.
+  // Pin once from the committed tree so refusals (filter driver, symlink,
+  // gitlink) happen before any manifest or lock mutation.
   const pin =
     opts.pin ??
     (await pinCurrentSource(dataRepo, item.kind, item.name, { memo }));
-  // PIN-3 for fragments: the target set comes from the tree this install pins,
-  // exactly as `apply` derives it from the lock. A worktree read made `add` and
-  // `apply` disagree about one lock entry — a dirty-deleted
-  // `mcp/<n>/codex.toml` left `.codex/config.toml` unwritten until an unrelated
-  // `apply` ran. The pin's own `ls-tree` is the reading: it is the tree that
-  // gets written, and it raises on a failed read rather than reporting one as
-  // an absent source.
+  // Derive fragment targets from the pinned tree, as `apply` derives them from
+  // the lock, so `add` and `apply` agree on one lock entry.
   const pinnedPaths = pin.entries.map((entry) => entry.repoRelPath);
   const sources = isFragmentItemKind(item.kind)
     ? presentSources(
         fragmentTargetPresenceInPaths(item.kind, item.name, pinnedPaths),
       )
     : [];
-  // The install branch always resolves the item and pins a fresh tree, so
-  // coverage is never unknown here.
   const targetCoverage = itemTargetCoverageInPaths(
     project,
     item.kind,
@@ -858,8 +797,8 @@ export async function installDataItem(
       `${item.kind}/${item.name} has no canonical source files at ${pin.sourceCommit}`,
     );
   }
-  // A supplied pin passed source validation during planning
-  // (src/commands/add.ts:531). Validate pins created here before mutation.
+  // A supplied pin was validated during planning; validate pins created here
+  // before mutation.
   if (opts.pin === undefined && isFragmentItemKind(item.kind)) {
     await loadFragmentSourcesAtCommit({
       dataRepo,
@@ -887,9 +826,8 @@ export async function installDataItem(
   let adoptMatchingInstall = false;
   if (!alreadyInLock && conflict) {
     if (isCopyDirectoryItemKind(item.kind)) {
-      // A folder that holds only a mounted volume is what `rm` leaves for an
-      // item with one. The user cannot delete a mount point, so it counts as
-      // an empty target and the write fills it.
+      // A folder holding only a mounted volume is what `rm` leaves; a mount
+      // point cannot be deleted, so treat it as empty.
       adoptMatchingInstall =
         (await matchesPinnedInstall(ctx, item, conflict, pin)) ||
         (conflict ===
@@ -944,10 +882,8 @@ export async function installDataItem(
       );
     }
   } else if (isCopyDirectoryItemKind(item.kind)) {
-    // PIN-3: `add` materializes from the commit's blobs, exactly as `apply`
-    // does, instead of copying the data repo working tree. The asymmetry that
-    // made the original bug invisible from inside a project is gone: both
-    // routes now read the same objects, so they cannot disagree.
+    // Materialize from the commit's blobs, as `apply` does, so the two routes
+    // read the same objects and cannot disagree.
     const entry = writableLock.items[key]!;
     await materializeLockEntry({
       project,
@@ -1007,10 +943,8 @@ export async function installDataItem(
 }
 
 /**
- * Recovery adoption: an unmanaged target is adopted only when it already holds
- * exactly what the pin selects. Under tree identity that is one comparison —
- * the installed tree's digest against the pin — and it needs no blob reads,
- * because both sides are named by Git object ids.
+ * Adopt an unmanaged target only if it matches the pin; comparing digests of
+ * paths, modes, and blob IDs avoids reading the pinned blob contents.
  */
 async function matchesPinnedInstall(
   ctx: AddContext,
@@ -1033,7 +967,6 @@ async function matchesPinnedInstall(
   return digest === pin.sourcePinDigest;
 }
 
-/** Expand `add bundles/<name>`: load → preflight → refuse or install. */
 async function addBundle(
   name: string,
   opts: AddOptions,
@@ -1096,13 +1029,9 @@ async function addBundle(
     throw new ResultExitError(3);
   }
 
-  // D7 points 1 and 3 reach a bundle member too, or a plugin with hooks would
-  // install unasked through the bundle that holds it. A skill member whose
-  // tree holds a plugin manifest is a plugin to Claude Code (R1), so it asks
-  // the same way. One prompt covers every such member. Every inspected
-  // skill-target member installs the pin it was inspected at, also one that
-  // asked nothing: a commit during the prompt can add a manifest and hooks
-  // to it, and a re-resolved pin would install them unasked.
+  // Skills with a plugin manifest need plugin consent too. Keep every
+  // inspected pin, even when no prompt is needed, because a later commit
+  // could add a manifest and hooks.
   const inspectedPins = new Map<
     string,
     { pin: PinnedSource; needs: NeedsSnapshot }
@@ -1133,10 +1062,8 @@ async function addBundle(
     return;
   }
 
-  // Bundles are the recommended entry point (`capshelf init` suggests
-  // `capshelf add bundles/<name>`), so the consent boundary has to be reached
-  // here too. Without this, the same fragment destruction was gated for
-  // `add settings/extra` and ungated for the bundle that contains it.
+  // Bundles are the recommended entry point, so destructive fragment changes
+  // must be gated here too, not only for `add settings/extra`.
   const planBundleDestruction = async (): Promise<{
     plan: DestructiveChangePlan;
     pins: Map<string, PinnedSource>;
@@ -1178,10 +1105,8 @@ async function addBundle(
     installItem: (member: MemberPlan) => {
       const item = masterByRef.get(member.ref);
       if (!item) throw new Error(`expected master item for ${member.ref}`);
-      // A bundle's write window is the longest one there is — every member
-      // installs after one shared revalidation — so each fragment member
-      // installs the exact tree its own preflight approved, and each skill or
-      // plugin member the tree its consent check read.
+      // Reuse approved fragment pins and inspected skill/plugin pins so later
+      // members cannot install content outside the shared consent checks.
       const inspected = inspectedPins.get(member.ref);
       const approved = revalidated.pins.get(member.ref) ?? inspected?.pin;
       return installDataItem(ctx, item, {
@@ -1203,11 +1128,6 @@ async function addBundle(
   }
 }
 
-/**
- * A discriminated union rather than one shape with optional fields: only the
- * `installed` outcome has per-item results, and only `unavailable` has a
- * reason. Callers then read the fields that exist instead of asserting.
- */
 export type InteractiveAddSummary =
   | { outcome: "unavailable"; reason: PickUnavailableReason }
   | { outcome: "cancelled" }
@@ -1220,45 +1140,26 @@ export type InteractiveAddSummary =
     };
 
 /**
- * The interactive install path, shared by `capshelf add` with no argument and
- * the offer at the end of `capshelf init`.
- *
- * Best effort by design, unlike `add bundles/<name>`. A bundle is a curated
- * set whose author asserted the members belong together, so a member that
- * fails preflight refuses the whole thing. A picker selection is a pile of
- * independent choices a user made one Tab at a time, and throwing away nine
- * good ones because the tenth has an occupied target would be hostile. Every
- * failure is named at the end with the command that retries just that item.
- *
- * Returns the summary rather than setting an exit code: `add` treats any
- * failure as exit 3, while `init` reports and exits 0, because init's exit
- * code answers "is this project initialized" and it is.
+ * Best effort unlike `add bundles/<name>`: a picker selection is independent
+ * choices, so one failure must not discard the rest. Returns a summary because
+ * `init` exits 0 even when items fail, since the project is initialized.
  */
 export async function runInteractiveAdd(request: {
   add: AddOptions;
   cmd: Command;
   message: string;
-  /** An already-resolved data repo path; see `loadAddContext`. */
   dataRepo?: string;
 }): Promise<InteractiveAddSummary> {
   const { add: opts, cmd, message, dataRepo } = request;
-  // Before any filesystem work: with no terminal there is nothing to offer,
-  // and reading the shelf could refuse for reasons that belong to `ls`.
+  // Check the terminal first: reading the shelf can refuse for reasons that
+  // belong to `ls`.
   const blocked = pickTerminalUnavailable();
   if (blocked) return { outcome: "unavailable", reason: blocked };
 
   let ctx = await loadAddContext(opts, cmd, dataRepo);
-  // Pin the repository the catalog is read from, and install from that one.
-  //
-  // A plain `capshelf add` resolves the binding from `.capshelf/local.json`,
-  // and every reload below would resolve it again. `capshelf data bind` in
-  // another terminal while the picker is open would then move the binding
-  // under it, and refs the user chose from one shelf would be installed from
-  // another. Reloading is for the locks, not for the binding.
-  //
-  // Every reload goes through `reload`, so the pin is structural rather than
-  // remembered. A reload added later cannot re-resolve the binding by
-  // forgetting to pass it.
+  // Pin the repo: a `capshelf data bind` in another terminal during the picker
+  // would otherwise install chosen refs from a different shelf; reloads go
+  // through `reload` so the pin can't be forgotten.
   const boundRepo = ctx.dataRepo;
   const memo = ctx.memo;
   const reload = (): Promise<AddContext> =>
@@ -1277,28 +1178,17 @@ export async function runInteractiveAdd(request: {
   if (picked.kind === "cancelled") return { outcome: "cancelled" };
   if (picked.refs.length === 0) return { outcome: "nothing-selected" };
 
-  // Reload before any write. The context above was read before the prompt, and
-  // the prompt then held the terminal for as long as the user looked at it —
-  // an unbounded wait no other capshelf command has. `installDataItem` saves
-  // the manifest and lock from whatever snapshot it is handed, so writing from
-  // that one would silently drop every entry another capshelf run made while
-  // the picker was open. It is the same failure the post-bundle reload below
-  // exists for, with a much wider window.
-  //
-  // This narrows the window to the one every other command already has,
-  // between its own read and its own write. It does not make the write atomic;
-  // serializing capshelf against itself would need a lock file and belongs to
-  // every command at once, not to this one.
+  // Reload before writing: the picker can block indefinitely, and saving from
+  // the pre-prompt snapshot would drop entries other capshelf runs added
+  // meanwhile. This narrows the window but isn't atomic.
   ctx = await reload();
 
   const added: string[] = [];
   const alreadyInstalled: string[] = [];
   const failed: string[] = [];
 
-  // Bundles first, and each through the ordinary all-or-nothing bundle path:
-  // a bundle keeps its own semantics even when a picker chose it. Its members
-  // may satisfy an individually picked item's `requires`, which is the other
-  // reason this order is not arbitrary.
+  // Bundles go first through the all-or-nothing path; their members may satisfy
+  // a picked item's `requires`.
   const bundleNames = picked.refs
     .map((ref) => isBundleRef(ref))
     .filter((name): name is string => name !== null);
@@ -1315,10 +1205,8 @@ export async function runInteractiveAdd(request: {
     }
   }
 
-  // Reload: every `addBundle` above resolved its own context and saved its own
-  // lock. Reusing the context loaded before them would write a lock built from
-  // a snapshot that predates their entries, silently dropping every member
-  // they just installed.
+  // Reload: each `addBundle` saved its own lock, and writing from the older
+  // context would drop their entries.
   if (bundleNames.length > 0) ctx = await reload();
 
   const itemRefs = picked.refs.filter((ref) => isBundleRef(ref) === null);
@@ -1336,12 +1224,9 @@ export async function runInteractiveAdd(request: {
         console.log(`= ${itemRef.padEnd(33)} already installed`);
         continue;
       }
-      // The same refusal a named `add` makes. The catalog already leaves these
-      // rows out, so this is the boundary check rather than the only one: both
-      // entry points into `installDataItem` have to enforce it. A data repo
-      // holding `skills/capshelf` would otherwise install `data/skills/capshelf`
-      // next to `system/skills/capshelf`, giving two lock entries ownership of
-      // one destination.
+      // Both entry points into `installDataItem` must refuse system names, or
+      // `data/skills/capshelf` and `system/skills/capshelf` would own one
+      // destination.
       if (isSystemItemName(ref.name)) {
         throw new PreconditionError(systemItemAddRefusal(ref.name));
       }
@@ -1352,8 +1237,6 @@ export async function runInteractiveAdd(request: {
         );
       }
 
-      // The same consent gate a named `add` reaches. A fragment picked from
-      // a list can destroy a config comment exactly as one typed by hand.
       const consent = await approveAddPin(ctx, item, {
         json: false,
         yes: opts.yes === true,
@@ -1370,10 +1253,8 @@ export async function runInteractiveAdd(request: {
       });
       added.push(itemRef);
       console.log(`+ ${itemRef.padEnd(33)} @ ${shortIdentity(result.sha)}`);
-      // Same block a named `add` prints. `mcp` and `subagents` items write a
-      // per-runtime set of targets, and the documented contract is that `add`
-      // says which runtimes it covered. A coverage gap is not a runtime
-      // warning, so the call below cannot stand in for this one.
+      // `add` is documented to report which runtimes it covered; a coverage gap
+      // is not a runtime warning, so the later call can't replace this.
       if (result.targetCoverage) {
         printTargetCoverage(result.targetCoverage, itemRef, {
           presentWord: "written",
@@ -1386,12 +1267,9 @@ export async function runInteractiveAdd(request: {
     } catch (error) {
       failed.push(itemRef);
       console.error(`✗ ${itemRef.padEnd(33)} ${errorDetail(error)}`);
-      // Reload before continuing. `installDataItem` adds the item to the
-      // manifest and the lock *before* it materializes, so a failure between
-      // those two steps leaves this context holding an entry for an item that
-      // was never written. The next item that succeeds calls `saveManifest`
-      // and `saveLock` on these same objects, which would persist the failed
-      // item's entry and claim an install that is absent or half-written.
+      // Reload: `installDataItem` records the manifest and lock entry before
+      // materializing, so a failure would leave a phantom entry that the next
+      // save persists.
       ctx = await reload();
     }
   }
@@ -1401,16 +1279,9 @@ export async function runInteractiveAdd(request: {
 }
 
 /**
- * `<something>/<name>` where the something is not a kind, refused here instead
- * of by the ref parser.
- *
- * `owner/repo` is shaped exactly like `kind/name`, and nothing in the text
- * tells a GitHub shorthand apart from a mistyped kind. One refusal serves both
- * readers: the kind list answers the typo, and the shorthand line answers the
- * other. `add` already refuses a bad argument with exit 3 rather than the
- * parser's generic exit 1 (see the `--target` and `--json` refusals above), so
- * this is that same class and not a new precedent. The other verbs keep the
- * parser's exit 1, because they have no alternative form to point at.
+ * `owner/repo` looks like `kind/name`, so one refusal covers both typo and
+ * GitHub shorthand; `add` uses exit 3 for bad arguments, unlike the parser's
+ * exit 1.
  */
 function nonKindRefRefusal(itemRef: string): PreconditionError | null {
   const parts = itemRef.trim().split("/");
@@ -1428,16 +1299,13 @@ function nonKindRefRefusal(itemRef: string): PreconditionError | null {
   );
 }
 
-/** The refusal both entry points into `installDataItem` print for a system name. */
 function systemItemAddRefusal(name: string): string {
   return `"${name}" is a system item — managed by the CLI, not addable from a data repo. It is installed automatically by 'capshelf init'.`;
 }
 
 /**
- * What an add puts in reach of Claude Code: the pinned tree, plus the
- * ignored local files that materialization keeps when the add adopts an
- * existing matching folder (the recovery path, `matchesPinnedInstall`). A
- * kept local manifest or hook file runs as part of the plugin.
+ * Includes ignored local files kept when adopting an existing folder, since a
+ * kept manifest or hook file runs as part of the plugin.
  */
 async function addPluginRuns(
   ctx: Awaited<ReturnType<typeof loadAddContext>>,
@@ -1458,18 +1326,9 @@ async function addPluginRuns(
 }
 
 /**
- * The consent gates both entry points into `installDataItem` run, and the
- * pin each gate approved.
- *
- * A fragment picked from a list can destroy a config comment exactly as one
- * typed by hand: preflight, confirm, then re-plan and prove the plan
- * unchanged — the consent was for the plan the user saw.
- *
- * A plugin asks before it installs commands (D7 points 1 and 3). So does a
- * skill whose tree holds a plugin manifest, because Claude Code loads it as a
- * plugin (R1). The pin the runs were read from travels to `installDataItem`,
- * so the tree the user approved is the tree that gets written. Any other item
- * has no gate and proceeds with no pin.
+ * The approved pin is passed to `installDataItem` so the tree the user
+ * consented to is the tree written; skills with a plugin manifest are gated
+ * because Claude Code loads them as plugins.
  */
 async function approveAddPin(
   ctx: Awaited<ReturnType<typeof loadAddContext>>,
@@ -1514,12 +1373,6 @@ async function approveAddPin(
   return { proceed: true, pin: revalidated.pin };
 }
 
-/**
- * D7 point 1 for every shelf plugin add, and point 3 when the add writes
- * project scope, the default for a shelf add. The two go in one prompt.
- * `ref` is `plugins/<name>`, or `skills/<name>` for a skill that holds a
- * plugin manifest.
- */
 function shelfPluginAddPoints(
   ref: string,
   runs: PluginRuns,
@@ -1532,8 +1385,8 @@ function shelfPluginAddPoints(
 }
 
 /**
- * A one-line reason for a per-item failure. `ResultExitError` carries no
- * message because the command that threw it already reported the detail.
+ * `ResultExitError` carries no message because the throwing command already
+ * reported the detail.
  */
 function errorDetail(cause: unknown): string {
   if (cause instanceof ResultExitError) return "";
@@ -1562,8 +1415,6 @@ async function loadRelationMetadata(
   projectLock: Lock,
   localLock: Lock,
 ): Promise<Map<string, ItemMetadata>> {
-  // Metadata for the members (forward checks) plus every installed data
-  // item (reverse conflicts) — same population standalone add consults.
   const wanted = new Set(bundle.members.map(memberRef));
   for (const lock of [projectLock, localLock]) {
     for (const key of Object.keys(lock.items)) {
@@ -1573,7 +1424,7 @@ async function loadRelationMetadata(
   const metadataByRef = new Map<string, ItemMetadata>();
   for (const ref of wanted) {
     const item = masterByRef.get(ref);
-    if (!item) continue; // deleted upstream: skipped, never failed
+    if (!item) continue;
     const meta = await loadDataItemMetadata(item);
     printMetadataWarnings(meta);
     metadataByRef.set(ref, meta);
@@ -1601,7 +1452,6 @@ function memberJsonStatus(
     case "cross-scope":
       return "refused";
     case "install":
-      // This member was fine; another member's failure stopped the bundle.
       return failed ? "blocked" : "added";
   }
 }
@@ -1706,11 +1556,6 @@ function printBundleRefusal(
   failures: MemberPlan[],
   ctx: AddContext,
 ): void {
-  // The --local copy-item rule gets ONE aggregated bundle-level error
-  // naming every fragment member, never the first-violator per-kind message.
-  // When it is the only failure kind, it is the headline; mixed with other
-  // failures it becomes a block under a single headline whose count covers
-  // every failed member.
   if (
     plan.localUnsupportedMembers.length > 0 &&
     failures.length === plan.localUnsupportedMembers.length
@@ -1800,7 +1645,6 @@ function itemRefLabel(item: MasterItem): string {
   return `${item.kind}/${item.name}`;
 }
 
-/** One row of `add --json`'s `sources` for a fragment item. */
 interface FragmentSourceJson {
   target: string;
   sourcePath: string;
@@ -1825,21 +1669,6 @@ function fragmentSourcesJson(
   }));
 }
 
-/**
- * Enforce sidecar-declared relations before any writes.
- *
- * `conflicts-with` refuses (exit 3) and the check is symmetric: the new item
- * declaring a conflict with an installed item, or any installed data item
- * declaring a conflict with the new item, both refuse. There is no --force —
- * the two legitimate escape hatches (remove the other item, or fix a stale
- * declaration upstream) are printed in the error.
- *
- * `requires` only warns: the returned refs are missing from both locks and
- * are reported with exact fix commands (exit stays 0; exit 5 is reserved for
- * a future doctor/strict audit). Refs pointing at items deleted upstream are
- * reported as missing requires / skipped for conflicts — add never fails
- * because someone deleted a referenced item.
- */
 async function enforceItemRelations(
   dataRepo: string,
   item: MasterItem,
@@ -1853,7 +1682,6 @@ async function enforceItemRelations(
     ...Object.keys(projectLock.items),
     ...Object.keys(localLock.items),
   ]);
-  // Re-adding an item must not conflict with (or require) itself.
   installedKeys.delete(dataKey(item.kind, item.name));
   const refInstalled = (ref: string): boolean =>
     installedKeys.has(`data/${ref}`) || installedKeys.has(`system/${ref}`);
@@ -1865,8 +1693,6 @@ async function enforceItemRelations(
     throw conflictRefusal(dataRepo, itemRef, declared, item.repoRelPath);
   }
 
-  // Reverse direction: conflict relations are symmetric, so an installed
-  // item's declaration against the new item refuses too.
   const masterByRef = new Map(
     (await listMasterItems(dataRepo)).map((m) => [`${m.kind}/${m.name}`, m]),
   );
@@ -1874,7 +1700,6 @@ async function enforceItemRelations(
     if (!installedKey.startsWith("data/")) continue;
     const installedRef = installedKey.slice("data/".length);
     const installedItem = masterByRef.get(installedRef);
-    // Deleted upstream: its declarations cannot be read — skip, never fail.
     if (!installedItem) continue;
     const installedMeta = await loadDataItemMetadata(installedItem);
     printMetadataWarnings(installedMeta);
@@ -1923,9 +1748,8 @@ function addToManifest(m: Manifest, item: MasterItem): void {
 }
 
 /**
- * A bundle member's locked identity. Version-4 data entries carry no `sha` —
- * `createDataLockEntry` writes `sourcePinDigest` — so reading the field
- * directly dropped the key out of `--json` entirely rather than erroring.
+ * v4 data entries carry no `sha` (they use `sourcePinDigest`), so go through
+ * `entryIdentity`.
  */
 function memberIdentity(lock: Lock, member: MemberPlan): string | undefined {
   const entry = lock.items[dataKey(member.kind, member.name)];
