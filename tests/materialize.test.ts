@@ -45,7 +45,6 @@ function isExecutable(path: string): boolean {
   return (lstatSync(path).mode & 0o111) !== 0;
 }
 
-/** Every item in this file is `skills/hello` in the fixture data repo. */
 function helloSource(dataRepo: string, entry: LockEntry): ContentSource {
   return contentSourceFor({
     entry,
@@ -135,7 +134,6 @@ describe("materializeLockEntry", () => {
     await writeFile(join(dataItem, "sub", ".capshelf.yml"), "content\n");
     await commitAll(dataRepo, "hello with sidecar");
     const sourceCommit = await lastTouchingCommit(dataRepo, "skills/hello");
-    // The working-tree sha already excludes the root sidecar.
     const sha = await shaOfItem(dataItem);
     const entry = {
       source: "data" as const,
@@ -158,8 +156,6 @@ describe("materializeLockEntry", () => {
     expect(existsSync(join(installed, ".capshelf.yml"))).toBe(false);
     expect(existsSync(join(installed, "sub", ".capshelf.yml"))).toBe(true);
 
-    // The at-commit sha equals the working-tree sha: a dry-run verification
-    // against the same entry passes and reports already-current.
     const dryRun = await materializeLockEntry({
       project,
       source: helloSource(dataRepo, entry),
@@ -297,9 +293,8 @@ describe("materializeLockEntry", () => {
       scope: "project",
     });
 
-    // Row 4 of the object-model table: local state under a managed directory
-    // never crosses a Git boundary, so Git's two-mode model does not apply
-    // and a symlink is preserved by target rather than refused.
+    // Local state under a managed directory never crosses a Git boundary, so
+    // Git's two-mode model doesn't apply and symlinks are preserved by target.
     await mkdir(join(installed, "node_modules", ".bin"), { recursive: true });
     await mkdir(join(installed, "node_modules", "lib"), { recursive: true });
     await writeFile(join(installed, "node_modules", "lib", "x.js"), "mod\n");
@@ -337,13 +332,9 @@ describe("materializeLockEntry", () => {
     expect(lstatSync(link).isSymbolicLink()).toBe(true);
     expect(await readlink(link)).toBe("../lib/x.js");
     expect(lstatSync(secret).mode & 0o7777).toBe(0o600);
-    // 0400 must not gain write either: the mode is carried, not normalized.
     expect(lstatSync(readOnly).mode & 0o7777).toBe(0o400);
-    // Managed content still normalizes to Git's two modes.
     expect(lstatSync(join(installed, "SKILL.md")).mode & 0o7777).toBe(0o644);
 
-    // A second pass sees no drift: preserved entries are compared, not
-    // rewritten, so the item converges instead of reconciling forever.
     const again = await materializeLockEntry({
       project,
       source: helloSource(dataRepo, v2),
@@ -385,8 +376,8 @@ describe("materializeLockEntry", () => {
     await mkdir(join(installed, "run"), { recursive: true });
     await $`mkfifo ${join(installed, "run", "pipe")}`.quiet();
 
-    // A fifo cannot be recreated by a directory replacement, so the write
-    // path names the path and refuses. `rm` still inventories and deletes it.
+    // A fifo cannot be recreated by a directory replacement, so writes refuse
+    // it while `rm` can still delete it.
     await expect(
       materializeLockEntry({
         project,
@@ -443,12 +434,9 @@ describe("materializeLockEntry", () => {
       appliedAt: new Date().toISOString(),
     };
 
-    // PIN-5: the pinned path set is always managed, so the item's own
-    // `cache/` ignore rule cannot keep `cache/state.db` as local state once
-    // the new pin includes it. Before PIN-5 the two populations could overlap
-    // and reconciliation refused outright; now the path is simply managed, the
-    // replacement writes it, and the loss reaches the ordinary consent
-    // boundary as `managed_content` rather than a hard error.
+    // The pinned path set is always managed, so an item's `cache/` ignore rule
+    // cannot keep `cache/state.db` as local state; its loss surfaces as
+    // `managed_content` consent.
     const planned = await planCopyDirectoryDestruction({
       project,
       currentSource: helloSource(dataRepo, v1),
@@ -495,9 +483,9 @@ describe("materializeLockEntry", () => {
 
   test("local scope verifies git-excluded installs against the filesystem", async () => {
     const dataRepo = await tempRepo();
-    // The project is itself a Git repo whose info/exclude hides the install
-    // path, exactly how add --local leaves it. Git-visible hashing would see
-    // an empty file list here and fail verification with the empty digest.
+    // The project's info/exclude hides the install path, as `add --local`
+    // leaves it; Git-visible hashing would see no files and fail with the empty
+    // digest.
     const project = await tempRepo();
     const dataItem = join(dataRepo, "skills", "hello");
     const installed = join(project, ".agents", "skills", "hello");
@@ -560,9 +548,8 @@ describe("materializeLockEntry", () => {
     );
     await commitAll(dataRepo, "one tree");
     const commit = await lastTouchingCommit(dataRepo, "docs/guides/review");
-    // The fixture and the call must read the same tree, or the test proves
-    // nothing: `pinDigestAtCommit` pins the canonical path, so the digest is
-    // taken from this source instead.
+    // The digest is taken from this source because `pinDigestAtCommit` pins the
+    // canonical path, which would read a different tree.
     const source = gitTreeSource({
       repo: dataRepo,
       kind: "skills",
@@ -667,8 +654,8 @@ describe("materialization source reads", () => {
         "drifted\n",
       );
 
-      // A shim on PATH logs every git invocation before exec'ing the real
-      // binary, so this counts subprocesses rather than trusting a code read.
+      // A PATH shim logs every git call so subprocesses are counted rather than
+      // assumed.
       const shimDir = await tempDir("capshelf-git-shim-");
       const log = join(shimDir, "calls.log");
       await writeFile(
@@ -686,19 +673,11 @@ describe("materialization source reads", () => {
       }
 
       const calls = (await file(log).text()).split("\n").filter(Boolean);
-      // One `git ls-tree` and one `git cat-file --batch` for the whole
-      // command, whatever the file count. Plan, revalidate, and materialize
-      // used to re-read the tree each time, and each pass ran two planners:
-      // 14 full reads per copy item. PIN-3 then replaced the per-file
-      // `git show` loop with a single batched object read, so the subprocess
-      // count no longer grows with the item.
       expect(calls.filter((line) => line.includes("ls-tree")).length).toBe(1);
       expect(calls.filter((line) => line.includes(" show ")).length).toBe(0);
       expect(
         calls.filter((line) => line.includes("cat-file --batch")).length,
       ).toBe(1);
-      // PIN-5 removes project Git from drift and reconciliation, so the
-      // project side contributes no subprocess at all here.
       expect(calls.filter((line) => line.includes(project)).length).toBe(0);
       expect(calls.length).toBeLessThan(fileCount);
     },

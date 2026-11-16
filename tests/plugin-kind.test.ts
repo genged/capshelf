@@ -117,11 +117,6 @@ describe("plugins kind", () => {
     ]);
   });
 
-  // promote's required-file check sent every non-skill kind down the
-  // `index.ts` branch, so `promote plugins/<n>` always refused (spec D1).
-  // Arranged at the lowest function that performs the check, the way
-  // tests/promote-core.test.ts arranges a copy-directory item: the CLI add
-  // flow for a plugin does not exist yet to install one end to end.
   test("promote of a plugin requires plugin.json, not index.ts", async () => {
     const dataRepo = await tempRepo("capshelf-plugin-kind-promote-data-", {
       origin: null,
@@ -143,8 +138,6 @@ describe("plugins kind", () => {
       join(installed, ".claude-plugin", "plugin.json"),
       JSON.stringify({ name: "p" }),
     );
-    // The required-file check reads this before anything else, so deleting
-    // it is enough to exercise the refusal without a full add/install flow.
     await rm(join(installed, ".claude-plugin", "plugin.json"));
 
     const lock: WritableLock = {
@@ -168,10 +161,6 @@ describe("plugins kind", () => {
     expect(error.message).not.toContain("index.ts");
   });
 
-  // D3: the manifest, not the directory, names a plugin. The installed copy
-  // here is named plugins/p by its lock key, but its plugin.json names it
-  // "q" — a renamed-upstream plugin — so promote must refuse with both
-  // names and write nothing, rather than publish "p" under "q"'s content.
   test("promote of a plugin refuses when its manifest names it something else (D3)", async () => {
     const dataRepo = await tempRepo(
       "capshelf-plugin-kind-promote-mismatch-data-",
@@ -191,7 +180,6 @@ describe("plugins kind", () => {
 
     const installed = installedPath(project, "plugins", "p");
     await mkdir(join(installed, ".claude-plugin"), { recursive: true });
-    // The installed copy's manifest names a different item than "p".
     await writeFile(
       join(installed, ".claude-plugin", "plugin.json"),
       JSON.stringify({ name: "q" }),
@@ -222,10 +210,6 @@ describe("plugins kind", () => {
     expect((await statusPorcelain(dataRepo)).trim()).toBe("");
   });
 
-  // The skills.sh conflict guard in syncTrackedIntoDataRepo tested
-  // `kind === "skills"` directly, so `promote plugins/<n>` never checked
-  // whether skills.sh already manages a same-named row at the shared
-  // install folder (spec D2) before this task.
   test("promote of plugins/<n> whose name is a skills.sh row refuses with the skills.sh message", async () => {
     const dataRepo = await tempRepo(
       "capshelf-plugin-kind-promote-skillsh-data-",
@@ -263,10 +247,6 @@ describe("plugins kind", () => {
     expect(error.message).toContain("managed by skills.sh");
   });
 
-  // `show` hid every nested file for a copy-directory item unless its kind
-  // was pi-extensions, so `show plugins/<n>` printed only its top-level
-  // files and silently dropped everything a real plugin holds below
-  // `hooks/`, `skills/`, and the rest.
   test("show plugins/<n> lists nested files", async () => {
     const project = await tempRepo("capshelf-plugin-kind-show-project-");
     const dataRepo = await tempRepo("capshelf-plugin-kind-show-data-");
@@ -288,8 +268,8 @@ describe("plugins kind", () => {
     expect(shown.stdout.toString()).toContain("─── hooks/hooks.json");
   });
 
-  // `show plugins/<n>` is the review command a consent refusal names, so a
-  // file name or content with ESC must not reach the terminal raw.
+  // `show` is the review command consent refusals name, so ESC in file names or
+  // content must not reach the terminal raw.
   test("show prints no ESC from a file name or content, and keeps line breaks", async () => {
     const project = await tempRepo("capshelf-plugin-kind-show-esc-project-");
     const dataRepo = await tempRepo("capshelf-plugin-kind-show-esc-data-");
@@ -318,11 +298,6 @@ describe("plugins kind", () => {
     expect(out).toContain("line one ]0;forged \nline\ttwo\n");
   });
 
-  // The share scanner walked every directory under the shared skill-target
-  // folder (spec D2) and treated each as an untracked skill, with no check
-  // for a lock entry recorded as `plugins/<n>` at that same folder — so an
-  // installed, tracked plugin showed up in the share picker as if it were
-  // an unmanaged skill.
   test("the share picker does not list an installed plugin as an untracked skill", async () => {
     const project = await tempDir("capshelf-plugin-kind-scan-project-");
     const dataRepo = await tempDir("capshelf-plugin-kind-scan-data-");
@@ -340,8 +315,6 @@ describe("plugins kind", () => {
       JSON.stringify({ name: "p" }),
     );
 
-    // A control: a real untracked skill at the same shared folder must still
-    // show up, so the fix is narrow rather than hiding every skills row.
     const untrackedSkill = installedPath(
       project,
       "skills",

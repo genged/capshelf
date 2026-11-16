@@ -60,10 +60,9 @@ describe("scorePickRow field weighting", () => {
     scorePickRow(query, r)?.score ?? -1;
 
   test("a name match outranks a description match on the same query", () => {
-    // The regression this weighting exists for. fzf scores a match after
-    // whitespace (bonus 10) above one after a delimiter (bonus 9), so with the
-    // fields joined into one line, `your work` inside a description beat
-    // `you` at the start of `skills/youtube-summarizer` by exactly 4 points.
+    // fzf scores a match after whitespace (10) above one after a delimiter (9),
+    // so a joined line let `your work` in a description beat `you` in the ref
+    // name.
     const named = row("skills/youtube-summarizer");
     const described = row("skills/simple-english", {
       description: "Use for answering the user and explaining your work.",
@@ -88,7 +87,6 @@ describe("scorePickRow field weighting", () => {
   });
 
   test("a description-only match is still found", () => {
-    // Weighting must not make lower-weight fields unsearchable.
     expect(scorePickRow("vulnerabilities", SHELF[0]!)).not.toBeNull();
   });
 
@@ -121,8 +119,8 @@ describe("createPickFinder", () => {
   const finder = createPickFinder(SHELF);
 
   test("an empty query returns the whole catalog in browse order", () => {
-    // Not ranked. Every row scores 0, and sorting those by the tiebreaker
-    // would replace the kind grouping with an order by ref length.
+    // Empty queries aren't ranked: every row scores 0, and a tiebreaker sort
+    // would replace kind grouping with ref-length order.
     expect(finder.find("").map((entry) => entry.row.ref)).toEqual(
       orderPickRows(SHELF).map((r) => r.ref),
     );
@@ -168,9 +166,6 @@ describe("createPickFinder", () => {
   });
 
   test("ties break toward the shorter ref", () => {
-    // `review` matches the trailing word of both refs identically, so the
-    // scores tie and only the length criterion separates them. This is the
-    // same rule that resolves the algo.go `ff` example.
     const refs = finder.find("review").map((entry) => entry.row.ref);
     expect(refs.indexOf("skills/code-review")).toBeLessThan(
       refs.indexOf("skills/security-review"),
@@ -210,7 +205,8 @@ describe("highlightRef", () => {
   });
 
   test("positions are code points, so an astral character stays whole", () => {
-    // Walking UTF-16 units would paint one half of the surrogate pair.
+    // Highlighting must walk code points; walking UTF-16 units would paint one
+    // half of a surrogate pair.
     expect(highlightRef("skills/🎨-design", [7], mark)).toBe(
       "skills/[🎨]-design",
     );
@@ -247,10 +243,8 @@ describe("pickRowHint", () => {
 
 describe("sanitizeDisplayText", () => {
   /**
-   * A description comes out of a data repo's `.capshelf.yml` or SKILL.md
-   * frontmatter, so its bytes are chosen by whoever writes the shelf. The
-   * picker paints it into a live frame, and `capshelf init` draws the focused
-   * row's hint before the user selects anything.
+   * Descriptions come from the data repo and are author-controlled, yet get
+   * painted into a live terminal frame.
    */
   const ESC = String.fromCharCode(27);
 

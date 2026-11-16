@@ -13,12 +13,6 @@ import {
   objectItems,
 } from "./cli-fixtures";
 
-/**
- * Drive the production consent path — the one `apply`, `update`, `rm`, and
- * `revert` actually call — with a scripted TTY, and restore the default
- * afterwards.
- */
-/** What the consent prompt asked and what it drew on stderr. */
 interface RecordedPrompts {
   prompts: string[];
   stderr: string[];
@@ -340,7 +334,8 @@ describe("interactive destructive-change consent", () => {
       const dryRun = await run(["update", "--dry-run", "--json"]);
       expect(dryRun.exitCode).toBe(0);
       const report = jsonOutput(dryRun);
-      // `#` is standard TOML and Codex reads it, so this is real loss.
+      // `#` comments are standard TOML that Codex reads, so dropping them is
+      // real loss.
       expect(report.destructiveChanges).toContainEqual({
         scope: "project",
         path: ".codex/config.toml",
@@ -348,8 +343,8 @@ describe("interactive destructive-change consent", () => {
         reviewCommand:
           "capshelf status codex-config/defaults --diff-view installed",
       });
-      // Claude Code will not load a settings.json with comments, so removing
-      // them repairs the file rather than destroying anything.
+      // Claude Code will not load a settings.json with comments, so stripping
+      // them repairs the file.
       expect(
         objectItems(report, "destructiveChanges").filter(
           (change) =>

@@ -44,7 +44,6 @@ describe("pickTabs", () => {
   });
 
   test("omits a kind with no rows", () => {
-    // A tab that shows nothing is a dead stop when cycling.
     expect(pickTabs(SHELF).map((tab) => tab.key)).not.toContain("settings");
   });
 
@@ -79,8 +78,6 @@ describe("stepTab", () => {
   });
 
   test("wraps at both ends", () => {
-    // The bar is short, and someone holding an arrow key to survey the shelf
-    // should not have to notice which end they are at.
     expect(stepTab(4, 3, 1)).toBe(0);
     expect(stepTab(4, 0, -1)).toBe(3);
   });
@@ -106,7 +103,6 @@ describe("showsGroupHeadings", () => {
   });
 
   test("a single-kind tab never gets them", () => {
-    // The heading would only repeat the tab.
     expect(showsGroupHeadings("skills", "")).toBe(false);
     expect(showsGroupHeadings("skills", "rev")).toBe(false);
   });

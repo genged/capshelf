@@ -15,10 +15,8 @@ import {
 import { initRepo } from "./git-fixtures";
 
 /**
- * PIN-4. Every one of these asserts the same property from a different angle:
- * what capshelf reads from a commit is a function of the commit, not of the
- * machine. A test here failing means some ambient input — a ref, an
- * environment variable, a config file — reached an answer it must not decide.
+ * Everything capshelf reads from a commit must depend only on the commit, never
+ * on ambient refs, environment variables or config files.
  */
 
 async function tempRepo(prefix: string): Promise<string> {
@@ -60,7 +58,6 @@ describe("source-read profile", () => {
     const second = await commitAll(repo, "two");
     await $`git -C ${repo} replace -f ${second} ${first}`.quiet();
 
-    // Plain git honors the graft, so this is the difference the profile makes.
     expect(
       (
         await $`git -C ${repo} show ${`${second}:a.txt`}`.quiet()
@@ -140,7 +137,6 @@ describe("committed attribute reads (PIN-9)", () => {
     await writeFile(join(repo, "plain.md"), "hello\n");
     const commit = await commitAll(repo, "attrs");
 
-    // Machine-local sources that must not be able to change the verdict.
     await writeFile(
       join(repo, ".git", "info", "attributes"),
       "plain.md filter=local-only\n",

@@ -25,9 +25,6 @@ function manifestWith(name: string): Manifest {
   });
 }
 
-// The pin `add` records comes from the committed tree; set-data re-derives it
-// at the same commit through `verifyDataLockEntries`. The two must agree,
-// including file ordering and sidecar exclusion.
 async function lockFromAdd(
   dataRepo: string,
   name: string,
@@ -55,9 +52,8 @@ describe("verifyDataLockEntries", () => {
     const skill = join(dataRepo, "skills", "greet");
     await mkdir(skill, { recursive: true });
     await writeFile(join(skill, "SKILL.md"), "name: greet\n---\nhi\n");
-    // A second content file whose name sorts differently under locale collation
-    // than under code-unit order (café vs SKILL) — the case that exposed the
-    // sort mismatch — plus the catalog sidecar that must be excluded.
+    // "café.md" sorts differently under locale collation than code-unit order
+    // against SKILL; the sidecar must be excluded.
     await writeFile(join(skill, "café.md"), "accent\n");
     await writeFile(join(skill, ".capshelf.yml"), "tags: [demo]\n");
     await $`git -C ${dataRepo} add -A`.quiet();
@@ -65,7 +61,6 @@ describe("verifyDataLockEntries", () => {
 
     const lock = await lockFromAdd(dataRepo, "greet");
 
-    // Must not throw: the recorded sha reproduces at the pinned commit.
     await verifyDataLockEntries(dataRepo, manifestWith("greet"), lock);
   });
 

@@ -69,7 +69,6 @@ describe("upstream verification", () => {
     );
     expect(error.exitCode).toBe(4);
     expect(error.message).toContain("bound to the wrong upstream");
-    // Both sides of the mismatch must be named so the user can see the diff.
     expect(error.message).toContain(
       "declares: https://github.com/mg/agent-shared",
     );
@@ -77,9 +76,6 @@ describe("upstream verification", () => {
   });
 
   test("rejects an unnormalizable manifest upstream before touching the repo", async () => {
-    // The manifest value is config the user committed; the contract is a
-    // plain Error naming the manifest file and the bad value (no exit-4
-    // verification failure -- the manifest itself is broken).
     const error = await rejection(
       verifyDataRepoUpstream(
         "/nonexistent/never-read",

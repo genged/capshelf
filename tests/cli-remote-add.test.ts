@@ -202,11 +202,6 @@ test(
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
 
-// A10 at the CLI layer: the printed line must stay byte-identical to the
-// line `src/remote-discovery.ts`'s deleted `marketplaceDirectories` used to
-// build directly, now that `add-remote.ts`'s warning loop assembles it from
-// `{ path, message }` instead of a preformatted string
-// (`src/commands/add-remote.ts:165-169`).
 test(
   "a malformed Claude catalog warns on stderr with its exact text and still lists",
   async () => {
@@ -271,9 +266,6 @@ test(
 test(
   "a tree that declares an external filter driver is refused before any write",
   async () => {
-    // PIN-9 is the guard a third-party repository is most likely to meet.
-    // Claiming it fires without proving it is the shape this work exists to
-    // prevent.
     const { url, work } = await upstreamWith([["skills/pdf", "Extract text"]]);
     await writeFile(
       join(work, ".gitattributes"),
@@ -333,7 +325,6 @@ test(
       "remote/skills/pdf",
       "remote/skills/xlsx",
     ]);
-    // One clone serves every skill in the repository.
     const clones = await $`find ${env.XDG_DATA_HOME} -name .git -type d`
       .quiet()
       .text();
@@ -387,11 +378,8 @@ test(
 test(
   "declining the second skill keeps the first one's record",
   async () => {
-    // The rest of the feature never leaves content with no owner: bytes are
-    // written, then the record, and a crash between two items leaves two
-    // owners rather than none. A multi-install has to follow the same rule, or
-    // the installed directory becomes invisible to every other command and a
-    // later `add` refuses it as an unmanaged path.
+    // Save each install's record before the next candidate can refuse, or the
+    // earlier install becomes unmanaged and a later `add` refuses it.
     const { url } = await upstreamWith([
       ["skills/pdf", "Extract text"],
       ["skills/xlsx", "Read workbooks"],
