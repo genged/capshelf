@@ -1,8 +1,3 @@
-/**
- * The chart's table twin: every commit in the range, newest first, with
- * the counts and the change each one made. Hovering a row moves the chart's
- * crosshair to that commit.
- */
 import type { JSX } from "preact";
 import { useState } from "preact/hooks";
 import {

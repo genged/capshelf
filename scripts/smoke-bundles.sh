@@ -9,9 +9,6 @@ export HOME="$TMP/home"
 DATA="$TMP/data"
 A="$TMP/project-a"
 
-# --- 1. data repo: two skills, two settings fragments, one mcp fragment;
-#        bundles/go-backend.yml includes five of them; skills/quick-review
-#        conflicts-with a bundle member ---
 mkdir -p "$HOME" \
   "$DATA/skills/security-review" \
   "$DATA/skills/go-test-writer" \
@@ -27,8 +24,6 @@ printf '%s\n' 'write go tests' > "$DATA/skills/go-test-writer/SKILL.md"
 printf '%s\n' 'quick review' > "$DATA/skills/quick-review/SKILL.md"
 printf '%s\n' 'conflicts-with: [skills/security-review]' \
   > "$DATA/skills/quick-review/.capshelf.yml"
-# Two bundled settings fragments contribute to the same output; disjoint keys
-# merge cleanly. (Conflicting scalars are refused, not silently last-write-win.)
 printf '%s\n' '{ "env": { "BASE": "1" } }' \
   > "$DATA/settings/permissions-base/settings.json"
 printf '%s\n' '{ "env": { "GO": "1" } }' \
@@ -50,7 +45,6 @@ git -C "$DATA" add -A
 git -C "$DATA" commit -qm baseline
 git -C "$A" init -q --initial-branch=main
 
-# --- 2. init; ls shows the bundles/ section; ls --json parses and has it ---
 (cd "$A" && "${CLI[@]}" init --data ../data >/dev/null)
 (cd "$A" && "${CLI[@]}" ls > "$TMP/ls.txt")
 assert_fixed_contains 'bundles/  (from' "$TMP/ls.txt"
@@ -60,7 +54,6 @@ assert_fixed_contains '2 skills · 2 settings · 1 mcp' "$TMP/ls.txt"
 python3 -m json.tool < "$TMP/ls.json" >/dev/null
 assert_fixed_contains '"bundles"' "$TMP/ls.json"
 
-# --- 3. show bundles/go-backend: all members listed, none installed ---
 (cd "$A" && "${CLI[@]}" show bundles/go-backend > "$TMP/show.txt")
 for member in skills/security-review skills/go-test-writer \
   settings/permissions-base settings/permissions-go mcp/github; do
@@ -69,7 +62,6 @@ done
 assert_fixed_contains 'not installed' "$TMP/show.txt"
 assert_fixed_not_contains 'installed (project)' "$TMP/show.txt"
 
-# --- 4. add bundles/go-backend: five items, strict-clean, bundle-order merge ---
 (cd "$A" && "${CLI[@]}" add bundles/go-backend > "$TMP/add.txt")
 assert_fixed_contains '✓ bundle go-backend → 5 added, 0 already installed' "$TMP/add.txt"
 (cd "$A" && "${CLI[@]}" ls --here > "$TMP/here.txt")
@@ -79,11 +71,9 @@ for member in skills/security-review skills/go-test-writer \
 done
 assert_fixed_not_contains 'go-backend' "$TMP/here.txt"
 (cd "$A" && "${CLI[@]}" status --strict >/dev/null)
-# Both fragments' env entries merge into the output.
 assert_fixed_contains '"BASE": "1"' "$A/.claude/settings.json"
 assert_fixed_contains '"GO": "1"' "$A/.claude/settings.json"
 
-# --- 5. re-run: converges, lock byte-identical (no pin bump) ---
 cp "$A/.capshelf/capshelf.lock.json" "$TMP/lock-after-add.json"
 (cd "$A" && "${CLI[@]}" add bundles/go-backend > "$TMP/rerun.txt")
 assert_fixed_contains '✓ bundle go-backend → 0 added, 5 already installed' "$TMP/rerun.txt"
@@ -92,8 +82,6 @@ if ! cmp -s "$TMP/lock-after-add.json" "$A/.capshelf/capshelf.lock.json"; then
   exit 1
 fi
 
-# --- 6. conflicts: single add exits 3 (metadata spec), and a bundle with the
-#        conflicting member refuses all-or-nothing with the lock untouched ---
 set +e
 (cd "$A" && "${CLI[@]}" add skills/quick-review > "$TMP/conflict.txt" 2>&1)
 CONFLICT_EXIT=$?
@@ -124,8 +112,8 @@ if ! cmp -s "$TMP/lock-after-add.json" "$A/.capshelf/capshelf.lock.json"; then
   exit 1
 fi
 
-# --- 7. bundle grows: the new member item is committed, the bundle YAML is
-#        deliberately left uncommitted (working-tree read) ---
+# The bundle YAML is deliberately left uncommitted to prove bundles are read
+# from the working tree.
 mkdir -p "$DATA/skills/extra"
 printf '%s\n' 'extra skill' > "$DATA/skills/extra/SKILL.md"
 git -C "$DATA" add skills/extra
@@ -145,8 +133,6 @@ git -C "$DATA" add bundles/go-backend.yml
 git -C "$DATA" commit -qm 'grow go-backend bundle'
 (cd "$A" && "${CLI[@]}" status --strict >/dev/null)
 
-# --- 8. errors: missing bundle exits 2; a corrupted bundle degrades on ls
-#        (stderr warning, exit 0) but refuses on add (exit 3) ---
 set +e
 (cd "$A" && "${CLI[@]}" add bundles/nope >/dev/null 2>&1)
 MISSING_EXIT=$?

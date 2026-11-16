@@ -20,7 +20,6 @@ git -C "$DATA" add -A
 git -C "$DATA" commit -qm baseline
 init_git_repo "$A"
 
-# --- init from a remote data repo URL clones into the managed location ---
 (cd "$A" && "${CLI[@]}" init --data "$URL" --no-upstream > "$TMP/init.txt")
 assert_fixed_contains 'cloned data repo:' "$TMP/init.txt"
 assert_fixed_contains "$URL" "$TMP/init.txt"
@@ -28,25 +27,21 @@ assert_fixed_contains 'bound project data repo:' "$TMP/init.txt"
 test -d "$CLONE/.git"
 test -f "$CLONE/skills/hello/SKILL.md"
 
-# --- local.json binds the managed clone; a machine-local file:// URL is not
-# --- recorded as the committed upstream
+# A machine-local file:// URL must not be recorded as the committed upstream.
 assert_fixed_contains "\"dataRepo\": \"$CLONE\"" "$A/.capshelf/local.json"
 assert_fixed_not_contains 'dataRepoUpstream' "$A/.capshelf/capshelf.json"
 
-# --- data-path resolves to the managed clone ---
 (cd "$A" && "${CLI[@]}" data-path > "$TMP/data-path.txt")
 test "$(cat "$TMP/data-path.txt")" = "$CLONE"
 (cd "$A" && "${CLI[@]}" data-path --json > "$TMP/data-path.json")
 assert_fixed_contains "\"path\": \"$CLONE\"" "$TMP/data-path.json"
 assert_fixed_contains '"upstream": null' "$TMP/data-path.json"
 
-# --- add installs from the clone, not the original remote ---
 (cd "$A" && "${CLI[@]}" add skills/hello --json >/dev/null)
 assert_fixed_contains 'hello v1' "$A/.agents/skills/hello/SKILL.md"
 SOURCE_COMMIT="$(git -C "$CLONE" log -1 --format=%H -- skills/hello)"
 assert_contains "$SOURCE_COMMIT" "$A/.capshelf/capshelf.lock.json"
 
-# --- promote commits to the local clone and prints push guidance ---
 configure_git_user "$CLONE"
 printf '%s\n' '---' 'name: hello' '---' '' 'hello v2 promoted' > "$A/.agents/skills/hello/SKILL.md"
 (cd "$A" && "${CLI[@]}" promote skills/hello -m 'promote hello v2' > "$TMP/promote.txt")
@@ -58,7 +53,6 @@ assert_fixed_contains 'hello v2 promoted' "$CLONE/skills/hello/SKILL.md"
 PROMOTE_COMMIT="$(git -C "$CLONE" log -1 --format=%H -- skills/hello)"
 assert_contains "$PROMOTE_COMMIT" "$A/.capshelf/capshelf.lock.json"
 
-# --- nothing was pushed: the original remote stays at the baseline commit ---
 if git -C "$DATA" cat-file -e "$PROMOTE_COMMIT^{commit}" 2>/dev/null; then
   echo "expected promote commit to stay local to the clone"
   exit 1

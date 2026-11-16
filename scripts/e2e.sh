@@ -1,20 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run the end-to-end scenarios against one compiled executable.
-#
-#   scripts/e2e.sh              build dist/capshelf, then test it
-#   scripts/e2e.sh --no-build   test the executable CAPSHELF_E2E_BIN names
-#
-# `--no-build` exists for the release lane, which points CAPSHELF_E2E_BIN at an
-# extracted candidate archive and must not be able to rebuild it: a rebuilt
-# binary is a different artifact from the one that was validated.
-#
-# The check below covers the one mistake this script can catch — an unset
-# variable, which would otherwise fail every scenario file with the same
-# message. What a valid executable *is* — absolute, present, executable, not a
-# source file — is decided in e2e/support/binary.ts, before any test world
-# exists, and is not restated here.
+# `--no-build` exists so the release lane cannot rebuild the extracted candidate
+# archive; a rebuilt binary is a different artifact from the one validated.
 
 ROOT="${CAPSHELF_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 cd "$ROOT"
@@ -33,7 +21,6 @@ if [ -z "${CAPSHELF_E2E_BIN:-}" ]; then
   exit 1
 fi
 
-# Each test owns its own world, so the files can run in parallel. Four workers
-# match the unit suite. More workers made that suite slower on a 12-core host,
-# because it spends its time starting processes.
+# Match the unit suite's four workers because more workers slowed that suite
+# on a 12-core host due to process startup.
 exec bun test --parallel="${E2E_JOBS:-4}" ./e2e "$@"
