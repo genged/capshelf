@@ -107,8 +107,6 @@ test(
       });
       const project = await world.git.createProject("console");
 
-      // The project predates capshelf: skills.sh owns one name, in the Codex
-      // layout it writes (a real directory plus a compatibility symlink).
       await writeFile(join(project, "skills-lock.json"), SKILLS_SH_LOCK);
       const owned = join(project, ".agents", "skills", "legacy-helper");
       await mkdir(owned, { recursive: true });
@@ -137,13 +135,10 @@ test(
         "add",
         "skills/legacy-helper",
       ]);
-      // "a system or externally managed item was selected" is exit 3
-      // (docs/cli.md:1250-1261).
       expectExit(refused, 3);
       expectOutputContains(refused, "skills.sh");
       expectOutputContains(refused, "skills.sh remove legacy-helper");
 
-      // A whole command sweep must not write a skills.sh-owned path.
       expectExit(
         await world.capshelf(project, ["add", "skills/release-notes"]),
         0,
@@ -156,8 +151,6 @@ test(
         "command sweep over a skills.sh-owned name",
       );
 
-      // Null second run: the sweep above already converged, so the same
-      // reconcile must report no work and write nothing.
       const converged = await captureOwnedState(world, {
         projectFiles: project,
         projectGit: project,
@@ -181,7 +174,6 @@ test(
       expect(
         externalOf(status.stdout).external.map((entry) => entry.name),
       ).toContain("legacy-helper");
-      // External state never moves the strict exit code.
       expectExit(await world.capshelf(project, ["status", "--strict"]), 0);
     });
   },
@@ -209,7 +201,6 @@ test(
       const project = await world.git.createProject("console");
       expectExit(await world.capshelf(project, ["init", "--data", shelf]), 0);
 
-      // Nothing is shadowed yet, so personal inventory alone is not a fault.
       const personal = await writePersonalSkill(world, "personal-shadow-demo");
       expectExit(await world.capshelf(project, ["status", "--strict"]), 0);
 
@@ -218,7 +209,6 @@ test(
         "skills/personal-shadow-demo",
       ]);
       expectExit(added, 0);
-      // The message names the personal path and states the precedence.
       expectOutputContains(added, "~/.claude/skills/personal-shadow-demo");
       expectOutputContains(added, "before this project skill");
 
@@ -240,12 +230,11 @@ test(
         "shadowed_by_personal_claude_skill",
       );
 
-      // Renaming the personal skill clears it.
       await rename(personal, join(world.home, ".claude", "skills", "renamed"));
       expectExit(await world.capshelf(project, ["status", "--strict"]), 0);
 
       // A symlink to the project skill resolves to the same real path, so it
-      // is not a shadow. This is the false-positive guard.
+      // must not be reported as a shadow.
       await symlink(
         join(project, ".agents", "skills", "personal-shadow-demo"),
         join(world.home, ".claude", "skills", "personal-shadow-demo"),

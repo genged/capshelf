@@ -3,9 +3,8 @@ import { join } from "node:path";
 import { E2E_TEST_TIMEOUT_MS, withWorld } from "../support/world";
 
 /**
- * The two clone modes are separate operations because Git treats them
- * differently: a clone from a local *path* may copy objects that no advertised
- * ref reaches, so it cannot stand in for what a new machine receives.
+ * A clone from a local path may copy objects no advertised ref reaches, so it
+ * cannot stand in for a transport clone.
  */
 test(
   "a transport clone cannot resolve an unadvertised commit that a local path clone copies",
@@ -14,8 +13,6 @@ test(
       const source = await world.git.createRepo("source", { origin: null });
       await world.git.writeAndCommit(source, { "a.txt": "a\n" }, "advertised");
 
-      // A commit on a deleted branch: still in the object store, reachable
-      // from no ref.
       await world.git.ok(source, ["switch", "-q", "-c", "side"]);
       const unadvertised = await world.git.writeAndCommit(
         source,
@@ -56,9 +53,8 @@ test("the local-path helper refuses a URL", async () => {
 });
 
 /**
- * The recorder is what an offline claim rests on, so its own failure modes are
- * proved here: a shim that recorded nothing would make "no fetch ran" pass
- * without measuring anything.
+ * A shim that recorded nothing would make "no fetch ran" pass without measuring
+ * anything, so the recorder itself is tested.
  */
 test(
   "the recorder logs the measured command, skips fixture Git, and passes the real answer through",
@@ -72,8 +68,6 @@ test(
       );
 
       const recorder = await world.git.recordInvocations();
-      // Fixture Git runs without the recorder's environment, so the log holds
-      // the subject's invocations and nothing the test itself ran.
       await world.git.ok(repo, ["status", "--porcelain=v1"]);
       expect(await recorder.invocations()).toEqual([]);
 
@@ -87,8 +81,8 @@ test(
       expect(await recorder.invocations()).toEqual([
         ["-C", repo, "rev-parse", "HEAD"],
       ]);
-      // Read past `-C <repo>`: capshelf puts it before every repository
-      // command, so the first argument is an option, not the subcommand.
+      // capshelf puts `-C <repo>` before every repository command, so the
+      // subcommand is read past it.
       expect(await recorder.subcommands()).toEqual(["rev-parse"]);
     });
   },

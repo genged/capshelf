@@ -39,10 +39,6 @@ test("a declared record is appended to the run report", async () => {
   });
 });
 
-/**
- * The labels are a claim about what a test proved, so the two that admit a
- * substitute have to say what the substitute leaves unproved.
- */
 test("a label that admits a substitute must name it", () => {
   expect(() =>
     declareEvidence({ scenario: "s", property: "p", labels: [] }),

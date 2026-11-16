@@ -84,7 +84,6 @@ export function asBoolean(
   return value;
 }
 
-/** A field that must be present. `undefined` is absence; `null` is a value. */
 export function objectField(
   object: JsonObject,
   key: string,

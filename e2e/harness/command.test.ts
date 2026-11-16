@@ -49,9 +49,8 @@ test(
     await withWorld("outcome-timeout", async (world) => {
       const outer = join(world.stage, "outer.log");
       const inner = join(world.stage, "inner.log");
-      // The grandchild ignores SIGTERM. With a grandchild that honors it, this
-      // test passes even when the SIGKILL escalation never fires, which is how
-      // a surviving process tree went unnoticed.
+      // The grandchild ignores SIGTERM so the test fails if the SIGKILL
+      // escalation never fires.
       const result = await runCommand(
         [
           "/bin/sh",
@@ -70,8 +69,6 @@ test(
       expect(result.outcome).toEqual({ kind: "timeout", timeoutMs: 700 });
       expect(describeCommand(result)).toContain("timed out after 700 ms");
 
-      // A dead process writes nothing. Comparing sizes across a pause proves
-      // both the parent and the grandchild stopped, without needing a pid.
       const sizes = async () => ({
         outer: (await stat(outer)).size,
         inner: (await stat(inner)).size,
@@ -106,9 +103,8 @@ test(
         },
       );
 
-      // SIGTERM ended the group before the escalation fired, so the SIGKILL
-      // found nothing to signal. The runner must still settle as a timeout
-      // rather than hang or report the child's SIGTERM exit as a signal.
+      // SIGTERM ends the group before escalation, so SIGKILL finds nothing; the
+      // runner must still report a timeout.
       expect(result.outcome).toEqual({ kind: "timeout", timeoutMs: 500 });
 
       const first = (await stat(beat)).size;
@@ -132,13 +128,10 @@ test("a declared secret is redacted from every diagnostic field", async () => {
         `printf '%s\\n' "$GH_TOKEN"; printf '%s\\n' "${sentinel}" >&2`,
         sentinel,
       ]);
-      // The result itself is what the command produced; the diagnostic is
-      // what a log receives.
       expect(result.stdout).toContain(sentinel);
       const diagnostic = world.describe(result);
       expect(diagnostic).not.toContain(sentinel);
       expect(diagnostic).toContain("[redacted]");
-      // Names are printed so a reader can see which inputs were declared.
       expect(diagnostic).toContain("GH_TOKEN");
     },
     { env: { GH_TOKEN: sentinel } },

@@ -3,10 +3,8 @@ import { lstatSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 
 /**
- * One process result, rich enough to tell a normal refusal apart from a
- * crash. A bare `exitCode` cannot: a command killed by a signal, one stopped
- * at the safety deadline, and one that never started all look like "not zero",
- * and each needs a different diagnosis.
+ * A bare exit code cannot distinguish a refusal from a signal kill, a timeout,
+ * or a spawn failure, which each need different diagnosis.
  */
 export type CommandOutcome =
   | { kind: "exit"; exitCode: number }
@@ -26,16 +24,14 @@ export interface RunOptions {
   cwd: string;
   env: Readonly<Record<string, string>>;
   /**
-   * Safety deadline. This is not a performance assertion and is never passed
-   * to capshelf as a user option.
+   * Safety deadline only; not a performance assertion and never passed to
+   * capshelf.
    */
   timeoutMs?: number;
-  /** Delay between the group SIGTERM and the group SIGKILL. */
   graceMs?: number;
   /**
-   * How long to wait for output pipes to close after the child exits. A
-   * grandchild that inherited the pipe can hold it open after its parent is
-   * gone; at this point the runner destroys the streams instead of waiting.
+   * A grandchild that inherited the pipe can hold it open after the child
+   * exits, so the runner destroys the streams after this delay.
    */
   drainMs?: number;
   stdin?: string;
@@ -44,12 +40,11 @@ export interface RunOptions {
 export const DEFAULT_TIMEOUT_MS = 60_000;
 export const DEFAULT_GRACE_MS = 2_000;
 export const DEFAULT_DRAIN_MS = 2_000;
-/** Time for a group SIGKILL to take effect before the result is reported. */
 const ESCALATION_SETTLE_MS = 100;
 
 /**
- * Values that must never reach a diagnostic. The required lane carries no
- * credentials, but a compatibility lane does, and both use this renderer.
+ * Registered values never reach diagnostics; compatibility lanes carry
+ * credentials and share this renderer.
  */
 const secrets = new Set<string>();
 
@@ -61,7 +56,6 @@ export function clearSecrets(): void {
   secrets.clear();
 }
 
-/** Names whose *values* are treated as secrets when a world declares them. */
 const SECRET_NAME_PATTERN =
   /TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|_KEY$|^GH_/i;
 
@@ -93,8 +87,8 @@ export async function runCommand(
     const child = spawn(executable, args, {
       cwd: options.cwd,
       env: { ...options.env },
-      // A new process group is what makes the deadline able to bound the whole
-      // tree. Killing the child alone leaves a grandchild running.
+      // A new process group lets the deadline bound the whole tree; killing
+      // only the child leaves a grandchild running.
       detached: true,
       stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
@@ -147,10 +141,8 @@ export async function runCommand(
 
     child.on("exit", (code, signal) => {
       if (deadline) clearTimeout(deadline);
-      // Once a timeout is escalating, the escalation owns the result. The
-      // direct child exiting says nothing about a grandchild that ignored
-      // SIGTERM, and cancelling the escalation here would leave that
-      // grandchild running after the runner reported a bounded process tree.
+      // Once a timeout is escalating it owns the result, since the direct child
+      // exiting says nothing about a grandchild that ignored SIGTERM.
       if (timedOut) return;
       // Prefer "close" so late output is not lost, but never block on it: a
       // grandchild holding the inherited pipe would otherwise hang the run.
@@ -164,8 +156,6 @@ export async function runCommand(
       }, drainMs);
     });
 
-    // Only the non-timeout paths reach this. A timeout finishes after its
-    // escalation instead.
     const settleExit = (
       code: number | null,
       signal: NodeJS.Signals | null,
@@ -185,17 +175,9 @@ export async function runCommand(
       timedOut = true;
       signalGroup("SIGTERM");
       killer = setTimeout(() => {
-        // Escalate unconditionally. Whether the direct child is still alive
-        // is not the question — a grandchild that ignores SIGTERM is, and it
-        // is invisible from here. Sending SIGKILL to a group that is already
-        // gone raises ESRCH, which signalGroup swallows.
-        //
-        // The outcome does not say which signal ended the tree. Deciding that
-        // needs a live-versus-zombie check: a dead grandchild stays in the
-        // group as a zombie until PID 1 reaps it, some container inits never
-        // do, and kill(-pgid, SIGKILL) succeeds against zombies. Reading
-        // /proc answers it, and that is more machinery than one word in a
-        // diagnostic is worth.
+        // Escalate unconditionally because a grandchild ignoring SIGTERM is
+        // invisible from here; which signal ended the tree is not reported
+        // since telling live from zombie processes needs /proc.
         signalGroup("SIGKILL");
         setTimeout(
           () => finish({ kind: "timeout", timeoutMs }),
@@ -227,8 +209,8 @@ export interface DiagnosticExtras {
 }
 
 /**
- * The failure text a reader gets in CI, where the world is already deleted.
- * Everything needed to reproduce or diagnose must be in here.
+ * CI failure text is read after the world is deleted, so it must contain
+ * everything needed to reproduce or diagnose.
  */
 export function describeCommand(
   result: CommandResult,
@@ -265,8 +247,8 @@ function indent(text: string): string {
 }
 
 /**
- * A short tree. Bounded on purpose: a failing world can hold a Git object
- * store, and an unbounded listing buries the two paths that matter.
+ * Bounded because a failing world can hold a Git object store that buries the
+ * relevant paths.
  */
 export function directoryTree(root: string, limit = 60, maxDepth = 4): string {
   const found: string[] = [];

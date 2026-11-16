@@ -3,10 +3,9 @@ import { runInPty } from "../support/pty";
 import { E2E_TEST_TIMEOUT_MS, withWorld } from "../support/world";
 
 /**
- * The terminal cell is only meaningful if the child really gets a terminal and
- * the runner really sees its exit status. Both were wrong with the first
- * implementation on one platform, so both are asserted here: a failure names
- * the harness instead of surfacing as a scenario that "did not prompt".
+ * The child must really get a terminal and the runner must see its exit status;
+ * both broke on one platform, so they are asserted here to blame the harness
+ * rather than a scenario.
  */
 test(
   "a command run through the pty helper sees a terminal on every stream",
@@ -59,10 +58,9 @@ test(
 );
 
 /**
- * The raw-mode variant. The command sleeps first, so an answer written
- * immediately would sit in the terminal's unfinished-line buffer and be
- * discarded at the raw switch on macOS. The answer arriving intact proves the
- * driver held it until canonical mode was off.
+ * On macOS an answer written before the raw switch is discarded from the
+ * terminal's unfinished-line buffer, so the driver holds it until canonical
+ * mode is off.
  */
 test(
   "an answer held for raw mode arrives after the switch",

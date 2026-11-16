@@ -20,7 +20,6 @@ function fail(message: string, result?: CommandResult): never {
   throw new Error(result ? `${message}\n${describeCommand(result)}` : message);
 }
 
-/** Exact documented exit code. A signal, timeout, or spawn failure is not it. */
 export function expectExit(result: CommandResult, exitCode: number): void {
   if (result.outcome.kind !== "exit") {
     fail(
@@ -55,9 +54,8 @@ export function expectOutputExcludes(
 }
 
 /**
- * A refusal must name the way out. This asserts the recovery command the user
- * is told to run, not the whole message: prose is not a contract, but the
- * command in it is what the user types.
+ * Assert the recovery command rather than the whole message: prose is not a
+ * contract, but the command is what the user types.
  */
 export function expectRecovery(result: CommandResult, command: string): void {
   expectOutputContains(result, command);
@@ -80,7 +78,6 @@ export interface ApplyRow {
   action: string;
 }
 
-/** Semantic rows from `apply --json`, not a text snapshot of its output. */
 export function parseApplyRows(stdout: string): ApplyRow[] {
   const payload: JsonValue = JSON.parse(stdout);
   if (!isJsonObject(payload) || !Array.isArray(payload.items)) {
@@ -98,7 +95,6 @@ export function parseApplyRows(stdout: string): ApplyRow[] {
   });
 }
 
-/** One `targetCoverage` entry, as `docs/cli.md` documents it. */
 export interface TargetCoverage {
   target: string;
   present: boolean | null;
@@ -136,7 +132,6 @@ export interface StatusRow {
   runtimeWarnings?: JsonValue[];
 }
 
-/** Semantic rows from `status --json`. */
 export function parseStatusRows(stdout: string): StatusRow[] {
   const payload: JsonValue = JSON.parse(stdout);
   const items = isJsonObject(payload) ? payload.items : undefined;
@@ -191,7 +186,6 @@ export function statusRow(
   return found;
 }
 
-/** `expected === null` asserts the path is absent. */
 export async function expectBytes(
   path: string,
   expected: string | null,
@@ -227,7 +221,6 @@ export async function expectAbsent(path: string): Promise<void> {
   throw new Error(`expected ${path} to be absent`);
 }
 
-/** A real directory, not a symlink that happens to resolve to one. */
 export async function expectRealDirectory(path: string): Promise<void> {
   const stats = await lstat(path).catch(() => null);
   if (stats === null) throw new Error(`expected a directory at ${path}`);
@@ -242,9 +235,8 @@ export async function expectRealDirectory(path: string): Promise<void> {
 }
 
 /**
- * Reading bytes through a link proves the bytes, not the link. The
- * compatibility path is a *relative* symlink, so the project stays portable
- * when it is cloned somewhere else.
+ * Reading bytes through a link proves bytes, not the link; the path is a
+ * relative symlink so the project stays portable when cloned.
  */
 export async function expectRelativeSymlink(
   path: string,
@@ -276,7 +268,6 @@ export async function expectExecutable(
   }
 }
 
-/** Independent observation: git's own answer, in this world's environment. */
 export async function expectIgnored(
   world: World,
   repo: string,
@@ -324,8 +315,8 @@ export async function expectHeadTreeExcludes(
 }
 
 /**
- * Project paths a capshelf command may own. A snapshot covers all of them so a
- * refusal cannot quietly write outside the paths a scenario happens to name.
+ * Snapshots cover every owned path so a refusal cannot quietly write outside
+ * the paths a scenario names.
  */
 export const OWNED_PROJECT_PATHS = [
   ".capshelf",
@@ -344,7 +335,6 @@ export interface FileEntry {
   target?: string;
 }
 
-/** A project root and the paths under it a snapshot covers. */
 export interface PathSelection {
   path: string;
   include: readonly string[];
@@ -365,24 +355,18 @@ const SELECTION_KEYS = [
 ] as const;
 
 export interface OwnedStateSelection {
-  /** Project files: `.capshelf/**` plus managed runtime outputs. */
   projectFiles?: string | PathSelection;
-  /** Project Git: HEAD, refs, index bytes, porcelain status. */
   projectGit?: string;
   /**
-   * Managed source paths plus Git state in the data repo. `refPrefixes`
-   * narrows the refs the snapshot covers — a command that fetches moves
-   * remote-tracking refs by design, so a test about the *local* branch selects
-   * `refs/heads/` and says so.
+   * `refPrefixes` narrows covered refs because a fetch moves remote-tracking
+   * refs by design; tests about the local branch select `refs/heads/`.
    */
   dataRepo?: {
     path: string;
     paths: readonly string[];
     refPrefixes?: readonly string[];
   };
-  /** Advertised refs, for a workflow that can change a remote. */
   bareRemote?: string;
-  /** Absolute paths that must stay absent. */
   requiredAbsent?: readonly string[];
 }
 
@@ -403,12 +387,9 @@ export interface GitState {
 }
 
 /**
- * Build the snapshot a safe-failure assertion compares. Every snapshot is
- * selected by the scenario: there is no catch-all "all owned state", because a
- * label that names nothing cannot be checked for completeness.
- *
- * Git object storage, pack layout, and reflogs are deliberately outside it.
- * Git may change those without changing anything a user contracted for.
+ * Snapshots are always scenario-selected because a catch-all label cannot be
+ * checked for completeness; Git object storage, packs and reflogs are excluded
+ * since they can change without affecting anything contracted.
  */
 export async function captureOwnedState(
   world: World,
@@ -520,8 +501,8 @@ async function collect(
 }
 
 /**
- * A command expected to refuse must prove more than a non-zero exit: the state
- * it owns has to be byte-identical afterwards.
+ * A non-zero exit alone would pass if the command half-wrote, so also require
+ * the owned state to be byte-identical.
  */
 export function expectSameState(
   before: OwnedState,

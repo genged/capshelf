@@ -25,7 +25,6 @@ interface UiInfo {
   registered: boolean;
 }
 
-/** The one JSON line `capshelf ui --json` prints once it listens. */
 function parseUiInfo(line: string): UiInfo {
   const info = asObject(parseJsonText(line, "capshelf ui --json"), "ui info");
   const project = info.project;
@@ -44,10 +43,7 @@ interface RunningUi {
   stderr(): string;
 }
 
-/**
- * Start `capshelf ui` from the compiled binary and wait for the JSON line it
- * prints. The process runs in its own group so `stop` ends every child.
- */
+/** The process runs in its own group so `stop` ends every child. */
 async function startUi(world: World, cwd: string): Promise<RunningUi> {
   const child = spawn(world.binary, ["ui", "--no-open", "--json"], {
     cwd,
@@ -139,8 +135,6 @@ test(
         const base = url.origin;
         const auth = { Authorization: `Bearer ${token}` };
 
-        // Independent observation: the shell and every asset ship inside the
-        // executable, so the compiled program serves them from memory.
         const shell = await fetch(`${base}/`);
         expect(shell.status).toBe(200);
         expect(await shell.text()).toContain(
@@ -159,7 +153,6 @@ test(
           0x89, 0x50, 0x4e, 0x47,
         ]);
 
-        // The API refuses without the token and answers with it.
         expect((await fetch(`${base}/api/overview`)).status).toBe(401);
         const overview = asObject(
           parseJsonText(
@@ -203,7 +196,6 @@ test(
           "capshelf revert skills/hello",
         ]);
 
-        // The same state the CLI reports, from the same executable.
         const cli = await world.capshelf(project, ["status", "--json"]);
         expectExit(cli, 0);
         const parsed = asObject(
