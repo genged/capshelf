@@ -48,8 +48,6 @@ test(
       );
       expectExit(await world.capshelf(original, ["add", "skills/hello"]), 0);
 
-      // Publication is the user's step. capshelf never pushes, and never
-      // stages the project for the user.
       expectExit(
         await world.git.run(original, [
           "add",
@@ -100,15 +98,12 @@ test(
         0,
       );
 
-      // A transport clone is what a second machine receives.
       const clone = await world.git.cloneViaTransport(
         projectRemote.url,
         "clone",
       );
       await expectBytes(join(clone, ".capshelf", "local.json"), null);
 
-      // With no binding at all, a read-only command degrades instead of
-      // refusing: the row says the source is unavailable and the exit stays 0.
       const unbound = await world.capshelf(clone, ["status", "--json"]);
       expectExit(unbound, 0);
       expect(
@@ -163,7 +158,6 @@ test(
         "hello\n",
       );
 
-      // Null second run: the same reconcile operation must change nothing.
       const beforeSecondRun = await captureOwnedState(world, {
         projectFiles: clone,
         projectGit: clone,

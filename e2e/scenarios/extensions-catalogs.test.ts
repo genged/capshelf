@@ -47,9 +47,8 @@ test(
       const userPiRoot = join(world.home, ".pi", "agent", "extensions");
       const piSettings = join(project, ".pi", "settings.json");
 
-      // `--to local` is explicit: for Pi extensions the default scope is
-      // project (`capshelf share --help`), so clone-local adoption is asked
-      // for by name.
+      // `--to local` is explicit because the default scope for Pi extensions is
+      // project.
       const shared = await world.capshelf(project, [
         "share",
         "pi-extensions/deploy-helper",
@@ -61,7 +60,6 @@ test(
       expectExit(shared, 0);
       expectOutputContains(shared, "execute arbitrary code");
 
-      // Adopted into the shelf, tracked here, and excluded from project Git.
       expect(
         await readFile(
           join(shelf, "pi", "extensions", "deploy-helper", "index.ts"),
@@ -74,15 +72,11 @@ test(
       );
       expect(exclude).toContain(".pi/extensions/deploy-helper/");
 
-      // Neither Pi surface capshelf refuses to manage was written.
       await expectAbsent(userPiRoot);
       expect(await readFile(piSettings, "utf-8")).toBe('{"theme":"dark"}\n');
 
-      // A Pi warning is advisory: it never moves the strict exit code.
       expectExit(await world.capshelf(project, ["status", "--strict"]), 0);
 
-      // Project scope is a move, not a re-share, and it changes no shelf
-      // content.
       const shelfBefore = await captureOwnedState(world, {
         dataRepo: { path: shelf, paths: ["pi"] },
       });
@@ -103,8 +97,8 @@ test(
         "move between scopes",
       );
 
-      // An entrypoint hidden from Git cannot be promoted: a project-scope
-      // snapshot contains only Git-visible files.
+      // A project-scope snapshot contains only Git-visible files, so a
+      // gitignored entrypoint cannot be promoted.
       await writeFile(join(extensionDir, ".gitignore"), "index.ts\n");
       await writeFile(
         join(extensionDir, "index.ts"),
@@ -211,9 +205,6 @@ test(
         0,
       );
 
-      // Authoring is local commits in the shelf, and nothing else. Each of
-      // the two mutations makes exactly one commit
-      // (docs/marketplaces.md:19-34).
       const commitsAfter = Number(
         (
           await world.git.ok(shelf, ["rev-list", "--count", "HEAD"])
@@ -232,7 +223,6 @@ test(
         "catalogs are shelf state, not project items",
       );
 
-      // Read-only commands stay read-only.
       const listed = await world.capshelf(project, ["marketplace", "ls"]);
       expectExit(listed, 0);
       expectOutputContains(listed, "engineering");
@@ -246,7 +236,6 @@ test(
         0,
       );
 
-      // Packaging is deterministic and lands outside the shelf.
       const out = world.path("packages");
       await mkdir(out, { recursive: true });
       const packagePath = join(out, "engineering.plugin");
@@ -276,7 +265,6 @@ test(
       expectExit(rebuild, 0);
       expect(rebuild.stdout).toContain("already-built");
 
-      // An output path inside the shelf is refused.
       const inside = await world.capshelf(project, [
         "marketplace",
         "plugin",

@@ -14,12 +14,9 @@ import { declareEvidence } from "../support/report";
 import { E2E_TEST_TIMEOUT_MS, withWorld } from "../support/world";
 
 /**
- * The kinds the packaged binary ships that no other scenario drives.
- *
- * `codex-config` and `subagents` are installable item kinds with their own
- * source layout and their own runtime outputs. Every other e2e scenario
- * reaches Codex through an mcp item or a settings fragment, so a fault in
- * either kind's own path would have survived the whole suite and shipped.
+ * No other scenario drives `codex-config` or `subagents` directly (Codex is
+ * otherwise reached via mcp or settings), so a fault in their own paths would
+ * ship unnoticed.
  */
 const SCENARIO = "item-kinds";
 
@@ -47,9 +44,6 @@ test(
       const project = await world.git.createProject("api");
       expectExit(await world.capshelf(project, ["init", "--data", shelf]), 0);
 
-      // The value the project owns. It predates the fragment and has to
-      // survive every verb below, including the removal at the end: that is
-      // the whole ownership contract for a fragment output.
       const output = join(project, ".codex", "config.toml");
       await world.git.writeFiles(project, {
         ".codex/config.toml": 'profile = "local"\n',
@@ -64,9 +58,6 @@ test(
       expect(merged).toContain('sandbox = "workspace-write"');
       expect(merged).toContain('profile = "local"');
 
-      // Safe failure. `keep-local` marks divergence in a copy item; a fragment
-      // has no copy to diverge, so the kind is refused by name rather than
-      // silently accepted into a state nothing can clear.
       const snapshot = (): Promise<OwnedState> =>
         captureOwnedState(world, {
           projectFiles: project,
@@ -85,7 +76,6 @@ test(
       );
       expectSameState(beforeRefusal, await snapshot(), "refused keep-local");
 
-      // Upstream moves. Only the managed keys follow it.
       await world.git.writeAndCommit(
         shelf,
         {
@@ -104,7 +94,6 @@ test(
       expect(updated).toContain('profile = "local"');
       expect(updated).not.toContain('model = "gpt-5"');
 
-      // Null second run.
       const converged = await captureOwnedState(world, {
         projectFiles: project,
         projectGit: project,
@@ -123,9 +112,8 @@ test(
         "second apply",
       );
 
-      // Exact bytes, because the claim is subtraction: every managed key is
-      // gone and the line capshelf never owned is untouched. A `toContain`
-      // here would pass with a managed key left behind.
+      // Exact bytes, because `toContain` would pass with a managed key left
+      // behind.
       expectExit(
         await world.capshelf(project, ["rm", "codex-config/defaults"]),
         0,
@@ -168,17 +156,12 @@ test(
         0,
       );
 
-      // One item, two runtimes. The projection is the reason this kind exists,
-      // so both outputs are asserted rather than the lock entry that implies
-      // them.
       const claudeAgent = join(project, ".claude", "agents", "reviewer.md");
       const codexAgent = join(project, ".codex", "agents", "reviewer.toml");
       await expectBytes(claudeAgent, claudeSource);
       await expectBytes(codexAgent, codexSource);
       expectExit(await world.capshelf(project, ["status", "--strict"]), 0);
 
-      // Safe failure. A subagent is project scope only, so the marker that
-      // records clone-local divergence has nothing to mark.
       const snapshot = (): Promise<OwnedState> =>
         captureOwnedState(world, {
           projectFiles: project,
@@ -197,7 +180,6 @@ test(
       );
       expectSameState(beforeRefusal, await snapshot(), "refused keep-local");
 
-      // Null second run.
       const converged = await captureOwnedState(world, {
         projectFiles: project,
         projectGit: project,
@@ -216,9 +198,6 @@ test(
         "second apply",
       );
 
-      // The shelf drops a runtime. Update removes the output that target
-      // owned and leaves the other one, rather than stranding a file no
-      // source produces any more.
       await world.git.ok(shelf, ["rm", "-q", "subagents/reviewer/codex.toml"]);
       await world.git.commit(shelf, "make reviewer Claude only");
       expectExit(

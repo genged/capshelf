@@ -11,15 +11,8 @@ import { E2E_TEST_TIMEOUT_MS, withWorld } from "../support/world";
 const SCENARIO = "environment-cells";
 
 /**
- * The picker is terminal behavior, so this is the only layer that can prove it.
- * Every other cell runs through pipes, where `add` with no argument refuses and
- * `init` prints its skip note — proving the offer is absent, never that it
- * works.
- *
- * The query is deliberately `pgh`. It is not a substring of any item on the
- * shelf, only a subsequence of `postgres-helper`, so an item appearing on disk
- * afterwards proves the whole chain end to end in the packaged binary: raw-mode
- * input, the ported fzf match, the mark, and the install.
+ * The query `pgh` is only a subsequence of `postgres-helper`, so a successful
+ * install proves raw-mode input, fuzzy match, mark and install end to end.
  */
 test(
   "with a terminal, add with no item offers the shelf and installs what was marked",
@@ -44,17 +37,16 @@ test(
         },
       });
       const project = await world.git.createProject("platform");
-      // `--no-pick` here: this cell is about the `add` offer, and an init that
-      // also prompted would consume the keystrokes meant for it.
+      // `--no-pick` keeps init from prompting and consuming the keystrokes
+      // meant for `add`.
       expectExit(
         await world.capshelf(project, ["init", "--no-pick", "--data", shelf]),
         0,
       );
 
       const picked = await runInPty(world, project, [world.binary, "add"], {
-        // The world defaults to TERM=dumb, which the picker refuses because a
-        // dumb terminal cannot run a full-screen prompt. These cells are about
-        // the prompt, so they ask for a terminal that has capabilities.
+        // The world defaults to TERM=dumb, which the picker refuses, so ask for
+        // a capable terminal.
         env: { TERM: "xterm-256color" },
         answer: "pgh\t\r",
         answerAfterRawMode: true,
@@ -67,8 +59,6 @@ test(
           join(project, ".claude", "skills", "postgres-helper", "SKILL.md"),
         ),
       ).toBe(true);
-      // Precision, not just recall: the other item was on the shelf, was never
-      // marked, and must not have been installed.
       expect(
         existsSync(join(project, ".claude", "skills", "code-review")),
       ).toBe(false);
@@ -78,15 +68,8 @@ test(
 );
 
 /**
- * Typing must move the cursor to the best match, not just reorder the rows
- * beneath a cursor that stays where it was.
- *
- * The two names are chosen so the distinction is observable. With no query the
- * list is in browse order and the cursor sits on `architecture-review`. Typing
- * `rev` ranks `review-diff` above it, but `architecture-review` still matches,
- * so a cursor that tracks the previously focused row follows it down to second
- * place and `Tab` marks the wrong item. Asserting on what lands on disk, not
- * on what the screen drew, is what makes this a real assertion.
+ * `review-diff` ranks above `architecture-review` for `rev`, so a cursor that
+ * follows the previously focused row would mark the wrong item.
  */
 test(
   "with a terminal, typing moves the cursor to the best match",
@@ -105,11 +88,7 @@ test(
       const shelf = await world.git.createDataRepo({
         origin: "https://example.invalid/shelf.git",
         files: {
-          // Sorts first, so it is what the cursor starts on, and it still
-          // matches `rev`, so it stays in the filtered list.
           "skills/architecture-review/SKILL.md": "# architecture review\n",
-          // Ranks first for `rev`: the match is at a word start right after
-          // the delimiter, and the ref is shorter.
           "skills/review-diff/SKILL.md": "# review diff\n",
         },
       });
@@ -120,9 +99,8 @@ test(
       );
 
       const picked = await runInPty(world, project, [world.binary, "add"], {
-        // The world defaults to TERM=dumb, which the picker refuses because a
-        // dumb terminal cannot run a full-screen prompt. These cells are about
-        // the prompt, so they ask for a terminal that has capabilities.
+        // The world defaults to TERM=dumb, which the picker refuses, so these
+        // cells set a capable terminal.
         env: { TERM: "xterm-256color" },
         answer: "rev\t\r",
         answerAfterRawMode: true,
@@ -143,14 +121,8 @@ test(
 );
 
 /**
- * `←` switches type *and* leaves the query intact.
- *
- * Node's readline owns the text insertion point and still moves it on `←`, and
- * clack's clear only deletes what is left of that point. Restoring the query
- * without first moving to the end therefore left the suffix behind and typed
- * into the middle of it: `ab`, `←`, `x` produced `abxb`. Typing `re`, `←`,
- * `v` here must still search for `rev` and install the item that ranks first
- * for it.
+ * readline moves its insertion point on `←` but clack's clear only deletes left
+ * of it, so the query must be restored from the end.
  */
 test(
   "with a terminal, switching type mid-query leaves the query intact",
@@ -179,11 +151,9 @@ test(
         0,
       );
 
-      // "re", ←, "v" — the query must end up as `rev`.
       const picked = await runInPty(world, project, [world.binary, "add"], {
-        // The world defaults to TERM=dumb, which the picker refuses because a
-        // dumb terminal cannot run a full-screen prompt. These cells are about
-        // the prompt, so they ask for a terminal that has capabilities.
+        // The world defaults to TERM=dumb, which the picker refuses, so these
+        // cells set a capable terminal.
         env: { TERM: "xterm-256color" },
         answer: "re\u001b[Dv\t\r",
         answerAfterRawMode: true,
@@ -201,14 +171,8 @@ test(
 );
 
 /**
- * The type menu. `←/→` switch which kind the list shows, so a query typed
- * afterwards can only match rows of that kind.
- *
- * The shelf holds one skill and one MCP item whose names both match `git`.
- * From `All`, one `→` selects `bundles`... except the shelf has no bundles, so
- * that tab does not exist, and the first `→` lands on `skills`. Marking there
- * must install the skill and never the MCP item, which proves the tab actually
- * scoped the list rather than only relabelling it.
+ * The shelf has no bundles, so the first `→` lands on `skills`; the MCP item's
+ * absence proves the tab scoped the list.
  */
 test(
   "with a terminal, the type menu scopes the list to one kind",
@@ -238,12 +202,9 @@ test(
         0,
       );
 
-      // → moves off All to the first kind tab (skills), then `git` matches
-      // only within it.
       const picked = await runInPty(world, project, [world.binary, "add"], {
-        // The world defaults to TERM=dumb, which the picker refuses because a
-        // dumb terminal cannot run a full-screen prompt. These cells are about
-        // the prompt, so they ask for a terminal that has capabilities.
+        // The world defaults to TERM=dumb, which the picker refuses, so these
+        // cells set a capable terminal.
         env: { TERM: "xterm-256color" },
         answer: "\u001b[Cgit\t\r",
         answerAfterRawMode: true,
@@ -255,8 +216,6 @@ test(
           join(project, ".claude", "skills", "git-helper", "SKILL.md"),
         ),
       ).toBe(true);
-      // The MCP item matches `git` just as well and sits on another tab, so
-      // its absence is what shows the tab scoped the list.
       const manifest = asObject(
         parseJsonText(
           await Bun.file(join(project, ".capshelf", "capshelf.json")).text(),
@@ -272,15 +231,8 @@ test(
 );
 
 /**
- * Space stays a query separator after arrow navigation.
- *
- * `AutocompletePrompt` treats Space as "mark the focused row" while its
- * navigation flag is set, and `↑`/`↓` set it. Typing `sec`, pressing `↓`, then
- * Space and `rev` swallowed the separator — leaving `secrev` — and marked
- * whichever row was focused, which `Enter` then installed. Nothing on screen
- * said so. The shelf below is arranged so the wrongly marked row is a
- * different item than the query selects, which is what makes the silent
- * install visible on disk.
+ * AutocompletePrompt treats Space as mark-the-row while its navigation flag is
+ * set, which `↑`/`↓` set, so Space after arrows would swallow the separator.
  */
 test(
   "with a terminal, space after navigation separates terms and marks nothing",
@@ -309,8 +261,6 @@ test(
         0,
       );
 
-      // "sec", ↓, " ", "rev", Tab, Enter. The query must be the two terms
-      // `sec rev`, and the only install must be the row Tab marked.
       const picked = await runInPty(world, project, [world.binary, "add"], {
         env: { TERM: "xterm-256color" },
         answer: "sec\u001b[B rev\t\r",
@@ -323,7 +273,6 @@ test(
           join(project, ".claude", "skills", "secure-review", "SKILL.md"),
         ),
       ).toBe(true);
-      // The decoy is what a stray Space-mark would have caught.
       expect(existsSync(join(project, ".claude", "skills", "aaa-decoy"))).toBe(
         false,
       );
@@ -333,20 +282,9 @@ test(
 );
 
 /**
- * The share picker, end to end in the packaged binary: rows from the unmanaged
- * remainder, the fuzzy filter, the mark, the grouped share, the committed
- * fragment, and the printed equivalent command.
- *
- * The marked row is an mcp server on purpose. Its name is the item name, so
- * the run needs no readline question after the frame — the pty driver writes
- * every key in one burst, and the picker's raw-mode reader consumes whatever
- * the burst still holds when Enter closes it, so keys meant for a later
- * canonical prompt never arrive. The settings name prompt is covered at the
- * CLI layer through the injectable prompt seam instead.
- *
- * The query is `ghb` — not a substring of any row, only a subsequence of
- * `github` — so an item landing in the data repo proves the whole chain in the
- * packaged binary: raw-mode input, the ported fzf match, the mark, the share.
+ * The marked row is an mcp server because the pty driver writes all keys in one
+ * burst and the raw-mode reader drops whatever remains after Enter, so no later
+ * readline prompt can be answered.
  */
 test(
   "with a terminal, share with no item offers unmanaged values and commits the marked one",
@@ -390,7 +328,6 @@ test(
       });
 
       expectExit(picked, 0);
-      // One marked output file means the command carries its target.
       expectOutputContains(picked, "capshelf share mcp/github --target claude");
       const fragment = parseJsonText(
         await readFile(join(shelf, "mcp", "github", "claude.json"), "utf-8"),
@@ -399,19 +336,12 @@ test(
       expect(fragment).toEqual({
         mcpServers: { github: { command: "github-mcp" } },
       });
-      // Precision, not just recall: the decoy matched nothing, was never
-      // marked, and must not have been shared.
       expect(existsSync(join(shelf, "mcp", "aaa-decoy"))).toBe(false);
     });
   },
   E2E_TEST_TIMEOUT_MS,
 );
 
-/**
- * The promote picker, end to end: a tracked fragment whose canonical source
- * changed in the data repo is offered, marked by fuzzy subsequence, and
- * promoting it commits the edit.
- */
 test(
   "with a terminal, promote with no item offers the dirty item and commits it",
   async () => {
@@ -454,10 +384,9 @@ test(
         JSON.stringify({ env: { FOO: "baz" } }),
       );
 
-      // `sth` is a subsequence of `settings/theme`, not a substring. Ctrl-V
-      // opens the diff. The second step waits until the asynchronous preview
-      // is visible. It closes with q, reopens and closes with Ctrl-V, marks
-      // the row, and promotes it.
+      // `sth` is a fuzzy subsequence of `settings/theme`, and the preview
+      // renders asynchronously, so wait for its text before sending the next
+      // key.
       const picked = await runInPty(world, project, [world.binary, "promote"], {
         env: { TERM: "xterm-256color" },
         interactions: [
@@ -484,14 +413,8 @@ test(
 );
 
 /**
- * A disabled row is browsable: the cursor moves onto it — across the kind
- * headings of the `All` view — and its reason renders in the detail column.
- *
- * This held a real defect. Disabled rows were passed to the prompt library as
- * disabled options, and its cursor walk skips those, so a struck-through row
- * could never be focused, its reason could never be read, and a promote list
- * where nothing was promotable had a cursor that refused to move at all. The
- * rows exist *for* their reasons, so the cursor must reach them.
+ * The prompt library's cursor walk skips disabled options, so disabled rows are
+ * rendered as ordinary rows to stay focusable and show their reason.
  */
 test(
   "with a terminal, the cursor reaches a disabled promote row and Tab on it marks nothing",
@@ -516,9 +439,6 @@ test(
         await world.capshelf(project, ["init", "--no-pick", "--data", shelf]),
         0,
       );
-      // Two tracked items in two kind groups: a dirty skill the cursor opens
-      // on (skills sort first), and a clean settings fragment whose row is
-      // disabled with a reason.
       expectExit(await world.capshelf(project, ["add", "skills/hello"]), 0);
       await mkdir(join(project, ".claude"), { recursive: true });
       await writeFile(
@@ -540,7 +460,6 @@ test(
       );
       const before = await world.run(shelf, ["git", "rev-parse", "HEAD"]);
 
-      // ↓ onto the disabled settings row, Tab there, Enter.
       const picked = await runInPty(world, project, [world.binary, "promote"], {
         env: { TERM: "xterm-256color" },
         answer: "\u001b[B\t\r",
@@ -548,10 +467,9 @@ test(
       });
 
       expectExit(picked, 0);
-      // The disabled row was focused: its reason is on screen. Only the
-      // focused row draws a detail, so this is also the traversal proof.
+      // Only the focused row draws its detail, so seeing the reason proves
+      // focus reached the disabled row.
       expectOutputContains(picked, "nothing to promote");
-      // Tab on it marked nothing, so nothing was promoted or committed.
       expect(picked.stdout + picked.stderr).not.toContain("✓ promoted");
       const after = await world.run(shelf, ["git", "rev-parse", "HEAD"]);
       expect(after.stdout.trim()).toBe(before.stdout.trim());
@@ -561,14 +479,9 @@ test(
 );
 
 /**
- * A terminal that declares no capabilities is refused, not drawn on.
- *
- * This cell keeps the world's default `TERM=dumb`, which is why every cell
- * above has to ask for a real one. On a dumb terminal `readline` ignores the
- * key argument to its own `write`: the clear that restores the query never
- * runs, so `re`, `←`, `v` left `rerev`, and `Tab` arrived as a literal tab
- * instead of marking a row. It installed the wrong item without any sign that
- * something had gone wrong, which is the outcome the refusal replaces.
+ * On TERM=dumb, readline ignores the key argument to `write`, so the
+ * query-restoring clear never runs and Tab arrives as a literal tab; the picker
+ * refuses instead.
  */
 test(
   "on a terminal without capabilities, the picker refuses instead of misbehaving",
@@ -594,7 +507,6 @@ test(
         0,
       );
 
-      // No TERM override here: the world's default is `dumb`.
       const refused = await runInPty(world, project, [world.binary, "add"], {
         answer: "rev\t\r",
       });
@@ -610,11 +522,6 @@ test(
   E2E_TEST_TIMEOUT_MS,
 );
 
-/**
- * The other half. Without a terminal the offer must be absent and say so,
- * rather than hanging on a prompt nothing can answer — which is what a CI job
- * running `capshelf init` depends on.
- */
 test(
   "without a terminal, init reports the skipped picker and still succeeds",
   async () => {
