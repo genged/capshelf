@@ -4,11 +4,6 @@ import type { TreeEntry } from "../shared/view-model";
 import { splitDisplayPath } from "../shared/view-model";
 import { Icon } from "./icons";
 
-/**
- * The left rail: every registered project, attention first, with the folder
- * name first because it tells projects apart. The foot names the shelf and
- * the CLI. A phone gets a picker instead (`RailPicker`).
- */
 export function ProjectRail({
   entries,
   selectedPath,
@@ -22,7 +17,6 @@ export function ProjectRail({
   shelf: UiShelfFacts | null;
   cliVersion: string | null;
   onSelect: (path: string) => void;
-  /** Rows above the project list, such as All findings. */
   top?: ComponentChildren;
 }): preact.JSX.Element {
   const onKeyDown = (event: KeyboardEvent): void => {
@@ -99,7 +93,6 @@ export function ProjectRail({
   );
 }
 
-/** A count pill with a word for assistive technology beside the number. */
 export function RailCount({ entry }: { entry: TreeEntry }): preact.JSX.Element {
   if (entry.state === "missing") {
     return <span class="count is-attention">missing</span>;
@@ -143,13 +136,9 @@ export function RailCount({ entry }: { entry: TreeEntry }): preact.JSX.Element {
   );
 }
 
-/** The select value that stands for All findings; no project path is empty. */
+/** Empty string stands for All findings because no project path is empty. */
 const FINDINGS_VALUE = "";
 
-/**
- * The phone's stand-in for the rail: one select over All findings and the
- * projects. A null `selectedPath` selects All findings.
- */
 export function RailPicker({
   entries,
   selectedPath,
@@ -161,7 +150,6 @@ export function RailPicker({
   entries: TreeEntry[];
   selectedPath: string | null;
   findings: number;
-  /** False while a zero count could hide the findings of an unread project. */
   findingsComplete: boolean;
   onSelect: (path: string) => void;
   onFindings: () => void;
