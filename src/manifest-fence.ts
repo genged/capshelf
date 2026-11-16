@@ -1,11 +1,7 @@
 /**
- * Spec M9. Capshelf 0.13 refuses a manifest or local config that holds a
- * `shelves` key, whatever its value, and it drops every key it does not know
- * when it saves. A project with a plugin therefore carries this string under
- * `shelves`, so 0.13 stops before it can drop the `plugins` array.
- * `capshelf data upstream` saves the manifest without a lock read, so lock
- * version 5 alone does not stop it. Federation uses an array, so this string
- * can never be a federation config.
+ * Capshelf 0.13 refuses a `shelves` key but drops unknown keys on save, so a
+ * plugin project carries this string there to stop it before it drops
+ * `plugins`; federation uses an array, so no clash.
  */
 import { isConfigObject, type ConfigValue } from "./config-values";
 
@@ -17,10 +13,8 @@ export function fenceFor(pluginCount: number): { shelves?: string } {
 }
 
 /**
- * True when a parsed JSON document carries a `shelves` key with any value
- * (including `null`). Reserved by the federation spec; see
- * `assertFenceOrFederation`. Shared by manifest.ts and local-config.ts, which
- * enforce the same reservation.
+ * `shelves` is reserved by the federation spec, so a key with any value, even
+ * null, counts.
  */
 export function hasShelvesKey(value: ConfigValue): boolean {
   return isConfigObject(value) && "shelves" in value;

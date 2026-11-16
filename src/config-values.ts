@@ -12,7 +12,6 @@ export interface ConfigObject {
   [key: string]: ConfigValue;
 }
 
-/** The JSON value model as a zod schema, for documents zod validates. */
 export const ConfigValueSchema: z.ZodType<ConfigValue> = z.lazy(() =>
   z.union([
     z.null(),
@@ -24,7 +23,6 @@ export const ConfigValueSchema: z.ZodType<ConfigValue> = z.lazy(() =>
   ]),
 );
 
-/** The object member of the JSON value model as a zod schema. */
 export const ConfigObjectSchema: z.ZodType<ConfigObject> = z.record(
   z.string(),
   ConfigValueSchema,
@@ -69,15 +67,9 @@ export function mergeConfigValues(
 }
 
 /**
- * Put the managed contribution on top of the local base of a generated output.
- *
- * This differs from `mergeConfigObject` only for arrays. A local element that
- * equals a managed element is dropped, and the managed elements follow the
- * local ones. Other local elements keep their order and their duplicates. So
- * the output has one canonical order, and `removeManagedValue` followed by this
- * function gives the same output again: a second `apply` writes nothing.
- * Fragment-to-fragment merging keeps `mergeConfigValues`, so the documented
- * manifest order of managed elements does not change.
+ * Differs from `mergeConfigObject` only for arrays: managed elements go after
+ * local ones, deduped, so remove-then-overlay is idempotent and a second
+ * `apply` writes nothing.
  */
 export function overlayManagedConfig(
   base: ConfigObject,
@@ -221,7 +213,6 @@ export function stableSortConfig(
   if (!isConfigObject(value)) return value;
 
   const out: ConfigObject = {};
-  // UTF-16 code-unit order, the same order the default `sort()` used.
   const entries = Object.entries(value).sort(([left], [right]) =>
     left < right ? -1 : left > right ? 1 : 0,
   );
@@ -264,11 +255,6 @@ export function defineConfigProperty(
   });
 }
 
-/**
- * The boundary predicate: whether a value of unknown origin is a plain object
- * (`Object.prototype` or a null prototype). Class instances, `Map`s, and
- * `Date`s are not config objects even though they are objects.
- */
 export function isPlainConfigObject(value: unknown): value is ConfigObject {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return false;
@@ -278,9 +264,9 @@ export function isPlainConfigObject(value: unknown): value is ConfigObject {
 }
 
 /**
- * The object member of `ConfigValue`, for values already parsed. The body
- * repeats the boundary predicate on purpose: a shared helper would take the
- * broad `object` type, and a call into the `unknown` predicate would widen.
+ * The body repeats the plain-object check on purpose: a shared helper would
+ * take broad `object`, and calling the `unknown` predicate would widen the
+ * type.
  */
 export function isConfigObject(
   value: ConfigValue | undefined,
