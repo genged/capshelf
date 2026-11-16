@@ -1,14 +1,7 @@
-/**
- * Pure search machinery for `capshelf search`: whitespace-split terms, AND
- * semantics, case-insensitive substring matching over four weighted fields,
- * and deterministic result ordering. No fuzzy matching, no index, no
- * dependencies — predictable for agents and trivially testable.
- */
 import { METADATA_SIDECAR } from "./identity";
 
 export type SearchFieldName = "name" | "tags" | "description" | "content";
 
-/** Per-field weights: an item's score sums the best field each term hit. */
 export const FIELD_WEIGHTS: Record<SearchFieldName, number> = {
   name: 8,
   tags: 4,
@@ -16,17 +9,15 @@ export const FIELD_WEIGHTS: Record<SearchFieldName, number> = {
   content: 1,
 };
 
-/** Content files larger than this are skipped (binary/log heuristics). */
+/** Larger files are skipped as likely binary or logs. */
 export const MAX_SEARCHABLE_CONTENT_BYTES = 256 * 1024;
 
 export interface SearchContentFile {
-  /** Path relative to the item root, e.g. "SKILL.md". */
   relPath: string;
   content: string;
 }
 
 export interface SearchableItem {
-  /** Kind-qualified name, e.g. "skills/security-review". */
   name: string;
   tags: string[];
   description?: string;
@@ -36,9 +27,7 @@ export interface SearchableItem {
 export interface SearchMatch {
   term: string;
   field: SearchFieldName;
-  /** For content matches: the first matching file's relative path. */
   file?: string;
-  /** Human annotation detail (matched tag value or content file path). */
   detail?: string;
 }
 
@@ -51,11 +40,6 @@ export function splitTerms(query: string): string[] {
   return query.split(/\s+/).filter((term) => term.length > 0);
 }
 
-/**
- * Whether a file's content participates in search. Skips the metadata
- * sidecar itself (its fields are already structured inputs), oversize files,
- * and files containing a NUL byte (binary heuristic).
- */
 export function isSearchableContent(
   relPath: string,
   content: Uint8Array,
@@ -66,11 +50,6 @@ export function isSearchableContent(
   return true;
 }
 
-/**
- * Match every term (AND) against the item's fields. Each term scores the
- * best (highest-weight) field it hits; a term hitting nothing disqualifies
- * the item. Returns null on no match or an empty term list.
- */
 export function matchItem(
   terms: string[],
   item: SearchableItem,
@@ -87,7 +66,6 @@ export function matchItem(
   return { score, matches };
 }
 
-/** Sort by score descending, then kind-qualified name ascending. */
 export function compareResults(
   a: { score: number; name: string },
   b: { score: number; name: string },
@@ -98,7 +76,6 @@ export function compareResults(
   return 0;
 }
 
-/** Unique `field(detail)` annotations for the human `matched:` column. */
 export function matchAnnotations(matches: SearchMatch[]): string[] {
   const out: string[] = [];
   for (const match of matches) {

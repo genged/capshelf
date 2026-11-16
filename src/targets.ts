@@ -15,16 +15,10 @@ export interface ScopedTarget {
 }
 
 export interface ScopeFilter {
-  /** Restrict to project scope (used by `status --project`). */
   project?: boolean;
-  /** Restrict to local scope. */
   local?: boolean;
 }
 
-/**
- * The data-repo item of each target and the commit its lock entry pins. A
- * target with no data entry is left out.
- */
 export function pinnedDataItems(
   targets: readonly ScopedTarget[],
   projectLock: Lock,
@@ -39,10 +33,8 @@ export function pinnedDataItems(
 }
 
 /**
- * Every lock key a ref maps to across the project and local locks, honoring a
- * scope filter. This is the one definition of "what does this ref point at",
- * shared by apply/update/status so a ref can't resolve differently depending
- * on the verb.
+ * The single definition of what a ref points at, so apply, update, and status
+ * cannot resolve it differently.
  */
 export function matchRefAcrossScopes(
   projectLock: Lock,
@@ -69,24 +61,9 @@ export function matchRefAcrossScopes(
 }
 
 /**
- * Refuse a bare ref that names a remote row and a shelf item at once.
- *
- * For a bare ref, `remoteKeysForRef` matches on name across both remote
- * kinds, `skills` and `plugins`. `add <url>` checks only its own
- * `<kind>/<name>` against the two locks, so a project can track `mcp/pdf` in
- * its shelf and pull `skills/pdf` or `plugins/pdf` from a URL. `apply` and
- * `update` resolve the remote row first, so without this the remote row would
- * win `capshelf apply pdf` outright and leave the shelf item unconverged with
- * nothing reported.
- * `resolveTrackedTarget` already refuses an ambiguous bare ref inside one
- * population; this is the same rule across two.
- *
- * Naming the kind does not settle it. A remote row is kind `skills` or
- * `plugins`, so `skills/pdf` is exactly as split as a bare `pdf` when the
- * shelf tracks that name too — the D18 "an adopt did not finish" state, which
- * `status` reports and `--strict` fails on, and which is reached by an
- * interrupted adopt. A ref that matches only one population passes through,
- * whatever its shape.
+ * A ref matching both a remote row and a shelf item is refused: remote rows
+ * resolve first and would silently win, leaving the shelf item unconverged. A
+ * ref matching one population passes.
  */
 export function assertRefNotSplitAcrossPopulations(
   projectLock: Lock,
@@ -105,18 +82,9 @@ export function assertRefNotSplitAcrossPopulations(
 }
 
 /**
- * The refusal for a name two populations hold, shared so `apply`, `update`, and
- * `rm` cannot drift apart on it.
- *
- * "Use kind/name" is not the answer here and would be useless advice when both
- * owners are `skills/<name>`. Naming `rm` would be worse than useless: `rm`
- * refuses this state too, so the hint would send the user back to a refusal.
- * The adopt is the one command that resolves it, and it is what `status`
- * already prints for the same rows.
- *
- * `owners` carries at least one remote key (`assertRefNotSplitAcrossPopulations`
- * never calls this with none), so its kind is read from the first one for the
- * hint — the same kind the row itself holds.
+ * Shared so apply, update, and rm refuse identically. The hint is the adopt
+ * because `kind/name` cannot separate owners that are both `skills/<name>`, and
+ * `rm` refuses this state too.
  */
 export function splitPopulationRefusal(
   name: string,
@@ -133,14 +101,6 @@ export function splitPopulationRefusal(
   );
 }
 
-/**
- * Resolve a single ref to exactly one tracked target, or throw the standard
- * errors that apply and update must report identically: a skills.sh-managed
- * external skill (PreconditionError, verb-specific message), a ref that isn't
- * tracked (NotFoundError), or a ref that is ambiguous across scopes (Error).
- * `verb` is the present participle used in the external-skill refusal, e.g.
- * "applying" or "updating".
- */
 export async function resolveTrackedTarget(
   project: string,
   projectLock: Lock,

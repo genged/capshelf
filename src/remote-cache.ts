@@ -1,14 +1,6 @@
 /**
- * The clone cache for skills pulled from repositories outside the shelf.
- *
- * `$XDG_DATA_HOME/capshelf/remote/<host>/<owner…>/<repo>`, beside the existing
- * `data/` bootstrap cache and built from the same segment rule. The path is
- * derived from the upstream on every read and is never stored: a recorded
- * absolute path would let stale machine state decide which objects a pin reads.
- *
- * Only `add <url>`, `add --list`, and `status --check-upstream` reach the
- * network through this module. `apply`, `update`, and `rm` read whatever the
- * cache already holds.
+ * The path is derived from the upstream on every read and never stored, so
+ * stale machine state cannot decide which objects a pin reads.
  */
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -31,7 +23,6 @@ export function remoteCachePath(
 
 export interface RemoteCacheState {
   path: string;
-  /** False when the path holds no clone. */
   present: boolean;
 }
 
@@ -45,11 +36,9 @@ export function remoteCacheState(
 
 export interface EnsureRemoteCacheResult {
   path: string;
-  /** True when this call created the clone. */
   cloned: boolean;
 }
 
-/** Clone when absent, validate when present. Network on the clone path only. */
 export async function ensureRemoteCache(
   cloneUrl: string,
   upstream: string,
@@ -67,13 +56,10 @@ export async function ensureRemoteCache(
 export interface RemoteFetchResult {
   ok: boolean;
   stderr: string;
-  /** HEAD of the ref after the fetch, or null when the ref does not resolve. */
   head: string | null;
-  /** Commits the ref gained since `since`, or null when it is not computable. */
   ahead: number | null;
 }
 
-/** `git fetch origin` in the cache, then resolve `ref`. Network. */
 export async function fetchRemoteCache(
   cachePath: string,
   ref: string,
@@ -95,36 +81,29 @@ export async function fetchRemoteCache(
 }
 
 /**
- * Resolve `ref` in the cache without any network.
- *
- * Remote-tracking first: the cache clone's own local branch is whatever `git
- * clone` checked out and never moves again, so it would answer with the
- * install-time commit forever.
+ * Remote-tracking refs come first: the clone's local branch never moves after
+ * `git clone`, so it would answer with the install-time commit forever.
  */
 export async function resolveCachedRef(
   cachePath: string,
   ref: string,
 ): Promise<string | null> {
-  // Every ref reaching here came through the URL parser or the remotes-lock
-  // schema, both of which refuse an option-shaped name. A ref that did not is
-  // simply unresolvable, which is what the callers already handle.
+  // Reject unsafe Git ref syntax here even when callers have already validated
+  // it.
   if (!isSafeGitRef(ref)) return null;
   for (const candidate of [`refs/remotes/origin/${ref}`, `refs/tags/${ref}`]) {
     const resolved = await resolveCommit(cachePath, candidate);
     if (resolved !== null) return resolved;
   }
-  // The bare name last, and never when it would resolve the clone's own local
-  // branch. `git clone` checks one out and it never moves again, so a branch
-  // deleted upstream would keep resolving from it forever — reported as a
-  // healthy ref, and pinned from by a later update. This fallback exists for a
-  // raw commit id, which no local branch can shadow.
+  // Bare name is tried last and never when it matches the clone's local branch:
+  // `git clone` checks one out that never moves, so a branch deleted upstream
+  // would still resolve. The fallback exists for raw commit ids.
   if ((await resolveCommit(cachePath, `refs/heads/${ref}`)) !== null) {
     return null;
   }
   return await resolveCommit(cachePath, ref);
 }
 
-/** The cache clone's own default branch, which `git clone` took from origin. */
 export async function defaultCachedBranch(
   cachePath: string,
 ): Promise<string | null> {

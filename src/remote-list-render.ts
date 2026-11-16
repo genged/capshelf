@@ -1,10 +1,6 @@
 /**
- * The text that `capshelf add <url> --list` prints, and the plugin facts
- * block that a consent prompt prints.
- *
- * Pure: these functions return lines and print nothing. They live outside
- * `src/commands/add-remote.ts` so that `src/commands/update.ts` can print the
- * same facts block without importing another command module.
+ * Lives outside `add-remote.ts` so `update.ts` can print the same facts block
+ * without importing another command module.
  */
 import { PRODUCT_NAME } from "./identity";
 import { sanitizeDisplayText } from "./pick-core";
@@ -27,11 +23,6 @@ import type {
 } from "./remote-discovery";
 import { shellCommand } from "./shell-quote";
 
-/**
- * Whether a consent prompt (install's, or `src/commands/update.ts`'s pin-move
- * prompt) owes the reader the `renderPluginFacts` block: a plugin skill that
- * uses something outside itself, or whose facts could not all be read.
- */
 export function factsWarnOnInstall(
   facts: SkillPluginFacts | undefined,
 ): boolean {
@@ -42,26 +33,18 @@ export function factsWarnOnInstall(
 }
 
 /**
- * Repository-controlled text, made safe to paint.
- *
- * File paths come from `ls-tree` and a description comes from the item's YAML;
- * Git allows almost any byte in a path and YAML carries escapes freely. The
- * consent prompt is the one gate authorizing third-party code to run with the
- * user's permissions, so a repository able to emit ESC or OSC bytes into it
- * could redraw the prompt's own text — hide a file from the list, fake a
- * license line, or drive the terminal. `sanitizeDisplayText` is the same filter
- * the picker applies to the same class of text.
+ * Repository-controlled text is sanitized because the consent prompt gates
+ * third-party code, and ESC/OSC bytes in paths or descriptions could redraw it
+ * or drive the terminal.
  */
 export function safe(text: string): string {
   return sanitizeDisplayText(text);
 }
 
-/** Singular everywhere a count can be one: "1 skill", "2 skills". */
 export function plural(count: number, word: string): string {
   return count === 1 ? word : `${word}s`;
 }
 
-/** A size for a person: bytes, then kB and MB in powers of 1000. */
 export function formatBytes(bytes: number): string {
   if (bytes < 1000) return `${bytes} B`;
   const kb = bytes / 1000;
@@ -69,10 +52,6 @@ export function formatBytes(bytes: number): string {
   return `${(kb / 1000).toFixed(1)} MB`;
 }
 
-/**
- * The skill row's "uses" column. "" when the candidate is not a plugin
- * skill or matches none of the four checks and its facts are complete.
- */
 export function usesLabel(facts: SkillPluginFacts | undefined): string {
   if (facts === undefined) return "";
   const reasons = facts.usesPluginParts.map(
@@ -94,27 +73,14 @@ const USE_PART_LABELS: Record<PluginFactReason, string> = {
   "outside-links": "outside links",
 };
 
-// A template string, not interpolation: this is the literal text the facts
-// block prints, the plugin-root variable name a skill's own source reads.
 const PLUGIN_ROOT_VARIABLE = `\${CLAUDE_PLUGIN_ROOT}`;
 
-/**
- * The consent prompt's facts block: what a plugin skill reaches outside its
- * own directory, by reason, and what that costs an install that copies the
- * skill directory only. Exported so `src/commands/update.ts` can print the
- * same block when a skill's plugin facts change at the new commit.
- *
- * Pure: the caller decides whether anything here is worth printing at all
- * (`factsWarnOnInstall`) — this only renders the lines once that is decided.
- */
 export function renderPluginFacts(facts: SkillPluginFacts): string[] {
   const lines: string[] = [
     `  ! this skill uses parts of the ${safe(facts.plugin.name)} plugin that are not installed:`,
   ];
-  // The column width is the widest label *present in this block*, plus a
-  // two-space gutter — not the widest of all four possible labels. Basing it
-  // on every possible label would give "outside links" (already the widest)
-  // zero gutter of its own whenever it is the longest one shown.
+  // Width is based on the labels present, not all four, so the widest shown
+  // label always keeps its own gutter.
   const labelWidth =
     Math.max(
       ...facts.usesPluginParts.map((use) => USE_PART_LABELS[use.reason].length),
@@ -142,11 +108,6 @@ export function renderPluginFacts(facts: SkillPluginFacts): string[] {
   return lines;
 }
 
-/**
- * The picker's unit count: "3 plugins", "2 plugins and 3 skills", or
- * "4 skills" when the offer holds no plugin. The no-terminal refusal and the
- * D9 question both use it.
- */
 export function unitCount(offer: PickerOffer): string {
   const skills = `${offer.skills.length} ${plural(offer.skills.length, "skill")}`;
   if (offer.plugins.length === 0) return skills;
@@ -155,9 +116,8 @@ export function unitCount(offer: PickerOffer): string {
 }
 
 /**
- * The picker row's `detail` for a whole plugin: its skill and agent counts,
- * then the other parts it ships. Capshelf reads the hooks only at consent,
- * on the pinned tree, so this row names the `hooks/` part and no count.
+ * Hooks are read only at consent on the pinned tree, so this row names `hooks/`
+ * without a count.
  */
 export function pluginPickDetail(
   plugin: DiscoveredPlugin,
@@ -171,32 +131,17 @@ export function pluginPickDetail(
     : `${counts} · also ships: ${others.join(", ")}`;
 }
 
-/**
- * Join parts as English prose: one part alone, two joined by "and", three
- * or more comma-separated with a final "and".
- */
 function englishJoin(parts: readonly string[]): string {
   if (parts.length <= 1) return parts.join("");
   if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
   return `${parts.slice(0, -1).join(", ")}, and ${parts.at(-1)}`;
 }
 
-/**
- * `summaryLength` is the line count up to and including the `elsewhere`
- * line, or the last header line present when there is no `elsewhere` line,
- * plus the one blank line printed after it. A caller can slice `lines` at
- * this index to print the D9 "ask before a long list" summary before
- * asking whether to show the rest.
- */
 export interface CandidateListRender {
   lines: string[];
   summaryLength: number;
 }
 
-/**
- * The `--list` text output, as plain lines, with no console calls — exported
- * so the D9 summary and the picker's plugin detail can reuse these lines.
- */
 export function renderCandidateList(input: {
   url: string;
   upstream: string;
@@ -221,8 +166,6 @@ export function renderCandidateList(input: {
   );
 }
 
-/** The `found 0 skills` early return, and the layout-only format unchanged
- * by byte, for a repository with no plugin at all. */
 function renderRepositoryList(
   lines: string[],
   url: string,
@@ -234,8 +177,6 @@ function renderRepositoryList(
     lines.push(
       `  found     ${candidates.length} ${plural(candidates.length, "skill")}`,
     );
-    // D3: a catalog can name only sources outside this repository. A
-    // capshelf shelf names none, so its listing stays as it was (D2).
     if (elsewhere !== null) lines.push(elsewhere);
     if (candidates.length === 0) return { lines, summaryLength: lines.length };
     lines.push("");
@@ -255,10 +196,6 @@ function renderRepositoryList(
     return { lines, summaryLength: lines.length };
   }
 
-  // Plugin D5, 2026-10-20: a plugin that installs whole is a tree node and a
-  // picker unit, even with no skill. With one or more, the `found` line counts
-  // the picker unit. Otherwise it counts skills and the plugins that hold one,
-  // and a commands-only plugin gets the `no skills` line.
   const offer = pickerOffer(discovery);
   const whole = new Map(
     offer.plugins.map((offered) => [offered.plugin.source, offered.whole]),
@@ -300,11 +237,6 @@ function renderRepositoryList(
   );
   if (noSkillPlugins.length > 0) {
     const dirs = noSkillPlugins.map((p) => safe(p.source)).join(", ");
-    // Each part in the order its first no-skill plugin ships it, not
-    // `PLUGIN_PARTS`'s own order: "plugins/insecure-defaults,
-    // plugins/git-cleanup  (commands and workflows only)" names `commands`
-    // first because `insecure-defaults` (listed first) ships it, even
-    // though `PLUGIN_PARTS` puts `workflows` ahead of `commands`.
     const ships: PluginPart[] = [];
     for (const plugin of noSkillPlugins) {
       for (const part of plugin.ships) {
@@ -317,8 +249,6 @@ function renderRepositoryList(
   }
   if (elsewhere !== null) lines.push(elsewhere);
   lines.push("");
-  // Plugin D5: the whole-plugin line only when a plugin installs whole. It
-  // names the first one in the listing.
   const firstWhole = offer.plugins[0]?.plugin;
   const footer = [
     ...(firstWhole === undefined ? [] : [wholePluginLine(url, firstWhole)]),
@@ -330,8 +260,6 @@ function renderRepositoryList(
   }
   const summaryLength = lines.length;
 
-  // Plugin D5, 2026-10-20: the tree prints each plugin with its skills
-  // first, then the skills that no plugin holds.
   const renderOrder: RemoteSkillCandidate[] = [];
   const pluginRows = candidates.filter((c) => c.plugin !== undefined);
   const nameWidth =
@@ -351,8 +279,6 @@ function renderRepositoryList(
       plugin.ships.length > 0
         ? `   also ships: ${plugin.ships.join(", ")}`
         : "";
-    // A plugin that installs whole names itself and its manifest
-    // description, so the tree shows what the picker offers.
     const offered = whole.get(plugin.source);
     const wholeLabel =
       offered === undefined
@@ -390,7 +316,6 @@ function renderRepositoryList(
     lines.push("");
   }
 
-  // A listing of whole plugins with no skill at all has no skill to name.
   if (renderOrder.length > 0) {
     const firstSubpath = firstSubpathWithNoFacts(renderOrder).subpath;
     lines.push(
@@ -407,31 +332,20 @@ function renderRepositoryList(
   return { lines, summaryLength };
 }
 
-/**
- * Plugin D5: one footer line when the listing holds a plugin that installs
- * whole. It names the URL the user typed and that plugin's path, quoted like
- * the other footer lines.
- */
 function wholePluginLine(url: string, plugin: DiscoveredPlugin): string {
   return `  install a whole plugin:  ${safe(shellCommand([PRODUCT_NAME, "add", url, "--path", plugin.source]))}`;
 }
 
 /**
- * Plugin D13: capshelf writes nothing for Codex, so a listing that offers a
- * whole plugin says what Codex reads from it. Printed under the footer line.
+ * Capshelf writes nothing for Codex, so the listing footer says Codex sees only
+ * a plugin's skills.
  */
 const CODEX_SKILLS_ONLY_LINE = "  Codex sees the skills only.";
 
-/**
- * Whether a plugin holds a skill. Every plugin count in the listing uses this
- * one test: the `found` line, the `no skills` line, and the D9 question.
- */
 export function hasSkills(plugin: DiscoveredPlugin): boolean {
   return plugin.skillDirs.length > 0;
 }
 
-/** D3: one line that names every catalog entry whose source is outside this
- * repository, or null when there is none. */
 function elsewhereLine(discovery: RemoteDiscovery): string | null {
   const elsewhere = discovery.skipped.filter(
     (s) => s.reason === "external-source",
@@ -440,7 +354,6 @@ function elsewhereLine(discovery: RemoteDiscovery): string | null {
   return `  elsewhere  ${elsewhere.map((s) => safe(s.name)).join(", ")}  (sources outside this repository, not read)`;
 }
 
-/** D10: `--list --path <plugin dir>` lists one plugin's skills. */
 function renderPluginList(
   lines: string[],
   url: string,
@@ -486,12 +399,6 @@ function renderPluginList(
   return { lines, summaryLength };
 }
 
-/**
- * The first plugin skill in listing order with no `usesPluginParts` and
- * complete facts, for the "install one" example. Falls back to the first
- * candidate in that order when none qualifies — which may itself be a
- * layout skill with no plugin facts at all.
- */
 function firstSubpathWithNoFacts(
   renderOrder: readonly RemoteSkillCandidate[],
 ): RemoteSkillCandidate {
