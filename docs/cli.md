@@ -2670,13 +2670,18 @@ metadata and never adopts the user skill.
 | code | meaning |
 |---|---|
 | 0 | success |
-| 1 | generic error (missing args, bad config, I/O) |
+| 1 | generic error (missing or extra args, bad config, I/O) |
 | 2 | item or bundle not found in data repo |
 | 3 | conflict or refused precondition (project is already initialized, a destructive `add`/`apply`/`update`/`rm`/`revert`/marketplace sync lacks consent, a plugin consent point lacks consent, a project lock is an older version than this capshelf writes, a second item would install into one skill folder, promote would clobber, a system or externally managed item was selected, an untracked target would be overwritten, the data repo ignores a file that a `share` or `promote` commit must contain, a bundle failed preflight, an interactive `add`, `share`, or `promote` had a selection fail or had no usable terminal, `add` was given `<something>/<name>` where the something is not an item kind, or data sync cannot run safely) |
 | 4 | drift detected (for `status --strict`), upstream verification failed, or `data sync` needs human action (diverged history, or upstream commits blocked by a dirty worktree) |
 | 5 | reserved for future unmet-requires checks (`add` with unmet `requires` warns and exits 0) |
 | 6 | no data repo configured for this project (pass `--data`, set `.capshelf/local.json`, or `$CAPSHELF_HOME`) |
 | 7 | required dependency missing (`git` not found on `PATH`, or older than 2.40.0) |
+
+A command refuses an extra positional argument. It prints `too many arguments`
+and exits 1. The refusal comes before the command changes the project, its
+lock, or the data repo. A command that takes a list, such as
+`update` or `search`, accepts many values.
 
 `apply` and `update` report a failed item as a row and continue with the
 others. When every failed row has the same exit code, the command exits with
