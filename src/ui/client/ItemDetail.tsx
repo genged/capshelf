@@ -15,11 +15,6 @@ import { copyText } from "./copy";
 import { DiffView } from "./DiffView";
 import { Icon, type IconName } from "./icons";
 
-/**
- * The sticky bar at the top of the detail pane. Today its primary button
- * copies the recommended command. A later release puts the run action in
- * the same place, so the pane does not change shape when the UI can write.
- */
 export function ActionBar({
   icon,
   tone,
@@ -48,10 +43,6 @@ export function ActionBar({
   );
 }
 
-/**
- * The pane's one primary button. The `c` key does the same while no field
- * has focus and no dialog is open.
- */
 function PrimaryCopy({ action }: { action: UiAction }): preact.JSX.Element {
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle");
   const timer = useRef<number | null>(null);
@@ -61,8 +52,7 @@ function PrimaryCopy({ action }: { action: UiAction }): preact.JSX.Element {
     if (timer.current !== null) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => setState("idle"), 1600);
   };
-  // The reset timer outlives renders. Only an unmount clears it, or the
-  // render that "Copied" causes would cancel its own reset.
+  // Clear only on unmount so the "Copied" render cannot cancel its reset.
   useEffect(
     () => () => {
       if (timer.current !== null) window.clearTimeout(timer.current);
@@ -109,7 +99,6 @@ function PrimaryCopy({ action }: { action: UiAction }): preact.JSX.Element {
   );
 }
 
-/** Crumbs, title, and the state sentence that every detail starts with. */
 export function DetailHead({
   crumbs,
   title,
@@ -123,9 +112,8 @@ export function DetailHead({
   backLabel: string;
   onBack: () => void;
   /**
-   * The message of the project's last read when it failed. The facts below
-   * are then from an older read. On a phone the list, which also says so,
-   * is hidden behind the detail, so the detail says it too.
+   * On a phone the list, which also shows the failure, is hidden behind the
+   * detail, so the detail repeats it.
    */
   refreshError?: string | null;
   children?: ComponentChildren;
@@ -161,11 +149,9 @@ export function ItemDetail({
 }: {
   item: UiItem;
   projectName: string;
-  /** The session's --data override, repeated on every printed command. */
   dataOverride: string | undefined;
   loadDiff: (view: DiffViewName) => Promise<UiDiffResponse>;
   onBack: () => void;
-  /** See `DetailHead`. */
   refreshError?: string | null;
 }): preact.JSX.Element {
   const updateCommand = capshelfCommand(dataOverride, [
@@ -250,8 +236,8 @@ export function ItemDetail({
           <section class="detail-section" aria-label="What changed">
             <h3 class="section-label">What changed</h3>
             <DiffView
-              // A refresh that moves a digest must drop the loaded diff,
-              // or the facts update while the comparison stays old.
+              // The digests are in the key so a refresh that moves one drops
+              // the loaded diff instead of leaving it stale.
               key={`${item.id}\t${item.row.lockedSha}\t${item.row.currentSha}\t${item.row.upstreamSha}`}
               item={item}
               loadDiff={loadDiff}
