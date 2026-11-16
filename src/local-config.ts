@@ -8,8 +8,8 @@ import { atomicWriteFile, ensureDir } from "./fs-utils";
 import type { MutationScope } from "./path-safety";
 
 /**
- * Git decides where `info/exclude\` lives, and a worktree or a submodule puts
- * it outside the project folder on purpose.
+ * Git decides where info/exclude lives, and a worktree or submodule puts it
+ * outside the project folder on purpose.
  */
 const GIT_DIR_EXEMPTION: MutationScope = {
   exempt: "the Git exclude file path comes from git rev-parse --git-path",
@@ -58,9 +58,9 @@ export async function loadLocalConfig(
   const path = localConfigPath(project);
   if (!existsSync(path)) return null;
   const raw: ConfigValue = JSON.parse(await readFile(path, "utf-8"));
-  // "shelves" is reserved for multi-shelf federation, with one exception: the
-  // plugin fence (M9). Fail loudly before zod strips it and a later
-  // saveLocalConfig silently deletes the federation config, or the fence.
+  // "shelves" is reserved for federation, except the plugin fence. Any other
+  // use fails loudly before zod strips it, because a later save would silently
+  // delete the federation config or the fence.
   assertFenceOrFederation(path, raw);
   if (isConfigObject(raw)) delete raw.shelves;
   const parsed = LocalConfigSchema.parse(raw);
@@ -177,12 +177,10 @@ export async function ensureLocalExcludes(
   );
 }
 
-/** The `.git/info/exclude` lines capshelf writes for a local-scope item. */
 export function localExcludeLines(kind: ItemKind, name: string): string[] {
   return localInstallPaths(kind, name, true);
 }
 
-/** True when a line was actually removed, so a caller can put back only that. */
 export async function removeLocalExcludes(
   project: string,
   kind: ItemKind,
@@ -207,7 +205,6 @@ export async function removeLocalExcludes(
   return true;
 }
 
-/** The first local install path that project Git already tracks, or null. */
 export async function trackedLocalInstallPath(
   project: string,
   kind: ItemKind,

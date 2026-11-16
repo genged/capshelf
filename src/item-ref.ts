@@ -29,9 +29,8 @@ export function parseItemRef(input: string): ItemRef {
     const [kind, name] = parts;
     if (!kind || !isItemKind(kind)) {
       const base = `invalid item kind "${kind ?? ""}" in "${input}" (supported: ${ITEM_KINDS.join(", ")})`;
-      // Bundles are not items (no lock entry, no sha); only add/show accept
-      // bundle refs, intercepted before this parser runs. Point agents there
-      // instead of dead-ending them.
+      // Bundles are intercepted by add/show before this parser, so point agents
+      // there instead of dead-ending.
       if (kind === "bundles") {
         throw new Error(
           `${base}\n  bundles are not items — they expand at install time; use: capshelf add ${raw}, capshelf show ${raw}`,
@@ -55,13 +54,6 @@ export function formatItemRef(ref: ItemRef): string {
   return ref.kind ? `${ref.kind}/${ref.name}` : ref.name;
 }
 
-/**
- * Whether `name` round-trips through the ref grammar as `kind/name` — the
- * boundary every typed ref passes. The parser trims, splits, and rejects
- * unsafe names, so a name with surrounding whitespace, a slash, a colon, or
- * an unsafe character parses into a different ref or none at all, and the
- * item it would create could never be addressed by a named command.
- */
 export function isAddressableItemName(kind: ItemKind, name: string): boolean {
   try {
     const parsed = parseItemRef(`${kind}/${name}`);
@@ -121,12 +113,10 @@ export function lockKeyForRef(
 
 function requireName(name: string, input: string): string {
   if (!name) throw new Error(`invalid item ref "${input}" (missing name)`);
-  // Shared traversal/absolute/option-name rejection — the same invariant the
-  // manifest and lockfile boundaries enforce, so a name like `../../evil` is
-  // refused here too, not just as a bare `..`.
+  // Shared traversal, absolute and option-name rejection, the same invariant
+  // the manifest and lockfile boundaries enforce, so `../../evil` is refused
+  // here too, not just a bare `..`.
   assertSafeItemName(name, `item ref "${input}"`);
-  // Same reservation as the parseItemRef guard: ":" in an item name would
-  // collide with the reserved shelf-qualified ref grammar.
   if (name.includes(":")) {
     throw new Error(
       `invalid item name "${name}" (":" is reserved for future shelf-qualified refs)`,

@@ -14,10 +14,8 @@ import { PRODUCT_NAME } from "./identity";
 import { homeRelative, normalizePath } from "./paths";
 
 /**
- * Classification of the `--data` input for `init`. A remote data repo URL is
- * bootstrap input only: it is cloned to `clonePath` once and every later
- * command operates on that local clone (the runtime invariant stays "local,
- * writable git working tree").
+ * For `init`, a remote `--data` URL is bootstrap input only: it is cloned once,
+ * and every later command uses the local writable clone.
  */
 export type ResolvedDataInput =
   | { kind: "local-path"; path: string }
@@ -29,22 +27,14 @@ export type ResolvedDataInput =
     };
 
 export interface ResolveDataInputOptions {
-  /** Base directory for relative local paths (defaults to process.cwd()). */
   cwd?: string;
-  /** Explicit clone destination (`init --data-dir`) for remote bootstrap. */
   dataDir?: string;
-  /** Environment override for tests (XDG_DATA_HOME lookup). */
   env?: Record<string, string | undefined>;
 }
 
 const REMOTE_URL_SCHEMES = /^(https?|ssh|git|file):\/\//i;
 const SCP_LIKE_REMOTE = /^git@[^:/]+:.+/;
 
-/**
- * True when the input is shaped like a git remote URL rather than a local
- * filesystem path. Shorthand such as `owner/repo` or `github:owner/repo` is
- * deliberately not matched; it is rejected by `resolveDataInput`.
- */
 export function isRemoteDataUrl(input: string): boolean {
   const trimmed = input.trim();
   return SCP_LIKE_REMOTE.test(trimmed) || REMOTE_URL_SCHEMES.test(trimmed);
@@ -77,13 +67,6 @@ export function resolveDataInput(
   throw rejectDataInput(input);
 }
 
-/**
- * Default bootstrap clone destination:
- *   $XDG_DATA_HOME/capshelf/data/<host>/<owner-path>/<repo>
- * falling back to ~/.local/share when XDG_DATA_HOME is unset. Derived from the
- * normalized remote identity, so credentials and one trailing `.git` are
- * already stripped.
- */
 export function defaultClonePath(
   upstream: string,
   env: Record<string, string | undefined> = process.env,
@@ -95,14 +78,13 @@ export function defaultClonePath(
 }
 
 /**
- * The per-upstream directory segments under a cache root. Shared with the
- * remote-skill cache so one upstream cannot land in two differently shaped
- * paths depending on which command created it.
+ * Shared with the remote-skill cache so one upstream never lands in two
+ * differently shaped paths.
  */
 export function cloneRelativeSegments(upstream: string): string[] {
   const url = new URL(upstream);
-  // host keeps a non-default port; sanitize ":" so the cache segment is a
-  // plain directory name (github.com:8443 -> github.com_8443).
+  // Sanitize `:` from a non-default port so the segment is a plain directory
+  // name.
   const host = (url.host.toLowerCase() || "localhost").replace(":", "_");
   const segments = url.pathname.split("/").filter(Boolean);
   return [host, ...segments];
@@ -121,25 +103,16 @@ function hasExplicitPathPrefix(input: string): boolean {
 }
 
 export interface EnsureCloneResult {
-  /** True when a fresh clone was created; false when a matching clone existed. */
   cloned: boolean;
 }
 
 /**
- * How a caller names the clone it owns, in the three refusals below.
- *
- * The validator is shared with the remote-skill cache, and its repair is not:
- * `capshelf init --data <local-path>` fixes a data repo cache and has nothing
- * to do with a skill pulled from a URL. Duplicating the validator to change
- * three sentences would put two origin checks in the codebase, so the wording
- * travels instead.
+ * Wording travels as labels because the validator is shared with the
+ * remote-skill cache but the repair advice differs.
  */
 export interface ClonePathLabels {
-  /** What to call the path in a refusal. */
   subject: string;
-  /** The repair block, already indented. */
   repair: string;
-  /** The line the partial-clone refusal adds above `repair`. */
   partialClone: string;
 }
 
@@ -150,12 +123,7 @@ const DATA_REPO_CLONE_LABELS: ClonePathLabels = {
     "the clone may be partial or corrupted; remove it and retry, or",
 };
 
-/**
- * Make sure `clonePath` holds a usable clone of `url`. Clones when the path is
- * absent; when it exists, verifies it is a git working tree whose `origin`
- * normalizes to `upstream`. Never fetches or pulls — after bootstrap the clone
- * is user-owned state.
- */
+/** Never fetches or pulls: after bootstrap the clone is user-owned state. */
 export async function ensureClone(
   url: string,
   clonePath: string,
@@ -202,8 +170,7 @@ export async function ensureClone(
     );
   }
 
-  // Guard against a partial clone (e.g. a killed clone process): origin can
-  // already be configured while no commit was ever checked out.
+  // A killed clone can leave origin configured with no commit checked out.
   const head = await sourceRead(clonePath, ["rev-parse", "--verify", "HEAD"]);
   if (head.exitCode !== 0) {
     throw new PreconditionError(
@@ -218,17 +185,12 @@ export async function ensureClone(
   return { cloned: false };
 }
 
-/**
- * `git clone` accepts an existing empty directory, so treat one the same as
- * an absent path.
- */
+/** `git clone` accepts an existing empty directory, so it counts as absent. */
 async function cloneTargetAbsent(clonePath: string): Promise<boolean> {
   if (!existsSync(clonePath)) return true;
   try {
     return (await readdir(clonePath)).length === 0;
   } catch {
-    // Not a directory: fall through to the existing-path validation, which
-    // reports it as "not a git working tree".
     return false;
   }
 }

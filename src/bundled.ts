@@ -54,10 +54,6 @@ export function systemTargetDir(
   return installedPath(project, item.kind, item.name, mode);
 }
 
-/**
- * Hash a system item the same way as a data item so drift detection
- * compares apples to apples (see master.ts shaOfItem).
- */
 export async function shaOfSystemItem(item: SystemItem): Promise<string> {
   const hasher = new Bun.CryptoHasher("sha256");
   const sorted = [...item.files].sort((a, b) =>
@@ -73,12 +69,8 @@ export async function shaOfSystemItem(item: SystemItem): Promise<string> {
 }
 
 /**
- * True when the install target already holds exactly this bundled item.
- *
- * An `init` interrupted after the system items were written but before the
- * lock was saved leaves such a directory behind with no lock entry. Without
- * this check the re-run — which is the documented recovery — would refuse its
- * own leftovers as an unmanaged target and the project would be stuck.
+ * Matches leftovers from an `init` interrupted before the lock was saved, so
+ * the documented re-run does not refuse them as an unmanaged target.
  */
 export async function installedMatchesSystemItem(
   project: string,
@@ -107,7 +99,6 @@ export async function installSystemItem(
 ): Promise<string> {
   const dst = systemTargetDir(project, item, mode);
   assertCanMaterializeInstalled(project, item.kind, item.name, mode);
-  // A mounted volume in the folder stays. See `removeInstalledTree`.
   const scope = { root: project };
   await removeInstalledTree(dst, scope);
   await ensureDir(dst, scope);

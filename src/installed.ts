@@ -39,7 +39,6 @@ export function itemOutputTargets(
   mode: InstallMode = detectInstallMode(project),
 ): ItemOutputTarget[] {
   const targets = unconfinedItemOutputTargets(project, kind, name, mode);
-  // Every builder result is confined before a caller can mutate it.
   for (const target of targets) assertConfinedSync(project, target.outputPath);
   return targets;
 }
@@ -120,12 +119,10 @@ export function installedPath(
         return assertNever(kind);
     }
   }
-  // Root invariant: an install destination is always inside the project, and
-  // so is every real path it resolves to. Every destructive caller
-  // (materialize/sync rm+rewrite) trusts this path, so a path that escapes —
-  // via a `..`/absolute item name or a symlinked parent — must never be
-  // returned. This backstops the per-boundary name validation rather than
-  // relying on it alone.
+  // Destructive callers trust this path, so it and every real path it resolves
+  // to must stay inside the project, whether the escape is a `..` or absolute
+  // item name or a symlinked parent. This backstops per-boundary name
+  // validation.
   assertConfinedSync(project, dst);
   return dst;
 }
@@ -189,9 +186,9 @@ export async function ensureInstallAliases(
 
   const dst = installedPath(project, kind, name, mode);
   const claudePath = claudeSkillPath(project, name);
-  // The alias folder must resolve inside the project. The link target is
-  // computed from the physical folder, because the OS resolves a relative
-  // link from there, not from the path as written.
+  // The alias folder must resolve inside the project. Compute the link target
+  // from the physical folder, because the OS resolves a relative link from
+  // there, not from the path as written.
   const physicalParent = assertConfinedSync(project, dirname(claudePath));
   const physicalDst = assertConfinedSync(project, dst);
   const stat = lstatOrNull(claudePath);
@@ -245,12 +242,9 @@ export function isInstalled(
 }
 
 /**
- * PIN-5: the installed content hash is filesystem work, full stop.
- *
- * It used to branch on whether the project was a Git worktree and hash the
- * Git-visible file list when it was — so an edit to the project's
- * `.gitignore` could move an item's computed state, and a `--local` item, put
- * in `.git/info/exclude` by capshelf itself, hashed as if it were empty.
+ * The installed content hash comes from the files on disk, so a project
+ * `.gitignore` edit or capshelf's own `.git/info/exclude` lines for a `--local`
+ * item do not change it.
  */
 export async function shaOfInstalled(
   project: string,
@@ -262,12 +256,6 @@ export async function shaOfInstalled(
   return shaOfItem(p);
 }
 
-/**
- * Which record owns an item, not where its bytes come from. Those were one
- * question until a third population separated them; `ContentSource` in
- * `src/item-source.ts` answers the other. A value here is a lock key prefix
- * and nothing more.
- */
 export type ItemSource = "data" | "system";
 
 export interface LockKeyParts {
@@ -312,11 +300,10 @@ function skillInstalledPath(
   if (stat?.isSymbolicLink()) {
     const symlinkTarget = physicalAliasTarget(physicalParent, claudePath);
     // The compatibility alias must resolve to the managed skill location.
-    // Materialize/sync delete-and-rewrite whatever path this returns, so
-    // following a stray or hostile symlink that points elsewhere would let it
-    // wipe an arbitrary directory. Refuse instead of following it.
+    // Materialize and sync delete and rewrite the returned path, so a symlink
+    // that points elsewhere would let them wipe an arbitrary directory. Refuse
+    // it instead of following it.
     if (!samePath(symlinkTarget, assertConfinedSync(project, canonical))) {
-      // A link that leaves the project is refused first, with exit 3.
       try {
         assertConfinedSync(project, claudePath);
       } catch (error) {
@@ -347,10 +334,9 @@ function skillInstalledPath(
 }
 
 /**
- * Where an alias points, as a real path. `resolve` alone only normalizes the
- * link text. It does not follow a symlink inside the target, so it cannot be
- * compared with `assertConfinedSync`, which returns real paths. A dangling
- * target keeps its missing tail, so a managed dangling alias still matches.
+ * `resolve` only normalizes link text and doesn't follow symlinks, so resolve
+ * the real path to compare with `assertConfinedSync`; a dangling target keeps
+ * its missing tail.
  */
 function physicalAliasTarget(
   physicalParent: string,

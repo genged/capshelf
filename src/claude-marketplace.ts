@@ -15,8 +15,8 @@ import { assertConfined } from "./path-safety";
 const ownerSchema = z
   .object({ name: z.string().min(1), email: z.string().min(1).optional() })
   .passthrough();
-// Every field except the name stays a free JSON value: an external entry is
-// preserved, never validated, and the managed test below reads the fields.
+// Fields other than name stay free JSON so external entries are preserved, not
+// validated.
 const pluginSchema = z
   .object({
     name: z.string().min(1),
@@ -49,11 +49,6 @@ const COMPONENT_FIELDS = new Set([
   "lspServers",
 ]);
 
-/**
- * The canonical skill refs of a managed entry, or null when the entry is
- * external: another source, a strict plugin, a version, a component field,
- * or a skill list that is empty or not entirely `./skills/<name>` paths.
- */
 function managedSkillRefs(plugin: ClaudePlugin): string[] | null {
   if (
     plugin.source !== "./" ||
@@ -127,11 +122,8 @@ export async function loadClaudeMarketplaceAtHead(
 }
 
 /**
- * The document at an arbitrary commit, for a repository capshelf does not own.
- *
- * A parse failure stays a throw here. Whether a caller can continue without
- * the document is the caller's question: discovery in a third-party repository
- * warns and carries on, and the shelf's own commands do not.
+ * Parse failures throw because only the caller knows whether it can continue:
+ * third-party discovery warns and goes on, the shelf's own commands do not.
  */
 export async function loadClaudeMarketplaceAtCommit(
   repo: string,
