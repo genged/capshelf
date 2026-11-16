@@ -11,10 +11,9 @@ import { PIN_DIGEST_PATTERN } from "./pin";
 import type { PinnedSource } from "./pin";
 import { PreconditionError } from "./errors";
 
-// A git object name (abbreviated or full, SHA-1 or SHA-256). Validated on load
-// so an attacker-supplied lockfile can't smuggle option-like values (e.g.
-// `--output=/path`) into the `git show <rev>:<path>` argv, where the trailing
-// `:<path>` defeats any `--` argument guard.
+// Validated on load so a hostile lockfile cannot smuggle option-like values
+// into `git show <rev>:<path>`, where the trailing `:<path>` defeats a `--`
+// guard.
 const GitCommitSchema = z
   .string()
   .regex(
@@ -23,9 +22,9 @@ const GitCommitSchema = z
   );
 
 /**
- * Version 4 resolves every `sourceCommit` to a full object name. An
- * abbreviation is a request for Git to guess, and two clones with different
- * object populations can guess differently.
+ * Lock versions 4 and later require every `sourceCommit` to be a full object
+ * name. An abbreviation is a request for Git to guess, and clones with
+ * different object populations can guess differently.
  */
 const FullGitCommitSchema = z
   .string()
@@ -45,18 +44,8 @@ const DataLockEntryV2Schema = z.object({
   appliedAt: z.string(),
   label: z.string().optional(),
   /**
-   * Intentional project-local divergence. Set only by `keep-local`, cleared
-   * only by `keep-local --unset`. This records *intent*, not a fact about
-   * current content: it survives `revert`, so a user can reset to the pinned
-   * base and start a fresh edit without losing the marker, and it survives a
-   * lock refresh (`refreshDataLockEntry`) so `update` and `sync` cannot
-   * silently revoke it.
-   *
-   * It means "do not reconcile this automatically", not "do not touch".
-   * `apply` and `update` skip the item. `revert` is the explicit user-driven
-   * override and reconciles through it behind the destructive-change consent
-   * gate. `promote` refuses: publishing would end the divergence the marker
-   * asserts, so the user must clear it first.
+   * Records intent, not content state: it survives `revert` and lock refresh,
+   * and means "do not reconcile automatically" rather than "do not touch".
    */
   local: z.literal(true).optional(),
   localReason: z.string().optional(),
@@ -147,11 +136,10 @@ export const LockV3Schema = withNeedsPairing(
 );
 
 /**
- * Version 4 has **no legacy data-entry variant**. The lock version describes
- * every entry in the file, so a union would keep two identity models alive in
- * every consumer until the last entry happened to re-pin — and a project with
- * one unreachable historical commit could stay mixed forever. `lock migrate`
- * builds a complete v4 candidate or writes nothing.
+ * Lock versions 4 and 5 have no legacy data-entry variant. A union would keep
+ * two identity models alive in every consumer, and a project with one
+ * unreachable historical commit could stay mixed forever. `lock migrate` builds
+ * a complete candidate or writes nothing.
  */
 export const LockV4Schema = withNeedsPairing(
   z.object({
@@ -160,11 +148,6 @@ export const LockV4Schema = withNeedsPairing(
   }),
 );
 
-/**
- * Version 5 is version 4 plus the `plugins` item kind (M10). The entry shape
- * does not change. Every writer requires version 5, as every writer required
- * version 4 before it.
- */
 export const LockV5Schema = withNeedsPairing(
   z.object({
     version: z.literal(5),
@@ -181,25 +164,19 @@ type PersistedDataLockEntryV4 = z.infer<typeof DataLockEntryV4Schema>;
 
 type NeedsFields = {
   /**
-   * Optional only for source-level compatibility with older test/client
-   * constructors. Both loaders always migrate these to explicit nulls, and
-   * both writers validate the required shape.
+   * Optional only so older constructors still compile; loaders always migrate
+   * these to explicit nulls and writers validate the required shape.
    */
   needs?: ItemNeeds | null;
   needsSourceCommit?: string | null;
 };
 
-/**
- * A data entry written by lock version 2 or 3: identity is `sha`, a hash of
- * the data repo *working tree*. Readable, never writable.
- */
 export type DataLockEntryV3 = Omit<
   PersistedDataLockEntryV3,
   "needs" | "needsSourceCommit"
 > &
   NeedsFields & { sourcePinDigest?: undefined };
 
-/** A data entry written by lock version 4: identity is the committed tree. */
 export type DataLockEntryV4 = Omit<
   PersistedDataLockEntryV4,
   "needs" | "needsSourceCommit"
@@ -216,10 +193,6 @@ export interface LockV3 {
   items: Record<string, LockEntry>;
 }
 
-/**
- * A lock written by version 4. Readable, never writable: version 5 is the
- * only writable shape now.
- */
 export interface LockV4 {
   version: 4;
   items: Record<string, LockEntryV4>;
@@ -231,13 +204,11 @@ export interface LockV5 {
 }
 
 /**
- * The runtime lock. Read-only and non-lock-writing commands accept any
- * version; every writer narrows to `WritableLock` through `assertWritableLock`
- * first, so an ordinary command can never silently upgrade a project.
+ * Writers narrow through `assertWritableLock` so an ordinary command can never
+ * silently upgrade a project's lock.
  */
 export type Lock = LockV3 | LockV4 | LockV5;
 
-/** The one shape a writer may save. */
 export type WritableLock = LockV5;
 
 export function emptyLock(): WritableLock {
@@ -250,10 +221,9 @@ export function isWritableLock(lock: Lock): lock is WritableLock {
 
 /**
  * The single gate that stops an ordinary command from writing an old lock.
- *
- * The alternative — migrating on the next natural re-pin — would rewrite every
- * entry in the file as a side effect of updating one item, and would surface an
- * unrelated blocker as an `add`, `move`, or `keep-local` failure.
+ * Migrating on the next re-pin instead would rewrite every entry as a side
+ * effect of updating one item, and would surface an unrelated blocker as an
+ * `add`, `move`, or `keep-local` failure.
  */
 export function assertWritableLock(lock: Lock, verb: string): WritableLock {
   if (isWritableLock(lock)) return lock;
@@ -266,11 +236,9 @@ export function assertWritableLock(lock: Lock, verb: string): WritableLock {
 }
 
 /**
- * The identity a lock entry records, whichever version wrote it, for display
- * and for equality against a value computed the same way. Comparisons that
- * decide whether content is correct must not use this: a v3 `sha` and a v4
- * `sourcePinDigest` answer different questions, and mixing them silently
- * would recreate the defect version 4 exists to remove.
+ * The identity a lock entry records, for display and for equality against a
+ * value computed the same way. Never use it to decide whether content is
+ * correct: a v3 `sha` and a v4 `sourcePinDigest` answer different questions.
  */
 export function entryIdentity(entry: LockEntry): string {
   if (entry.source === "system") return entry.sha;
@@ -316,16 +284,14 @@ export async function saveLocalLock(
 }
 
 /**
- * Serialize a complete v5 candidate and strict-parse it back. `lock migrate`
- * relies on this being the only writer: a serializer that dropped a digest has
- * to fail here, before any file is published, rather than after.
+ * Validates the complete v5 candidate against the schema before serializing, so
+ * an entry with a dropped digest fails before any file is published.
  */
 export function serializeLock(lock: WritableLock): string {
   const parsed = LockV5Schema.parse({ ...lock, version: LOCK_VERSION });
   return `${JSON.stringify(parsed, null, 2)}\n`;
 }
 
-/** The one field read before the version decides which schema applies. */
 const VersionProbe = z.object({ version: z.number().optional() });
 
 export function parseLock(value: ConfigValue): Lock {
@@ -349,10 +315,9 @@ export function parseLock(value: ConfigValue): Lock {
 }
 
 /**
- * D12: an older binary strips an unknown manifest array with no error, so a
- * plugin item is only safe once the lock version also gates it loudly. A
- * lock below version 5 refuses to hold a `plugins` key, which an older
- * `lock migrate` run could otherwise carry across unnoticed.
+ * An older binary silently strips unknown manifest arrays, so locks below
+ * version 5 refuse a `plugins` key rather than let an old `lock migrate` carry
+ * it across.
  */
 function refusePluginKeysBefore5(lock: Lock): void {
   if (lock.version === LOCK_VERSION) return;
@@ -367,9 +332,9 @@ function refusePluginKeysBefore5(lock: Lock): void {
 }
 
 /**
- * Version 2 gains explicit needs nulls in memory. Capshelf never writes an
- * intermediate v3 file: `lock migrate` feeds this straight into the complete
- * v4 candidate.
+ * Version 2 gains explicit needs nulls in memory only. Capshelf never writes an
+ * intermediate v3 file, because `lock migrate` feeds this straight into the
+ * complete candidate at the current lock version.
  */
 function normalizeV2(lock: z.infer<typeof LockV2Schema>): LockV3 {
   return {
@@ -393,7 +358,6 @@ export function needsEqual(a: ItemNeeds, b: ItemNeeds): boolean {
   );
 }
 
-/** True when the entry carries a needs snapshot and the commit it came from. */
 export function hasNeedsSnapshot(
   entry: DataLockEntry,
 ): entry is DataLockEntry & { needs: ItemNeeds; needsSourceCommit: string } {
@@ -411,9 +375,8 @@ function arraysEqual(a: string[], b: string[]): boolean {
 
 interface DataLockEntryInput {
   /**
-   * PIN-2. The pin arrives as one branded value built by `src/pin.ts`, so a
-   * call site cannot assemble `(digest, commit)` from parts that were never
-   * observed together.
+   * The pin is one branded value so a call site cannot assemble (digest,
+   * commit) from parts never observed together.
    */
   pin: PinnedSource;
   needs: ItemNeeds;
@@ -462,9 +425,6 @@ export function systemKey(kind: string, name: string): string {
   return `system/${kind}/${name}`;
 }
 
-/**
- * Build a lock key. Use dataKey/systemKey when source is known statically.
- */
 export function itemKey(
   source: "data" | "system",
   kind: string,
