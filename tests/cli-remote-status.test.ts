@@ -97,6 +97,35 @@ test(
 );
 
 test(
+  "status <remote ref> --project keeps an empty report",
+  async () => {
+    const { world, run } = await installOne();
+    const result = await run(
+      ["status", "skills/pdf", "--project", "--json"],
+      world.env,
+    );
+    expect(result.exitCode).toBe(0);
+    expect(objectItems(jsonOutput(result), "items")).toHaveLength(0);
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "status <unknown ref> --check-upstream prints no fetch line and exits 2",
+  async () => {
+    const { world, run } = await installOne();
+    const result = await run(
+      ["status", "skills/nope", "--check-upstream"],
+      world.env,
+    );
+    expect(result.exitCode).toBe(2);
+    expect(result.stdout.toString()).toBe("");
+    expect(result.stderr.toString()).toContain("skills/nope");
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
   "an edited remote skill reports drifted and names share --adopt, never promote",
   async () => {
     const { world, run } = await installOne();

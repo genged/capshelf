@@ -418,4 +418,68 @@ describe("cli integration", () => {
       4,
     );
   });
+
+  test("status refuses a ref that names nothing tracked or reported", async () => {
+    const project = await tempRepo("capshelf-status-unknown-project-");
+    const dataRepo = await tempRepo("capshelf-status-unknown-data-");
+    const run = runInProcess(project);
+    await addSkill(dataRepo, "hello", "hello\n");
+    await commitAll(dataRepo, "hello");
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/hello"])).exitCode).toBe(0);
+    const lockPath = join(project, ".capshelf", "capshelf.lock.json");
+    const lockBefore = await readFile(lockPath);
+
+    for (const args of [
+      ["status", "skills/helo"],
+      ["status", "skills/helo", "--json"],
+      ["status", "skills/helo", "--strict"],
+    ]) {
+      const result = await run(args);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout.toString()).toBe("");
+      expect(result.stderr.toString()).toContain(
+        "not tracked in this project: skills/helo",
+      );
+    }
+    expect(await readFile(lockPath)).toEqual(lockBefore);
+
+    const known = await run(["status", "skills/hello", "--json"]);
+    expect(known.exitCode).toBe(0);
+    expect(JSON.parse(known.stdout.toString()).count).toBe(1);
+  });
+
+  test("status keeps an empty report for a ref in the other scope or only external", async () => {
+    const project = await tempRepo("capshelf-status-scope-project-");
+    const dataRepo = await tempRepo("capshelf-status-scope-data-");
+    const run = runInProcess(project);
+    await addSkill(dataRepo, "hello", "hello\n");
+    await commitAll(dataRepo, "hello");
+    expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+    expect((await run(["add", "skills/hello"])).exitCode).toBe(0);
+
+    const other = await run(["status", "skills/hello", "--local", "--json"]);
+    expect(other.exitCode).toBe(0);
+    expect(JSON.parse(other.stdout.toString()).count).toBe(0);
+
+    await mkdir(join(project, ".agents", "skills", "outside"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(project, ".agents", "skills", "outside", "SKILL.md"),
+      "---\nname: outside\ndescription: outside\n---\noutside\n",
+    );
+    await writeFile(
+      join(project, "skills-lock.json"),
+      `${JSON.stringify({
+        version: 1,
+        skills: {
+          outside: { source: "acme/outside", computedHash: "abc" },
+        },
+      })}\n`,
+    );
+    const external = await run(["status", "skills/outside", "--json"]);
+    expect(external.exitCode).toBe(0);
+    expect(JSON.parse(external.stdout.toString()).external).toHaveLength(1);
+  });
 });
