@@ -1,20 +1,8 @@
 /**
- * `.capshelf/remotes.lock.json`: the record of every skill or plugin pulled
- * from a repository outside the shelf (spec D4).
- *
- * It is a separate document, not a third scope in the project lock. A remote
- * entry is not a `LockEntryV4` — it carries an upstream, a ref, and an item
- * root, and it carries no `needs` snapshot — so putting it in `Lock["items"]`
- * would widen the type every consumer of the project lock reads. The version 4
- * project lock is untouched by this file, and no project runs `lock migrate`
- * because a remote row exists.
- *
- * The file is gitignored. Every row is local scope, and a teammate who clones
- * the project gets none of them.
- *
- * The file moves to version 2 only when a row holds `plugins`: a skills-only
- * file stays version 1, so an older capshelf can still read it. The writer
- * computes the version from the rows every time; nothing sets it directly.
+ * Remote rows live in a separate file, not the project lock, because they are
+ * not `LockEntryV4` (no `needs`) and would widen the type every lock consumer
+ * reads. The file is gitignored (local scope) and is version 2 only when a row
+ * holds `plugins`, so older capshelf can read skills-only files.
  */
 import { z } from "zod";
 import { readFile } from "node:fs/promises";
@@ -34,14 +22,8 @@ import { ensureGitignored } from "./local-config";
 import { remotesLockPath } from "./paths";
 import { PIN_DIGEST_PATTERN } from "./pin";
 
-/**
- * The newest version this build understands, read or write. A file that
- * declares a higher number is refused with "upgrade capshelf" before it is
- * parsed any further.
- */
 export const REMOTES_LOCK_VERSION = 2 as const;
 
-/** The kinds a remote row may hold, by D4. */
 export const REMOTE_ITEM_KINDS = ["skills", "plugins"] as const;
 export type RemoteItemKind = (typeof REMOTE_ITEM_KINDS)[number];
 
@@ -54,10 +36,8 @@ function isRemoteItemKind(value: string | undefined): value is RemoteItemKind {
 const REMOTE_KEY_PREFIX = "remote";
 
 /**
- * Full object names only, for the same reason the project lock requires them:
- * an abbreviation is a request for Git to guess, and it would be guessing
- * inside a `git show <rev>:<path>` argv where a trailing `:<path>` defeats any
- * `--` guard.
+ * Full object names only: an abbreviation asks Git to guess, and in `git show
+ * <rev>:<path>` a trailing `:<path>` defeats any `--` guard.
  */
 const FullGitCommitSchema = z
   .string()
@@ -85,18 +65,15 @@ const RemoteLockEntrySchema = z
     upstreamPinDigest: SourcePinDigestSchema.optional(),
   })
   .superRefine((entry, ctx) => {
-    // A head must never sit beside no timestamp: it would claim a measurement
-    // nothing dates. The reverse is a real state — a check that reached the
-    // repository and found the recorded ref gone — so a timestamp alone is
-    // allowed, and `upstreamFacts` reads it as `missing_upstream`.
+    // A head without a timestamp would claim an undated measurement; a
+    // timestamp alone is valid (ref gone, read as `missing_upstream`).
     if (entry.upstreamHead !== undefined && entry.lastChecked === undefined)
       ctx.addIssue({
         code: "custom",
         message: "upstreamHead requires the lastChecked it was read at",
       });
-    // The measured digest may be absent while the head is present: that is a
-    // check which reached the repository and found the item no longer at its
-    // recorded subpath. The reverse cannot happen.
+    // A digest may be absent beside a head (item gone from its subpath), but
+    // never the reverse.
     if (
       entry.upstreamPinDigest !== undefined &&
       entry.upstreamHead === undefined
@@ -125,9 +102,8 @@ const RemotesLockSchema = z
         });
         continue;
       }
-      // D4: a version 1 file predates the `plugins` kind, so a plugins row
-      // there would be silently unreadable by capshelf 0.13. The writer
-      // never produces this combination; only a hand-edited file can.
+      // A version 1 file predates `plugins`, so capshelf 0.13 could not read
+      // such a row; only a hand-edited file can produce it.
       if (kind === "plugins" && lock.version === 1) {
         ctx.addIssue({
           code: "custom",
@@ -139,30 +115,19 @@ const RemotesLockSchema = z
   });
 
 export interface RemoteLockEntry {
-  /** Normalized upstream identity, the value `normalizeRemoteUrl` returns. */
   upstream: string;
-  /** The ref the user asked for, e.g. `main` or a tag. */
   ref: string;
-  /** Repository-relative item root, POSIX separated, `.` for the repo root. */
   subpath: string;
   sourceCommit: string;
   sourcePinDigest: string;
   appliedAt: string;
-  /**
-   * Set only by `status --check-upstream`, and only after a fetch that
-   * succeeded. `lastChecked` and `upstreamHead` move together or neither does,
-   * so a timestamp can never sit beside a head it did not measure.
-   */
+  /** Failed checks must not make a stale upstream measurement look fresh. */
   lastChecked?: string;
   upstreamHead?: string;
   /**
-   * The item's content digest at `upstreamHead`, which is what decides
-   * `update_available`. `upstreamHead` is reported to the user but never
-   * compared: two skills in one repository share a commit and would both look
-   * updated when either changes.
-   *
-   * Absent beside a set `upstreamHead` means the check reached the repository
-   * and the item was no longer at `subpath`.
+   * This digest, not `upstreamHead`, decides `update_available`, since skills
+   * in one repository share a commit. Absent beside a set head means the item
+   * left `subpath`.
    */
   upstreamPinDigest?: string;
 }
@@ -203,9 +168,8 @@ export function parseRemoteKey(key: string): RemoteKeyParts {
 }
 
 /**
- * The remote keys an item ref selects. An unsafe name matches nothing. With
- * no kind named, both kinds are searched — a bare name does not say which
- * one a repository published.
+ * With no kind named both kinds are searched, since a bare name doesn't say
+ * which one a repository published.
  */
 export function remoteKeysForRef(lock: RemotesLock, ref: ItemRef): string[] {
   if (ref.kind !== undefined && !isRemoteItemKind(ref.kind)) return [];
@@ -218,14 +182,9 @@ export function remoteKeysForRef(lock: RemotesLock, ref: ItemRef): string[] {
 }
 
 /**
- * `remoteKeysForRef`, refused when a bare name selects both kinds.
- *
- * The CLI never creates `remote/skills/<n>` beside `remote/plugins/<n>`: both
- * install to one folder, and D2 guard 5 refuses the second install. A hand
- * edit or an older state can still hold the pair. Then a bare name must not
- * pick one row silently (`rm` would delete one owner's row and keep the
- * other) or reconcile both into one folder (`apply`, `update`). This is the
- * refusal the shelf gives for the same ambiguity.
+ * Refuses a bare name that selects both kinds: both install to one folder, so
+ * picking one silently would let `rm` drop one owner's row or `apply`/`update`
+ * reconcile both into one folder.
  */
 export function remoteKeysForNamedRef(
   lock: RemotesLock,
@@ -265,20 +224,15 @@ export async function saveRemotesLock(
   const path = remotesLockPath(project);
   await ensureDir(dirname(path), { root: project });
   await atomicWriteFile(path, serializeRemotesLock(lock), { root: project });
-  // Deliberately not `saveLocalConfig`: D7 allows a project that holds remote
-  // rows and no data-repo binding, and `LocalConfigSchema` requires one.
+  // Deliberately not `saveLocalConfig`: a project may hold remote rows with no
+  // data-repo binding, which `LocalConfigSchema` requires.
   await ensureGitignored(project, REMOTES_LOCK_FILE);
 }
 
 /**
- * Serialize and strict-parse the result, the way `serializeLock` does. A
- * candidate that a refinement rejects has to fail here, before any file is
- * published.
- *
- * The version is computed from the rows, not carried from `lock.version`: a
- * file with a `plugins` row is written as version 2, and one with skill rows
- * only is written as version 1, so removing the last plugin row moves the
- * file back down and capshelf 0.13 can read it again.
+ * Strict-parse before publishing so a refined-out candidate fails first; the
+ * version is computed from the rows so removing the last plugin row lets
+ * capshelf 0.13 read the file again.
  */
 export function serializeRemotesLock(lock: RemotesLock): string {
   const version: 1 | 2 = Object.keys(lock.items).some(
@@ -290,7 +244,6 @@ export function serializeRemotesLock(lock: RemotesLock): string {
   return `${JSON.stringify(parsed, null, 2)}\n`;
 }
 
-/** The one field read before the version decides which schema applies. */
 const VersionProbe = z.object({ version: z.number().optional() });
 
 export function parseRemotesLock(value: ConfigValue): RemotesLock {

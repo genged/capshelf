@@ -51,14 +51,13 @@ import { currentSourceCommit } from "./pin";
 interface DiffableStatusRow {
   scope?: "project" | "local";
   source: RowSource;
-  /** Remote rows only: the cache and the item root its locked bytes are in. */
   remote?: { upstream: string; subpath: string };
   kind: ItemKind;
   name: string;
   state: string;
   /**
-   * The pin the row was built from. A remote row is in neither capshelf lock
-   * by A3, so this is the only place its locked identity can be read.
+   * The pin the row was built from. A remote row is in neither capshelf lock,
+   * so this is the only place its locked identity can be read.
    */
   lockedSha?: string;
   sourceCommit?: string;
@@ -75,17 +74,11 @@ interface StatusDiffOptions {
   row: DiffableStatusRow;
   view?: StatusDiffView;
   fragmentPlanner?: typeof planFragmentOutput;
-  /** The read memo of the diff pass. Reads at a full commit id reuse it. */
   memo?: GitReadMemo;
 }
 
 interface CopyDirectoryFilesOptions {
   project: string;
-  /**
-   * Where the locked bytes are. Null means they cannot be read at all — no
-   * repository, or a commit `status` already found unreachable — and every
-   * consumer degrades rather than failing.
-   */
   source: ContentSource | null;
   manifest: Manifest;
   kind: CopyDirectoryItemKind;
@@ -119,7 +112,6 @@ interface FileSide {
 
 type FileMap = Map<string, FileSide>;
 
-/** The path git prints, and accepts, for a side that does not exist. */
 const DEV_NULL = "/dev/null";
 
 export async function buildStatusDiff(
@@ -141,10 +133,8 @@ export async function buildStatusDiff(
   }
 
   const entry = opts.lock.items[`${row.source}/${row.kind}/${row.name}`];
-  // A remote row is in neither capshelf lock by A3, so the lookup above always
-  // misses and the locked endpoint would report no pin for a row that has one.
-  // `lockedContentSource` already reads the cache for the diff text; this is
-  // the same fact in the endpoint metadata a scripted consumer compares.
+  // A remote row is in neither capshelf lock, so the lock lookup misses; use
+  // the row's own pin.
   const lockedSha =
     row.source === "remote"
       ? (row.lockedSha ?? null)
@@ -164,9 +154,8 @@ export async function buildStatusDiff(
   };
 
   if (view === "upstream") {
-    // A remote row's upstream is a third-party repository, and reading its
-    // current content is a fetch. `status --diff` never fetches, so the view is
-    // unavailable rather than wrong, and it names the flag that measures it.
+    // Reading a remote's current content needs a fetch, which `status --diff`
+    // never does, so the view is unavailable rather than wrong.
     if (row.source === "remote") {
       return {
         ...base,
@@ -286,8 +275,6 @@ export async function buildStatusDiff(
         memo: opts.memo,
       });
       firstPath ||= plan.path;
-      // locked is the baseline (---), current is the new side (+++), so a local
-      // edit reads as an addition, matching `git diff` convention.
       const text = await unifiedDiff(
         `${plan.path} (locked)`,
         `${plan.path} (current)`,
@@ -419,10 +406,8 @@ export async function currentCopyDirectoryItemSha(
   const root = installedPath(opts.project, opts.kind, opts.name);
   if (!existsSync(root)) return null;
 
-  // Ordinary status only needs the locked path set so ignored-but-managed
-  // files still participate in the current hash. Loading every locked blob
-  // here used to run one `git show` subprocess per file even though none of
-  // those bytes were used; reserve that work for `status --diff`.
+  // Ordinary status needs only the locked path set, so reserve blob reads for
+  // `status --diff`.
   const expectedPaths = await expectedFilePathsForCopyItem(opts);
   const currentFiles = await readInstalledFiles(root, expectedPaths ?? []);
   return shaOfFileMap(currentFiles);
@@ -452,20 +437,9 @@ export async function copyDirectoryModeDrifted(
 }
 
 /**
- * The dirty canonical sources of a fragment item, as text.
- *
- * `status` is read-only, so it runs no program the data repo names (GIT-11).
- * That rules out asking Git for the diff: `git diff HEAD` converts the
- * working-tree file with `convert_to_git` before comparing it, so a
- * `filter=<driver>` attribute starts `filter.<driver>.clean`, and no
- * per-invocation flag disables a driver whose name is unknown. Reproduced —
- * with a rewriting clean filter the diff reported `{"v":REDACTED}` for a file
- * holding `{"v":2}`, which is the exact failure this design exists to close:
- * the one command a user runs to investigate disagreeing with the bytes.
- *
- * So both sides are read as bytes — the commit from the object database, which
- * applies no smudge filter, and the working tree from the filesystem — and
- * compared in the disposable, attribute-free directory `unifiedDiff` owns.
+ * `status` runs no program the data repo names, and `git diff HEAD` would start
+ * `filter.<driver>.clean`, so both sides are read as bytes and diffed in an
+ * attribute-free directory.
  */
 async function dataRepoDiff(
   dataRepo: string,
@@ -474,9 +448,8 @@ async function dataRepoDiff(
   const committed = await committedSources(dataRepo, relPaths);
   const staged = await stagedSourcePaths(dataRepo, relPaths);
   const untracked = await untrackedDataRepoFiles(dataRepo, relPaths);
-  // A file you staged but did not commit is in none of git's other answers:
-  // `HEAD` does not hold it, and `ls-files --others` skips it because git
-  // tracks it now. Without the index the path is compared by nothing.
+  // A staged-but-uncommitted file is absent from HEAD and from `ls-files
+  // --others`, so only the index reveals it.
   const paths = [
     ...new Set([...committed.keys(), ...staged.keys(), ...untracked]),
   ].sort();
@@ -495,8 +468,8 @@ async function dataRepoDiff(
       },
     );
     if (text) parts.push(text);
-    // `git rm --cached` leaves the file on disk, so neither side of the
-    // comparison above moves and the staged removal renders as nothing.
+    // `git rm --cached` leaves the file on disk, so neither compared side
+    // changes and the staged removal would render as nothing.
     if (before !== null && current !== null && !staged.has(relPath)) {
       parts.push(
         `${relPath}: staged for deletion; the file is still in the working tree`,
@@ -512,8 +485,8 @@ interface SourceSide {
 }
 
 /**
- * The canonical sources as `HEAD` holds them, read through `cat-file`, which
- * runs no smudge filter and consults no working tree.
+ * Read via `cat-file`, which runs no smudge filter and consults no working
+ * tree.
  */
 async function committedSources(
   dataRepo: string,
@@ -542,9 +515,8 @@ async function committedSources(
 }
 
 /**
- * The canonical paths the index holds. `ls-files --stage` reads the index
- * alone: it opens no working-tree file, so no clean filter runs. Only the
- * path set is used, which is why unmerged stages need no policy here.
+ * `ls-files --stage` reads only the index, so no clean filter runs; unmerged
+ * stages don't matter since only paths are used.
  */
 async function stagedSourcePaths(
   dataRepo: string,
@@ -560,7 +532,6 @@ async function stagedSourcePaths(
   const paths = new Set<string>();
   for (const record of out.split("\0")) {
     if (record.length === 0) continue;
-    // "<mode> <object> <stage>\t<path>", verbatim under -z.
     const match = /^\d{6} [0-9a-f]+ \d\t([\s\S]+)$/.exec(record);
     if (!match) throw new Error(`unexpected git ls-files output: ${record}`);
     paths.add(match[1]!);
@@ -568,7 +539,6 @@ async function stagedSourcePaths(
   return paths;
 }
 
-/** The working-tree side, read from the filesystem rather than through git. */
 async function worktreeSource(
   dataRepo: string,
   relPath: string,
@@ -622,18 +592,10 @@ async function expectedFilesForRow(
   });
 }
 
-/**
- * Where a row's locked bytes are, read from the entry the row came from.
- *
- * A row is always built from one lock entry, so a missing entry means the
- * caller paired a row with a lock that does not hold it. Nothing can be read
- * for such a row, and every consumer here degrades to "no diff".
- */
 function lockedContentSource(opts: StatusDiffOptions): ContentSource | null {
   const { row } = opts;
-  // A remote row is in neither capshelf lock by A3, so looking it up there
-  // would always return null and silently report "no diff" for every remote
-  // skill. Its bytes are in the clone cache at its own item root.
+  // A remote row is in neither capshelf lock, so a lock lookup would silently
+  // report no diff; its bytes are in the clone cache.
   if (row.source === "remote") {
     if (row.remote === undefined || row.sourceCommit === undefined) return null;
     const cache = remoteCacheState(row.remote.upstream);
@@ -671,13 +633,12 @@ async function expectedFilesForCopyItem(
   const source = opts.source;
   const files = await expectedFileEntriesForCopyItem(opts);
   if (!files) return null;
-  // One `cat-file --batch` for the item. `git show <commit>:<path>` prints a
-  // blob raw: it runs a textconv driver only when `--textconv` is given, and
-  // no smudge filter. So the bytes are the same.
+  // `git show <commit>:<path>` prints blobs raw (no smudge filter, textconv
+  // only with `--textconv`), so one `cat-file --batch` yields the same bytes.
   let blobs: Map<string, Buffer>;
   try {
-    // The diff pass reads each item once, so it keeps no bytes it reads
-    // itself. Peak memory then follows the largest item.
+    // Items are read once, so bytes aren't memoized; peak memory follows the
+    // largest item.
     blobs = await catFileBlobs(
       source.repo,
       files.map((file) => file.object),
@@ -749,8 +710,8 @@ async function expectedFileEntriesForCopyItem(
         rel.length > 0 &&
         !rel.startsWith("..") &&
         !hasIgnoredDotSegment(rel) &&
-        // A committed metadata sidecar is catalog data, not locked content;
-        // it must not participate in status hashes or diffs.
+        // A committed metadata sidecar is catalog data, not locked content, so
+        // it stays out of hashes and diffs.
         !isMetadataSidecarPath(rel),
     );
 }
@@ -771,8 +732,8 @@ async function readInstalledFiles(
   const out: FileMap = new Map();
   if (!existsSync(root)) return out;
 
-  // A project-side root .capshelf.yml is never managed content: keep it out
-  // of the file-map hash (currentCopyDirectoryItemSha) and status --diff.
+  // A project-side root .capshelf.yml is never managed content, so it stays out
+  // of hashes and diffs.
   const files = new Set(
     (await gitignoreVisibleFiles(root)).filter(
       (rel) => !isMetadataSidecarPath(rel),
@@ -806,7 +767,6 @@ async function diffFileMaps(
   for (const file of files) {
     const currentFile = current.get(file) ?? null;
     const expectedFile = expected.get(file) ?? null;
-    // locked is the baseline (---), current the new side (+++) — see above.
     const text = await unifiedDiffBytes(
       `${file} (locked${lockedCommit ? ` ${lockedCommit.slice(0, 7)}` : ` ${item}`})`,
       `${file} (${view}${targetCommit ? ` ${targetCommit.slice(0, 7)}` : ""})`,
@@ -843,9 +803,8 @@ export interface UnifiedDiffOptions {
 }
 
 /**
- * The text of a diff side, or null when the side is binary. Git calls a file
- * binary when a NUL appears in its first 8000 bytes. That check also catches
- * UTF-16 text, which can survive a fatal UTF-8 decode.
+ * Git treats a file as binary when a NUL appears in its first 8000 bytes, which
+ * also catches UTF-16 text that can survive a fatal UTF-8 decode.
  */
 function decodeDiffText(content: Buffer): string | null {
   if (content.subarray(0, 8000).includes(0)) return null;
@@ -857,11 +816,9 @@ function decodeDiffText(content: Buffer): string | null {
 }
 
 /**
- * Diff two files given as bytes. The isolated git profile passes `--text`,
- * which disables git's own binary check, so binary content must be caught
- * here before it reaches git. A binary side collapses the diff to a
- * three-line stanza instead of raw bytes. Equal binary bytes still go to
- * git: only the mode can differ, and a mode-only diff carries no content.
+ * The isolated git profile passes `--text`, disabling git's binary check, so
+ * binary sides are caught here; equal binary bytes still go to git for
+ * mode-only diffs.
  */
 export async function unifiedDiffBytes(
   fromLabel: string,
@@ -885,11 +842,8 @@ export async function unifiedDiffBytes(
 }
 
 /**
- * A side is `null` when the file does not exist on that side. That is not the
- * same as an empty file, and collapsing the two hides a real change: comparing
- * two empty files reports nothing, while comparing `/dev/null` with an empty
- * file reports `new file mode 100644`. Git renders existence and mode itself
- * once it is given them, so neither is reconstructed here.
+ * `null` (absent) differs from empty: diffing `/dev/null` against an empty file
+ * reports `new file mode`, while two empty files report nothing.
  */
 export async function unifiedDiff(
   fromLabel: string,
@@ -914,12 +868,9 @@ export async function unifiedDiff(
       await writeFile(expectedPath, toText);
       if (toExecutable) await chmod(expectedPath, 0o755);
     }
-    // The `isolated-diff` profile owns every flag and environment decision
-    // here (`src/git.ts`). This used to run under `repo === null`, which meant
-    // "in the user's own directory, under their global config" — so on the
-    // machine that produced the original bug report `--diff` printed nothing
-    // for a CRLF-versus-LF difference, because `core.autocrlf=input`
-    // normalized it away before the comparison.
+    // The isolated-diff profile sets neutral line-ending and attribute config,
+    // so a user setting such as `core.autocrlf=input` cannot hide a
+    // CRLF-versus-LF difference.
     const result = await isolatedNoIndexDiff(dir, currentPath, expectedPath);
     if (result.exitCode === 0) return "";
     if (result.exitCode !== 1) {
@@ -960,8 +911,7 @@ function normalizeDiffHeaders(
       out.push(line);
     }
   }
-  // A mode-only change carries no `---`/`+++` pair, so without this the output
-  // would be two mode lines with nothing naming the file they describe.
+  // A mode-only change has no `---`/`+++` pair, so add one to name the file.
   if (!labelled && out.some((line) => line.trim().length > 0)) {
     out.unshift(`--- ${fromLabel}`, `+++ ${toLabel}`);
   }

@@ -56,9 +56,8 @@ export function describe(r: StatusRow): string {
     case "ok":
       return "up-to-date";
     case "missing_source_commit":
-      // A remote skill's source is a clone cache on this machine, not the
-      // shelf. Naming the data repo would send the user to a repository that
-      // never held the item.
+      // A remote skill's source is a local clone cache, not the shelf, so
+      // naming the data repo would mislead.
       return r.source === "remote"
         ? "no clone cache on this machine — run: capshelf status --check-upstream"
         : `locked sourceCommit ${shortCommit(r.sourceCommit)} is not present in the data repo`;
@@ -99,11 +98,6 @@ export function describe(r: StatusRow): string {
   }
 }
 
-/**
- * PIN-6: name the *kinds* of difference, not just that there is one. The row
- * lists at most three paths and then a count, because the complete list is
- * what `--json` and `--diff` are for.
- */
 function driftDescription(r: StatusRow): string {
   const differences = r.installDifferences ?? [];
   if (differences.length === 0) {
@@ -125,10 +119,8 @@ export interface FormatStatusHumanInput {
 }
 
 /**
- * Render the human-readable status report as a list of lines. Returning lines
- * (rather than calling console.log) keeps this pure and unit-testable; the
- * command shell joins them with "\n" and prints once, which reproduces the
- * original per-line console.log output exactly.
+ * Returns lines instead of logging so it stays pure; the command shell joins
+ * them with "\n" and prints once.
  */
 export function formatStatusHuman(input: FormatStatusHumanInput): string[] {
   const {
@@ -162,9 +154,8 @@ export function formatStatusHuman(input: FormatStatusHumanInput): string[] {
   const localRows = rows.filter(
     (r) => r.scope === "local" && r.source !== "remote",
   );
-  // M8: several plugin rows can share one untrusted workspace, so the hint
-  // names the fact once, under the first plugin row a reader reaches —
-  // never once per row.
+  // Several plugin rows can share one untrusted workspace, so the hint appears
+  // once, under the first plugin row.
   const firstUntrustedPluginRow = [
     ...projectRows,
     ...localRows,
@@ -189,7 +180,6 @@ export function formatStatusHuman(input: FormatStatusHumanInput): string[] {
   }
   if (remoteRows.length > 0) {
     if (projectRows.length > 0 || localRows.length > 0) lines.push("");
-    // D16: the word never stands alone, so the heading carries its qualifier.
     lines.push(REMOTE_GROUP_HEADING);
     for (const r of remoteRows) lines.push(...formatRowWithTrustHint(r));
     if (remoteRows.some((r) => r.remote?.lastChecked === null)) {
@@ -212,8 +202,8 @@ export function formatStatusHuman(input: FormatStatusHumanInput): string[] {
     }
     lines.push("external/  (Claude plugins)");
     for (const plugin of externalClaudePlugins) {
-      // D11: the external Claude marketplace plugin id now collides with the
-      // `plugins` item kind, so this group's rows are `claude-plugins/<id>`.
+      // The external Claude marketplace plugin id collides with the `plugins`
+      // item kind, so rows are prefixed `claude-plugins/`.
       const id = `claude-plugins/${plugin.id}`.padEnd(34);
       const status = plugin.enabled ? "enabled" : "disabled";
       lines.push(
@@ -296,19 +286,16 @@ function userSkillSurfaceLabel(surface: ExternalUserSkill["surface"]): string {
 export const REMOTE_GROUP_HEADING =
   "remote/  (items pinned to repos outside your shelf)";
 
-/** M8: printed once, under the first plugin row in an untrusted workspace. */
 export const CLAUDE_TRUST_HINT =
   "Claude Code does not load plugins in an untrusted workspace. Open the project in Claude Code and trust it.";
 
 function formatRow(r: StatusRow): string[] {
-  // D12: visible extras fail `status --strict`, so an otherwise clean row
-  // must not show the clean glyph.
+  // Visible extras fail `status --strict`, so an otherwise clean row must not
+  // show the clean glyph.
   const extras = r.visibleExtras?.length ?? 0;
   const g = (extras > 0 && r.state === "ok" ? "⚠" : glyph(r.state)).padEnd(3);
   const extrasLabel =
     extras > 0 ? `, ${extras} extra ${extras === 1 ? "file" : "files"}` : "";
-  // A remote row already sits under a heading that names its population, so
-  // the id drops the source prefix the shelf groups need.
   const id = (
     r.source === "remote"
       ? `${r.kind}/${r.name}`
@@ -329,9 +316,8 @@ function formatRow(r: StatusRow): string[] {
 const VISIBLE_EXTRAS_SHOWN = 3;
 
 /**
- * D12: unpinned files that Git can see. They are not part of the item, and
- * `update` and `apply` delete them under consent, so the row says so before
- * that happens.
+ * These unpinned files are not part of the item, and `update` and `apply`
+ * delete them under consent, so the row warns beforehand.
  */
 function visibleExtrasGuidance(r: StatusRow): string[] {
   const extras = r.visibleExtras ?? [];
@@ -346,10 +332,6 @@ function visibleExtrasGuidance(r: StatusRow): string[] {
   ];
 }
 
-/**
- * What a plugin row runs (spec D11), after the state. A count that is zero
- * prints nothing, so a plugin that runs nothing reads like any other row.
- */
 function runsSuffix(r: StatusRow): string {
   const runs = r.runs;
   if (runs === undefined) return "";
@@ -362,10 +344,8 @@ function runsSuffix(r: StatusRow): string {
 }
 
 /**
- * Where a remote skill came from, and what the user can do about it.
- *
- * `promote` has nowhere to go for a remote skill, so a drifted row names
- * `share --adopt` instead. An unfinished adopt is D18's warning line.
+ * `promote` has nowhere to go for a remote skill or plugin, so a drifted row
+ * names `share --adopt` instead.
  */
 function remoteRowDetail(r: StatusRow): string[] {
   const remote = r.remote;
@@ -403,7 +383,6 @@ function remoteRowDetail(r: StatusRow): string[] {
   return lines;
 }
 
-/** `owner/repo` for a hosted URL, and the whole identity for anything else. */
 function upstreamLabel(upstream: string): string {
   try {
     const url = new URL(upstream);
@@ -415,12 +394,9 @@ function upstreamLabel(upstream: string): string {
 }
 
 /**
- * A gap in the item's runtime target coverage, and where the missing source
- * belongs. Full coverage prints nothing extra: `status` is a whole-project
- * overview, and a line per healthy item would bury the rows that need
- * attention. Unknown coverage prints nothing either — an unknown gap is not a
- * gap. A bundle install reports no per-member coverage, so this is the only
- * surface a bundle user sees, which is why it repeats `add`'s sentence.
+ * Full coverage prints nothing, so healthy items do not bury rows with gaps.
+ * Unknown coverage prints one `targets: unknown (reason)` line. A bundle
+ * install reports no per-member coverage, so this repeats `add`'s sentence.
  */
 function targetCoverageGuidance(r: StatusRow): string[] {
   if (r.coverageState === "unknown") {
@@ -467,18 +443,12 @@ function needsStateGuidance(r: StatusRow): string[] {
 
 function missingSourceCommitGuidance(r: StatusRow): string[] {
   if (r.state !== "missing_source_commit") return [];
-  // A remote row reaches this state through an absent clone cache, which is
-  // machine state one fetch restores. `sync-data` and `update` both speak about
-  // the shelf, so `remoteRowDetail` says what to run instead.
+  // An absent clone cache is machine state one fetch restores; `sync-data` and
+  // `update` speak about the shelf, so `remoteRowDetail` says what to run.
   if (r.source === "remote") return [];
   return missingSourceCommitRepinGuidance(r.kind, r.name);
 }
 
-/**
- * What to do about a locked `sourceCommit` the data repo cannot reach. Shared
- * with `add`'s already-installed branch, which reports the same unreachable
- * commit as unknown target coverage.
- */
 export function missingSourceCommitRepinGuidance(
   kind: string,
   name: string,

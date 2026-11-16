@@ -29,47 +29,29 @@ import {
 } from "./subagents";
 
 export interface UpstreamFacts {
-  /**
-   * The identity of the current upstream item, computed the same way the
-   * comparing lock entry was pinned. Null when the item is missing, and — for
-   * `worktree` identity only — when the source path is dirty.
-   */
   upstreamSha: string | null;
-  /** true when the data-repo item path has uncommitted changes */
   upstreamDirty: boolean;
-  /** Last commit affecting the accepted item content model. */
   sourceCommit: string | null;
 }
 
 /**
- * Which identity model the caller's lock entry uses.
- *
- * `tree` (lock version 4) reads the committed tree, so a dirty working copy no
- * longer suppresses the answer: what consumers receive is what Git stores, and
- * a divergent working copy is advisory rather than a correctness fault.
- * `worktree` (lock version 3) keeps the legacy hash so a project that has not
- * migrated still compares like against like.
+ * `tree` reads the committed tree, so a dirty working copy is advisory rather
+ * than suppressing the answer; `worktree` keeps the legacy hash so unmigrated
+ * projects compare like with like.
  */
 export type UpstreamIdentity = "tree" | "worktree";
 
 export interface UpstreamFactsOptions {
-  /** The calling command's memo for reads at a full commit id. */
   memo?: GitReadMemo;
-  /** The dirty check of a data-repo path. Default: one `git status` per path. */
   isClean?: PathCleanCheck;
   /**
-   * The data-repo `HEAD` the caller read once. With it, the commit walk starts
-   * there instead of at the live `HEAD`, and `memo` can answer it.
+   * With `head`, the commit walk starts at the caller's single read instead of
+   * the live `HEAD`, so `memo` can answer it.
    */
   head?: string;
 }
 
-/**
- * The per-item upstream facts the status state machine consumes, shared with
- * promote's stale guard so the two can never disagree (extracted verbatim
- * from the status loop). For fragments, dirtiness is checked across every
- * canonical source path; for copy items, across the item directory.
- */
+/** Shared with promote's stale guard so the two cannot disagree. */
 export async function upstreamFactsForItem(
   dataRepo: string,
   kind: ItemKind,
@@ -154,7 +136,6 @@ export async function upstreamFactsForItem(
   throw new Error(`no upstream strategy for ${kind}/${name}`);
 }
 
-/** Whichever paths define this kind's source, checked for uncommitted change. */
 async function sourcePathsDirty(
   kind: ItemKind,
   name: string,
