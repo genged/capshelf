@@ -29,11 +29,8 @@ test("the canary reports whether non-local egress is possible", async () => {
 });
 
 /**
- * The policy is tested against fixed observations, not against the network.
- * Classifying a live probe would exercise only the branch matching the machine
- * the tests happen to run on, and comparing two live probes would fail whenever
- * reachability changed between them even though each call classified its own
- * observation correctly.
+ * Tests use fixed observations because a live probe would only exercise the
+ * branch matching the current machine.
  */
 test("a denied lane is offline, and stays offline under strict mode", async () => {
   delete process.env[REQUIRE_OFFLINE_ENV];

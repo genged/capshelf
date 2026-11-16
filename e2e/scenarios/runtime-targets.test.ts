@@ -18,7 +18,6 @@ import { E2E_TEST_TIMEOUT_MS, withWorld } from "../support/world";
 
 const SCENARIO = "runtime-targets";
 
-/** The coverage of the one item `add --json` reports, or of the payload itself. */
 function coverageOf(payload: string): TargetCoverage[] {
   const parsed = asObject(parseJsonText(payload, "add --json"), "add --json");
   const items = parsed.items;
@@ -64,7 +63,6 @@ test(
       const project = await world.git.createProject("api");
       expectExit(await world.capshelf(project, ["init", "--data", shelf]), 0);
 
-      // A one-source item installs, and says which runtime it does not cover.
       const addedDeepwiki = await world.capshelf(project, [
         "add",
         "mcp/deepwiki",
@@ -81,8 +79,6 @@ test(
       expectOutputContains(humanAdd, "mcp/deepwiki/codex.toml");
       expectOutputContains(humanAdd, "capshelf update mcp/deepwiki");
 
-      // The regression this reporting exists for: a two-source item writes
-      // both outputs, so it must name both.
       const addedGithub = await world.capshelf(project, [
         "add",
         "mcp/github",
@@ -100,7 +96,6 @@ test(
         "deepwiki",
       );
 
-      // A gap is a fact, not a fault.
       const strict = await world.capshelf(project, ["status", "--strict"]);
       expectExit(strict, 0);
       const rows = parseStatusRows(
@@ -113,8 +108,6 @@ test(
         presence(statusRow(rows, "mcp", "github").targetCoverage ?? []),
       ).toEqual({ claude: true, codex: true });
 
-      // Coverage is read at the locked commit. A new source upstream changes
-      // nothing until the project asks for it.
       await world.git.writeAndCommit(
         shelf,
         {
@@ -157,7 +150,6 @@ test(
         ),
       ).toEqual({ claude: true, codex: true });
 
-      // Null second run.
       const converged = await captureOwnedState(world, {
         projectFiles: project,
         projectGit: project,
@@ -202,8 +194,6 @@ test(
       expectExit(await world.capshelf(project, ["init", "--data", shelf]), 0);
       expectExit(await world.capshelf(project, ["add", "mcp/deepwiki"]), 0);
 
-      // Unbind by pointing the binding at a clone that no longer holds the
-      // pinned commit: read-only status degrades instead of refusing.
       const emptyShelf = await world.git.createDataRepo({
         name: "other-shelf",
         origin: "https://example.invalid/shelf.git",

@@ -33,13 +33,8 @@ async function readLock(path: string): Promise<LockFile> {
 }
 
 /**
- * Fixture control: rewrite a version-4 lock as the version-3 file an older
- * binary would have written. The entry keeps its commit and metadata and
- * carries the legacy `sha` instead of a pin digest.
- *
- * This constructs the state; it does not prove that an older binary produces
- * it. That claim belongs to the source-level lock tests and to a real
- * older-binary compatibility run.
+ * This constructs the v3 state but does not prove an older binary writes it;
+ * that belongs to the source-level lock tests and a real older-binary run.
  */
 async function downgradeLockToV3(
   path: string,
@@ -89,9 +84,8 @@ async function seedProject(world: World): Promise<{
     await world.capshelf(project, ["add", "skills/pr-notes", "--local"]),
     0,
   );
-  // The marker records intent about existing drift, so the edit comes first.
-  // It also has to exist before the downgrade: keep-local writes a lock, and
-  // every lock writer refuses an unmigrated project.
+  // The marker must be written before the downgrade because keep-local writes a
+  // lock, and every lock writer refuses an unmigrated project.
   await writeFile(
     join(project, ".agents", "skills", "security-review", "SKILL.md"),
     "security review\nplatform additions\n",
@@ -143,14 +137,12 @@ test(
       expect((await readLock(projectLock)).version).toBe(3);
       expect((await readLock(localLock)).version).toBe(3);
 
-      // Reads keep working against the old lock.
       const status = await world.capshelf(project, ["status", "--json"]);
       expectExit(status, 0);
       expect(
         statusRow(parseStatusRows(status.stdout), "skills", "csv-report").name,
       ).toBe("csv-report");
 
-      // Every writer refuses, and refuses without touching either lock.
       const before = await captureOwnedState(world, {
         projectFiles: project,
         projectGit: project,
@@ -174,7 +166,6 @@ test(
         "lock writers against a legacy lock",
       );
 
-      // A dry run reports the plan and writes nothing.
       const dryRun = await world.capshelf(project, [
         "lock",
         "migrate",
@@ -193,9 +184,6 @@ test(
 
       const migration = await world.capshelf(project, ["lock", "migrate"]);
       expectExit(migration, 0);
-      // The fixture's legacy `sha` disagrees with the commit it names, and
-      // that contradiction is what version 4 removes, so the migration says
-      // so rather than repairing it silently (docs/cli.md:1070-1072).
       expectOutputContains(migration, "repaired legacy identity");
 
       const migrated = await readLock(projectLock);
@@ -214,8 +202,6 @@ test(
       expect(asString(marker.sourcePinDigest, "sourcePinDigest")).toMatch(
         /^[0-9a-f]{64}$/,
       );
-      // The migration selects no new content: the commit it resolves is the
-      // one the legacy entry named.
       expect(marker.sourceCommit).toBe(markerBefore.sourceCommit);
 
       expectExit(await world.capshelf(project, ["status", "--strict"]), 0);
@@ -242,7 +228,6 @@ test(
       await downgradeLockToV3(projectLock, "0123456789ab");
       await downgradeLockToV3(localLock, "0123456789ab");
 
-      // Point two entries at a commit that exists nowhere.
       const orphan = "0".repeat(40);
       const lock = await readLock(projectLock);
       const csv = lock.items["data/skills/csv-report"];
@@ -262,7 +247,6 @@ test(
       });
       const blocked = await world.capshelf(project, ["lock", "migrate"]);
       expectExit(blocked, 3);
-      // Every blocker is reported in one pass, not just the first.
       expectOutputContains(blocked, "skills/csv-report");
       expectOutputContains(blocked, "settings/permissions");
       expectSameState(
@@ -274,7 +258,7 @@ test(
         "blocked lock migration",
       );
 
-      // A fragment's former contribution cannot be told apart from a
+      // A fragment's former contribution is indistinguishable from a
       // project-local value, so re-pinning it is refused.
       const refusedRepin = await world.capshelf(project, [
         "lock",
