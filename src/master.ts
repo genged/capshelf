@@ -35,10 +35,8 @@ export type CopyDirectoryItemKind = (typeof COPY_DIRECTORY_ITEM_KINDS)[number];
 
 export type SkillTargetKind = "skills" | "plugins";
 
-/** Where a plugin's manifest lives, relative to its item root (spec D1, D3). */
 export const PLUGIN_MANIFEST_REL = ".claude-plugin/plugin.json";
 
-/** Skills and plugins install into one folder per name (spec D2). */
 export function installsAtSkillTarget(kind: ItemKind): kind is SkillTargetKind {
   return kind === "skills" || kind === "plugins";
 }
@@ -60,7 +58,6 @@ export function isItemKind(value: string): value is ItemKind {
   return ITEM_KINDS.some((kind) => kind === value);
 }
 
-/** The kind a `--kind` option names, or the refusal `ls` and `search` print. */
 export function parseItemKind(value: string): ItemKind {
   if (isItemKind(value)) return value;
   throw new PreconditionError(
@@ -84,11 +81,6 @@ export function isFragmentItemKind(value: ItemKind): value is FragmentItemKind {
   return FRAGMENT_ITEM_KINDS.some((kind) => kind === value);
 }
 
-/**
- * Same test for a kind that has already been widened to `string` — result rows
- * from `apply`/`update` carry `kind` that way, and the all-or-nothing preflight
- * gate is scoped by it.
- */
 export function isFragmentKindName(value: string): value is FragmentItemKind {
   return FRAGMENT_ITEM_KINDS.some((kind) => kind === value);
 }
@@ -119,18 +111,15 @@ export function itemStrategy(kind: ItemKind): ItemStrategy {
 export interface MasterItem {
   kind: ItemKind;
   name: string;
-  /** absolute path on disk */
   path: string;
-  /** path relative to the data repo root, used for git operations */
   repoRelPath: string;
 }
 
 export function assertDataRepoExists(dataRepo: string): string {
   if (!existsSync(dataRepo)) {
     throw new Error(
-      // No path is suggested as a fallback: there is no implicit default
-      // (ADR-009, see `resolveDataRepo`), and naming one here told users to
-      // create a repo capshelf would never look at.
+      // No fallback path is suggested because there is no implicit default data
+      // repo.
       `data repo not found at ${dataRepo}\n` +
         `  pass --data <path>, bind one with \`${PRODUCT_NAME} data bind <path>\`, or set $${HOME_ENV}`,
     );
@@ -187,42 +176,23 @@ export async function findMasterItem(
   return matches[0] ?? null;
 }
 
-/*
- * THE OBJECT MODEL
- *
- * Every call site that walks a managed directory must classify what it finds
- * against this table instead of improvising a rule.
- *
- * There are five populations, not two. Git visibility is the line between
- * drift (row 3, reconciled away under consent) and local state (row 4,
- * carried across a replacement). Before this table was written down, each
- * call site rediscovered the boundary and drew it differently: one refused
- * symlinks in ignored local state, another normalized real file modes to
- * Git's two-value model, a third hard-failed on the sidecar.
- *
- * | # | Population | Policy | Enforced by |
- * | - | ---------- | ------ | ----------- |
- * | 1 | Item content in the data-repo working tree | Regular files only, Git modes. Symlinks refused — trust boundary | `gitignoreVisibleFiles` |
- * | 2 | Item content at a commit | Regular blobs only, sidecar filtered | `assertRegularBlobEntries`, `materializableFilesAtCommit` |
- * | 3 | Git-visible content inside an installed directory that is not managed | Drift. Reconciled away under consent as `extra_local_path`; Git modes apply, so `executable_mode` is a real change | `visiblePaths` in `copyDirectoryReconciliationFiles` |
- * | 4 | Ignored local state under an installed directory | Carried across as-is: real `stat` modes, symlinks preserved by target, never hashed or published. Non-recreatable objects (fifo, socket, device) refused on write, listed on remove | `inventoryLocalTree` + `PreservedEntry` |
- * | 5 | `.capshelf.yml` | Excluded from hashing and materialization everywhere; for reconciliation, treated as row 4 regardless of Git visibility | `isMetadataSidecarPath` at each boundary |
- *
- * Rows 1 and 2 are the trust boundary: item content crossing into or out of
- * the data repo is Git's object model, and nothing below may widen it. Row 4
- * never crosses that boundary — those files came from the user's filesystem
- * and go back to the same path, so capshelf never reads through them, hashes
- * them, or publishes them, and Git's object model does not apply.
+/**
+ * Core invariants: (1) Item content in the data-repo working tree allows
+ * regular files only, with Git modes. Symlinks are refused. (2) Item content at
+ * a commit allows regular blobs only, with the sidecar filtered. (3)
+ * Git-visible extras in an installed directory are drift, reconciled away under
+ * consent. (4) Ignored local state returns to the same path, so preserve real
+ * modes and symlink targets; never read through these links, hash this state,
+ * or publish it. Fifos, sockets, and devices are refused on write and listed on
+ * remove. (5) `.capshelf.yml` is excluded from hashing and materialization
+ * everywhere, and is treated as (4) for reconciliation. (1) and (2) are the
+ * trust boundary and nothing below may widen it. Git visibility separates drift
+ * from local state.
  */
 
 /**
- * True when an item-root-relative path is the item's metadata sidecar.
- * `rel` must be relative to the item root: the check is exactly
- * `rel === ".capshelf.yml"`, never a basename match — nested
- * `sub/.capshelf.yml` files are item content and stay hashed/materialized.
- * The sidecar is catalog data only; it is excluded from every hashing path
- * and from materialization so metadata edits never look like content drift
- * (row 5 of the object-model table above).
+ * Exact match on the item-root-relative path, never a basename match, because
+ * nested `sub/.capshelf.yml` files are item content.
  */
 export function isMetadataSidecarPath(rel: string): boolean {
   return rel === METADATA_SIDECAR;
@@ -257,10 +227,6 @@ export async function walkItemFiles(root: string): Promise<string[]> {
   return out;
 }
 
-/**
- * Hash an item's content. Works on both directories (copy items and fragment
- * roots) and single files (future codex agents).
- */
 export async function shaOfItem(itemPath: string): Promise<string> {
   const info = await lstat(itemPath);
   if (info.isFile()) {
@@ -280,13 +246,10 @@ export async function shaOfItem(itemPath: string): Promise<string> {
 }
 
 /**
- * The legacy (lock version 3) content hash of a data-repo item, taken over the
- * files Git treats as owned in the *data repo working tree*. Bound to the
- * `source-read` profile.
- *
- * Under lock version 4 this is no longer an identity: `sourcePinDigest`
- * (`src/pin.ts`) is, and it comes from the committed tree. This survives for
- * catalog display and for the one-time migration audit in `lock migrate`.
+ * Content hash over the files Git treats as owned in the data repo working
+ * tree, the identity of lock versions 2 and 3. From version 4 on, identity is
+ * `sourcePinDigest` from the committed tree. This hash serves catalog and
+ * comparison facts and the `lock migrate` audit.
  */
 export async function shaOfGitVisibleItem(
   repo: string,
@@ -302,7 +265,6 @@ export async function shaOfGitVisibleItem(
   );
 }
 
-/** The same hash over an installed item, using the *project's* Git policy. */
 export async function shaOfProjectVisibleItem(
   project: string,
   relPath: string,
@@ -363,12 +325,8 @@ export function itemRepoRelPath(kind: ItemKind, name: string): string {
 }
 
 /**
- * The paths a kind occupies inside its own item root, POSIX-separated. An
- * empty list means the whole root, which is what a copy-directory item is.
- *
- * The kind decides the layout; the content source decides where the root is.
- * Keeping the two apart is what lets an item be read at a root other than the
- * canonical one without a second path rule.
+ * Kind decides the layout and the content source decides the root, so an item
+ * can be read at a non-canonical root without a second path rule.
  */
 export function itemRelPathsWithinRoot(kind: ItemKind): readonly string[] {
   switch (kind) {
@@ -463,12 +421,6 @@ async function isInstallableDataItem(
   }
 }
 
-/**
- * The `name` field of the plugin manifest at `manifestPath`, or `null` when
- * the path is missing, unreadable, malformed, or has no string `name` (spec
- * D3). Never throws: callers decide what a missing or malformed manifest
- * means for their own site.
- */
 export async function readPluginManifestName(
   manifestPath: string,
 ): Promise<string | null> {
@@ -486,11 +438,6 @@ export async function readPluginManifestName(
   }
 }
 
-/**
- * A `plugins/<name>` directory is an item only when its manifest names it
- * `name` (spec D1, D3). Never throws: a missing, unreadable, or malformed
- * manifest means the directory is not (yet) a listed item, not an error.
- */
 async function isInstallablePlugin(
   dataRepo: string,
   name: string,
