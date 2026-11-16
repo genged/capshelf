@@ -20,17 +20,10 @@ import type {
   TargetCoverageJson,
 } from "./target-coverage";
 
-/*
- * PIN-6 axes. `status` reports pin, source, and installation separately and
- * derives one headline from them. A precedence chain evaluated in place would
- * report whichever condition it tested first and lose the more actionable one,
- * so `--json` always carries all three and a script never loses one to a rule.
- *
- * Deviation from the spec, recorded here because the name matters to
- * consumers: the spec calls the second axis `source`, but `StatusRow.source`
- * already means the entry's origin (`data` | `system`) and predates this
- * design. The axis is `sourceState` in the row and in `--json`; reusing
- * `source` would silently change the meaning of an existing field.
+/**
+ * Axes are reported separately so a precedence chain doesn't hide the more
+ * actionable condition; the second axis is `sourceState` because
+ * `StatusRow.source` already means entry origin.
  */
 export type PinAxis = "valid" | "mismatch" | "unresolvable";
 export type SourceAxis = "exact" | "filtered" | "dirty";
@@ -60,16 +53,11 @@ export type NeedsState =
   | "unavailable";
 
 /**
- * Which population a status row belongs to.
- *
- * `ItemSource` is a lock key prefix: it says which capshelf lock owns the
- * record. A remote skill lives in a different document, so it is not an
- * `ItemSource` at all and `parseLockKey` is right to refuse `remote/…`. Only
- * the reporting row widens.
+ * `ItemSource` is a lock key prefix and remote skills live in a different
+ * document, so only the reporting row widens to include `remote`.
  */
 export type RowSource = ItemSource | "remote";
 
-/** Where a remote row's pin came from, for the row's detail lines. */
 export interface RemoteRowFacts {
   upstream: string;
   ref: string;
@@ -77,76 +65,50 @@ export interface RemoteRowFacts {
   lastChecked: string | null;
   upstreamHead: string | null;
   /**
-   * False when this machine holds no clone of the upstream. Machine state, not
-   * project state: it decides what the row could measure, never what the
-   * project owns.
+   * Machine state, not project state: it decides what the row can measure, not
+   * what the project owns.
    */
   cachePresent: boolean;
-  /** True when the shelf also tracks this name: an unfinished adopt (D18). */
   alsoTrackedInShelf: boolean;
 }
 
-/**
- * What a plugin runs with no request from the agent, as counts (spec D11).
- * `unknown` lists each declaration the reader could not read.
- */
 export type StatusRowRuns = PluginRunCounts;
 
 export interface StatusRow {
   scope: "project" | "local";
   source: RowSource;
-  /** Remote rows only: where the pin came from. */
   remote?: RemoteRowFacts;
-  /** Plugin rows only: what the plugin runs. */
   runs?: StatusRowRuns;
-  /** Plugin rows only: whether Claude Code has trusted this workspace (M8). */
   claudeTrust?: ClaudeTrust;
   kind: ItemKind;
   name: string;
   state: State;
   lockedSha: string;
   currentSha: string | null;
-  /** Executable modes differ even when the byte-only lock sha is unchanged. */
+  /**
+   * Executable-mode changes don't alter the byte-only lock sha, so they are
+   * tracked separately.
+   */
   modeDrifted?: boolean;
-  /** PIN-6: the three axes, evaluated independently. */
   pin?: PinAxis;
   sourceState?: SourceAxis;
   installation?: InstallationAxis;
-  /** What kind of difference each drifted path carries (PIN-6 stage 2). */
   installDifferences?: InstallDifference[];
-  /**
-   * D12: unpinned installed paths the project sees in Git. `update` and
-   * `apply` delete them under consent. Present only when not empty.
-   */
   visibleExtras?: string[];
-  /** Managed paths that declare an external filter driver (PIN-9). */
   filteredPaths?: FilteredPath[];
-  /** master sha (data) or bundled sha (system); null if upstream is gone */
   upstreamSha: string | null;
-  /** true when the data-repo item path has uncommitted changes */
   upstreamDirty?: boolean;
-  /** for data items, the recorded source commit */
   sourceCommit?: string;
   local?: true;
   localReason?: string;
-  /** for system items, the cliVersion that wrote the entry */
   cliVersion?: string;
   label?: string;
   runtimeWarnings?: RuntimeWarning[];
-  /** Orthogonal freshness of the lock-pinned needs declaration. */
   needsState?: NeedsState;
-  /** Present for every data row; null means a migrated v2 snapshot. */
   lockedNeeds?: ItemNeeds | null;
   targets?: StatusTargetDetail[];
-  /**
-   * Runtime target coverage at the locked commit, for kinds with more than one
-   * candidate target (`mcp`, `subagents`). Distinct from `targets`, which is
-   * the subagent install state of the sources that exist at that commit.
-   */
   targetCoverage?: TargetCoverageJson[];
-  /** Set only when coverage could not be read; every row is then `null`. */
   coverageState?: "unknown";
-  /** Why coverage could not be read; set only alongside `coverageState`. */
   coverageReason?: string;
 }
 
@@ -167,51 +129,36 @@ export interface ExternalPersonalClaudeSkill {
 export interface StateFacts {
   kind: ItemKind;
   /**
-   * Whether this row has a real upstream to compare against, expressed as the
-   * lock entry source. This is the content model, not the record model: a
-   * remote row passes `"data"` because it does have one, and the existing
-   * drift and update logic then applies unchanged.
+   * A remote row passes `"data"` because it has a real upstream, so existing
+   * drift and update logic applies unchanged.
    */
   source: ItemSource;
-  /** true only for a data entry pinned local (kept-local) */
   local: boolean;
-  /** the sha recorded in the lock (entry.sha) */
   lockedSha: string;
   currentSha: string | null;
-  /** Executable modes differ even when the byte-only lock sha is unchanged. */
+  /**
+   * Track executable modes separately because the byte-only lock sha excludes
+   * them.
+   */
   modeDrifted?: boolean;
   upstreamSha: string | null;
   upstreamDirty: boolean;
-  /** Upstream bytes or last-touching commit differ from the lock. */
   upstreamChanged?: boolean;
   fragmentOutputState: FragmentContributionState | null;
-  /**
-   * Whether the data entry's locked `sourceCommit` is reachable in the data
-   * repo. `null` (or omitted) means "not applicable or not checkable" (system
-   * items, no data repo resolved) and is treated as present, which keeps
-   * existing callers backwards compatible.
-   */
   sourceCommitPresent?: boolean | null;
-  /** PIN-9: a managed path declares an external filter driver. */
   sourceFiltered?: boolean;
 }
 
-/**
- * Pure status state machine: given the SHAs and flags gathered for one tracked
- * item, decide its drift/update state. Extracted verbatim from the status loop
- * so it can be exhaustively unit-tested without touching git or the filesystem.
- */
 export function deriveState(f: StateFacts): State {
   if (f.source === "data" && f.local && f.currentSha !== null) {
     return "kept-local";
   }
-  // Ahead of every other condition, because a filtered source makes a re-pin
-  // pointless: every consumer would receive the placeholder Git stores, so
-  // there is nothing else worth acting on until it is fixed upstream.
+  // Checked right after kept-local and ahead of every other condition: a
+  // filtered source makes a re-pin pointless since consumers would receive
+  // Git's placeholder.
   if (f.sourceFiltered === true) return "source_filtered";
-  // After kept-local (an explicit user pin keeps its strict exemption),
-  // before all upstream/drift comparisons — those are unreliable when the
-  // pinned provenance is gone (e.g. squash-orphaned or unpushed elsewhere).
+  // Runs before upstream/drift comparisons, which are unreliable once the
+  // pinned provenance is gone; kept-local stays exempt.
   if (f.source === "data" && f.sourceCommitPresent === false) {
     return "missing_source_commit";
   }
@@ -280,7 +227,6 @@ export interface BuildStatusRowInput {
   axes?: StatusAxes;
 }
 
-/** Pure assembly of a StatusRow from a lock entry and the computed facts. */
 export function buildStatusRow(input: BuildStatusRowInput): StatusRow {
   const { scope, source, kind, name, entry, state } = input;
   return {
@@ -350,8 +296,6 @@ export function statusTargets(
   ref: ItemRef | undefined,
   opts: { project?: boolean; local?: boolean },
 ): ScopedTarget[] {
-  // Status lists every match (it never requires a unique target), so it uses
-  // the shared ref matcher for the ref case and enumerates all keys otherwise.
   if (ref) return matchRefAcrossScopes(projectLock, localLock, ref, opts);
   const includeProject = !opts.local;
   const includeLocal = !opts.project;

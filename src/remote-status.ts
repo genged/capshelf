@@ -1,9 +1,6 @@
 /**
- * Status rows for remote skills and plugins.
- *
- * Offline by construction. Everything here reads the clone cache the install
- * left behind and the record in `.capshelf/remotes.lock.json`; `status
- * --check-upstream` is the one path that fetches, and it lives beside this.
+ * Offline by construction: rows come from the clone cache, the installed files,
+ * and `.capshelf/remotes.lock.json`. Only `status --check-upstream` fetches.
  */
 import { describeInstallation, isTreePinned } from "./install-identity";
 import { installedPath } from "./installed";
@@ -37,7 +34,6 @@ export interface RemoteStatusInput {
   remotes: RemotesLock;
   projectLock: Lock;
   localLock: Lock;
-  /** M8: the caller's single read of `~/.claude.json` for this status run. */
   claudeTrust: ClaudeTrust;
   ref?: ItemRef;
 }
@@ -67,26 +63,18 @@ async function buildRemoteRow(
 ): Promise<StatusRow> {
   const cache = remoteCacheState(entry.upstream);
   const synthetic = remoteEntryAsDataEntry(entry);
-  // The same reader the shelf rows use. It takes a `GitTreeSource`, so a remote
-  // row passes one naming the cache clone and its own subpath and the function
-  // needs no change at all.
   const installation = cache.present
     ? await describeInstallation(
         input.project,
         remoteTreeSource(cache.path, entry.sourceCommit, entry.subpath),
         kind,
         name,
-        // Every remote row is local scope (D5).
         "local",
       )
     : null;
-  // A missing cache is not a missing upstream: the upstream is the repository,
-  // not the clone. It is not a missing install either — the files can be
-  // perfectly intact. What it is is an unreadable *source*, so the row takes
-  // the state the shelf already has for that, `missing_source_commit`, rather
-  // than reporting `missing_installed` and sending the user to an `apply` that
-  // refuses. Without the cache no comparison is possible, which is the whole
-  // point of that state.
+  // A missing cache means an unreadable source, not a missing upstream or
+  // install, so the row uses `missing_source_commit` rather than sending the
+  // user to an `apply` that refuses.
   const currentSha = installation?.currentSha ?? null;
 
   const upstream = upstreamFacts(entry);
@@ -96,8 +84,6 @@ async function buildRemoteRow(
 
   const state = deriveState({
     kind,
-    // A remote row does have a real upstream, so it takes the data branch of
-    // the state machine. The record it lives in is a different question.
     source: "data",
     local: false,
     lockedSha: entry.sourcePinDigest,
@@ -154,7 +140,6 @@ async function buildRemoteRow(
   });
 }
 
-/** D11 for a remote plugin row: the clone cache holds the pinned tree. */
 async function remotePluginRuns(
   project: string,
   name: string,
@@ -170,30 +155,19 @@ async function remotePluginRuns(
 }
 
 interface UpstreamFacts {
-  /** The identity `deriveState` compares the pin against, or null. */
   sha: string | null;
   changed: boolean;
 }
 
 /**
- * What the last successful check measured.
- *
- * Content is compared, never the repository commit: two skills installed from
- * one repository share a `sourceCommit`, so comparing commits would mark both
- * updated when either one changes.
- *
- * A row nobody has checked reports its own pin, which reads `ok` and says it
- * was never checked. A check that reached the repository and found nothing at
- * the recorded subpath records the head with no digest, which is
- * `missing_upstream`.
+ * Compare content, not the repository commit: skills from one repository share
+ * a `sourceCommit`, so a commit comparison would mark both updated when either
+ * changes.
  */
 function upstreamFacts(entry: RemoteLockEntry): UpstreamFacts {
   if (entry.lastChecked === undefined) {
     return { sha: entry.sourcePinDigest, changed: false };
   }
-  // No head: the check reached the repository and the recorded ref was gone.
-  // No digest: the ref was there and the item was not. Both are the same answer
-  // to the only question this row asks — the upstream no longer offers it.
   if (
     entry.upstreamHead === undefined ||
     entry.upstreamPinDigest === undefined
@@ -206,7 +180,6 @@ function upstreamFacts(entry: RemoteLockEntry): UpstreamFacts {
   };
 }
 
-/** The cache path a remote row reads, for a caller that has to name it. */
 export function remoteRowCachePath(entry: RemoteLockEntry): string {
   return remoteCachePath(entry.upstream);
 }
@@ -220,20 +193,14 @@ export interface UpstreamFetchReport {
 }
 
 export interface UpstreamCheckReport {
-  /** One entry per distinct upstream, in the order they were fetched. */
   fetches: UpstreamFetchReport[];
-  /** The updated rows, ready to be saved. */
   remotes: RemotesLock;
 }
 
 /**
- * The one fetch a read-only command performs.
- *
- * Fetch per repository, decide per row. Those are two different groupings: a
- * repository is fetched once, and each row then resolves its own `ref` and
- * re-pins its own subpath, because two rows from one repository can sit on
- * different branches and a moved repository head is not evidence that a
- * particular skill moved.
+ * Fetch once per repository but decide per row: rows from one repository can
+ * sit on different branches, and a moved head is not evidence a given skill
+ * moved.
  */
 export async function checkRemoteUpstreams(opts: {
   remotes: RemotesLock;
@@ -266,16 +233,11 @@ async function fetchOneUpstream(
   const first = rows[0]![1];
   const cache = remoteCacheState(upstream);
   if (!cache.present) {
-    // The flag re-creates an absent cache through the same `ensureClone` rule
-    // the install used. `ensureClone` throws where `fetchOrigin` reports, so
-    // the failure is caught and recorded per row: one unreachable repository
-    // must not abort the check for every other one. Maintainer decision,
-    // 2026-09-16.
-    //
-    // The clone URL is the normalized identity, because that is the only form
-    // the record holds. A repository installed over SSH is therefore re-cloned
-    // over HTTPS; if that cannot authenticate, `capshelf add <ssh-url>`
-    // re-creates the cache with the URL the user typed.
+    // With `--check-upstream`, an absent cache is re-cloned from the normalized
+    // URL, so an SSH install is re-cloned over HTTPS. If that cannot
+    // authenticate, `capshelf add <ssh-url>` recreates it. Clone errors are
+    // caught per repository so one unreachable repository does not abort
+    // checks for the others.
     try {
       await ensureRemoteCache(upstream, upstream);
     } catch (error) {
@@ -294,9 +256,8 @@ async function fetchOneUpstream(
   const path = remoteCachePath(upstream);
   const fetched = await fetchRemoteCache(path, first.ref, first.sourceCommit);
   if (!fetched.ok) {
-    // A failed fetch records no freshness. `lastChecked` means "last
-    // successful measurement", never "last attempt", because a fresh timestamp
-    // beside a stale head is the one thing the report must never imply.
+    // A failed fetch records no freshness: `lastChecked` means last successful
+    // measurement, so a fresh timestamp never sits beside a stale head.
     return {
       report: {
         upstream,
@@ -317,10 +278,8 @@ async function fetchOneUpstream(
         ? fetched.head
         : await resolveCachedRef(path, entry.ref);
     if (head === null) {
-      // The fetch succeeded and the ref is not there: the branch or tag was
-      // deleted upstream. Keeping the previous measurement made the row report
-      // the deleted ref as healthy forever, so the timestamp is recorded
-      // without a head, which is `missing_upstream`.
+      // A ref deleted upstream records the timestamp without a head, so the row
+      // reads `missing_upstream` instead of healthy.
       const {
         upstreamHead: _wasHead,
         upstreamPinDigest: _wasDigest,
@@ -329,20 +288,15 @@ async function fetchOneUpstream(
       items[key] = { ...carried, lastChecked: checkedAt };
       continue;
     }
-    // `upstreamPinDigest` is this check's measurement, never a fact carried
-    // over from the last one: absent beside a set head is exactly how a row
-    // says the item is no longer at its subpath. Spreading the measurement
-    // over the whole entry let a stale digest outlive the check that found
-    // nothing, so a skill deleted upstream read `ok` forever. Drop the old
-    // value before the new one is applied.
+    // Drop the previous digest before applying the new measurement: an absent
+    // digest beside a set head is how a row says the item left its subpath.
     const { upstreamPinDigest: _measuredLastTime, ...carried } = entry;
     items[key] = {
       ...carried,
       lastChecked: checkedAt,
       upstreamHead: head,
-      // Compare content, never the repository commit. Two skills installed
-      // from one repository share a `sourceCommit`, so a commit comparison
-      // marks both updated when either one changes.
+      // Compare content, not the commit: skills from one repository share a
+      // `sourceCommit`.
       ...(await measuredPinDigest(
         parseRemoteKey(key).kind,
         path,
@@ -363,10 +317,6 @@ async function fetchOneUpstream(
   };
 }
 
-/**
- * The item's digest at the measured head, or no digest at all when the item is
- * no longer there. An absent digest beside a present head is `missing_upstream`.
- */
 async function measuredPinDigest(
   kind: RemoteItemKind,
   cachePath: string,

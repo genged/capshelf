@@ -26,29 +26,20 @@ import {
 } from "./subagents";
 
 /**
- * Target coverage: for one item, every candidate runtime target, each marked
- * present or absent, with the output path it feeds.
- *
- * capshelf reports item → source → output file. The user thinks in
- * server → which of my agents can call it. `.mcp.json` is not a neutral fact;
- * it is Claude Code's project MCP file, and printing it alone said nothing
- * about Codex. This is the shape every command that *describes* an item uses,
- * so all of them say it in the same words.
+ * Lists every candidate runtime target because an output file like `.mcp.json`
+ * is only Claude Code's and says nothing about whether Codex or other agents
+ * can call the server.
  */
 export interface TargetCoverage {
   target: FragmentSourceTarget;
-  /** Canonical source path in the data repo, whether it is there or not. */
   sourcePath: string;
-  /** true | false, or null when coverage could not be read at all. */
   present: boolean | null;
-  /** Absolute path in the project this target feeds; null outside a project. */
   outputPath: string | null;
 }
 
 /**
- * Why coverage could not be read. A closed set, not free text, because callers
- * branch on it: the squash-merge re-pin guidance `status` gives belongs to an
- * unreachable commit and is wrong advice for a corrupt object database.
+ * A closed set because callers branch on it: squash-merge re-pin guidance fits
+ * an unreachable commit, not a corrupt object database.
  */
 type CoverageUnknownReason =
   | "data repo unbound"
@@ -59,17 +50,13 @@ type CoverageUnknownReason =
 export interface TargetCoverageReport {
   rows: TargetCoverage[];
   /**
-   * "unknown" when presence could not be read at a commit — the data repo is
-   * unbound, the locked sourceCommit is unreachable, or its objects do not
-   * read. Every row then carries `present: null`, and no gap is reported: an
-   * unknown gap is not a gap.
+   * Unknown coverage reports no gap: an unreadable state is not evidence of a
+   * missing target.
    */
   state: "known" | "unknown";
-  /** Why coverage is unknown; set only when `state` is "unknown". */
   reason?: CoverageUnknownReason;
 }
 
-/** The `--json` row shape. `outputPath` is project-relative, as callers emit. */
 export interface TargetCoverageJson {
   target: FragmentSourceTarget;
   present: boolean | null;
@@ -77,7 +64,6 @@ export interface TargetCoverageJson {
   outputPath: string | null;
 }
 
-/** Every surface prints the block at the same depth under its headline. */
 const INDENT = "  ";
 
 export const RUNTIME_TARGET_LABELS: Record<FragmentSourceTarget, string> = {
@@ -86,11 +72,8 @@ export const RUNTIME_TARGET_LABELS: Record<FragmentSourceTarget, string> = {
 };
 
 /**
- * Coverage applies only to kinds with more than one candidate target — today
- * `mcp` and `subagents`. `settings` and `codex-config` have one candidate each
- * and keep their single-path output unchanged. Derived from the candidate
- * lists rather than a hardcoded pair, so a third kind gaining a second target
- * is covered by construction.
+ * Derived from the candidate lists, not a hardcoded pair, so a subagent or
+ * fragment kind that gains a second target is covered automatically.
  */
 function hasTargetCoverage(kind: ItemKind, name: string): boolean {
   if (kind === "subagents") return subagentCandidates(name).length > 1;
@@ -101,15 +84,8 @@ function hasTargetCoverage(kind: ItemKind, name: string): boolean {
 }
 
 /**
- * Coverage for one item, read at `commit`. Never at the worktree: fragment
- * values are read with `readFragmentAtCommit` at the locked commit, so a
- * worktree-derived claim could disagree with the file capshelf actually wrote,
- * and a dirty deletion is invisible to the cleanliness gate — `add` accepts an
- * item whose pin still contains the source the worktree cannot see.
- *
- * Returns null for a kind with one candidate target. Degrades to an `unknown`
- * report when the commit is unreachable, so a caller that keeps producing rows
- * in that state (`status`, `add`'s already-installed branch) still gets one.
+ * Read at the commit, never the worktree: a worktree claim can disagree with
+ * the written file, and a dirty deletion is invisible to the cleanliness gate.
  */
 export async function itemTargetCoverageAtCommit(
   project: string | null,
@@ -118,10 +94,8 @@ export async function itemTargetCoverageAtCommit(
   name: string,
   commit: string,
   /**
-   * Set when the caller has already proved the commit is reachable. `status`
-   * probes it for every row before anything commit-dependent runs
-   * (`src/commands/status.ts`), and only calls this when the answer was true —
-   * so re-probing here is a second identical `git cat-file -e` per row.
+   * Set when the caller already proved the commit reachable, to avoid a second
+   * identical `git cat-file -e` per row.
    */
   opts: { commitKnownPresent?: boolean; memo?: GitReadMemo } = {},
 ): Promise<TargetCoverageReport | null> {
@@ -151,10 +125,8 @@ export async function itemTargetCoverageAtCommit(
 }
 
 /**
- * Coverage from a tree listing the caller already has. `add` passes its pin's
- * entries: the pin is one `ls-tree` over the item's canonical paths, so it is
- * both the tree the install writes and a read that raises rather than
- * reporting a failure as an absent source.
+ * `add` passes its pin's entries because that `ls-tree` raises on failure
+ * instead of reporting an absent source.
  */
 export function itemTargetCoverageInPaths(
   project: string | null,
@@ -182,26 +154,10 @@ export function itemTargetCoverageInPaths(
 }
 
 /**
- * Which of an item's canonical paths are blobs at `commit`, in one `ls-tree`.
- *
- * `null` means the read failed, which is not the same as "the file is not
- * there". Probing each path with `git show` cannot tell the two apart — it
- * catches every git failure — and coverage that claims a known absence on a
- * failed read would let the Codex trust warning be suppressed on no evidence
- * and would report a gap that does not exist. Unmatched pathspecs are not an
- * error to `ls-tree`, so a genuinely absent file is an empty result, not a
- * failure.
- *
- * The filter is on mode, not type: Git stores a symlink as a `blob` with mode
- * `120000`, and `assertRegularBlobEntries` refuses exactly those, so a
- * committed `mcp/<n>/codex.toml` symlink would otherwise be reported as a
- * covered target for an item `pinCurrentSource` cannot pin at all.
- *
- * Membership in the tree is then confirmed by reading, because `present: true`
- * is read by every consumer as "this runtime is covered" — and a listed blob
- * that cannot be produced covers nothing. Without the read, a corrupt object
- * left `status` claiming full coverage for an item `apply` could not restore,
- * and left `targetCoverage` contradicting the `targets` array beside it.
+ * A failed read returns null, not absence, since a false known-absence would
+ * suppress the Codex trust warning. Filter on mode because symlinks are blobs
+ * with mode 120000 that `pinCurrentSource` rejects, and confirm each blob reads
+ * so a corrupt object isn't reported as covered.
  */
 async function canonicalPathsAtCommit(
   dataRepo: string,
@@ -220,10 +176,8 @@ async function canonicalPathsAtCommit(
     const regular = entries.filter(
       (entry) => entry.mode === "100644" || entry.mode === "100755",
     );
-    // One `cat-file --batch` over the ids `ls-tree` already returned, rather
-    // than a `git show` per path: same proof that the content can be produced,
-    // one subprocess instead of one per candidate, and `catFileBlobs` asserts
-    // the object really is a blob rather than inferring it from a exit status.
+    // One `cat-file --batch` proves each content can be produced and asserts
+    // the object is a blob, rather than inferring it from an exit status.
     await catFileBlobs(
       dataRepo,
       regular.map((entry) => entry.object),
@@ -235,7 +189,6 @@ async function canonicalPathsAtCommit(
   }
 }
 
-/** Every candidate row with `present: null`, for a state that cannot be read. */
 export function unknownTargetCoverage(
   project: string | null,
   kind: ItemKind,
@@ -281,13 +234,10 @@ export function coversTarget(
 }
 
 interface CoverageBlockOptions {
-  /** `add` and `share` wrote the covered outputs; `show` only describes them. */
   presentWord?: "written" | "present";
-  /** Where an absent source was looked for. */
   absentScope?: "item" | "locked";
 }
 
-/** Narrow a report to one runtime target, for `show --target`. */
 export function restrictCoverage(
   report: TargetCoverageReport,
   target: FragmentSourceTarget | null,
@@ -300,9 +250,8 @@ export function restrictCoverage(
 }
 
 /**
- * The target block. It prints whether or not there is a gap: a user who sees
- * the table once learns the model, and a table that appears only on failure
- * teaches nothing.
+ * Print the block even without a gap, so users learn the model from the table
+ * instead of only on failure.
  */
 export function formatTargetCoverageBlock(
   report: TargetCoverageReport,
@@ -324,15 +273,9 @@ export function formatTargetCoverageBlock(
 }
 
 /**
- * Name the gap as a fact about the data repo, never as a computed command.
- *
- * The canonical path is fixed by the candidate list, so this sentence is true
- * whether the source is missing everywhere, present at HEAD but not at the
- * lock, or present only in the working tree — author or commit the file, then
- * `update` picks it up. An earlier design printed a repair command chosen from
- * the project's state; every review pass found another state where it refused.
- * The `update` line has the one precondition the path sentence does not: the
- * item must be tracked in a project.
+ * Name the gap as a fact about the canonical path in the data repo, not a
+ * computed repair command. The sentence holds whether the source is missing
+ * everywhere, present at HEAD but not at the lock, or only in the working tree.
  */
 export function formatCoverageGap(
   report: TargetCoverageReport,
@@ -348,22 +291,16 @@ export function formatCoverageGap(
 }
 
 export interface PrintCoverageOptions {
-  /** `add` and `share` wrote the covered outputs; `show` only describes them. */
   presentWord: "written" | "present";
   absentScope?: "item" | "locked";
-  /** `capshelf update` needs an item this project tracks. */
   tracked: boolean;
-  /** What to print instead of the gap when coverage could not be read. */
   unknownGuidance?: string[];
 }
 
 /**
- * The block plus, when a target is absent, the sentence naming the canonical
- * path it reads. Both go to stdout with the rest of the result, matching
- * `printRuntimeWarnings`.
- *
- * This lives beside the formatters so `add`, `show`, and `share` share the
- * loop as well as the wording — three copies of it is how the wording drifts.
+ * Prints the coverage block and, when a target is absent, the gap sentence. It
+ * lives beside the formatters so `add`, `show`, and `share` share the loop and
+ * the wording cannot drift.
  */
 export function printTargetCoverage(
   report: TargetCoverageReport,
@@ -390,7 +327,6 @@ export function printTargetCoverage(
 export interface TargetCoverageFields {
   targetCoverage: TargetCoverageJson[];
   coverageState?: "unknown";
-  /** Why every row is `null`; set only alongside `coverageState`. */
   coverageReason?: string;
 }
 

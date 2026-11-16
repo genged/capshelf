@@ -1,18 +1,3 @@
-/**
- * The share picker's catalog: one row per unmanaged value that `--pick`
- * accepts today, built from the three generated outputs.
- *
- * The row set is the legal argument space made visible. A settings or
- * codex-config row is one config path in one output; an mcp row is one server
- * in one output file, so a server present in both outputs gets two rows and
- * `--target` becomes a property of which rows were marked instead of a flag to
- * remember (spec decision 1).
- *
- * `shareCatalogRows` is pure over parsed remainders, like `pick-core.ts`, so
- * the row split and the grouping are unit tests. `loadShareCatalog` is the
- * thin read half; it also folds in the untracked skills, Pi extensions, and
- * subagents that `share-scan.ts` finds on disk (picker spec, phase 3).
- */
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { relative } from "node:path";
@@ -48,54 +33,35 @@ import type { PickKind, PickRow } from "./pick-core";
 import { scanUntrackedShareItems } from "./share-scan";
 import type { ItemSharePick, ShareScanLocation } from "./share-scan";
 
-/**
- * The tab order for the share catalog: the canonical kind order, items before
- * fragments, matching `add` and `status`. `ITEM_KINDS` itself, so a new kind
- * gets its tab without a second list to update.
- */
 export const SHARE_KIND_ORDER: readonly PickKind[] = ITEM_KINDS;
 
-/** What one marked row means to `share`. */
 export interface SharePick {
-  /** The row id, so a mark can be looked up in a freshly rebuilt catalog. */
   id: string;
   kind: FragmentItemKind;
-  /**
-   * Which runtime output the row came from. Meaningful for mcp, where it is
-   * the `--target` value one marked row implies; null for the kinds with one
-   * output.
-   */
   sourceTarget: FragmentSourceTarget | null;
-  /** The `--pick` path (settings, codex-config) or the bare server name (mcp). */
   pick: string;
   /**
-   * Fingerprint of the value the row showed when it was offered. The picker
-   * holds the terminal for an unbounded time, and the user consented to share
-   * what they saw — not whatever a concurrent tool wrote into the output
-   * while the frame was open. The interactive loop compares this against a
-   * rebuilt catalog after the prompt and fails the row on a mismatch.
+   * The picker holds the terminal for an unbounded time, so the digest lets the
+   * post-prompt check reject values a concurrent tool changed after the user
+   * saw them.
    */
   digest: string;
 }
 
 export interface ShareOutputState {
   target: FragmentTarget;
-  /** Output path relative to the project, for row details and messages. */
   label: string;
   exists: boolean;
 }
 
 export interface ShareCatalog {
   rows: PickRow[];
-  /** Row id -> what the mark means: a fragment value or an on-disk item. */
   picks: Map<string, SharePick | ItemSharePick>;
   outputs: ShareOutputState[];
-  /** The item directories the scanner looked in, for the empty state. */
   scanned: ShareScanLocation[];
 }
 
 export interface ShareOutputRemainder extends ShareOutputState {
-  /** Current output minus every managed fragment's contribution. */
   remainder: ConfigObject;
 }
 
@@ -106,8 +72,6 @@ export async function loadShareCatalog(opts: {
   lock: Lock;
   localLock: Lock;
 }): Promise<ShareCatalog> {
-  // The scan and the three outputs are independent reads; only the row order
-  // below is fixed.
   const [scan, perTarget] = await Promise.all([
     scanUntrackedShareItems({
       project: opts.project,
@@ -141,11 +105,8 @@ export async function loadShareCatalog(opts: {
 }
 
 /**
- * One output's unmanaged remainder. Per output, not all-or-nothing: an
- * unparseable `.codex/config.toml` or an unreachable source commit for one
- * target must not hide the other outputs' shareable values — a named share of
- * those values only reads its own target and would succeed. The broken output
- * gets a disabled diagnostic row instead.
+ * Read per output, not all-or-nothing: one broken output must not hide the
+ * other outputs' shareable values, which a named share would still read fine.
  */
 async function readOutputState(
   opts: {
@@ -203,7 +164,6 @@ async function readOutputState(
   }
 }
 
-/** The output key that holds the server table, per output target. */
 function serverContainerKey(target: FragmentTarget): string | null {
   if (target === "claude-settings") return null;
   return mcpServerContainerKey(sourceTargetOf(target));
@@ -214,19 +174,10 @@ function sourceTargetOf(target: FragmentTarget): FragmentSourceTarget {
 }
 
 /**
- * Rows and their meanings from the three outputs' unmanaged remainders.
- *
- * `.claude/settings.json` walks into settings rows and `.codex/config.toml`
- * into codex-config rows, one per config path, parents included — the label is
- * the exact string `--pick` takes. The server tables walk into mcp rows
- * instead, one per server per output file, and the codex-config walk skips the
- * `mcp_servers` subtree so a server is never offered under two kinds.
- *
- * Labels and details pass through `sanitizeDisplayText`: these strings come
- * from files the user's tools wrote, and the frame is live. The row id keeps
- * the unsanitized path, so the mark still names the real value.
+ * Labels and details require terminal-control filtering because file content
+ * can control the live terminal. Row ids keep raw paths so marks identify the
+ * real values.
  */
-/** The fragment rows of the share catalog and what each mark means. */
 export interface FragmentShareCatalog {
   rows: PickRow[];
   picks: Map<string, SharePick>;
@@ -245,28 +196,21 @@ export function shareCatalogRows(
   for (const output of outputs) {
     if (!output.exists) continue;
     const container = serverContainerKey(output.target);
-    // mcp rows are servers, not config paths, so the path walk skips them.
     const kind = fragmentKindForTarget(output.target);
     const pathKind: FragmentItemKind | null = kind === "mcp" ? null : kind;
 
     if (pathKind !== null) {
       const walkable = { ...output.remainder };
       if (container !== null) delete walkable[container];
-      // `$schema` in `.claude/settings.json` is capshelf's own synthetic key
-      // (`normalizeClaudeSettingsOutput` writes it), not project config. A
-      // schema-only file must report "nothing to share", and a fragment
-      // holding only the schema would contribute nothing.
+      // `$schema` is capshelf's own synthetic key, not project config; leaving
+      // it in would make a schema-only file look shareable.
       if (output.target === "claude-settings") delete walkable.$schema;
-      // A top-level key `--pick` cannot name has no ancestor row to cover it.
-      // Dropping it silently would let an output that still holds unmanaged
-      // data read as "nothing to share", so it gets a visible, unmarkable
-      // row instead. (`--from` can still share such a value.)
+      // A top-level key `--pick` cannot name gets a visible, unmarkable row;
+      // dropping it would let unmanaged data read as "nothing to share".
       for (const key of Object.keys(walkable)) {
         if (isPickableKey(key)) continue;
         rows.push({
           ref: sanitizeDisplayText(key),
-          // A distinct id namespace: this row is never a pick, so its id
-          // must not collide with any real pick path's.
           id: JSON.stringify([
             "share-unpickable",
             pathKind,
@@ -305,9 +249,8 @@ export function shareCatalogRows(
     }
 
     if (pathKind === null && container !== null) {
-      // `.mcp.json` rows are servers, so a non-server top-level key has no
-      // representation at all. Silence would let a file holding one read as
-      // "nothing to share"; a disabled row names it instead.
+      // A non-server top-level key has no mcp row, so a disabled row names it;
+      // silence would let the file read as "nothing to share".
       for (const key of Object.keys(output.remainder)) {
         if (key === container) continue;
         rows.push({
@@ -326,9 +269,8 @@ export function shareCatalogRows(
     if (container !== null) {
       const servers = output.remainder[container];
       if (servers === undefined) continue;
-      // A scalar server table is unmanaged data the fragment validators would
-      // reject, not an empty one. Silence here would let the output read as
-      // "nothing to share"; a disabled row names the problem instead.
+      // A scalar server table is unmanaged data, not an empty one; a disabled
+      // row avoids it reading as "nothing to share".
       if (!isPlainConfigObject(servers)) {
         rows.push({
           ref: sanitizeDisplayText(container),
@@ -348,20 +290,13 @@ export function shareCatalogRows(
         continue;
       }
       for (const [name, server] of Object.entries(servers)) {
-        // A server name with a dot has no `--pick` sugar (pick paths split on
-        // dots), and one the item-ref grammar cannot round-trip — a slash, a
-        // reserved system name, surrounding whitespace, an unsafe name —
-        // cannot become the item `share` would create. The row stays visible
-        // so the server does not look invisible to the tool; it just cannot
-        // be marked. The interactive loop re-checks through the same boundary
-        // a typed ref passes (`itemNameRefusal`), so a forged mark cannot
-        // reach `shareFragment` either.
-        // The share validators require a server definition to be an object;
-        // a scalar entry would fail every time after selection.
+        // Names that cannot round-trip through the item-ref grammar (or are
+        // malformed) stay visible but unmarkable; the interactive loop
+        // re-checks via `itemNameRefusal` so a forged mark cannot reach
+        // `shareFragment`.
         const malformed = !isPlainConfigObject(server);
-        // The trim check is not part of the round-trip: the ref grammar trims
-        // the whole ref, so a leading space after the slash survives parsing.
-        // A name needing that quirk stays offerable only through --from.
+        // The ref grammar trims the whole ref, so a leading space after the
+        // slash survives parsing; such names are shareable only via --from.
         const unshareable =
           malformed ||
           name.includes(".") ||
@@ -408,32 +343,18 @@ function shareRowId(
   return JSON.stringify(["share", kind, target, pick]);
 }
 
-/** One `capshelf share` invocation the marks add up to. */
 export interface PlannedShare {
   kind: FragmentItemKind;
-  /** Known for mcp (the server name); null means the picker must ask for one. */
   name: string | null;
-  /** Explicit `--pick` arguments; empty for a default mcp share. */
   picks: string[];
-  /** The `--target` flag; null means no flag (every marked output). */
   target: FragmentSourceTarget | null;
   /**
-   * Every mark that formed this item, ancestors and dropped descendants both,
-   * so the post-prompt staleness check covers everything the user saw.
+   * Includes ancestors and dropped descendants so the post-prompt staleness
+   * check covers everything the user saw.
    */
   marks: SharePick[];
 }
 
-/**
- * Group marked rows into the share invocations they mean (spec decision 2).
- *
- * mcp rows group by server name, and the marked outputs decide the `--target`
- * flag: both rows drop it, one row adds it. Settings rows group into one item,
- * codex-config rows into another; their names do not exist yet, so `name` is
- * null and the caller asks once per item, after the frame closes. Marked
- * ancestors silently drop their marked descendants — both marks name the same
- * fragment.
- */
 export function plannedSharesFromMarks(marks: SharePick[]): PlannedShare[] {
   const planned: PlannedShare[] = [];
   for (const kind of ["settings", "codex-config"] as const) {
@@ -467,12 +388,8 @@ export function plannedSharesFromMarks(marks: SharePick[]): PlannedShare[] {
 }
 
 /**
- * The marks of one planned item whose values no longer match what the picker
- * showed, judged against a freshly rebuilt catalog. Covers fragment and
- * on-disk item marks alike: both carry an id and a content digest.
- *
- * A vanished row counts as changed: the value was removed, or another process
- * now manages it, and either way it is not what the user marked.
+ * A vanished row counts as changed: the value was removed or is now managed
+ * elsewhere, so it is not what the user marked.
  */
 export function changedMarks<M extends { id: string; digest: string }>(
   planned: { marks: M[] },

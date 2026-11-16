@@ -1,14 +1,7 @@
 /**
- * What a repository outside the shelf offers, read at one commit.
- *
- * Everything here reads through `ls-tree` and `cat-file` at a resolved commit.
- * The cache clone has a working tree because `git clone` makes one; nothing may
- * depend on it, because its checkout is an artifact of the clone rather than a
- * fact about the commit a pin names.
- *
- * Ambiguity is never resolved by guessing, by D17. A repository holding a root
- * `SKILL.md` **and** subdirectory skills offers both, and the caller lists or
- * picks.
+ * Read only through ls-tree and cat-file at the commit: the clone's checkout is
+ * an artifact of `git clone`, not a fact about the pinned commit. A root
+ * SKILL.md plus subdirectory skills offers both, and the caller lists or picks.
  */
 import { basename, posix } from "node:path";
 import { isSafeItemName, isSafeItemRoot } from "./assert";
@@ -39,7 +32,6 @@ import type {
 
 const SKILL_FILE = "SKILL.md";
 
-/** Where a candidate came from, and the precedence when two rules agree. */
 export type RemoteCandidateOrigin =
   | "root"
   | "skills"
@@ -55,7 +47,6 @@ const ORIGIN_PRECEDENCE: RemoteCandidateOrigin[] = [
   "marketplace",
 ];
 
-/** The three directories a repository publishes skills under. */
 const SKILL_PARENTS: ReadonlyArray<{
   prefix: string;
   origin: RemoteCandidateOrigin;
@@ -66,15 +57,10 @@ const SKILL_PARENTS: ReadonlyArray<{
 ];
 
 export interface RemoteSkillCandidate {
-  /** Repository-relative item root. `"."` means the repository root. */
   subpath: string;
-  /** The default item name: the directory name, or the repo name at the root. */
   defaultName: string;
-  /** The SKILL.md `description` frontmatter value, when it parses. */
   description: string | null;
-  /** Where the candidate came from, for the `--list` heading. */
   origin: RemoteCandidateOrigin;
-  /** Set when this candidate is a skill directory of a plugin. */
   plugin?: SkillPluginFacts;
 }
 
@@ -82,31 +68,17 @@ export interface RemoteDiscovery {
   candidates: RemoteSkillCandidate[];
   plugins: DiscoveredPlugin[];
   skipped: SkippedEntry[];
-  /** A10: a catalog or manifest document that is present and does not parse. */
   warnings: DiscoveryWarning[];
-  /**
-   * The plugins in `plugins` that hold a regular Claude manifest, so they
-   * install whole (plugin D5). Absent means none.
-   */
   wholePlugins?: WholePlugin[];
 }
 
-/** One plugin that the `add <url>` picker offers as a whole (plugin D5). */
 export interface OfferedPlugin {
   plugin: DiscoveredPlugin;
   whole: WholePlugin;
 }
 
-/**
- * What the `add <url>` picker offers, by the repository shape (plugin D5,
- * the 2026-10-20 reversal). A plugin with a regular Claude manifest is one
- * row. A skill is a row when no such plugin holds it. A repository with no
- * such plugin gives skill rows only, as before.
- */
 export interface PickerOffer {
-  /** Discovery order. */
   plugins: OfferedPlugin[];
-  /** Candidate order. */
   skills: RemoteSkillCandidate[];
 }
 
@@ -127,15 +99,13 @@ export function pickerOffer(discovery: RemoteDiscovery): PickerOffer {
   return { plugins, skills };
 }
 
-/** Every candidate at `commit`, sorted by subpath. Reads only through ls-tree. */
 export async function discoverRemoteSkills(
   repo: string,
   commit: string,
   repoName?: string,
 ): Promise<RemoteDiscovery> {
-  // One `ls-tree -r` over the whole tree, then everything in memory. An empty
-  // pathspec list would return before running Git at all, so discovery would
-  // find nothing and report no error.
+  // Pass the `.` pathspec explicitly: an empty pathspec list returns before
+  // running Git, so discovery would silently find nothing.
   const entries = await lsTreeEntriesForPathspecs(repo, commit, [
     literalPathspec("."),
   ]);
@@ -148,14 +118,11 @@ export async function discoverRemoteSkills(
 
   const inventory = await discoverPlugins(repo, entries);
 
-  // D2: today's rule for an entry with a `skills` array, or `source: "./"`.
   for (const dir of inventory.legacySkillDirs) {
     if (!skillDirs.has(dir)) continue;
     if (!found.has(dir)) found.set(dir, "marketplace");
   }
 
-  // Discovery rule 7: a directory a layout rule already found keeps that
-  // origin and still gets plugin facts below.
   const pluginSkillDirs = new Set<string>();
   for (const plugin of inventory.plugins) {
     for (const dir of plugin.skillDirs) {
@@ -198,7 +165,6 @@ export async function discoverRemoteSkills(
   };
 }
 
-/** One candidate at an explicit subpath, or a refusal naming the path read. */
 export async function candidateAtSubpath(
   repo: string,
   commit: string,
@@ -211,14 +177,11 @@ export async function candidateAtSubpath(
       { hint: "name a directory inside the repository, without `..`" },
     );
   }
-  // One full-tree read, reused below for the SKILL.md check and the plugin
-  // lookup — not a narrow read of just `skillPath` followed by a second,
-  // full one.
   const entries = await lsTreeEntriesForPathspecs(repo, commit, [
     literalPathspec("."),
   ]);
   const skillPath = itemFilePath(subpath, SKILL_FILE);
-  // D14: a symlinked or gitlinked SKILL.md is "no SKILL.md".
+  // A symlinked or gitlinked SKILL.md counts as missing.
   const skillEntry = entries.find((entry) => entry.path === skillPath);
   if (skillEntry === undefined || !isRegularFile(skillEntry)) {
     throw new PreconditionError(
@@ -258,15 +221,8 @@ export async function candidateAtSubpath(
 }
 
 /**
- * D10 and D5: the plugin whose source equals `subpath`, with candidates for
- * its skills and their facts. Null when `subpath` names no plugin at all,
- * cataloged or manifest-only.
- *
- * `warnings` is `inventory.warnings` plus, only for the manifest-only
- * fallback, that one `describePluginDirectory` call's own warnings — the
- * cataloged branch's warnings are already inside `inventory.warnings`,
- * because `discoverPlugins` calls `describePluginDirectory` for every kept
- * plugin itself.
+ * `warnings` adds `describePluginDirectory`'s own only on the manifest-only
+ * fallback, since the cataloged branch's are already in `inventory.warnings`.
  */
 export async function pluginAtSubpath(
   repo: string,
@@ -277,15 +233,10 @@ export async function pluginAtSubpath(
   plugin: DiscoveredPlugin;
   candidates: RemoteSkillCandidate[];
   warnings: DiscoveryWarning[];
-  /** Set when the plugin holds a regular Claude manifest (plugin D5). */
   whole: WholePlugin | null;
 } | null> {
-  // D2/D12: the repository root is always legacy, never a plugin — a
-  // catalog source normalizing to "." routes through `legacySkillDirs`
-  // (`isLegacyClaudePlugin`), so no cataloged plugin ever has `source: "."`.
-  // A manifest at the root must not turn `--path .` into a plugin lookup
-  // either: a repository whose root is also a plugin keeps today's `--path .`
-  // behavior.
+  // The repository root is never a plugin: a catalog source of "." is legacy,
+  // and a root manifest must not turn `--path .` into a plugin lookup.
   if (subpath === ".") return null;
 
   const entries = await lsTreeEntriesForPathspecs(repo, commit, [
@@ -330,15 +281,6 @@ export async function pluginAtSubpath(
   };
 }
 
-/**
- * The plugin that owns `subpath` as a skill directory, or null.
- *
- * Checked first against every catalog-named plugin's own `skillDirs` (any
- * manifest-declared shape). When none claims it, falls back to the
- * conventional `<plugin>/skills/<skill>` shape for a plugin no catalog names
- * at all, built the same way `describePluginDirectory` builds any other
- * manifest-only plugin.
- */
 async function pluginOwningSkillDir(
   repo: string,
   entries: readonly GitTreeEntry[],
@@ -350,9 +292,8 @@ async function pluginOwningSkillDir(
   );
   if (cataloged !== undefined) return cataloged;
 
-  // The repository root is never a plugin (D2), so a root manifest gives
-  // `skills/<x>` no plugin. `discoverRemoteSkills` agrees: it reads plugins
-  // only from the catalogs, and a catalog source at the root is legacy.
+  // The repository root is never a plugin, matching `discoverRemoteSkills`, so
+  // a root manifest gives `skills/<x>` no plugin.
   const pluginDir = pluginDirFromSkillPath(subpath);
   if (
     pluginDir === null ||
@@ -371,11 +312,6 @@ async function pluginOwningSkillDir(
   return plugin.skillDirs.includes(subpath) ? plugin : null;
 }
 
-/**
- * The plugin directory `subpath` would sit under if it has the conventional
- * `<plugin>/skills/<skill>` shape, or null when it does not have that shape
- * at all.
- */
 function pluginDirFromSkillPath(subpath: string): string | null {
   const parent = posix.dirname(subpath);
   if (posix.basename(parent) !== "skills") return null;
@@ -383,11 +319,8 @@ function pluginDirFromSkillPath(subpath: string): string | null {
 }
 
 export interface LicenseFinding {
-  /** The path that was found, or null. */
   path: string | null;
-  /** True when the file sits inside the item and therefore travels with it. */
   insideItem: boolean;
-  /** A short label such as `MIT`, or null when none was recognized. */
   label: string | null;
 }
 
@@ -412,10 +345,8 @@ const LICENSE_LABELS: ReadonlyArray<[RegExp, string]> = [
 ];
 
 /**
- * Name-match heuristic over LICENSE, LICENSE.md, LICENCE, and COPYING.
- *
- * It is a heuristic and the specification says so. It misses a license stated
- * only in a README, and it never blocks a command.
+ * Name-match heuristic only: it misses a license stated only in a README, and
+ * never blocks a command.
  */
 export async function findLicense(
   repo: string,
@@ -448,7 +379,6 @@ export interface RemoteCandidateSummary {
   totalBytes: number;
 }
 
-/** The file list and sizes the consent prompt prints. */
 export async function summarizeCandidate(
   repo: string,
   commit: string,
@@ -472,7 +402,6 @@ export async function summarizeCandidate(
   };
 }
 
-/** The content source a remote item root selects, with no item name involved. */
 export function remoteTreeSource(
   repo: string,
   commit: string,
@@ -481,7 +410,6 @@ export function remoteTreeSource(
   return { kind: "git-tree", repo, commit, itemRoot };
 }
 
-/** Every directory that holds a regular-file `SKILL.md` at the commit (D14). */
 function skillDirectories(entries: readonly GitTreeEntry[]): Set<string> {
   const dirs = new Set<string>();
   for (const entry of entries) {
@@ -498,11 +426,8 @@ function skillDirectories(entries: readonly GitTreeEntry[]): Set<string> {
 }
 
 /**
- * The origin a directory's own position implies, or null when its position
- * implies nothing.
- *
- * A directory under `skills/` counts only as a direct child: `skills/a/b` is
- * content of `skills/a`, not a second skill.
+ * Only a direct child of a skills directory counts: `skills/a/b` is content of
+ * `skills/a`, not a second skill.
  */
 function layoutOriginOf(subpath: string): RemoteCandidateOrigin | null {
   if (subpath === ".") return "root";
@@ -522,7 +447,6 @@ interface CandidateSeed {
   origin: RemoteCandidateOrigin;
 }
 
-/** Read every candidate's `SKILL.md` in one object read, then sort. */
 async function describeCandidates(
   repo: string,
   commit: string,
@@ -571,12 +495,9 @@ function compareCandidates(
 }
 
 /**
- * The frontmatter `description`, or null.
- *
- * `parseFrontmatter` takes the extracted block, never the whole file: the
- * closing `---` opens a second YAML document, so passing the file returns no
- * description and one "multiple documents" warning for every skill ever
- * written.
+ * Pass the extracted frontmatter block, not the whole file: the closing `---`
+ * opens a second YAML document, causing no description and a "multiple
+ * documents" warning.
  */
 function descriptionOf(
   bytes: Buffer | undefined,

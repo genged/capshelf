@@ -30,10 +30,8 @@ export function targetDir(
 }
 
 /**
- * Skips paths (relative to the copied root) during a copy. Copy-down callers
- * pass `isMetadataSidecarPath` so the catalog sidecar never lands in a
- * project; copy-up callers (promote/share) pass nothing — a project-authored
- * sidecar must travel up to the data repo.
+ * Copy-down skips the catalog sidecar; copy-up must not, so a project-authored
+ * sidecar reaches the data repo.
  */
 type SkipPredicate = (rel: string) => boolean;
 

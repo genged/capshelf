@@ -1,24 +1,18 @@
 /**
- * The commands a status row can be resolved with, as the CLI would print
- * them. The web UI shows these beside each item, so every command must run
- * as printed from the project root: no placeholders, and every argument
- * quoted the way `shellArg` quotes it (`src/paths.ts`).
+ * Every command must run as printed from the project root, with arguments
+ * quoted by `shellArg`, because the web UI shows them verbatim.
  */
 import { capshelfCommandPrefix, shellArg } from "./paths";
 import { allCanonicalItemRelPaths, isCopyDirectoryItemKind } from "./master";
 import type { StatusRow } from "./status-core";
 
 export interface StatusAction {
-  /** The exact text to paste. */
   command: string;
-  /** One sentence on what it does. */
   purpose: string;
 }
 
 export interface StatusActionOptions {
-  /** The `--data` override this run used, repeated on every printed command. */
   dataOverride?: string;
-  /** The resolved data repo, for the git commands a dirty shelf needs. */
   dataRepo?: string | null;
 }
 
@@ -53,14 +47,11 @@ export function actionsForRow(
   };
   const system = row.source === "system";
 
-  // A remote skill gets its own branch rather than falling through the
-  // shelf-owned one. Every command below that names the shelf — `promote`,
-  // `keep-local`, `revert` — refuses for a remote row, so listing them would
-  // turn the status output into a set of dead ends the user is invited to run.
+  // Remote rows get their own branch because `promote`, `keep-local`, and
+  // `revert` all refuse for them, so listing those would be dead ends.
   if (row.source === "remote") {
-    // No `--local` suffix. Every remote row is local scope, so there is no
-    // second row to disambiguate from, and `share` has no `--local` flag at
-    // all: a printed command has to run as printed.
+    // No `--local` suffix: every remote row is local scope and `share` has no
+    // such flag, so the printed command must omit it to run as printed.
     const remoteVerb = (name: string, extra = ""): string =>
       `${prefix} ${name} ${ref}${extra}`;
     const adopt = remoteVerb("share", " --adopt");
@@ -92,8 +83,8 @@ export function actionsForRow(
         add(remoteVerb("apply"), "Reinstall from the cached pin.");
         break;
       case "missing_source_commit":
-        // The cache is gone, so `apply` has nothing to reinstall from and
-        // refuses. The fetch is the only command that restores it.
+        // With the cache gone, `apply` has nothing to reinstall from and
+        // refuses; only the fetch restores it.
         add(
           `${prefix} status --check-upstream`,
           "Re-create the clone cache this machine no longer has.",
