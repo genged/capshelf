@@ -20,9 +20,8 @@ import type { ItemKind } from "./master";
 
 export { hasShelvesKey } from "./manifest-fence";
 
-// Names in a committed manifest are as untrusted as lockfile names — a cloned
-// project's manifest could carry `skills: ["../../evil"]`, which would flow to
-// installedPath. Validate every tracked name against the one canonical rule.
+// Manifest names are untrusted like lockfile names (e.g. `../../evil` reaching
+// installedPath), so validate against the canonical rule.
 const itemNameArray = z
   .array(
     z.string().refine(isSafeItemName, {
@@ -70,9 +69,6 @@ export const ManifestSchema = z
 
 type ParsedManifest = z.infer<typeof ManifestSchema>;
 
-// New fields stay optional at the TypeScript boundary so older in-memory
-// fixtures and integrations remain source-compatible. ManifestSchema always
-// supplies them when loading persisted state, and mutation initializes them.
 export type Manifest = Omit<
   ParsedManifest,
   "piExtensions" | "subagents" | "plugins"
@@ -91,10 +87,9 @@ export async function loadManifest(project: string): Promise<Manifest> {
   const p = manifestReadPath(project);
   if (!p) return emptyManifest();
   const parsed: ConfigValue = JSON.parse(await readFile(p, "utf-8"));
-  // "shelves" is reserved for multi-shelf federation, with one exception: the
-  // plugin fence (M9). Detect it before zod parsing: the non-strict schema
-  // would silently strip it and the next saveManifest would delete the
-  // federation config, or the fence, with no error.
+  // "shelves" is reserved for federation, except the plugin fence. Detect it
+  // before zod parsing, because the non-strict schema would strip it and the
+  // next save would silently delete the federation config or the fence.
   assertFenceOrFederation(p, parsed);
   if (isConfigObject(parsed)) delete parsed.shelves;
   const legacyDataRepo = legacyDataRepoOf(parsed);
@@ -147,8 +142,8 @@ export async function saveManifest(
   await atomicWriteFile(p, `${JSON.stringify(out, null, 2)}\n`, {
     root: project,
   });
-  // installMode may have changed; drop the memoized detectInstallMode value so
-  // a later read in the same process sees the new manifest.
+  // installMode may have changed, so drop the memoized value so later reads see
+  // the new manifest.
   clearInstallModeCache(project);
 }
 
@@ -196,12 +191,10 @@ export function removeManifestName(
   if (index !== -1) list.splice(index, 1);
 }
 
-/** The retired top-level `dataRepo` field, read before the schema strips it. */
 const LegacyDataRepoProbe = z.object({
   dataRepo: z.string().min(1).optional(),
 });
 
-/** The legacy `dataRepo` path a manifest still carries, or null. */
 function legacyDataRepoOf(value: ConfigValue): string | null {
   const probe = LegacyDataRepoProbe.safeParse(value);
   return probe.success ? (probe.data.dataRepo ?? null) : null;

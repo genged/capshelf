@@ -1,13 +1,6 @@
 /**
- * Walk a config object into the dot paths `--pick` accepts, each with a shape
- * summary for the picker's detail column.
- *
- * Pure, like `pick-core.ts`: no filesystem and no terminal, so the walk, the
- * labels, and the ancestor dedupe are unit tests.
- *
- * The shape summary is deliberate: a row never shows a scalar value, because a
- * config value can be a credential and the picker paints into a live frame.
- * `2 keys` and `string` identify a row; the path does the rest.
+ * Rows show a shape summary, never a scalar value, because config values can be
+ * credentials and the picker paints into a live frame.
  */
 import { isTerminalControlCode } from "./assert";
 import { isConfigObject, isConfigString } from "./config-values";
@@ -15,17 +8,14 @@ import type { ConfigObject, ConfigValue } from "./config-values";
 
 export interface ConfigPathRow {
   /**
-   * Dot-joined path — the exact string `--pick` takes. Pickable keys cannot
-   * contain a dot, so `path.split(".")` recovers the segments exactly.
+   * Dot-joined `--pick` path; pickable keys never contain a dot, so splitting
+   * on `.` recovers the segments.
    */
   path: string;
-  /** Detail summary, never the value: `2 keys`, `3 entries`, `string`. */
   detail: string;
-  /** The node itself, so a caller can fingerprint what the row named. */
   value: ConfigValue;
 }
 
-/** The detail text for one value: its structure, never its content. */
 export function configDetailLabel(value: ConfigValue): string {
   if (value === null) return "null";
   if (Array.isArray(value)) return countLabel(value.length, "entry", "entries");
@@ -37,21 +27,9 @@ export function configDetailLabel(value: ConfigValue): string {
 }
 
 /**
- * Every node of `value` as a pick path, parents before children, in document
- * order. The root itself gets no row: `--pick` takes a path into the object,
- * and the whole object is not a path.
- *
- * A key that `--pick` cannot name is skipped with its subtree. Pick paths
- * split on `.` (`pickPathSegments`), so a key containing a literal dot, or an
- * empty key, has no pick syntax at all. Its nearest offerable ancestor still
- * covers it.
- *
- * A key holding a terminal control character is skipped for a different
- * reason: the path becomes a row label, a `--pick` argument in a printed
- * equivalent command, and a retry command. `shellArg` quotes for the shell but
- * deliberately preserves bytes, so a raw ESC in a printed command would reach
- * the live terminal. These keys come from files a cloned project's tools
- * wrote, which is untrusted input.
+ * Keys with a literal dot, empty keys, or terminal control characters are
+ * skipped with their subtree: pick paths split on `.`, and `shellArg` preserves
+ * bytes, so a raw ESC from untrusted project files would reach the terminal.
  */
 export function walkConfigPaths(value: ConfigObject): ConfigPathRow[] {
   const rows: ConfigPathRow[] = [];
@@ -77,11 +55,9 @@ function walk(
 }
 
 /**
- * Whether `--pick` can name and safely print a key: non-empty, no literal dot
- * (pick paths split on dots), no control character (C0, DEL, C1 — the set
- * `sanitizeDisplayText` blanks). A nested unpickable key is covered by its
- * ancestor's row; a top-level one has no ancestor, so the share catalog shows
- * it as a disabled row rather than letting the output read as empty.
+ * A nested unpickable key is covered by its ancestor's row, but a top-level one
+ * has none, so the share catalog shows it as a disabled row instead of an
+ * empty-looking output.
  */
 export function isPickableKey(key: string): boolean {
   if (key.length === 0 || key.includes(".")) return false;
@@ -92,12 +68,8 @@ export function isPickableKey(key: string): boolean {
 }
 
 /**
- * Drop every marked path whose strict ancestor is also marked.
- *
- * Marking `permissions` and `permissions.allow` names the same fragment twice:
- * extracting the parent already carries the child. Passing both to `--pick`
- * would merge the child into the parent's copy and change nothing, so the
- * printed equivalent command would carry a redundant flag.
+ * Parent and child both marked would pass a redundant `--pick` flag, since
+ * extracting the parent already carries the child.
  */
 export function dedupeAncestorPaths(paths: readonly string[]): string[] {
   const unique = [...new Set(paths)];

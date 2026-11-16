@@ -1,8 +1,6 @@
 /**
- * The syntax-highlighting languages a diff can use, keyed by file extension.
- *
- * One table for the terminal preview and the web UI. The module imports only
- * `@speed-highlight/core` language data, so a browser bundle can carry it.
+ * Imports only `@speed-highlight/core` language data so the browser bundle can
+ * carry this table.
  */
 import bash from "@speed-highlight/core/languages/bash.js";
 import c from "@speed-highlight/core/languages/c.js";
@@ -60,13 +58,11 @@ export const LANGUAGE_BY_EXTENSION: ReadonlyMap<string, ShjLanguageData> =
     [".yml", yaml],
   ]);
 
-/** The language for a bare file name (no directory part), or undefined. */
 export function languageForFileName(name: string): ShjLanguageData | undefined {
   const lower = name.toLowerCase();
   if (lower === "dockerfile") return docker;
   if (lower === "makefile") return make;
   const dot = lower.lastIndexOf(".");
-  // A dotfile such as `.bashrc` has no extension, which matches `extname`.
   if (dot <= 0) return undefined;
   return LANGUAGE_BY_EXTENSION.get(lower.slice(dot));
 }
