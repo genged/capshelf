@@ -1,7 +1,3 @@
-/**
- * The web UI's static files, inlined into the binary. `bun run build:ui`
- * writes the two generated files; the logo is the repository's own mark.
- */
 import appCss from "./generated/app.css" with { type: "text" };
 import appJs from "./generated/app.js" with { type: "text" };
 import logoPath from "../../docs/logo.png" with { type: "file" };

@@ -1,8 +1,3 @@
-/**
- * The client's one door to the server. The access token arrives in the URL
- * `capshelf ui` prints, moves into session storage on the first load, and
- * rides every API call as a bearer header.
- */
 import { isJsonObject, isJsonString } from "../shared/json";
 import type { JsonValue } from "../shared/json";
 
@@ -38,7 +33,6 @@ export class ApiError extends Error {
   }
 }
 
-/** The two fields the client reads from a `UiError` envelope. */
 interface ApiErrorEnvelope {
   message: string;
   hint: string | undefined;
@@ -90,7 +84,7 @@ export async function apiGet<T>(
       envelope?.hint,
     );
   }
-  // SAFETY: every /api route is owned by src/ui/api.ts, which returns the
-  // type T the caller names. The server and the client are one build.
+  // SAFETY: /api routes in src/ui/api.ts return the type the caller names, and
+  // server and client ship in one build.
   return (await response.json()) as T;
 }

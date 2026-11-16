@@ -1,8 +1,4 @@
-/**
- * Syntax color for diff and file lines, from the same language table the
- * terminal preview uses (`src/diff-languages.ts`). Tokens become spans, never
- * markup, so file content cannot inject anything.
- */
+/** Tokens become spans, never markup, so file content cannot inject HTML. */
 import { tokenizeWith } from "@speed-highlight/core/tokenize";
 import type { ShjLanguageData, ShjToken } from "@speed-highlight/core/tokenize";
 import type { ComponentChildren } from "preact";

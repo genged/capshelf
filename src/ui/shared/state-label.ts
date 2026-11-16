@@ -1,9 +1,3 @@
-/**
- * Short labels for the fourteen status states, for the web UI's panel
- * headers. The CLI's own sentence (`describe` in `src/status-format.ts`)
- * travels beside them as `stateDetail`; this file only shortens, it never
- * reinterprets.
- */
 import type { RuntimeWarningType } from "../../runtime-warnings";
 import type { RowSource, State } from "../../status-core";
 import type { StateTone } from "./api-types";
@@ -61,10 +55,6 @@ export function stateLabel(state: State, source: RowSource): string {
   }
 }
 
-/**
- * A row whose content is fine but whose harness will load another copy is
- * hidden, not stale. Its badge names the warning instead of the state.
- */
 export function warningLabel(type: RuntimeWarningType): string {
   switch (type) {
     case "shadowed_by_personal_claude_skill":
@@ -86,7 +76,6 @@ export function stateTone(state: State): StateTone {
   return "attention";
 }
 
-/** The icon that stands in for the CLI glyph (`glyph` in status-format). */
 export function stateIcon(state: State): StateIconName {
   switch (state) {
     case "ok":
@@ -113,7 +102,6 @@ export function stateIcon(state: State): StateIconName {
   }
 }
 
-/** The tree and panel icon. A finding on an up-to-date row shows the alert. */
 export function itemIcon(state: State, attention: boolean): StateIconName {
   return attention && (state === "ok" || state === "kept-local")
     ? "alert"

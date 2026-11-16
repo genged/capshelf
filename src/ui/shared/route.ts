@@ -1,11 +1,5 @@
 /**
- * Hash routes, so the page needs no server route table and a reload keeps
- * the place. `#/status/<project>/<item>`, `#/findings/<project>/<item>`,
- * `#/shelf/<repo>/<ref>`, `#/shelf/<repo>/rollouts/<ref>`,
- * `#/shelf/<repo>/coverage`, and `#/machine/<entry>`; every segment is
- * URI-encoded.
- * An encoded ref always holds `%2F`, so a section name never reads as one.
- * Pure: the hook that follows the location lives in the client router.
+ * An encoded ref always contains `%2F`, so a ref never matches a section name.
  */
 
 export type ShelfSection = "items" | "rollouts" | "coverage";
@@ -19,7 +13,6 @@ export type Route =
       section: ShelfSection;
       ref: string | null;
     }
-  /** `entry` is a `machineEntryKey` from the view model. */
   | { view: "machine"; entry: string | null };
 
 function isSection(value: string | undefined): value is ShelfSection {
@@ -37,10 +30,9 @@ export function parseRoute(hash: string): Route {
       .filter((part) => part.length > 0)
       .map((part) => decodeURIComponent(part));
   } catch {
-    // A hand-edited link can hold a bad percent escape, and
-    // `decodeURIComponent` throws a URIError for it. The route is parsed
-    // during render, so a throw would leave a blank page. The overview opens
-    // instead.
+    // A hand-edited link can hold a bad percent escape that makes
+    // `decodeURIComponent` throw during render and blank the page, so fall back
+    // to the overview.
     return OVERVIEW;
   }
   if (parts[0] === "shelf") {
@@ -77,11 +69,8 @@ export function parseRoute(hash: string): Route {
 }
 
 /**
- * Item ids that earlier releases of the dashboard put in a status route for
- * user-level skills: the aggregate `user-skills` row, and the per-skill
- * `user/<surface>/<name>`. User-level skills now live in This machine, and
- * the per-skill id carries the path (`user/<surface>:<path>`), so an old link
- * opens This machine instead of a project overview.
+ * Old dashboard links used these user-skill item ids in status routes; redirect
+ * them to This machine.
  */
 export function isLegacyUserSkillItem(item: string): boolean {
   return item === "user-skills" || /^user\/(claude|codex)\/[^:]+$/.test(item);

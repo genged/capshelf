@@ -7,7 +7,6 @@ import {
 import { DetailHead } from "./ItemDetail";
 import { Icon, type IconName } from "./icons";
 
-/** `<scope>/<source>/skills/<name>`, the id a shadowed item has in the UI. */
 export function shadowedItemId(
   skill: ExternalUserSkill,
   shadow: ExternalUserSkill["shadows"][number],
@@ -16,9 +15,8 @@ export function shadowedItemId(
 }
 
 /**
- * The per-harness sentence for a user-level skill that shares a name with a
- * managed skill. Claude loads its personal copy first, so that is a shadow.
- * Codex offers both copies, so that is a name clash and not a finding.
+ * Claude loads its personal copy first (a shadow); Codex offers both copies, so
+ * it is a name clash, not a finding.
  */
 export function shadowWording(surface: ExternalUserSkill["surface"]): {
   lead: string;
@@ -36,7 +34,6 @@ export interface ExternalRowText {
   state: string;
 }
 
-/** The list row's quiet words for an external entry. */
 export function externalRowText(entry: ExternalEntry): ExternalRowText {
   switch (entry.type) {
     case "skills.sh":
@@ -61,11 +58,6 @@ export function externalRowText(entry: ExternalEntry): ExternalRowText {
   }
 }
 
-/**
- * The detail of something a harness loads here that Capshelf does not
- * manage. It has no pin, no diff, and no command. It says who manages it
- * and where it lives.
- */
 export function ExternalDetail({
   entry,
   project,
@@ -79,7 +71,6 @@ export function ExternalDetail({
   projectName: string;
   displayPath: (path: string) => string;
   onBack: () => void;
-  /** See `DetailHead`. */
   refreshError?: string | null;
 }): preact.JSX.Element {
   const managedBy =
@@ -90,7 +81,6 @@ export function ExternalDetail({
           ? "Enabled in Claude settings."
           : "Disabled in Claude settings. Claude does not load it."
         : "A user-level skill from the home folder.";
-  // The entry in This machine, for a skill or plugin from the home folder.
   const machineEntry =
     entry.type === "user-skill"
       ? machineSkillKey(entry.skill)
