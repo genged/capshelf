@@ -1,12 +1,6 @@
 /**
- * Build the picker's rows from a data repo: every installable item plus every
- * bundle, each marked with whether the project already has it.
- *
- * This is the read half. It never installs and never refuses — a malformed
- * bundle or an unreadable sidecar degrades into a warning and a visible row,
- * the same way `ls` keeps a broken item on the shelf. `runInteractiveAdd` in
- * `commands/add.ts` is where a bad row becomes an error, because that is where
- * it can change something.
+ * Read-only: malformed bundles or sidecars become warnings and visible rows;
+ * errors are raised in runInteractiveAdd where state can change.
  */
 import { isSystemItemName } from "./bundled";
 import { listBundles, memberCountSummary } from "./bundles";
@@ -18,7 +12,6 @@ import type { PickRow } from "./pick-core";
 
 export interface PickCatalog {
   rows: PickRow[];
-  /** Bundle and metadata parse warnings, deduped, for the caller to print. */
   warnings: string[];
 }
 
@@ -39,9 +32,8 @@ export async function loadPickCatalog(
   warnings.push(...bundles.warnings);
   for (const bundle of bundles.bundles) {
     warnings.push(...bundle.warnings);
-    // A malformed bundle is listed and refuses on install rather than being
-    // hidden: a bundle that silently vanishes from the picker looks like a
-    // bundle the shelf does not have.
+    // Malformed bundles are listed (and refuse on install) because a silently
+    // hidden bundle looks like one the shelf lacks.
     rows.push({
       ref: `bundles/${bundle.name}`,
       kind: "bundles",
@@ -50,22 +42,19 @@ export async function loadPickCatalog(
         description: bundle.description,
       }),
       tags: bundle.tags,
-      // A bundle is a manifest macro, never locked, so "installed" is not a
-      // state it can be in. It is offered every time; members already present
-      // are skipped by the install path.
+      // Bundles are manifest macros and never locked, so they are always
+      // offered; install skips members already present.
       installed: false,
       detail: bundle.malformed ? "malformed" : memberCountSummary(bundle),
     });
   }
 
-  // A data repo may hold an item whose name collides with a system item's.
-  // `add` refuses those, so offering one would be offering a row that can
-  // only fail. Installed detection would not even mark it present, because
-  // the system copy is locked under `system/`, not `data/`.
+  // Items colliding with system item names are hidden because `add` refuses
+  // them and installed detection would miss them (system copy is locked under
+  // system/).
   const dataItems = (await listMasterItems(opts.dataRepo)).filter(
     (item) => !isSystemItemName(item.name),
   );
-  // Independent per-item file reads; the map keeps the row order.
   const metas = await Promise.all(
     dataItems.map((item) => loadDataItemMetadata(item)),
   );
@@ -83,11 +72,8 @@ export async function loadPickCatalog(
     });
   });
 
-  // Warnings quote data-repo text back to the user, and some of it verbatim:
-  // an unrecognised `includes` key goes straight into the message. The picker
-  // prints these to a live terminal, and `capshelf init` does it without being
-  // asked, so a shelf could paint over the frame or drive the terminal. Row
-  // descriptions are filtered for the same reason.
+  // Warnings echo untrusted data-repo text to a live terminal, so strip control
+  // sequences to stop a shelf painting over or driving the terminal.
   return {
     rows,
     warnings: [...new Set(warnings)].map(sanitizeDisplayText),
@@ -95,9 +81,8 @@ export async function loadPickCatalog(
 }
 
 /**
- * Refs already owned by either scope. Both locks count: an item installed at
- * local scope must not be offered at project scope, because `add` refuses that
- * as a cross-scope conflict rather than installing it.
+ * Both locks count because `add` refuses an item installed at the other scope
+ * as a cross-scope conflict.
  */
 function installedRefs(projectLock: Lock, localLock: Lock): Set<string> {
   const refs = new Set<string>();

@@ -1,23 +1,7 @@
 /**
- * What a plugin runs without the agent asking: its hooks and its MCP
- * servers (spec D6, D7 point 2).
- *
- * The reader is conservative (D6): a declaration that does not parse, or a
- * manifest path that leaves the plugin root, is reported in `unknown`. It
- * never reports "no hooks" for something it could not read — a reader that
- * silently dropped an unreadable file would be a false negative at the one
- * gate the design has.
- *
- * Hooks and MCP servers are not the complete set. Claude Code also arms
- * background monitors and starts LSP servers from a plugin, and its manifest
- * schema grows. The reader does not list those. It reports each one in
- * `unknown`, and so does every manifest key that is not on the inert
- * allowlist, so a consent point asks whenever capshelf cannot list what the
- * plugin runs.
- *
- * Two callers read the same logic through one `PluginFileReader` seam:
- * `pluginRunsAtCommit` reads blobs from a pinned Git tree, `pluginRunsOnDisk`
- * reads files from an installed directory.
+ * The reader is conservative: anything it can't parse or list (unreadable
+ * declarations, monitors, LSP, unlisted manifest keys) goes in `unknown` so the
+ * consent gate never reports a false "no hooks".
  */
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
@@ -45,9 +29,9 @@ const MONITORS_DEFAULT_REL = "monitors/monitors.json";
 const LSP_DEFAULT_REL = ".lsp.json";
 
 /**
- * Manifest keys that run nothing, or that this reader models itself (`hooks`,
- * `mcpServers`). Any other key is unknown: a key that Claude Code added after
- * this list was written can start a process.
+ * Keys are allowlisted because they are inert or handled by this reader
+ * (`hooks`, `mcpServers`). Other keys are unknown because future keys could
+ * start a process.
  */
 const INERT_MANIFEST_KEYS: ReadonlySet<string> = new Set([
   "$schema",
@@ -83,9 +67,7 @@ export interface PluginRunHook {
 
 export interface PluginRunServer {
   name: string;
-  /** The executable, or null for a server with no `command`. */
   command: string | null;
-  /** The arguments, one element each, so their boundaries stay exact. */
   args: string[];
   url: string | null;
   source: string;
@@ -97,19 +79,13 @@ export interface PluginRuns {
   unknown: string[];
 }
 
-/**
- * A local file that the write keeps beside the pinned files (row 4 of the
- * object model). `content` is null for a symlink: present, never read.
- */
+/** `content` is null for a symlink: reported as present, never read. */
 export interface PluginExtraFile {
   path: string;
   content: Buffer | null;
 }
 
-/** Returns the file's bytes, or null when the path is absent or unusable. */
 export type PluginFileReader = (relPath: string) => Promise<Buffer | null>;
-
-// --------------------------------------------------------------- schemas
 
 const hookEntrySchema = z
   .object({ type: z.string(), command: z.string().optional() })
@@ -157,8 +133,6 @@ function parseJsonDocument<T>(bytes: Buffer, schema: z.ZodType<T>): T | null {
   return result.success ? result.data : null;
 }
 
-// ----------------------------------------------------------------- manifest
-
 async function readManifest(
   read: PluginFileReader,
   unknown: string[],
@@ -175,8 +149,6 @@ async function readManifest(
   }
   return manifest;
 }
-
-// -------------------------------------------------------------------- hooks
 
 function pushHooksFromDocument(
   doc: HooksDocument,
@@ -223,7 +195,6 @@ async function readHooksFromPath(
   pushHooksFromDocument(doc, normalized, hooks);
 }
 
-/** The manifest `hooks` field, in the order R10 names: string, array, object. */
 async function readManifestHooks(
   read: PluginFileReader,
   manifest: PluginManifest,
@@ -255,7 +226,6 @@ async function readManifestHooks(
     pushHooksFromDocument(result.data, PLUGIN_MANIFEST_REL, hooks);
     return;
   }
-  // Any other type (number, boolean, null): unknown.
   unknown.push(unknownEntry(PLUGIN_MANIFEST_REL));
 }
 
@@ -275,13 +245,9 @@ async function collectHooks(
   await readManifestHooks(read, manifest, hooks, unknown);
 }
 
-// ------------------------------------------- monitors, LSP, unknown keys
-
 /**
- * The manifest keys this reader cannot list (D6): `monitors` (also under
- * `experimental`), `lspServers`, and every key off the inert allowlist. One
- * entry per source, whatever the value holds: Claude Code reads these keys,
- * so even a value capshelf would call malformed can run a command.
+ * One entry per source whatever the value holds: Claude Code reads these keys,
+ * so even a malformed value can run a command.
  */
 function collectManifestUnknowns(
   manifest: PluginManifest,
@@ -308,10 +274,6 @@ function collectManifestUnknowns(
   for (const key of keys) unknown.push(manifestKeyUnknown(key));
 }
 
-/**
- * The default monitor and LSP files Claude Code loads when present. Their
- * contents are not parsed: presence alone is reported.
- */
 async function collectDefaultFileUnknowns(
   read: PluginFileReader,
   unknown: string[],
@@ -321,8 +283,6 @@ async function collectDefaultFileUnknowns(
   }
   if ((await read(LSP_DEFAULT_REL)) !== null) unknown.push(LSP_FILE_UNKNOWN);
 }
-
-// --------------------------------------------------------------- MCP servers
 
 function pushServersFromMap(
   map: McpServersMap,
@@ -340,10 +300,6 @@ function pushServersFromMap(
   }
 }
 
-/**
- * `.mcp.json`'s two shapes: the `mcpServers` wrapper when that key holds an
- * object, else the top-level object itself.
- */
 function parseMcpDocument(bytes: Buffer): McpServersMap | null {
   let parsed: unknown;
   try {
@@ -387,8 +343,6 @@ async function collectServers(
   pushServersFromMap(result.data, PLUGIN_MANIFEST_REL, servers);
 }
 
-// ----------------------------------------------------------------- top level
-
 export async function readPluginRuns(
   read: PluginFileReader,
 ): Promise<PluginRuns> {
@@ -416,33 +370,21 @@ function hookIdentity(hook: PluginRunHook): string {
 }
 
 /**
- * The arguments stay an array: joined with spaces, `["-c", "a", "; b"]` and
- * `["-c", "a ; b"]` would be one identity, but only the second runs `b`.
+ * Args stay an array: joined with spaces, `["-c","a","; b"]` and `["-c","a ;
+ * b"]` would collide, but only the second runs `b`.
  */
 function serverIdentity(server: PluginRunServer): string {
   return JSON.stringify([server.name, server.command, server.args, server.url]);
 }
 
-/**
- * The command line a person reads: the executable and each argument, quoted
- * for a POSIX shell so the argument boundaries show. Null for a server with
- * no `command`.
- */
 export function serverCommandLine(server: PluginRunServer): string | null {
   if (server.command === null) return null;
   return shellCommand([server.command, ...server.args]);
 }
 
 /**
- * The entries in `next` that `previous` did not have (D7 point 2). A hook is
- * new when no previous hook shares its event, matcher, and command; a server
- * is new when no previous server shares its name, command, arguments, and
- * url. A script changing while its hook line stays the same is therefore not
- * a new entry.
- *
- * Every unknown entry of `next` is kept, also one the previous tree had. An
- * unreadable declaration can never be shown to be unchanged, and D7 says a
- * non-empty unknown list always asks.
+ * Every unknown entry of `next` is kept even if unchanged, since an unreadable
+ * declaration can never be shown unchanged.
  */
 export function newRunsEntries(
   previous: PluginRuns,
@@ -459,11 +401,6 @@ export function newRunsEntries(
   };
 }
 
-/**
- * Every entry of either set, once: a hook or a server both sets hold by
- * identity appears once, and every unknown entry appears once. A consent
- * point that covers two trees asks with this.
- */
 export function unionRuns(left: PluginRuns, right: PluginRuns): PluginRuns {
   const hooks = new Set(left.hooks.map(hookIdentity));
   const servers = new Set(left.mcpServers.map(serverIdentity));
@@ -482,8 +419,6 @@ export function unionRuns(left: PluginRuns, right: PluginRuns): PluginRuns {
   };
 }
 
-// ------------------------------------------------------------------ readers
-
 const DEFAULT_CANDIDATE_RELS = [
   PLUGIN_MANIFEST_REL,
   HOOKS_DEFAULT_REL,
@@ -497,19 +432,9 @@ function isRegularBlobMode(mode: string): boolean {
 }
 
 /**
- * D6's conservative-reader rule for the declaration paths themselves and
- * each of their ancestor directories. `collectHooks`, `collectServers`, and
- * `readManifest` treat a `null` read as "genuinely absent" and stay quiet.
- * That is correct for a missing file and wrong for one that exists but is
- * unsafe to read: a symlink, a non-regular entry, or a file under a
- * symlinked directory such as `hooks -> elsewhere`. The reader never follows
- * a symlink, so it cannot tell the two cases apart through
- * `PluginFileReader`. Each caller checks presence its own way, and this adds
- * one unknown entry for each unsafe path, at the path or at the ancestor
- * that is unsafe.
- *
- * Runs after `readPluginRuns` and skips a message that is already present,
- * so a source flagged for another reason is not reported twice.
+ * A null read can't distinguish an absent file from an unsafe one (symlink,
+ * non-regular, symlinked ancestor), so flag unsafe declaration paths as
+ * unknown.
  */
 async function addUnsafeDeclarationUnknowns(
   runs: PluginRuns,
@@ -531,8 +456,7 @@ async function addUnsafeDeclarationUnknowns(
 }
 
 /**
- * For a listed tree: the unsafe entries whose path folds to `prefix`. Case
- * and Unicode folding, because a folding volume resolves `hooks/hooks.json`
+ * Folds case and Unicode because a folding volume resolves `hooks/hooks.json`
  * through a kept `HOOKS` symlink.
  */
 function foldedUnsafeEntries(
@@ -544,7 +468,6 @@ function foldedUnsafeEntries(
   };
 }
 
-/** True when some ancestor directory of `relPath` is a symlink on disk. */
 function hasUnsafeAncestorOnDisk(dir: string, relPath: string): boolean {
   const segments = relPath.split("/");
   for (let depth = 1; depth < segments.length; depth += 1) {
@@ -555,28 +478,20 @@ function hasUnsafeAncestorOnDisk(dir: string, relPath: string): boolean {
   return false;
 }
 
-/** The widest folding a destination filesystem applies: NFC, then case. */
 const FULL_FOLDING = { caseFolding: true, normalizationFolding: true };
 
 function foldedPath(path: string): string {
   return destinationKey(path, FULL_FOLDING);
 }
 
-/**
- * The paths Claude Code reads a declaration from: the default candidates and
- * each path the manifest `hooks` field names.
- */
 function declarationPaths(manifestBytes: Buffer | null): string[] {
   return [...DEFAULT_CANDIDATE_RELS, ...manifestNamedHookPaths(manifestBytes)];
 }
 
 /**
- * D6's conservative-reader rule for a destination that folds names. On a
- * case-insensitive or normalization-insensitive volume, Claude Code finds
- * `HOOKS/hooks.json` when it asks for `hooks/hooks.json`. The reader asks for
- * the exact bytes, so each present path that folds to a declaration path,
- * but is not that path, is one unknown entry. Both readers call this with
- * the paths they found, so the two cannot disagree.
+ * On a case- or normalization-insensitive volume Claude Code finds
+ * `HOOKS/hooks.json` for `hooks/hooks.json`, so each present path that folds to
+ * a declaration path but is not that exact path is one unknown entry.
  */
 function addCaseVariantUnknowns(
   runs: PluginRuns,
@@ -595,9 +510,8 @@ function addCaseVariantUnknowns(
 }
 
 /**
- * The paths under `dir` that fold to `relPath`, found one segment at a time.
- * Each name in a directory is compared folded, so this finds `HOOKS/hooks.json`
- * on a case-sensitive volume too, where a teammate's volume may fold it.
+ * Compare names folded so `HOOKS/hooks.json` is found even on a case-sensitive
+ * volume, since a teammate's volume may fold it.
  */
 async function foldedMatchesOnDisk(
   dir: string,
@@ -625,12 +539,6 @@ async function foldedMatchesOnDisk(
   return matches;
 }
 
-/**
- * The manifest `hooks` field's string path(s), normalized and resolved. Two
- * uses: prefetching in `pluginRunsAtCommit`, where a missed path is still
- * read one blob at a time, and the case-variant check, which reads the field
- * the same way `readManifestHooks` does.
- */
 function manifestNamedHookPaths(manifestBytes: Buffer | null): string[] {
   if (manifestBytes === null) return [];
   let parsed: unknown;
@@ -656,20 +564,9 @@ function manifestNamedHookPaths(manifestBytes: Buffer | null): string[] {
 }
 
 /**
- * Read a plugin's runs from a pinned Git tree. Reads a fixed number of
- * `cat-file --batch` processes in the common case: one for the default
- * candidate files (the manifest, `hooks/hooks.json`, `.mcp.json`), one more
- * for the paths the manifest's `hooks` field names. A path missed by that
- * second batch — an edge case this reader's own logic does not anticipate —
- * still reads correctly through one extra per-path fetch, never as a false
- * "could not be read".
- *
- * `assertRegularBlobEntries` (`src/git.ts:697-712`) already refuses a
- * symlink or gitlink before `pin.ts` ever builds a `PinTreeEntry`, so in
- * practice every entry here already has a regular-file mode. This reader
- * checks the mode itself anyway rather than trusting that invariant: a
- * caller that builds `entries` by some other path must not be able to make
- * this reader silently treat a non-regular blob as absent.
+ * Checks each entry's mode itself rather than trusting that
+ * `assertRegularBlobEntries` already refused symlinks and gitlinks, so a caller
+ * building `entries` another way cannot make a non-regular blob read as absent.
  */
 export async function pluginRunsAtCommit(
   repo: string,
@@ -738,11 +635,9 @@ export async function pluginRunsAtCommit(
 }
 
 /**
- * Read a plugin's runs from an installed directory. A symlink or a
- * non-regular file is treated the same as absent by the reader itself — it
- * is never followed or opened — but a present, unsafe default candidate
- * still produces one unknown entry (D6), rather than being silently read as
- * "no hooks".
+ * The declaration reader refuses symlinks and non-regular files. Present unsafe
+ * declaration paths still produce unknown entries to prevent false "no hooks"
+ * results.
  */
 export async function pluginRunsOnDisk(dir: string): Promise<PluginRuns> {
   const reader: PluginFileReader = async (relPath) => {
@@ -776,17 +671,11 @@ export async function pluginRunsOnDisk(dir: string): Promise<PluginRuns> {
   return runs;
 }
 
-/** One file of an in-memory tree, plugin-relative and POSIX-separated. */
 export interface PluginTreeFile {
   path: string;
   content: Buffer;
 }
 
-/**
- * Read a plugin's runs from files held in memory, such as an `update
- * --merge` result before it is written, plus the local files the write
- * keeps. A kept symlink at a default path is unknown (D6).
- */
 export async function pluginRunsFromFiles(
   files: readonly PluginTreeFile[],
   extras: readonly PluginExtraFile[] = [],
@@ -810,7 +699,6 @@ export async function pluginRunsFromFiles(
   return runs;
 }
 
-/** The folded manifest path and its folded ancestor directories. */
 const MANIFEST_KEY = foldedPath(PLUGIN_MANIFEST_REL);
 const MANIFEST_ANCESTOR_KEYS = PLUGIN_MANIFEST_REL.split("/")
   .slice(0, -1)
@@ -819,9 +707,9 @@ const MANIFEST_ANCESTOR_KEYS = PLUGIN_MANIFEST_REL.split("/")
   );
 
 /**
- * Whether a listed entry makes the tree a plugin: any entry at the manifest
- * path, folded, or a non-regular entry at one of its ancestors, such as a
- * `.claude-plugin` symlink that Claude Code would follow.
+ * Any entry at the manifest path, compared folded, makes the tree a plugin. So
+ * does a non-regular entry at one of its ancestors, such as a `.claude-plugin`
+ * symlink that Claude Code would follow.
  */
 export function marksPluginManifest(path: string, regular: boolean): boolean {
   const key = foldedPath(path);
@@ -831,13 +719,12 @@ export function marksPluginManifest(path: string, regular: boolean): boolean {
 }
 
 /**
- * Whether an item is a plugin to Claude Code, and so needs plugin consent
- * (D7). A `plugins` item always is. A `skills` item is one when its tree
- * holds `.claude-plugin/plugin.json`: Claude Code loads the skill folder as
- * `<name>@skills-dir` and runs its hooks (spec R1). Any entry at that path
- * counts, also a non-regular one, so an unsafe manifest gets the reader's
- * unknown entry instead of no question. So does an entry that differs only
- * in case or normalization, because a folding volume loads it.
+ * A `plugins` item always needs plugin consent. A `skills` item needs it when
+ * its tree holds `.claude-plugin/plugin.json`, because Claude Code loads that
+ * folder as a plugin and runs its hooks. Any entry at that path counts,
+ * including a non-regular one or a case or normalization variant that a folding
+ * volume loads. An unsafe manifest therefore gets an unknown entry instead of
+ * no question.
  */
 async function carriesPluginManifest(
   kind: ItemKind,
@@ -848,9 +735,8 @@ async function carriesPluginManifest(
 }
 
 /**
- * What a pinned item tree runs as a plugin, or null when the item is not a
- * plugin to Claude Code (see `carriesPluginManifest`). Every consent site
- * asks this instead of checking for the `plugins` kind.
+ * Consent sites ask this instead of checking for the `plugins` kind, because a
+ * skill whose tree carries a plugin manifest is also a plugin to Claude Code.
  */
 export async function itemPluginRunsAtCommit(
   repo: string,
@@ -871,7 +757,6 @@ export async function itemPluginRunsAtCommit(
   return isPlugin ? await pluginRunsAtCommit(repo, entries, extras) : null;
 }
 
-/** `itemPluginRunsAtCommit` for an item directory on disk. */
 export async function itemPluginRunsOnDisk(
   kind: ItemKind,
   dir: string,
@@ -880,7 +765,8 @@ export async function itemPluginRunsOnDisk(
     if ((await foldedMatchesOnDisk(dir, PLUGIN_MANIFEST_REL)).length > 0) {
       return true;
     }
-    // A `.claude-plugin` symlink, which `readdir` may not open.
+    // A `.claude-plugin` symlink, which `readdir` may not open, still marks a
+    // plugin.
     const [ancestor = ""] = PLUGIN_MANIFEST_REL.split("/");
     return (await foldedMatchesOnDisk(dir, ancestor)).some((match) => {
       const info = lstatOrNull(join(dir, ...match.split("/")));
@@ -890,7 +776,6 @@ export async function itemPluginRunsOnDisk(
   return isPlugin ? await pluginRunsOnDisk(dir) : null;
 }
 
-/** `itemPluginRunsAtCommit` for files held in memory. */
 export async function itemPluginRunsFromFiles(
   kind: ItemKind,
   files: readonly PluginTreeFile[],
@@ -907,7 +792,6 @@ export async function itemPluginRunsFromFiles(
   return isPlugin ? await pluginRunsFromFiles(files, extras) : null;
 }
 
-/** A kept local entry as the runs reader takes it: a symlink is unread. */
 export function pluginExtraFile(entry: {
   path: string;
   kind: "file" | "symlink";
@@ -920,13 +804,9 @@ export function pluginExtraFile(entry: {
 }
 
 /**
- * The runs entries a pin move adds (D7 point 2) for an item that is a plugin
- * to Claude Code at the new tree, or null when it is not one there. A tree
- * that was not a plugin before (a skill that gains a manifest) counts as
- * running nothing, so each of its entries is new. `extras` are the local
- * files the write keeps. Both sides read them, so an unchanged local file
- * adds no entry by itself, but a hook that a kept local manifest now arms
- * is new.
+ * A tree that was not a plugin before counts as running nothing, so all its
+ * entries are new. Kept local files are read on both sides, so an unchanged one
+ * adds no hook or server. A hook that a kept local manifest newly arms is new.
  */
 export async function itemPluginNewRuns(
   repo: string,
@@ -950,7 +830,6 @@ export async function itemPluginNewRuns(
   return newRunsEntries(previous, next);
 }
 
-/** What a plugin status row reports: counts, and each unread source (D11). */
 export interface PluginRunCounts {
   hooks: number;
   mcpServers: number;
@@ -958,11 +837,9 @@ export interface PluginRunCounts {
 }
 
 /**
- * The counts D11 reports for a plugin row, shelf or remote. The installed
- * tree when the folder exists: for a clean row it equals the pinned tree,
- * and for a drifted row it is what Claude Code loads. The pinned tree when
- * the folder is missing. With neither readable, the manifest is reported as
- * unread rather than as a plugin that runs nothing (D6).
+ * Use the installed tree because it is what Claude Code loads after drift.
+ * Read the pinned tree only when the installed directory is absent. If that
+ * tree cannot be read, report an unknown manifest rather than no runs.
  */
 export async function pluginRunCounts(
   installedDir: string,
