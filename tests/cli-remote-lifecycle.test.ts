@@ -436,6 +436,86 @@ test(
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
 
+test.each([
+  ["plain", ["update", "skills/pdf"]],
+  ["merge", ["update", "skills/pdf", "--merge"]],
+])(
+  "%s update --dry-run reports the digest a real update locks",
+  async (_mode, args) => {
+    const { upstream, world, run, lockPath, installPath } = await installed();
+    await pushChange(upstream, "skills/pdf", "Extract text and tables");
+    await run(["status", "--check-upstream", "--json"], world.env);
+    const lockBefore = await readFile(lockPath, "utf-8");
+    const skillBefore = await readFile(join(installPath, "SKILL.md"), "utf-8");
+
+    const dry = await run([...args, "--dry-run", "--json"], world.env);
+    expect(dry.exitCode).toBe(0);
+    const dryRow = objectItems(jsonOutput(dry), "items").find(
+      (row) => row.key === "remote/skills/pdf",
+    )!;
+    expect(dryRow.action).toBe("would-update");
+    expect(dryRow.plannedSha).not.toBe(dryRow.lockedSha);
+    expect(dryRow.sha).toBe(dryRow.plannedSha);
+    expect(await readFile(lockPath, "utf-8")).toBe(lockBefore);
+    expect(await readFile(join(installPath, "SKILL.md"), "utf-8")).toBe(
+      skillBefore,
+    );
+
+    const real = await run([...args, "--yes", "--json"], world.env);
+    expect(real.exitCode).toBe(0);
+    const realRow = objectItems(jsonOutput(real), "items").find(
+      (row) => row.key === "remote/skills/pdf",
+    )!;
+    expect(realRow.action).toBe("updated");
+    expect(dryRow.plannedSha).toBe(realRow.plannedSha);
+    expect(dryRow.lockedSha).toBe(realRow.lockedSha);
+    const lock = JSON.parse(await readFile(lockPath, "utf-8"));
+    expect(lock.items["remote/skills/pdf"].sourcePinDigest).toBe(
+      dryRow.plannedSha,
+    );
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test(
+  "merge --dry-run on a locally edited copy reports the digest a real merge locks",
+  async () => {
+    const { upstream, world, run, lockPath, installPath } = await installed();
+    await appendFile(join(installPath, "SKILL.md"), "\n- ask about rollback\n");
+    await pushChange(upstream, "skills/pdf", "Extract text and tables");
+    await run(["status", "--check-upstream", "--json"], world.env);
+    const lockBefore = await readFile(lockPath, "utf-8");
+    const skillBefore = await readFile(join(installPath, "SKILL.md"), "utf-8");
+    const args = ["update", "skills/pdf", "--merge"];
+
+    const dry = await run([...args, "--dry-run", "--json"], world.env);
+    expect(dry.exitCode).toBe(0);
+    const dryRow = objectItems(jsonOutput(dry), "items").find(
+      (row) => row.key === "remote/skills/pdf",
+    )!;
+    expect(dryRow.action).toBe("would-merge");
+    expect(dryRow.plannedSha).not.toBe(dryRow.lockedSha);
+    expect(dryRow.sha).toBe(dryRow.plannedSha);
+    expect(await readFile(lockPath, "utf-8")).toBe(lockBefore);
+    expect(await readFile(join(installPath, "SKILL.md"), "utf-8")).toBe(
+      skillBefore,
+    );
+
+    const real = await run([...args, "--yes", "--json"], world.env);
+    expect(real.exitCode).toBe(0);
+    const realRow = objectItems(jsonOutput(real), "items").find(
+      (row) => row.key === "remote/skills/pdf",
+    )!;
+    expect(realRow.action).toBe("merged");
+    expect(dryRow.plannedSha).toBe(realRow.plannedSha);
+    const lock = JSON.parse(await readFile(lockPath, "utf-8"));
+    expect(lock.items["remote/skills/pdf"].sourcePinDigest).toBe(
+      dryRow.plannedSha,
+    );
+  },
+  CLI_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
 test(
   "a bare update --dry-run reports the remote rows the real sweep skips",
   async () => {
