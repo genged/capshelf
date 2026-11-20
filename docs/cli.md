@@ -2712,6 +2712,11 @@ facts it read and enumerates the fixes as pasteable commands:
 - **Missing binding without a declared upstream** (exit 6) prints the
   `--data`, `.capshelf/local.json`, and `$CAPSHELF_HOME` options, and says
   to ask a maintainer for the URL and declare it as the upstream.
+- **Recorded binding that is missing or not a Git repository** (exit 6)
+  names the path, where it was recorded (`.capshelf/local.json` or
+  `$CAPSHELF_HOME`), and the cause. It then prints the same fixes. When
+  the path came from `.capshelf/local.json`, the fix for that file is
+  `capshelf set-data <path>`, which keeps the local item lists in the file.
 - **Upstream mismatch** (exit 4) prints the declared and actual normalized
   URLs and the two fixes: bind a clone of the declared upstream, or change
   the project's declared upstream.
