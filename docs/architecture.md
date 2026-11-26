@@ -1027,6 +1027,8 @@ second implementation. The command starts a `Bun.serve` server on 127.0.0.1
 | `/api/shelf` | `listMasterItems`, `listBundles`, the locks of every bound project | `ls`, `show` |
 | `/api/shelf/item` | `findMasterItemByRef`, the item's files | `show` |
 
+`/api/shelf/item` gives HTTP 400 with an `exitCode` for an invalid item ref.
+
 `status` and the dashboard call one function for the rows, so a row in the
 browser is the row `status --json` prints. Each status response carries a
 `snapshot` id. A diff request names it, and the server builds the comparison

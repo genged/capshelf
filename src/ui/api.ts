@@ -19,6 +19,7 @@ import {
 } from "../git";
 import { installedPath, parseLockKey } from "../installed";
 import { findMasterItemByRef, parseItemRef } from "../item-ref";
+import type { ItemRef } from "../item-ref";
 import { entryIdentity, LOCK_VERSION, loadLocalLock, loadLock } from "../lock";
 import type { Lock } from "../lock";
 import { loadRemotesLock } from "../remotes-lock";
@@ -457,7 +458,14 @@ export function createUiApi(ctx: UiContext): UiApi {
           `no registered project is bound to ${dataRepo}`,
         );
       }
-      const ref = parseItemRef(refText);
+      let ref: ItemRef;
+      try {
+        ref = parseItemRef(refText);
+      } catch (error) {
+        throw new PreconditionError(
+          error instanceof Error ? error.message : String(error),
+        );
+      }
       const usage = await usageByRef(projects);
 
       const system = findSystemItem(ref.name);

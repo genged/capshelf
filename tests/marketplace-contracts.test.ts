@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { isConfigObject } from "../src/config-values";
-import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   encodeDeterministicZip,
   publishClaudePackage,
 } from "../src/plugin-package";
+import { readFilesBelow } from "../src/marketplace-files";
 import type { ProjectionFile } from "../src/plugin-projection";
 import {
   type CliResult,
@@ -657,6 +658,57 @@ describe("marketplace observable contracts", () => {
         ])
       ).exitCode,
     ).toBe(3);
+  });
+
+  test("codex pack rebuilds identical output, refuses changed output, and refuses symlinks", async () => {
+    const { repo, run } = await fixture();
+    expect((await init(run, repo, "codex")).exitCode).toBe(0);
+    expect(
+      (await create(run, repo, "codex", "engineering", "review")).exitCode,
+    ).toBe(0);
+    const artifacts = await tempDir("capshelf-marketplace-artifacts-");
+    const output = join(artifacts, "codex-out");
+    const pack = (target: string, ...extra: string[]) =>
+      run([
+        "--data",
+        repo,
+        "marketplace",
+        "plugin",
+        "pack",
+        "engineering",
+        "--target",
+        "codex",
+        "--output",
+        target,
+        ...extra,
+      ]);
+    const first = await pack(output, "--json");
+    expect(first.exitCode).toBe(0);
+    expect(jsonOutput(first).action).toBe("built");
+
+    const again = await pack(output, "--json");
+    expect(again.exitCode).toBe(0);
+    expect(jsonOutput(again).action).toBe("already-built");
+    const fromHead = await pack(output, "--from-head", "--json");
+    expect(fromHead.exitCode).toBe(0);
+    expect(jsonOutput(fromHead).action).toBe("already-built");
+
+    await writeFile(join(output, "extra"), "junk");
+    const snapshot = await readFilesBelow(output, ["."]);
+    const changed = await pack(output);
+    expect(changed.exitCode).toBe(3);
+    expect(changed.stderr.toString()).toContain(
+      "already exists with different content",
+    );
+    expect(await readFilesBelow(output, ["."])).toEqual(snapshot);
+    await unlink(join(output, "extra"));
+
+    const link = join(artifacts, "codex-link");
+    await symlink(output, link);
+    expect((await pack(link)).exitCode).toBe(3);
+
+    await symlink(join(artifacts, "elsewhere"), join(output, "inner-link"));
+    expect((await pack(output)).exitCode).toBe(3);
   });
 
   test("dirty dry-run is read-only, real mutation refuses, and successful mutation commits exact roots", async () => {
