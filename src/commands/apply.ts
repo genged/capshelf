@@ -37,7 +37,10 @@ import {
   resolveTrackedTarget,
 } from "../targets";
 import type { ScopedTarget } from "../targets";
-import { materializeLockEntry } from "../materialize";
+import {
+  assertFragmentEntryMatchesLock,
+  materializeLockEntry,
+} from "../materialize";
 import { remoteCacheState } from "../remote-cache";
 import { remoteTreeSource } from "../remote-discovery";
 import {
@@ -367,6 +370,14 @@ export function registerApply(program: Command): void {
               if (entry.source !== "data") {
                 throw new Error(`expected data lock entry for ${key}`);
               }
+              await assertFragmentEntryMatchesLock({
+                dataRepo,
+                manifest,
+                kind: parsed.kind,
+                name: parsed.name,
+                entry,
+                memo,
+              });
               for (const outputTarget of await lockedFragmentTargetsForItem(
                 dataRepo,
                 parsed.kind,
@@ -617,6 +628,7 @@ async function reconcileFragmentTargets(input: {
           oldLock: input.projectLock,
           nextLock: input.projectLock,
           target,
+          verifyPins: true,
         }),
       );
     } catch (error) {
@@ -703,6 +715,14 @@ async function planApplyPreflight(
         if (entry.source !== "data") {
           throw new Error(`expected data lock entry for ${key}`);
         }
+        await assertFragmentEntryMatchesLock({
+          dataRepo: input.dataRepo,
+          manifest: input.manifest,
+          kind: parsed.kind,
+          name: parsed.name,
+          entry,
+          memo: input.memo,
+        });
         for (const target of await lockedFragmentTargetsForItem(
           input.dataRepo,
           parsed.kind,
@@ -843,6 +863,7 @@ async function planApplyPreflight(
             oldLock: input.projectLock,
             nextLock: input.projectLock,
             target,
+            verifyPins: true,
           }),
         );
       } catch (error) {
