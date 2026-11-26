@@ -4,55 +4,42 @@ import type { CommandResult } from "./command";
 import type { CommandOptions, WorldRunner } from "./world";
 
 export interface BareRemote {
-  /** Path of the bare repository on disk. */
   path: string;
-  /** Transport URL for `cloneViaTransport`. */
   url: string;
 }
 
 export interface CommitOptions {
-  /** Fixed author and committer timestamp, for example "2026-01-02T03:04:05Z". */
   date?: string;
-  /** Add these paths only. Defaults to every change in the worktree. */
   paths?: readonly string[];
 }
 
-/** Repository-relative file contents, keyed by path. */
 export interface SeedFiles {
   [relPath: string]: string;
 }
 
 export interface DataRepoOptions {
   name?: string;
-  /** Portable upstream identity. `null` creates a repository with no origin. */
   origin: string | null;
-  /** `skills/<name>/SKILL.md` content, keyed by item name. */
   skills?: Readonly<Record<string, string>>;
-  /** Arbitrary repository-relative files, for example `mcp/x/claude.json`. */
   files?: Readonly<Record<string, string>>;
   message?: string;
   branch?: string;
 }
 
 /**
- * Independent observation of the Git a command ran. A claim that a command
- * stayed offline cannot rest on its exit code: capshelf reports a failed fetch
- * instead of throwing, so a command that fetched and swallowed the error exits
- * the same way as one that never tried.
+ * Exit code can't show a command stayed offline: capshelf reports a failed
+ * fetch instead of throwing, so it exits the same either way.
  */
 export interface GitRecorder {
   /**
-   * Extra environment for the command under measurement. A command that does
-   * not receive it is not recorded, so fixture Git stays out of the log.
+   * Only commands given this env are recorded, keeping fixture Git out of the
+   * log.
    */
   env: { PATH: string };
-  /** Every recorded invocation, as the argv git received after its own name. */
   invocations(): Promise<string[][]>;
-  /** The subcommand of each invocation, in order. Global options are skipped. */
   subcommands(): Promise<string[]>;
 }
 
-/** Git subcommands that reach a remote. */
 export const NETWORK_SUBCOMMANDS: readonly string[] = [
   "fetch",
   "clone",
@@ -67,7 +54,6 @@ export const NETWORK_SUBCOMMANDS: readonly string[] = [
 const RECORD_SEPARATOR = "\u001e";
 const UNIT_SEPARATOR = "\u001f";
 
-/** Git's own options, before the subcommand, that take a separate value. */
 const VALUED_GLOBAL_OPTIONS = new Set([
   "-C",
   "-c",
@@ -79,10 +65,8 @@ const VALUED_GLOBAL_OPTIONS = new Set([
 ]);
 
 /**
- * The subcommand in one recorded argv, or null when the invocation carried
- * none. `git -C <repo> --no-replace-objects rev-parse HEAD` is `rev-parse`:
- * capshelf puts `-C` before every repository command (`src/git.ts:234`), so a
- * reader of the first argument alone would see the option instead.
+ * Global options can precede the subcommand, so the first argument alone
+ * cannot identify it.
  */
 function gitSubcommand(argv: readonly string[]): string | null {
   for (let index = 0; index < argv.length; index += 1) {
@@ -99,13 +83,11 @@ function gitSubcommand(argv: readonly string[]): string | null {
 }
 
 export interface GitWorld {
-  /** Run git inside a repository and return the raw result. */
   run(
     repo: string,
     args: readonly string[],
     options?: CommandOptions,
   ): Promise<CommandResult>;
-  /** Run git and fail the test with full diagnostics on any non-zero result. */
   ok(
     repo: string,
     args: readonly string[],
@@ -131,7 +113,6 @@ export interface GitWorld {
     repo: string,
     files: Readonly<Record<string, string>>,
   ): Promise<void>;
-  /** Fixture control: write files and commit them. Returns the new commit. */
   writeAndCommit(
     repo: string,
     files: Readonly<Record<string, string>>,
@@ -144,14 +125,12 @@ export interface GitWorld {
     options?: CommitOptions,
   ): Promise<string>;
   /**
-   * Clone a remote URL through Git transport. A fresh-machine or CI
-   * reachability claim must use this: a local *path* clone can copy objects no
-   * advertised ref reaches, so it cannot prove what a new machine receives.
+   * Use for fresh-machine claims: a local path clone can copy objects no
+   * advertised ref reaches.
    */
   cloneViaTransport(remoteUrl: string, destination: string): Promise<string>;
   /**
-   * Clone a local path with Git's local optimization left on. Only for a test
-   * whose subject is local-path cloning; it never supports a fresh-machine
+   * Only for tests of local-path cloning; it cannot support a fresh-machine
    * claim.
    */
   cloneFromLocalPath(source: string, destination: string): Promise<string>;
@@ -165,14 +144,13 @@ export interface GitWorld {
   hasCommit(repo: string, commit: string): Promise<boolean>;
   isCleanWorktree(repo: string): Promise<boolean>;
   /**
-   * Put a recording `git` on PATH and return the recorder. The shim logs the
-   * argv and then execs the real Git, so the command under measurement keeps
-   * its own exit code, streams, and signals.
+   * The shim logs argv then execs real Git, so the command keeps its own exit
+   * code, streams, and signals.
    */
   recordInvocations(name?: string): Promise<GitRecorder>;
 }
 
-/** Path output stays unquoted so a non-ASCII cell reads the same as baseline. */
+/** core.quotePath=false keeps non-ASCII paths readable in output. */
 const READ_CONFIG = ["-c", "core.quotePath=false"];
 
 export function createGitWorld(runner: WorldRunner): GitWorld {
@@ -340,9 +318,7 @@ export function createGitWorld(runner: WorldRunner): GitWorld {
             "Use cloneFromLocalPath when local-path cloning is the subject of the test.",
         );
       }
-      // --no-local is redundant for a URL and cheap insurance: it is the
-      // documented switch that stops Git from copying objects no advertised
-      // ref reaches.
+      // --no-local stops Git copying objects no advertised ref reaches.
       return await clone(remoteUrl, destination, ["--no-local"]);
     },
     cloneFromLocalPath: async (source, destination) => {
@@ -429,7 +405,6 @@ export function createGitWorld(runner: WorldRunner): GitWorld {
           .filter((record) => record.length > 0)
           .map((record) => {
             const argv = record.split(UNIT_SEPARATOR);
-            // Each invocation writes a separator after its last argument.
             argv.pop();
             return argv;
           });

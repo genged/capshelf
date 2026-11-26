@@ -367,9 +367,8 @@ describe("hidden rows and external display", () => {
 
   test("isKind accepts kinds and rejects the external group ids", () => {
     expect(isKind("skills")).toBe(true);
-    // "plugins" is the real kind (the data-repo plugin kind). The external
-    // "Claude plugins" chip id is "claude-plugins" (D11), so the two no
-    // longer collide.
+    // The external "Claude plugins" chip id is `claude-plugins` so it doesn't
+    // collide with the real `plugins` kind.
     expect(isKind("plugins")).toBe(true);
     expect(isKind("claude-plugins")).toBe(false);
     expect(isKind("user-skills")).toBe(false);
@@ -421,8 +420,6 @@ describe("current statuses", () => {
   const data = status("~/code/billing-api", []);
 
   test("each step of a read gives the status the views across projects show", () => {
-    // The dashboard writes these states in this order: a first read, a
-    // success, a refresh, a failed refresh, a second refresh, a success.
     const steps = [
       {
         read: { state: "loading", data: null, stale: false },
@@ -444,8 +441,8 @@ describe("current statuses", () => {
         shown: false,
         awaiting: false,
       },
-      // The refresh keeps the old data for the project view. It must not
-      // bring that data back into All findings, Rollouts, or This machine.
+      // A refresh keeps old data for the project view but must not resurface it
+      // in All findings, Rollouts, or This machine.
       {
         read: { state: "loading", data, stale: true },
         shown: false,
@@ -474,7 +471,6 @@ describe("the all-clear for All findings", () => {
   test("only a full read with no finding is all clear", () => {
     const base = { discovering: false, found: 0, pending: 0, unread: 0 };
     expect(findingsAllClear(base)).toBe(true);
-    // Each of these can hide findings, so none of them may read as clear.
     expect(findingsAllClear({ ...base, discovering: true })).toBe(false);
     expect(findingsAllClear({ ...base, pending: 1 })).toBe(false);
     expect(findingsAllClear({ ...base, unread: 1 })).toBe(false);
@@ -652,7 +648,6 @@ describe("shelf views", () => {
   ]);
 
   test("the project's status row decides the state, not the shelf flag", () => {
-    // The shelf says current, the status row says behind: the row wins.
     expect(
       usageState(
         "skills/quick-review",
@@ -670,9 +665,8 @@ describe("shelf views", () => {
   });
 
   test("a behind pin with visible extra files is not a clean update", () => {
-    // `update` deletes the extra files under consent, so the Rollouts note
-    // "No local edit. A plain update takes it." and its command must not
-    // apply. The pin is still behind, so the rollout still counts it.
+    // `update` deletes extra files only under consent, so the plain-update note
+    // must not apply; the pin is still behind, so the rollout counts it.
     const extras = status("~/code/extras", [
       item("skills/quick-review", "update_available", {
         row: {
@@ -733,11 +727,9 @@ describe("shelf views", () => {
   });
 
   test("a failed read or a missing row stays unknown, with no rollout", () => {
-    // Not loading and not read: a failed status read.
     expect(
       usageState("skills/quick-review", usage(billing), new Map()).state,
     ).toBe("unknown");
-    // Read, but the status leaves the item out, as for a name skills.sh owns.
     const without = status("~/code/owned", [item("skills/other", "ok")]);
     const read = new Map([[without.project, without]]);
     expect(usageState("skills/quick-review", usage(without), read).state).toBe(
@@ -768,14 +760,12 @@ describe("shelf views", () => {
   });
 
   test("an old pin with no current status is named, not dropped", () => {
-    // billing-api's status read failed: it is not in the map.
     const items = [
       shelfItem("skills/quick-review", [usage(billing, { current: false })]),
       shelfItem("skills/other", [usage(billing, { current: true })]),
     ];
     expect(shelfRollouts(items, new Map())).toEqual([]);
     expect(unreadOldPins(items, new Map())).toEqual(["billing-api"]);
-    // While its first read runs, the pin joins the rollout instead.
     const loading = new Set([billing.project]);
     expect(unreadOldPins(items, new Map(), loading)).toEqual([]);
   });
@@ -794,7 +784,6 @@ describe("shelf views", () => {
       label: "Not installed",
       pinCurrent: false,
     });
-    // The same finding on a current pin is not a rollout.
     expect(
       shelfRollouts(
         [shelfItem("skills/quick-review", [usage(missing, { current: true })])],

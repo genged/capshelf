@@ -258,7 +258,6 @@ describe("cli integration", () => {
       const stderr = rm.stderr.toString();
       expect(stderr).toContain("could not delete");
       expect(stderr).toContain("a rerun of this command finishes the removal");
-      // The failed delete must not have untracked the item.
       const localConfig = await file(
         join(project, ".capshelf", "local.json"),
       ).json();
@@ -372,8 +371,8 @@ describe("cli integration", () => {
 
     expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
     expect((await run(["add", "--local", "skills/hello"])).exitCode).toBe(0);
-    // The local install path is git-excluded — the setup that used to make
-    // materialization verification hash an empty file list.
+    // The local install path is git-excluded, so hashing git-visible files
+    // yields an empty list.
     expect(
       await readFile(join(project, ".git", "info", "exclude"), "utf-8"),
     ).toContain(".agents/skills/hello/");
@@ -382,7 +381,6 @@ describe("cli integration", () => {
     ).json();
     const oldEntry = lockBefore.items["data/skills/hello"];
 
-    // Advance upstream: edit the skill and add a second file.
     await writeFile(
       join(dataRepo, "skills", "hello", "SKILL.md"),
       "hello v2\n",
@@ -390,8 +388,6 @@ describe("cli integration", () => {
     await writeFile(join(dataRepo, "skills", "hello", "NEW.md"), "new\n");
     await commitAll(dataRepo, "hello v2");
 
-    // Dry run reports the real installed hash — not the empty git-visible
-    // digest e3b0c44298fc — and writes nothing.
     const dry = await run([
       "update",
       "skills/hello",
@@ -431,7 +427,6 @@ describe("cli integration", () => {
     const newEntry = lockAfter.items["data/skills/hello"];
     expect(newEntry.sourcePinDigest).not.toBe(oldEntry.sourcePinDigest);
     expect(newEntry.sourceCommit).not.toBe(oldEntry.sourceCommit);
-    // Local-scope operations never leak into committed project policy.
     const projectManifest = await file(
       join(project, ".capshelf", "capshelf.json"),
     ).json();
@@ -444,13 +439,11 @@ describe("cli integration", () => {
       (await run(["status", "skills/hello", "--local", "--strict"])).exitCode,
     ).toBe(0);
 
-    // Unchanged apply converges without a verification failure.
     const apply = await run(["apply", "skills/hello", "--local", "--json"]);
     expect(apply.exitCode).toBe(0);
     const applyJson = JSON.parse(apply.stdout.toString());
     expect(applyJson.items[0].action).toBe("already-current");
 
-    // Revert restores locked bytes and exits 0.
     await writeFile(
       join(project, ".agents", "skills", "hello", "SKILL.md"),
       "local edit\n",
@@ -486,8 +479,8 @@ describe("cli integration", () => {
     expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
     expect((await run(["add", "--local", "skills/hello"])).exitCode).toBe(0);
 
-    // Freshly added: no divergence, even though the install path is
-    // git-excluded and hashes as empty under git-visible conventions.
+    // Git-excluded install paths hash as empty under git-visible conventions,
+    // which must not count as divergence.
     const lockBefore = await readFile(
       join(project, ".capshelf", "local.lock.json"),
       "utf-8",
@@ -502,8 +495,6 @@ describe("cli integration", () => {
     expect(entry.local).toBeUndefined();
     expect(entry.localReason).toBeUndefined();
 
-    // Genuine drift is still accepted, proving the refusal above checks
-    // content rather than rejecting local scope outright.
     await writeFile(
       join(project, ".agents", "skills", "hello", "SKILL.md"),
       "edited\n",
@@ -681,8 +672,8 @@ describe("cli integration", () => {
       join(project, ".agents", "skills", "policy", "SKILL.md"),
       "policy\n",
     );
-    // A version-3 lock: `share` writes lock version 4, and the refusal must
-    // land before `adoptIntoDataRepo` commits the skill.
+    // Refuse legacy locks before adoption because adoption commits to the data
+    // repo.
     await writeFile(
       join(project, ".capshelf", "capshelf.lock.json"),
       JSON.stringify({ version: 3, items: {} }),
@@ -927,10 +918,8 @@ describe("cli integration", () => {
     const projectLockPath = join(project, ".capshelf", "capshelf.lock.json");
     const projectLock = await file(projectLockPath).json();
     const localLock = {
-      // The partial-recovery fixture mirrors the project lock, so it carries
-      // the same lock version. A version-2 envelope here would now be refused
-      // by the writer gate before `move` could recover anything, which is a
-      // different scenario (`lock migrate`).
+      // Fixture must match the project lock version, or the writer gate refuses
+      // before `move` can recover anything.
       version: 5,
       items: {
         "data/skills/partial-local":

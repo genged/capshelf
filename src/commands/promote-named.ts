@@ -1,8 +1,3 @@
-/**
- * The named promote path: `capshelf promote <item>`. `promote.ts` registers
- * the command and sends a call here or to the picker in
- * `promote-interactive.ts`, which runs each marked item through `promoteOne`.
- */
 import type { Command } from "commander";
 import { printShareUpstreamGuidance } from "./share-named";
 import { existsSync } from "node:fs";
@@ -125,19 +120,12 @@ export interface PromoteOptions {
   json?: boolean;
   local?: boolean;
   staleOk?: boolean;
-  /**
-   * Not a CLI flag. The interactive loop promotes several items in one run
-   * and prints the data-repo guidance once at the end instead of per item.
-   */
   suppressGuidance?: boolean;
   /**
-   * Not a CLI flag. The interactive loop pins the repository its catalog was
-   * read from and promotes into that one — the same pin `runInteractiveAdd`
-   * holds — so `capshelf data bind` in another terminal while the picker is
-   * open cannot move the destination under the marks.
+   * Not a CLI flag: pins the catalog's repo so `capshelf data bind` in another
+   * terminal cannot move the destination.
    */
   boundRepo?: string;
-  /** The exact item base and candidate that the interactive overlay showed. */
   previewGuard?: PromotePreviewGuard;
   beforeCanonicalWrite?: () => Promise<void>;
 }
@@ -154,11 +142,6 @@ interface SyncOptions {
   previewGuard?: PromotePreviewGuard;
 }
 
-/**
- * One named promote, printing the same report whether the ref was typed or
- * marked in the picker. Returns the result so the interactive loop can tell a
- * commit from a no-op without re-parsing output.
- */
 export async function promoteOne(
   itemRef: string,
   opts: PromoteOptions,
@@ -180,9 +163,8 @@ export async function promoteOne(
     projectLock: lock,
     localLock,
   } = await loadProjectContext({ cmd });
-  // Before the data repo is resolved. D7 allows a project that holds remote
-  // rows and no data-repo binding, and in that project the resolution exits 6
-  // with a message about a shelf the user never bound.
+  // Runs before data-repo resolution, which would exit 6 about an unbound shelf
+  // in a project that holds only remote rows.
   await assertNotPulledSkill(project, ref, "promoting");
   const dataRepo =
     opts.boundRepo ?? (await resolveProjectDataRepo(project, manifest, cmd));
@@ -246,10 +228,8 @@ export async function promoteOne(
 }
 
 /**
- * Refuse before any write when git hides a canonical source of the item.
- * An `--assume-unchanged` or `--skip-worktree` path shows as clean, and the
- * promote would overwrite the hidden edit. The interactive picker runs the
- * same check and message.
+ * Refuse before writing: an `--assume-unchanged` or `--skip-worktree` path
+ * looks clean and promote would overwrite the hidden edit.
  */
 async function assertGitWatchesItem(
   dataRepo: string,
@@ -623,8 +603,7 @@ export async function promoteFragmentSource(
   const entry = dataEntryV4OrThrow(lock.items[key], key);
   const canonicalPaths = allCanonicalFragmentRelPaths(kind, name);
   // Throws a PreconditionError when the data repo has no canonical source
-  // files (the only expected empty case); letting it surface means genuine
-  // git/fs failures propagate instead of being masked as "no source files."
+  // files, the expected empty case; real git or filesystem failures propagate.
   const existingSources = await currentFragmentSourcesForItem(
     dataRepo,
     kind,
@@ -642,18 +621,9 @@ export async function promoteFragmentSource(
     }
     dirty = dirty || pathDirty;
   }
-  // The canonical sources as committed at HEAD, which is what both branches
-  // below compare the lock against. Reading the commit rather than the
-  // worktree is what makes the two comparable: `entry.sourcePinDigest` is a
-  // digest over `(path, mode, blobId)` tree entries (`src/pin.ts:114`), and a
-  // content hash of the same files is a different number.
-  //
-  // The clean branch used `shaOfFragmentItem(...) === entry.sha` until
-  // 2026-08-26. `entry` is a `DataLockEntryV4`, whose `sha` is typed
-  // `undefined` (`src/lock.ts:188-192`), so on a version 4 lock that test was
-  // never true and every no-op fragment promote fell through to the refusal
-  // below. The message named committed changes that did not exist and sent
-  // the user to `capshelf update`, which had nothing to update.
+  // Compute the digest from the tree committed at HEAD, so it compares with
+  // `entry.sourcePinDigest`, which digests the (path, mode, blobId) tree
+  // entries.
   const headCommittedSha = sourcePinDigest(
     await itemTreeEntriesAtCommit(
       gitTreeSource({
@@ -666,8 +636,6 @@ export async function promoteFragmentSource(
     ),
   );
   if (!dirty) {
-    // Nothing local to promote. The worktree is clean, so it holds what HEAD
-    // holds, and the only question left is whether the lock names that.
     if (headCommittedSha === entry.sourcePinDigest) {
       return {
         source: "data",
@@ -686,10 +654,8 @@ export async function promoteFragmentSource(
     );
   }
 
-  // Stale gate for the dirty-commit path: the digest above ignores the dirty
-  // worktree edits about to be committed. A difference means upstream
-  // advanced past the lock, and committing would silently fold that advance
-  // into a lock bump the user never reviewed.
+  // A differing digest means upstream advanced past the lock, and committing
+  // would fold that advance into a lock bump the user never reviewed.
   let staleOverride = false;
   if (headCommittedSha !== entry.sourcePinDigest) {
     if (!opts.staleOk) {
@@ -738,9 +704,8 @@ export async function promoteFragmentSource(
     : undefined;
 
   const oldLock = structuredClone(lock);
-  // The canonical file is the user's own edit, sitting where they made it, so
-  // a failure here restores the index and leaves the working tree alone
-  // (GIT-7). Restoring the file would discard the edit being promoted.
+  // On failure restore only the index: the canonical file is the user's own
+  // edit and restoring it would discard what is being promoted.
   const sourceCommit = await commitExistingPaths({
     repo: dataRepo,
     relPaths: commitPaths,
@@ -756,10 +721,8 @@ export async function promoteFragmentSource(
       });
     },
   });
-  // The verifier above binds the commit to the candidate snapshot. A hook or
-  // concurrent editor can change the worktree after the preview and before
-  // Git stages it. The transaction rolls back that commit and does not restore
-  // or discard the worktree bytes.
+  // A hook or concurrent editor can change the worktree after the preview; the
+  // transaction rolls back the commit but leaves the worktree bytes alone.
   const pin = await pinItemAtCommit(
     gitTreeSource({ repo: dataRepo, kind, name, commit: sourceCommit }),
     kind,
@@ -888,9 +851,8 @@ export async function syncTrackedIntoDataRepo(
       `not promoting ${kind}/${name} — required ${requiredFile} is not Git-visible in the installed snapshot`,
     );
   }
-  // D3: the manifest, not the directory, names a plugin. Checked here, before
-  // the content comparison below, so a renamed-upstream plugin refuses with
-  // both names instead of promoting under the wrong item name.
+  // The manifest, not the directory, names a plugin; check before comparing
+  // content so a renamed-upstream plugin refuses with both names.
   if (kind === "plugins") {
     const manifestName = await readPluginManifestName(
       join(localPath, ...PLUGIN_MANIFEST_REL.split("/")),
@@ -954,9 +916,8 @@ export async function syncTrackedIntoDataRepo(
     installedMatchesPin &&
     namedFilesEqual(localFiles, lockedFiles)
   ) {
-    // Guard-free no-op by design: local content matches the lock, there is
-    // nothing to write. If upstream has advanced past the lock here, that is
-    // update_available territory and surfacing it is status's job.
+    // No guard needed when local content matches the lock; upstream advancing
+    // past it is status's job to report.
     const runtimeWarnings = runtimeWarningsForItem(project, kind, name);
     return {
       source: "data",
@@ -970,10 +931,7 @@ export async function syncTrackedIntoDataRepo(
     };
   }
 
-  // Stale guard: protects data-repo writes. Runs before anything is written
-  // or committed, covering both the dirty-commit path and the
-  // not-dirty-but-changed repin path below. Shares the upstream-facts
-  // computation with status so the state machine and this gate can never
+  // Shares upstream facts with status so this gate and the state machine cannot
   // disagree.
   const upstream = await upstreamFactsForItem(dataRepo, kind, name, "tree");
   if (upstream.upstreamDirty) {
@@ -1001,10 +959,6 @@ export async function syncTrackedIntoDataRepo(
       upstream.sourceCommit ?? "HEAD",
     );
     if (namedFilesEqual(localFiles, upstreamFiles)) {
-      // Convergence short-circuit: the project's edited content is
-      // byte-identical to what upstream already has (e.g. a teammate
-      // promoted the same fix first). Metadata-only lock repin; commit
-      // nothing, touch nothing in the data repo.
       const sourceCommit = await lastTouchingContentCommit(
         dataRepo,
         repoRelPath,
@@ -1013,8 +967,6 @@ export async function syncTrackedIntoDataRepo(
         kind,
         name,
       });
-      // Convergence, so the commit already holds the project's bytes — proving
-      // `A == B` here is the same check, and it is cheap.
       const pin = await assertCommittedTreeEqualsCandidate({
         dataRepo,
         kind,
@@ -1053,9 +1005,9 @@ export async function syncTrackedIntoDataRepo(
 
   await assertRepoCleanOutsidePath(dataRepo, repoRelPath);
   const privateDotenvWarnings = privateDotenvFiles(snapshot.files);
-  // The directory replace removes the data-repo .capshelf.yml wholesale, but
-  // projects never receive the sidecar: cache it and restore it afterwards
-  // unless the project copy supplied its own (the project's wins).
+  // Directory replace removes the data-repo .capshelf.yml, but projects never
+  // receive the sidecar, so restore it unless the project copy supplies its
+  // own.
   const dataDir = join(dataRepo, repoRelPath);
   const upstreamSidecar = await readSidecarBytes(dataDir);
   const codexConfigured = kind === "skills" && hasCodexMarketplace(dataRepo);
@@ -1096,13 +1048,9 @@ export async function syncTrackedIntoDataRepo(
     return keptSidecar ? [`${repoRelPath}/${METADATA_SIDECAR}`] : [];
   };
   const expectedHead = previewHead ?? (await headSha(dataRepo));
-  // PIN-11. The old guard compared one working-tree hash of the data repo
-  // against another, both taken *after* the copy — so a `pre-commit` hook, a
-  // clean filter, or a nested `.gitattributes` that rewrote the content
-  // between the copy and the commit passed it, and capshelf published bytes
-  // the project never held. This compares the project snapshot (`A`) with the
-  // tree the commit actually produced (`B`), inside the transaction, so a
-  // refusal unwinds the commit and the worktree.
+  // Compare the project snapshot against the tree the commit actually produced,
+  // so hooks, clean filters or .gitattributes that rewrite content cannot
+  // publish bytes the project never held; a refusal unwinds the commit.
   let pin: PinnedSource | undefined;
   const sourceCommit = await commitDataRepoMutation({
     dataRepo,
@@ -1147,10 +1095,8 @@ export async function syncTrackedIntoDataRepo(
 }
 
 /**
- * The keep-local marker asserts that this project's divergence is intentional
- * and should not be reconciled. Promoting publishes that divergence upstream,
- * which ends it — so the marker and the promote contradict each other and the
- * user has to say which one they meant.
+ * Promoting publishes the divergence that keep-local marks as intentional, so
+ * the user must choose which they meant.
  */
 function assertNotKeptLocal(
   entry: DataLockEntryV4,
@@ -1183,11 +1129,8 @@ function stalePromoteError(input: {
   scope: Scope;
 }): PreconditionError {
   const item = `${input.kind}/${input.name}`;
-  // The item ref appears bare in prose and quoted in every command line. An
-  // item name comes from the lock or the data-repo catalog, which a cloned
-  // project treats as untrusted, and `isSafeItemName` permits a space and a
-  // `$` — so an unquoted printed command would carry that text into the
-  // user's shell. `shellArg` leaves ordinary refs unchanged.
+  // Item names come from untrusted lock/catalog data and may contain spaces or
+  // `$`, so printed commands quote the ref via shellArg.
   const itemArg = shellArg(item);
   const shortCommit = input.sourceCommit.slice(0, 7);
   const scopeFlag = input.scope === "local" ? " --local" : "";
@@ -1196,7 +1139,7 @@ function stalePromoteError(input: {
       ? "  (preserve your current edits first; local-scope files are excluded from this project's Git):\n"
       : "  (preserve your current edits first; update replaces the installed copy):\n";
   // Update-time merge is the only choice that keeps both sides, so it comes
-  // first. Fragments and subagents do not support it.
+  // first; fragments and subagents do not support it.
   const mergeChoice = isCopyDirectoryItemKind(input.kind)
     ? "  inspect both lines of work:\n" +
       `    capshelf status ${itemArg}${scopeFlag} --diff\n\n` +
@@ -1212,8 +1155,8 @@ function stalePromoteError(input: {
       `  locked:   ${input.lockedSha}  (sourceCommit ${shortCommit})\n` +
       `  upstream: ${input.upstreamSha}  (data repo HEAD)\n\n` +
       "  optional history context:\n" +
-      // The absolute repo path and a quoted pathspec: this line is a command
-      // to paste, and `~` is not data a quoted argument can expand.
+      // Use the absolute path and quoted pathspec because this line is meant to
+      // be pasted and `~` does not expand inside quotes.
       `    git -C ${shellArg(input.dataRepo)} log --oneline ${shortCommit}..HEAD -- ${input.logPathspecs
         .map(shellArg)
         .join(" ")}\n\n` +

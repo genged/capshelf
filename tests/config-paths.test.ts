@@ -34,8 +34,8 @@ describe("walkConfigPaths", () => {
   });
 
   test("skips a key holding a terminal control byte, with its subtree", () => {
-    // The path becomes a row label and a printed --pick argument, and
-    // `shellArg` preserves bytes, so a raw ESC would reach the live terminal.
+    // The path becomes a row label and printed --pick argument, and `shellArg`
+    // preserves bytes, so a raw ESC would reach the terminal.
     const rows = walkConfigPaths({
       "evil\u001b[2Jkey": { inner: 1 },
       "bell\u0007": 2,
@@ -53,8 +53,8 @@ describe("walkConfigPaths", () => {
   });
 
   test("skips a key --pick cannot name, with its subtree", () => {
-    // Pick paths split on dots, so `a.b` as one key and an empty key have no
-    // pick syntax. Their nearest offerable ancestor still covers them.
+    // Pick paths split on dots, so keys containing `.` or empty keys have no
+    // pick syntax and are covered by their nearest offerable ancestor.
     const rows = walkConfigPaths({
       "a.b": { inner: 1 },
       "": 2,
@@ -87,8 +87,6 @@ describe("dedupeAncestorPaths", () => {
   });
 
   test("a shared name prefix is not an ancestor", () => {
-    // `env` is not an ancestor of `environment`: ancestry is by segment, not
-    // by string prefix.
     expect(dedupeAncestorPaths(["env", "environment.FOO"])).toEqual([
       "env",
       "environment.FOO",

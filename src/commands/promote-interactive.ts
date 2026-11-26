@@ -1,16 +1,7 @@
 /**
- * The interactive promote path: `capshelf promote` with no item.
- *
- * The picker lists every tracked data item in the selected scope. A row whose
- * status state has something to promote is markable; every other row stays
- * visible, struck through, with its reason in the detail column
- * (`promote-catalog.ts`). Each marked item then runs through the same
- * `promoteOne` a named promote runs, which reloads the project state and
- * re-runs its stale gate after the unbounded prompt wait.
- *
- * Best effort per item, like the `add` picker's install loop: a failure names
- * its reason and the command that retries that one item, and the other items
- * stay promoted.
+ * Each marked item runs through `promoteOne`, which reloads project state and
+ * re-runs its stale gate because the picker can wait unboundedly; a failure
+ * doesn't stop the other items.
  */
 import type { Command } from "commander";
 import { loadProjectContext, resolveProjectDataRepo } from "../command-context";
@@ -36,7 +27,6 @@ export type InteractivePromoteSummary =
   | { outcome: "unavailable"; reason: PickUnavailableReason }
   | { outcome: "cancelled" }
   | { outcome: "nothing-selected" }
-  /** The scope tracks no data items; the picker never opened. */
   | { outcome: "empty" }
   | { outcome: "promoted"; promoted: string[]; failed: string[] };
 
@@ -44,8 +34,9 @@ export async function runInteractivePromote(request: {
   promote: PromoteOptions;
   cmd: Command;
 }): Promise<InteractivePromoteSummary> {
-  // Before any filesystem work: with no terminal there is nothing to offer,
-  // and building the rows reads the project, the outputs, and the data repo.
+  // Checked before any filesystem work: with no terminal there is nothing to
+  // offer, and building the rows reads the project, the outputs, and the data
+  // repo.
   const blocked = pickTerminalUnavailable();
   if (blocked) return { outcome: "unavailable", reason: blocked };
 
@@ -68,7 +59,6 @@ export async function runInteractivePromote(request: {
   });
 
   if (catalog.rows.length === 0) {
-    // An empty answer is a valid answer, like a `search` with no matches.
     console.log(
       scope === "local"
         ? "nothing to promote: no local-scope data items tracked in this project"
@@ -110,10 +100,8 @@ export async function runInteractivePromote(request: {
   let committed = false;
   for (const ref of picked.refs) {
     try {
-      // The catalog's git-hidden check went stale during the unbounded prompt
-      // wait. Re-ask for this one item before acting: a flag or an ignore
-      // rule set while the picker was open must fail the row, not let the
-      // promote silently discard the hidden edit.
+      // Re-check hidden paths after the prompt wait so a flag or ignore rule
+      // set meanwhile fails the row instead of discarding a hidden edit.
       const parsed = parseItemRef(ref);
       if (parsed.kind !== undefined) {
         const unwatched = await unwatchedPathsForItem(
@@ -127,11 +115,9 @@ export async function runInteractivePromote(request: {
           );
         }
       }
-      // Each item is one full named promote: `promoteOne` reloads the project
-      // state, so the stale gate and the clean-repo checks run after the
-      // prompt, not before it. The commit message is `-m` when given and the
-      // per-item default otherwise; the picker asks for none, because one
-      // message across several commits says less than the default does.
+      // promoteOne reloads project state so stale and clean-repo checks run
+      // after the prompt; no message is asked because the per-item default says
+      // more than one shared message.
       const result = await promoteOne(
         ref,
         {
@@ -140,8 +126,8 @@ export async function runInteractivePromote(request: {
             message: request.promote.message,
           }),
           suppressGuidance: true,
-          // The repository the catalog was read from. A rebind while the
-          // picker was open must not move the destination.
+          // Pin the repo the catalog was read from so a rebind during the
+          // picker cannot move the destination.
           boundRepo: dataRepo,
           ...(picked.previewVersions?.[ref] !== undefined && {
             previewGuard: decodePromotePreviewGuard(
@@ -155,10 +141,8 @@ export async function runInteractivePromote(request: {
       promoted.push(ref);
     } catch (error) {
       failed.push(ref);
-      // The full message, not its first line: promote's stale refusal carries
-      // its resolution commands (`update --merge`, `--stale-ok`) in the lines
-      // after the first, and a `drifted_and_update` row is offered exactly so
-      // that guidance reaches the user.
+      // Report the full message: the stale refusal puts its resolution commands
+      // after the first line.
       const dataOverride = globalOpts(request.cmd).data;
       reportItemFailure(
         ref,

@@ -16,14 +16,6 @@ import {
   stringField,
 } from "./cli-fixtures";
 
-/**
- * PIN-12: `capshelf lock migrate` is the only v2/v3 → v4 path, and it is total
- * and transactional. The properties worth pinning are the ones a partial
- * migration would break: both lock files convert together, a single
- * unresolvable source blocks the whole run and writes nothing, and a second
- * run is a no-op.
- */
-
 const LOCK = join(".capshelf", "capshelf.lock.json");
 const LOCAL_LOCK = join(".capshelf", "local.lock.json");
 
@@ -35,10 +27,6 @@ interface LegacyEntry {
   label?: string;
 }
 
-/**
- * Rewrite a migrated project back to a genuine version-3 lock: identity is the
- * data repo working-tree hash and there is no `sourcePinDigest` anywhere.
- */
 async function downgradeToV3(
   project: string,
   dataRepo: string,
@@ -124,7 +112,6 @@ describe("capshelf lock migrate", () => {
         "project/skills/alpha",
       ]);
       expect(preview.blocked).toEqual([]);
-      // A dry run writes nothing.
       expect((await file(join(project, LOCK)).json()).version).toBe(3);
 
       expect((await run(["lock", "migrate"])).exitCode).toBe(0);
@@ -142,7 +129,6 @@ describe("capshelf lock migrate", () => {
         expect(entry.sourceCommit).toMatch(/^[0-9a-f]{40}$/);
       }
 
-      // The migration selected no new content, so the items still apply.
       const applied = await run(["apply"]);
       expect(applied.exitCode).toBe(0);
       expect(applied.stdout.toString()).toContain("already-current");
@@ -174,8 +160,6 @@ describe("capshelf lock migrate", () => {
           repoRelPath: "skills/beta",
         },
       ]);
-      // The exact shape of the original bug: a recorded hash the pinned commit
-      // cannot produce. Migration keeps the commit and replaces the proof.
       const lockPath = join(project, LOCK);
       const lock = JSON.parse(await readFile(lockPath, "utf-8"));
       const before = lock.items["data/skills/alpha"].sourceCommit;
@@ -227,12 +211,9 @@ describe("capshelf lock migrate", () => {
       expect(text).toContain("Lock migration blocked");
       expect(text).toContain("skills/beta");
       expect(text).toContain("No lock or installed file was changed.");
-      // The healthy project entry must not be converted on its own: no
-      // observable state has one v3 lock beside one v4 lock.
       expect(await readFile(join(project, LOCK), "utf-8")).toBe(projectBytes);
       expect(await readFile(localPath, "utf-8")).toBe(localBytes);
 
-      // An explicit re-pin is the way through, and it converts both files.
       const repaired = await run([
         "lock",
         "migrate",
@@ -358,9 +339,8 @@ describe("capshelf lock migrate", () => {
         "skills/alpha/** filter=git-crypt\n",
       );
       await commitAll(dataRepo, "encrypt alpha");
-      // The pin still names the old commit, and the attribute is read *from
-      // that commit*, so re-pinning is what exposes it. Point the entry at the
-      // commit that declares the driver.
+      // The attribute is read from the pinned commit, so the entry must point
+      // at the commit that declares the driver.
       const lockPath = join(project, LOCK);
       const lock = JSON.parse(await readFile(lockPath, "utf-8"));
       lock.items["data/skills/alpha"].sourceCommit = (

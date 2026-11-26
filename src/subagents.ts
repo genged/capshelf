@@ -35,13 +35,11 @@ import { installedTreeIdentity } from "./install-identity";
 export const SUBAGENT_TARGETS = ["claude", "codex"] as const;
 export type SubagentTarget = (typeof SUBAGENT_TARGETS)[number];
 
-/** The canonical file each runtime target reads, inside `subagents/<name>/`. */
 const SUBAGENT_SOURCE_FILES: Record<SubagentTarget, string> = {
   claude: "claude.md",
   codex: "codex.toml",
 };
 
-/** A candidate target and its canonical source path; no project needed. */
 export interface SubagentCandidate {
   target: SubagentTarget;
   relPath: string;
@@ -60,10 +58,8 @@ export function isSubagentTarget(value: string): value is SubagentTarget {
 }
 
 /**
- * The candidate list without a project. Presence is a fact about the data
- * repo, and `show` runs outside a project entirely, so it cannot come from
- * `subagentSourceCandidates` — that one needs a project root to build an
- * output path at all.
+ * Project-free because `show` runs outside a project, which
+ * `subagentSourceCandidates` needs to build output paths.
  */
 export function subagentCandidates(name: string): SubagentCandidate[] {
   return SUBAGENT_TARGETS.map((target) => ({
@@ -92,7 +88,6 @@ export function subagentSourceCandidates(
   });
 }
 
-/** One candidate target of a subagent, marked present or absent. */
 export interface SubagentTargetPresence {
   candidate: SubagentCandidate;
   present: boolean | null;
@@ -108,7 +103,6 @@ export function subagentTargetPresence(
   }));
 }
 
-/** Presence from a single tree listing — see `fragmentTargetPresenceInPaths`. */
 export function subagentTargetPresenceInPaths(
   name: string,
   repoRelPaths: Iterable<string>,
@@ -120,16 +114,6 @@ export function subagentTargetPresenceInPaths(
   }));
 }
 
-/**
- * The blob id of each candidate target that is a blob at `commit`, keyed by
- * repository-relative path, from one `ls-tree` over both candidate paths.
- *
- * A target is present only when its exact path is a blob. A tree or a gitlink
- * at that path is absent, as `cat-file -t` reported before. A commit that Git
- * cannot read gives no present targets. The memo keeps only a successful
- * listing at a full commit id, so one `apply` or `update` lists a commit once
- * across its preflight, revalidation, and write passes.
- */
 async function subagentBlobIdsAtCommit(
   dataRepo: string,
   name: string,
@@ -173,10 +157,7 @@ async function subagentTargetPresenceAtCommit(
 }
 
 /**
- * The committed bytes of one subagent source. One `cat-file --batch` reads
- * every present target of the commit, so with a memo the next target is a
- * cache hit. `cat-file` applies no filter, so the bytes are exactly what the
- * commit holds. Copy items read their bytes the same way.
+ * `cat-file` applies no filter, so the bytes are exactly what the commit holds.
  */
 export async function subagentSourceAtCommit(
   dataRepo: string,
@@ -372,7 +353,6 @@ export interface MaterializeSubagentOptions {
   entry: DataLockEntry;
   previousEntry?: DataLockEntry;
   dryRun?: boolean;
-  /** The calling command's memo for reads at a full commit id. */
   memo?: GitReadMemo;
   hooks?: {
     beforeReplace?: (
@@ -380,9 +360,8 @@ export interface MaterializeSubagentOptions {
       index: number,
     ) => void | Promise<void>;
     /**
-     * Test seam for write-then-verify: it runs after every target is written
-     * and before the post-write identity check, which is the only window in
-     * which that check can be made to fail.
+     * Test seam: the only window between writing targets and the post-write
+     * identity check.
      */
     afterReplace?: () => void | Promise<void>;
   };
@@ -441,12 +420,8 @@ export async function materializeSubagent(
     options.entry.sourceCommit,
     options.memo,
   );
-  // PIN-8: the previous commit only names which targets capshelf already owns,
-  // so an unresolvable previous pin degrades to the desired target set instead
-  // of failing the write that would replace it. `desired` is the conservative
-  // fallback — it never claims ownership of a target the new pin does not
-  // write, so the "target already exists and is not managed" guard below still
-  // fires for anything outside it.
+  // The previous commit only names owned targets, so if it is unresolvable fall
+  // back to `desired`, which never claims a target the new pin doesn't write.
   const previous = options.previousEntry
     ? await subagentSourcesAtCommit(
         options.project,
@@ -547,9 +522,8 @@ export async function materializeSubagent(
       await rmTreeWithRetries(source.outputPath, scope);
     }
     await options.hooks?.afterReplace?.();
-    // Write-then-verify: the claim this write establishes is re-derived here,
-    // in the same command, before it returns. A verification that lives in a
-    // different command is how the original bug survived for weeks.
+    // Re-derive the identity in the same command that writes, since
+    // verification in a separate command can miss a bad write.
     const expected = entryIdentity(options.entry);
     const installedSha =
       options.entry.sourcePinDigest !== undefined
@@ -597,11 +571,8 @@ export async function materializeSubagent(
 }
 
 /**
- * The identity check `materializeSubagent` runs before it writes anything.
- *
- * Version 4 digests the committed tree — the same value the pin recorded, and
- * one no working-tree state can move. Version 3 keeps the legacy hash of the
- * bytes about to be written, so an unmigrated project still applies.
+ * v4 digests the committed tree, which no working-tree state can move; v3 keeps
+ * the legacy byte hash so unmigrated projects still apply.
  */
 async function assertSubagentSourceMatchesEntry(
   dataRepo: string,

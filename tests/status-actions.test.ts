@@ -98,6 +98,29 @@ describe("actionsForRow", () => {
     ).toEqual([]);
   });
 
+  test("a missing upstream data row offers rm only when a data repo was read", () => {
+    const missing = row({ state: "missing_upstream" });
+    expect(actionsForRow(missing, { dataRepo: null })).toEqual([]);
+    expect(
+      actionsForRow(row({ state: "missing_upstream", needsState: "unknown" }), {
+        dataRepo: null,
+      }),
+    ).toEqual([]);
+    expect(
+      commands(actionsForRow(missing, { dataRepo: "/data/repo" })),
+    ).toEqual(["capshelf rm skills/security-review"]);
+    expect(commands(actionsForRow(missing))).toEqual([
+      "capshelf rm skills/security-review",
+    ]);
+    expect(
+      commands(
+        actionsForRow(row({ state: "missing_upstream", source: "system" }), {
+          dataRepo: null,
+        }),
+      ),
+    ).toEqual(["capshelf rm skills/security-review"]);
+  });
+
   test("kept-local offers --unset and revert", () => {
     expect(
       commands(actionsForRow(row({ state: "kept-local", local: true }))),

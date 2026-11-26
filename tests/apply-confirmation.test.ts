@@ -121,9 +121,9 @@ describe("apply destructive-change preflight", () => {
       expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
       expect((await run(["add", "skills/cached"])).exitCode).toBe(0);
 
-      // Convergence is decided by byte-comparing every expected and preserved
-      // path, not by comparing the Git-visible installed sha to the lock sha —
-      // that comparison can never converge for an item of this shape.
+      // Convergence byte-compares every expected and preserved path, because
+      // comparing the Git-visible installed sha to the lock sha can never
+      // converge for an item of this shape.
       expect(
         (await run(["apply", "skills/cached", "--dry-run"])).stdout.toString(),
       ).toContain("already-current");
@@ -133,6 +133,49 @@ describe("apply destructive-change preflight", () => {
       expect(
         (await run(["status", "skills/cached"])).stdout.toString(),
       ).toContain("up-to-date");
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "a nested gitignore keeps ignored extras and refuses other extras like the item root",
+    async () => {
+      const project = await tempRepo("capshelf-apply-nested-project-");
+      const dataRepo = await tempRepo("capshelf-apply-nested-data-");
+      const run = runInProcess(project);
+      const skill = join(dataRepo, "skills", "nest");
+      await mkdir(join(skill, "sub"), { recursive: true });
+      await writeFile(join(skill, "SKILL.md"), "managed\n");
+      await writeFile(join(skill, "sub", "a.txt"), "a\n");
+      await writeFile(join(skill, "sub", ".gitignore"), "*.log\n");
+      await commitAll(dataRepo, "nest skill");
+      expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+      expect((await run(["add", "skills/nest"])).exitCode).toBe(0);
+
+      const installed = join(project, ".agents", "skills", "nest");
+      await writeFile(join(installed, "sub", "extra.log"), "local\n");
+      await rm(join(installed, "SKILL.md"));
+      const kept = await run(["apply", "skills/nest"]);
+      expect(kept.exitCode).toBe(0);
+      expect(await file(join(installed, "SKILL.md")).text()).toBe("managed\n");
+      expect(await file(join(installed, "sub", "extra.log")).text()).toBe(
+        "local\n",
+      );
+
+      await rm(join(installed, "SKILL.md"));
+      await writeFile(join(installed, "extra.txt"), "root\n");
+      const rootRefused = await run(["apply", "skills/nest"]);
+      await rm(join(installed, "extra.txt"));
+      await writeFile(join(installed, "sub", "extra.txt"), "nested\n");
+      const nestedRefused = await run(["apply", "skills/nest"]);
+
+      expect(rootRefused.exitCode).toBe(3);
+      expect(nestedRefused.exitCode).toBe(3);
+      expect(nestedRefused.stderr.toString()).toContain("sub/extra.txt");
+      expect(nestedRefused.stderr.toString()).not.toContain("path.relative()");
+      expect(await file(join(installed, "sub", "extra.txt")).text()).toBe(
+        "nested\n",
+      );
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,
   );
@@ -148,14 +191,12 @@ describe("apply destructive-change preflight", () => {
       expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
       expect((await run(["add", "skills/hello"])).exitCode).toBe(0);
       const installed = join(project, ".agents", "skills", "hello");
-      // Git-visible (the project commits it) but row 5: excluded from hashing
-      // and materialization everywhere, so it must be carried across instead of
-      // reported as drift or silently deleted.
+      // Git-visible but excluded from hashing and materialization, so it must
+      // be carried across rather than reported as drift or deleted.
       await writeFile(join(installed, ".capshelf.yml"), "tags: [local]\n");
       await writeFile(join(installed, "sub-notes.md"), "extra\n");
       await commitAll(project, "authored sidecar");
 
-      // A non-sidecar Git-visible extra is still row 3 drift.
       const dryRun = await run([
         "apply",
         "skills/hello",
@@ -184,7 +225,6 @@ describe("apply destructive-change preflight", () => {
       );
       expect(await file(join(installed, "sub-notes.md")).exists()).toBe(false);
 
-      // status, dry-run, and apply now agree, and apply converges.
       expect(
         (await run(["apply", "skills/hello", "--dry-run"])).stdout.toString(),
       ).toContain("already-current");
@@ -195,7 +235,6 @@ describe("apply destructive-change preflight", () => {
         (await run(["status", "skills/hello"])).stdout.toString(),
       ).toContain("up-to-date");
 
-      // It survives an update that changes managed content.
       await writeFile(
         join(dataRepo, "skills", "hello", "SKILL.md"),
         "locked v2\n",
@@ -239,8 +278,6 @@ describe("apply destructive-change preflight", () => {
     ]);
     expect(dryRun.exitCode).toBe(0);
     const report = jsonOutput(dryRun);
-    // Comment loss in a strict-JSON target is repair, not destruction: only
-    // the edited managed contribution reaches the consent boundary.
     expect(
       objectItems(report, "destructiveChanges").map((change) => change.reason),
     ).toEqual(["fragment_contribution"]);
@@ -306,8 +343,6 @@ describe("apply destructive-change preflight", () => {
       const good = join(project, ".agents", "skills", "good", "SKILL.md");
       await writeFile(good, "local edit\n");
 
-      // Independent copy items share no output, so one unreachable pin must not
-      // cost the project `apply` — including self-healing of the system item.
       const applied = await run(["apply", "--yes"]);
       expect(applied.exitCode).toBe(1);
       expect(await file(good).text()).toBe("locked\n");
@@ -315,7 +350,7 @@ describe("apply destructive-change preflight", () => {
         "data/skills/good reconciled",
       );
       expect(applied.stdout.toString()).toContain("data/skills/broken error");
-      // A real apply reports outcomes, never a dry-run preview label.
+      // Outcome lines alone do not exclude an additional dry-run preview.
       expect(applied.stdout.toString()).not.toContain("would reconcile");
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,

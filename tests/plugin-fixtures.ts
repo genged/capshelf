@@ -1,42 +1,29 @@
-/**
- * The world a `plugin-discovery` test writes: plugin directories under a
- * repository, with an optional manifest each, plus the catalog documents that
- * name them.
- */
 import { dirname, join } from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import type { ConfigObject, ConfigValue } from "../src/config-values";
 
 /**
- * Not imported from `./remote-fixtures`: that file imports `writePlugins`
- * from here (`pluginUpstream`), and a mutual import would be a module cycle.
- * Kept byte-identical to `remote-fixtures.ts`'s own `skillText`.
+ * Duplicated from remote-fixtures because that file imports writePlugins from
+ * here and importing back would create a cycle; keep byte-identical.
  */
 function skillText(name: string, description: string, body = "body"): string {
   return `---\nname: ${name}\ndescription: ${description}\n---\n${body}\n`;
 }
 
 export interface PluginSpec {
-  /** Repository-relative plugin directory, e.g. "plugins/rust-review". */
   dir: string;
-  /** Writes `.claude-plugin/plugin.json` when set. */
   manifestName?: string;
-  /** The manifest's `skills` field, when set. */
   manifestSkills?: string | string[];
-  /** The manifest's `description` field, when set. */
   manifestDescription?: string;
   skills: Array<{
     name: string;
     description: string;
     body?: string;
-    /** Extra files under this skill's own directory, path relative to it. */
     extra?: Record<string, string>;
   }>;
-  /** Extra files under the plugin directory, path relative to it. */
   files?: Record<string, string>;
 }
 
-/** Write each plugin under `repo`, plus the catalogs given. Does not commit. */
 export async function writePlugins(
   repo: string,
   plugins: readonly PluginSpec[],
@@ -102,9 +89,8 @@ async function writeUnder(
 }
 
 /**
- * A Claude catalog document whose entries point at `./<dir>`. `metadata` is
- * document-level: Claude Code reads `metadata.pluginRoot` once per
- * marketplace, not once per plugin entry.
+ * `metadata` is document-level because Claude Code reads metadata.pluginRoot
+ * once per marketplace, not per plugin entry.
  */
 export function claudeCatalog(
   entries: ReadonlyArray<{
@@ -126,7 +112,6 @@ export function claudeCatalog(
   };
 }
 
-/** A Codex catalog document with local sources. */
 export function codexCatalog(
   entries: ReadonlyArray<{ name: string; path?: string; source?: ConfigValue }>,
 ): ConfigValue {

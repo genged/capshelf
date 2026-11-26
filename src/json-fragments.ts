@@ -12,8 +12,8 @@ export function parseJsonConfigObject(
   raw: string,
   label: string,
 ): ConfigObject {
-  // An empty file is equivalent to a missing one, matching TOML where empty
-  // input parses to an empty table.
+  // An empty file counts as missing, matching TOML where empty input parses to
+  // an empty table.
   if (raw.trim() === "") return {};
   let parsed: ConfigValue;
   try {
@@ -29,27 +29,20 @@ export function parseJsonConfigObject(
 }
 
 /**
- * Parse JSONC (JSON with // and block comments and trailing commas) into the
- * JSON value model. Claude Code's settings.json / .mcp.json are JSONC, so
- * tolerate them on read everywhere capshelf inspects those files — otherwise
- * a legitimately-commented file the target tool accepts makes capshelf throw.
- *
- * `JSON.parse` without a reviver yields exactly the members of `ConfigValue`,
- * so no assertion is needed.
+ * Tolerate comments on read so capshelf can repair files that require strict
+ * JSON when the target tool reads them.
  */
 export function parseJsonc(raw: string): ConfigValue {
   return JSON.parse(stripTrailingCommas(stripJsonComments(raw)));
 }
 
-/** True if the JSONC text contains // or block comments (outside strings). */
 export function jsonTextHasComments(raw: string): boolean {
   return stripJsonComments(raw) !== raw;
 }
 
 /**
- * Remove // line and block comments, leaving string literals untouched. A
- * string-aware scan (not a regex) so comment tokens inside string values are
- * preserved. Whitespace/newlines are otherwise left in place.
+ * Scans string-aware rather than with a regex so comment tokens inside string
+ * values are preserved.
  */
 function stripJsonComments(text: string): string {
   let out = "";
@@ -94,7 +87,6 @@ function stripJsonComments(text: string): string {
   return out;
 }
 
-/** Drop commas immediately before a closing } or ], string-aware. */
 function stripTrailingCommas(text: string): string {
   let out = "";
   let i = 0;
@@ -125,7 +117,7 @@ function stripTrailingCommas(text: string): string {
       let j = i + 1;
       while (j < n && /\s/.test(text[j]!)) j++;
       if (j < n && (text[j] === "}" || text[j] === "]")) {
-        i++; // drop the trailing comma
+        i++;
         continue;
       }
     }

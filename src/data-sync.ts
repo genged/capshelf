@@ -12,11 +12,8 @@ import { homeRelative } from "./paths";
 import { assertNever } from "./assert";
 
 /**
- * Explicit, opt-in network sync of the bound data repo. `sync-data` is the
- * only capshelf command (besides init bootstrap and self-update) that touches
- * the network. The clone is user-owned: the only ref movement performed here
- * is remote-tracking updates (`git fetch`) plus a fast-forward of the current
- * branch when that is provably safe. Everything else stops with guidance.
+ * The clone is user-owned: only `git fetch` and a provably safe fast-forward of
+ * the current branch are performed; everything else stops with guidance.
  */
 
 export type SyncState =
@@ -45,25 +42,14 @@ export interface SyncFacts {
 
 export interface SyncDecision {
   state: SyncState;
-  /** fast-forward the current branch (the only branch mutation ever made) */
   integrate: boolean;
   exitCode: SyncExitCode;
 }
 
 /**
- * Pure outcome table for sync-data. Normative precedence (first match wins):
- *
- *   no_origin > fetch_failed > detached_head > no_tracking_ref
- *     > diverged > dirty_worktree > local_ahead > fast_forwarded > up_to_date
- *
- * The ordering mirrors the I/O sequence: no_origin precedes fetch_failed
- * because the fetch is never attempted without a remote, and the
- * detached/tracking checks precede the comparison states because ahead/behind
- * is undefined without a target. Within the comparison states, diverged beats
- * dirty_worktree (when ahead > 0 && behind > 0, dirtiness does not change the
- * core problem); dirtiness selects a state only when behind > 0 && ahead == 0
- * (it blocks an otherwise-possible fast-forward) — in every other state it is
- * reported via the `dirty` field but affects neither state nor exit code.
+ * Precedence follows the I/O sequence; diverged beats dirty_worktree, and
+ * dirtiness picks a state only when behind > 0 and ahead == 0, since it blocks
+ * the fast-forward.
  */
 export function decideSync(facts: SyncFacts): SyncDecision {
   if (!facts.hasOrigin) {
@@ -108,15 +94,13 @@ export interface SyncReport {
   behind: number | null;
   dirty: boolean;
   guidance: string;
-  /** git's stderr; present only for fetch_failed */
   fetchStderr?: string;
   exitCode: SyncExitCode;
 }
 
 /**
- * The total I/O sequence for sync-data. Every run ends in exactly one outcome
- * state. The fetch runs before the detached-HEAD check, deliberately, so
- * remote-tracking refs are fresh even when capshelf refuses to move anything.
+ * Fetch runs before the detached-HEAD check so remote-tracking refs are fresh
+ * even when nothing is moved.
  */
 export async function syncData(dataRepo: string): Promise<SyncReport> {
   const originRaw = await originRemoteUrl(dataRepo);
@@ -260,9 +244,8 @@ const plural = (n: number, word: string): string =>
   `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /**
- * Human rendering of a sync report. Returns lines; the command joins and
- * prints them (including the ✗ line for stop states) before signaling the
- * exit code, so the full report always lands before a non-zero exit.
+ * Returns lines so the command prints the full report, including stop-state
+ * lines, before signaling a non-zero exit.
  */
 export function formatSyncHuman(report: SyncReport): string[] {
   const repo = homeRelative(report.dataRepo);

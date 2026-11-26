@@ -183,10 +183,8 @@ test(
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
 
-// The report reads `HEAD` once for the history walk and the needs of every
-// row. Only a successful read is kept. "first-two" fails the walk's read and
-// the first row's read, so the walk is skipped, the first row's needs are
-// unavailable, and the second row reads `HEAD` again.
+// Only a successful `HEAD` read is cached, so "first-two" fails the walk's read
+// and the first row's, leaving the second row to read `HEAD` again.
 for (const failure of ["none", "first-two", "all"] as const) {
   test(
     `report HEAD observations: ${failure} failures`,

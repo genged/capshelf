@@ -1,19 +1,10 @@
-/**
- * What counts as production code and what counts as test code. Edit this
- * table to point the dashboard at another layout. A path that matches no
- * rule is not counted at all: docs, configuration, generated files, and
- * assets do not move the lines.
- */
 import type { LocRuleText, SeriesId } from "./shared/types";
 
 export interface LocRule {
   series: SeriesId;
-  /** A directory prefix ending in `/`, or an exact file path. */
   prefix: string;
   extensions: readonly string[];
-  /** Only paths whose file name passes this test count. */
   fileName?: RegExp;
-  /** Paths under this prefix are skipped even when the rule matches. */
   exclude?: readonly string[];
   description: string;
 }
@@ -68,11 +59,6 @@ export function ruleTexts(): LocRuleText[] {
   }));
 }
 
-/**
- * The directory a file is grouped under in the breakdown: the first two
- * path segments, or the first one for a file that sits at the top of its
- * root directory.
- */
 export function groupDirectory(path: string): string {
   const parts = path.split("/");
   if (parts.length <= 2) return parts[0] ?? path;

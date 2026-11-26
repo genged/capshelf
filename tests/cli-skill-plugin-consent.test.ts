@@ -1,9 +1,7 @@
 /**
- * A `skills` item whose tree holds `.claude-plugin/plugin.json` loads in
- * Claude Code as `<name>@skills-dir` and runs its hooks (spec R1). It gets
- * the same consent points as a plugin: shelf `add` (points 1 and 3), bundle
- * members, `move --to project` and `share --to project` (point 3), shelf
- * `update` (point 2), and the remote `add <url>` and `update` prompts.
+ * Claude Code loads a skills folder holding `.claude-plugin/plugin.json` as a
+ * `<name>@skills-dir` plugin and runs its hooks, so it needs the same consent
+ * as a plugin.
  */
 import { describe, expect, test } from "bun:test";
 import { $ } from "bun";
@@ -50,7 +48,6 @@ async function writeUnder(
   await writeFile(target, content);
 }
 
-/** A skill folder with SKILL.md, a plugin manifest, and the extra files. */
 async function writeManifestSkill(
   root: string,
   name: string,
@@ -73,10 +70,6 @@ interface World {
   run: (args: string[]) => Promise<CliResult>;
 }
 
-/**
- * A data repo with `skills/hooked` (a manifest and a SessionStart hook) and
- * `skills/inert` (a manifest that runs nothing), and a project bound to it.
- */
 async function world(): Promise<World> {
   const project = await tempRepo("capshelf-skill-plugin-project-");
   const dataRepo = await tempRepo("capshelf-skill-plugin-data-");
@@ -201,8 +194,6 @@ describe("a shelf skill that holds a plugin manifest", () => {
   test(
     "a recovery add asks for the ignored manifest and hook it keeps",
     async () => {
-      // The unmanaged folder matches the pin on the pinned paths, so add
-      // adopts it and keeps its ignored files. They make it a plugin.
       const w = await world();
       await writeUnder(
         w.dataRepo,
@@ -244,8 +235,6 @@ describe("a shelf skill that holds a plugin manifest", () => {
   test(
     "update asks when a kept ignored local manifest arms a new upstream hook",
     async () => {
-      // The update keeps the ignored local manifest beside the new pinned
-      // files, so the folder becomes a plugin that runs the new hook.
       const w = await world();
       await writeUnder(
         w.dataRepo,
@@ -304,7 +293,6 @@ describe("a shelf skill that holds a plugin manifest", () => {
         ".claude-plugin/plugin.json",
         JSON.stringify({ name: "plain" }),
       );
-      // A visible local edit, so the merge has a local side.
       await writeUnder(installed, "local.md", "mine\n");
       await writeUnder(
         w.dataRepo,
@@ -324,9 +312,9 @@ describe("a shelf skill that holds a plugin manifest", () => {
   test(
     "update --merge asks when the writer keeps a pinned manifest that Git ignores",
     async () => {
-      // The pinned manifest is ignored in the project, so the merge reads it
-      // as a local deletion. The merge writer replaces only the files it
-      // read, so the manifest stays beside the new hook.
+      // The merge reads the ignored manifest as a local deletion, but the
+      // writer replaces only files it read, so the manifest stays beside the
+      // new hook.
       const w = await world();
       expect((await w.run(["add", "skills/inert"])).exitCode).toBe(0);
       await writeUnder(
@@ -389,9 +377,6 @@ describe("a shelf skill that holds a plugin manifest", () => {
   test(
     "update --merge asks for what the merged tree runs",
     async () => {
-      // Neither side is a plugin with hooks alone: the local copy gains an
-      // inert manifest and the upstream gains a hook with no manifest. The
-      // merge result holds both, so it runs the hook.
       const w = await world();
       await writeUnder(
         w.dataRepo,
@@ -460,7 +445,6 @@ describe("a shelf skill that holds a plugin manifest", () => {
   );
 });
 
-/** A bare upstream whose root is a skill that also holds a plugin manifest. */
 async function rootSkillUpstream(): Promise<{ url: string; work: string }> {
   const work = await tempRepo("capshelf-skill-plugin-upstream-", {
     origin: null,
@@ -619,7 +603,6 @@ describe("a remote skill that holds a plugin manifest", () => {
         ).exitCode,
       ).toBe(0);
       const installed = join(remote.project, ".agents", "skills", "keptr");
-      // Ignored inside the item, so the move keeps it (row 4).
       await writeUnder(
         installed,
         ".gitignore",
@@ -713,7 +696,6 @@ describe("shelf update installs the pin the user approved", () => {
       await writeUnder(w.dataRepo, "skills/inert/notes.md", "notes\n");
       await commitAll(w.dataRepo, "notes");
       const approved = await pinCurrentSource(w.dataRepo, "skills", "inert");
-      // A commit after the re-plan check: the write pass must not read it.
       await writeUnder(
         w.dataRepo,
         "skills/inert/hooks/hooks.json",
@@ -779,7 +761,6 @@ describe("shelf update installs the pin the user approved", () => {
         kind: "skills",
         name: "inert",
       });
-      // Commit B changes only the needs, after the approval.
       await writeUnder(
         w.dataRepo,
         "skills/inert/.capshelf.yml",

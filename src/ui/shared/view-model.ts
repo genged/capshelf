@@ -1,7 +1,3 @@
-/**
- * Pure helpers the dashboard uses to order, count, and filter the rows the
- * server sends. They carry no DOM, so they are unit tests.
- */
 import type {
   ExternalClaudePlugin,
   ExternalSkill,
@@ -41,7 +37,6 @@ export function projectCounts(items: readonly UiItem[]): ProjectCounts {
 
 const TONE_ORDER = { attention: 0, kept: 1, ok: 2 } as const;
 
-/** Attention first, then kept-local, then up to date; each group by ref. */
 export function sortItems(items: readonly UiItem[]): UiItem[] {
   return [...items].sort((a, b) => {
     const toneA = a.attention ? 0 : TONE_ORDER[a.tone];
@@ -58,7 +53,6 @@ export interface KindGroup<Row extends { kind: ItemKind }> {
   rows: Row[];
 }
 
-/** One group per kind that has a row, in `KIND_ORDER`. Rows keep their order. */
 export function groupByKind<Row extends { kind: ItemKind }>(
   rows: readonly Row[],
 ): KindGroup<Row>[] {
@@ -72,36 +66,29 @@ export function groupByKind<Row extends { kind: ItemKind }>(
   return groups;
 }
 
-/** A project's status read, as the dashboard holds it. */
 export interface StatusRead {
   state: "loading" | "ready" | "error";
   data: UiProjectStatus | null;
-  /** The last read that finished failed, so `data` is from an older read. */
   stale: boolean;
 }
 
 /**
- * The status that the views across projects may show. A failed read keeps
- * its old data for the project view, which says that the refresh failed.
- * That data stays out of All findings, Jump, Rollouts, Coverage, and This
- * machine until a new read of the project succeeds.
+ * A failed read's old data stays out of cross-project views until a new read
+ * succeeds, so they never show stale state.
  */
 export function currentStatus(read: StatusRead): UiProjectStatus | null {
   return read.state === "error" || read.stale ? null : read.data;
 }
 
-/** True while a read runs for a project that has no current status. */
 export function awaitingStatus(read: StatusRead): boolean {
   return read.state === "loading" && currentStatus(read) === null;
 }
 
 /**
- * True when a view may say that no item in any project needs attention.
- * A project that is missing, failed its read, or is still reading can hold
- * findings, so the claim needs every project read.
+ * An unread, failed, or missing project can hold findings, so an all-clear
+ * claim needs every project read.
  */
 export function findingsAllClear(summary: {
-  /** The project list itself is still loading. */
   discovering: boolean;
   found: number;
   pending: number;
@@ -115,10 +102,6 @@ export function findingsAllClear(summary: {
   );
 }
 
-/**
- * The rows whose state or identity moved between two refreshes. The UI
- * highlights each once.
- */
 export function changedItemIds(
   previous: readonly UiItem[] | undefined,
   next: readonly UiItem[],
@@ -154,7 +137,6 @@ export interface TreeEntry {
   counts: ProjectCounts | null;
 }
 
-/** Attention count descending, then the display path. */
 export function sortTree(entries: readonly TreeEntry[]): TreeEntry[] {
   return [...entries].sort((a, b) => {
     const attentionA = a.counts?.attention ?? -1;
@@ -164,7 +146,6 @@ export function sortTree(entries: readonly TreeEntry[]): TreeEntry[] {
   });
 }
 
-/** The first twelve characters of a 64-character digest, as the CLI prints. */
 export function shortDigest(value: string | null | undefined): string {
   if (!value) return "(missing)";
   return value.length === 64 ? value.slice(0, 12) : value;
@@ -175,10 +156,6 @@ export function shortCommit(value: string | null | undefined): string {
   return value.length >= 40 ? value.slice(0, 7) : value;
 }
 
-/**
- * The CLI prints some sentences with a full 64-character digest. The panel
- * shows the same sentence with the 12-character form the CLI uses elsewhere.
- */
 export function shortenDigests(text: string): string {
   return text.replace(/\b[0-9a-f]{64}\b/g, (digest) => digest.slice(0, 12));
 }
@@ -192,11 +169,6 @@ export interface ProjectFindings {
   rows: UiItem[];
 }
 
-/**
- * Every finding on the machine, one group per project that has one. The
- * project with the most findings comes first, then by display path. Rows
- * keep `sortItems` order.
- */
 export function findingsAcrossProjects(
   statuses: readonly UiProjectStatus[],
 ): ProjectFindings[] {
@@ -217,13 +189,12 @@ export function findingsAcrossProjects(
 
 export interface SharedFinding {
   ref: string;
-  /** Project names, in the order the findings list shows them. */
   projects: string[];
 }
 
 /**
- * Shelf items behind the shelf in more than one project. Each project still
- * takes the update on its own; the note only says the change is the same.
+ * Each project still updates on its own; the shared note only says the change
+ * is identical.
  */
 export function sharedFindings(
   groups: readonly ProjectFindings[],
@@ -252,7 +223,6 @@ export function sharedFindings(
     .sort((a, b) => a.ref.localeCompare(b.ref));
 }
 
-/** Where a jump row leads. The client maps it to a route. */
 export type JumpTarget =
   | { type: "item"; project: string; item: string }
   | { type: "project"; project: string }
@@ -260,9 +230,8 @@ export type JumpTarget =
   | { type: "machine"; entry: string };
 
 /**
- * The identity of an entry in This machine, used in its route and by Jump.
- * Two harnesses can hold a skill with one name, so the key carries the
- * surface and the path, not the name.
+ * Two harnesses can hold a skill with the same name, so the key carries surface
+ * and path.
  */
 export function machineSkillKey(
   skill: Pick<ExternalUserSkill, "surface" | "path">,
@@ -284,21 +253,16 @@ export type JumpGroup =
   | "This machine";
 
 export interface JumpRow {
-  /** The text the query matches and highlights. */
   ref: string;
   tags: string[];
   description?: string;
   group: JumpGroup;
-  /** Quiet words after the name: the project, the kind, or the state. */
   detail: string;
-  /** A finding's recommended command, for the `c` key. */
   command: string | null;
   target: JumpTarget;
-  /** Unique across every row, for list keys. */
   key: string;
 }
 
-/** The order the jump dialog shows its groups in. */
 export const JUMP_GROUPS: readonly JumpGroup[] = [
   "Findings",
   "Projects",
@@ -318,13 +282,7 @@ export interface JumpShelf {
   }>;
 }
 
-/**
- * Everything the jump dialog can open: findings first, then projects,
- * the other items, the shelf items, and the user-level skills. A finding
- * and its item are one row, under Findings.
- */
 export function jumpCandidates(
-  /** Every registered project, read or not: the rail lists them all. */
   projects: ReadonlyArray<{ path: string; display: string }>,
   statuses: readonly UiProjectStatus[],
   shelves: readonly JumpShelf[],
@@ -401,11 +359,6 @@ export function jumpCandidates(
   return rows;
 }
 
-/**
- * The CLI's state sentence, shortened, or null when it only restates the
- * label: `up-to-date` under "Up to date" adds nothing, while
- * `drifted + update available → 4ca4018c5a54` names the target.
- */
 export function stateSentence(label: string, detail: string): string | null {
   const words = (text: string): string =>
     text
@@ -417,11 +370,6 @@ export function stateSentence(label: string, detail: string): string | null {
   return words(sentence) === words(label) ? null : sentence;
 }
 
-/**
- * A project's display path as the rail shows it: the folder name first,
- * because it tells projects apart, and the parent below it.
- * `~/code/billing-api` → name `billing-api`, parent `~/code`.
- */
 export interface DisplayPathParts {
   name: string;
   parent: string;
@@ -451,10 +399,6 @@ const LIST_GROUPS: ReadonlyArray<{ id: ListGroupId; label: string }> = [
   { id: "ok", label: "Up to date" },
 ];
 
-/**
- * The item list groups by state, not by kind: findings first, then kept
- * local, then up to date. Rows keep `sortItems` order. Empty groups drop.
- */
 export function listGroups(items: readonly UiItem[]): ListGroup[] {
   const sorted = sortItems(items);
   const groupOf = (item: UiItem): ListGroupId =>
@@ -466,9 +410,8 @@ export function listGroups(items: readonly UiItem[]): ListGroup[] {
 }
 
 /**
- * Something a harness loads in a project that Capshelf does not manage. The
- * id is the route segment that selects it, so it must not collide with an
- * item id (`<scope>/<source>/<kind>/<name>`).
+ * The id is a route segment and must not collide with an item id
+ * (`<scope>/<source>/<kind>/<name>`).
  */
 export type ExternalEntry =
   | { type: "skills.sh"; id: string; name: string; skill: ExternalSkill }
@@ -485,7 +428,6 @@ export type ExternalEntry =
       skill: ExternalUserSkill;
     };
 
-/** Every external row of a project, ordered by name, then by id. */
 export function externalEntries(
   status: Pick<
     UiProjectStatus,
@@ -512,8 +454,8 @@ export function externalEntries(
     ...status.externalUserSkills.map(
       (skill): ExternalEntry => ({
         type: "user-skill",
-        // Codex reads two roots, so a name can repeat: the path makes the
-        // id unique (src/external.ts, the user skill roots).
+        // Codex reads two skill roots, so a name can repeat; the path makes the
+        // id unique.
         id: `user/${skill.surface}:${skill.path}`,
         name: skill.name,
         skill,
@@ -526,14 +468,8 @@ export function externalEntries(
 }
 
 /**
- * Where one project stands on one shelf item. `behind-edited` is behind the
- * shelf with a local edit, which no group update can take; `other` is a
- * finding that is not about the shelf, such as a plain local edit.
- */
-/**
- * `pin-current` and `pin-behind` come from the lock alone, while the
- * project's first status read runs. They say nothing about the installed
- * copy, so no view may call them up to date or free of edits.
+ * `pin-current` and `pin-behind` come from the lock alone while a project has
+ * no current status read, so no view may call them up to date or free of edits.
  */
 export type UsageState =
   | "current"
@@ -550,37 +486,28 @@ export interface ProjectUsage {
   name: string;
   scope: "project" | "local";
   state: UsageState;
-  /** The status label when the project's row is read, else null. */
   label: string | null;
-  /** The status row's state, so the badge draws the same icon as the list. */
   rowState: State | null;
   /**
-   * The shelf's own flag: the pin names the item's latest shelf commit. It
-   * is kept apart from `state`, because a row can show another finding, such
-   * as a missing install, while its pin is also behind.
+   * Kept apart from `state` because a row can show another finding, such as a
+   * missing install, while its pin is also behind.
    */
   pinCurrent: boolean | null;
-  /** The project's item id, for a link into its detail. */
   itemId: string | null;
 }
 
 /**
- * Join one usage entry with the project's status row. The row is the CLI's
- * own state, so it wins. While the project is still loading, the shelf's
- * `current` flag stands in: it only knows whether the pin names the item's
- * latest shelf commit (src/ui/api.ts, usage `current`).
+ * The status row is the CLI's own state and wins; the shelf's `current` flag
+ * only stands in while the project is loading.
  */
 export function usageState(
   ref: string,
   usage: UiItemUsage,
   statuses: ReadonlyMap<string, UiProjectStatus>,
-  /** The shelf item's source: a bundled item joins the system row. */
   source: UiShelfItem["source"] = "data",
   /**
-   * Projects in a read with no current status (`awaitingStatus`). Only for
-   * them does the shelf flag stand in for the row. A failed read, or a status that
-   * leaves the item out (a name skills.sh owns, for one), stays unknown, so
-   * the views show no state and no command the CLI did not compute.
+   * Only pending projects use the shelf flag; a failed read or omitted item
+   * stays unknown so no view shows a state or command the CLI did not compute.
    */
   pending: ReadonlySet<string> = new Set(),
 ): ProjectUsage {
@@ -603,8 +530,8 @@ export function usageState(
     const loading = pending.has(usage.project);
     return {
       ...base,
-      // The lock's kept-local marker is not a state either: the installed
-      // copy can be gone. Only the pin's commit is known until the row comes.
+      // The lock's kept-local marker is not a state: the installed copy can be
+      // gone, and only the pin's commit is known until the row arrives.
       state: !loading
         ? "unknown"
         : usage.current === true
@@ -617,9 +544,9 @@ export function usageState(
       itemId: null,
     };
   }
-  // "behind" promises that a plain update only takes the new version. An
-  // update also deletes visible extra files (D12, `visibleExtras`), so a row
-  // with them is a finding to resolve first.
+  // "behind" promises a plain update only takes the new version, but update
+  // also deletes visible extra files, so a row with them must be resolved
+  // first.
   const state: UsageState =
     row.row.state === "update_available" &&
     (row.row.visibleExtras?.length ?? 0) === 0
@@ -644,7 +571,6 @@ export interface Rollout {
   ref: string;
   name: string;
   kind: ItemKind;
-  /** Last change on the shelf, when the server found one. */
   commit: string | null;
   subject: string | null;
   projects: ProjectUsage[];
@@ -652,10 +578,8 @@ export interface Rollout {
 }
 
 /**
- * A project that has not taken the shelf's latest version. The row's state
- * says so for a plain or edited update. A row with another finding, such as
- * a missing install, can hide an old pin behind it, so the shelf's flag
- * decides there.
+ * A row with another finding, such as a missing install, can hide an old pin,
+ * so the shelf's flag decides there.
  */
 export function isBehind(usage: ProjectUsage): boolean {
   return (
@@ -667,9 +591,8 @@ export function isBehind(usage: ProjectUsage): boolean {
 }
 
 /**
- * The shelf items that some bound projects have not taken. Each project
- * keeps its pin until it updates, so a rollout lists who is behind, who has
- * a local edit in the way, and who is already current.
+ * Each project keeps its pin until it updates, so a rollout lists who is
+ * behind, blocked by a local edit, or current.
  */
 export function shelfRollouts(
   items: readonly UiShelfItem[],
@@ -700,10 +623,9 @@ export function shelfRollouts(
 }
 
 /**
- * Projects with an old pin on this shelf and no current status, after a
- * failed read for one. They cannot join a rollout, because their state is
- * unknown, but Rollouts must not claim that every project is current while
- * one exists. Names are unique and sorted.
+ * Old pins in a project whose status read failed cannot join a rollout because
+ * their state is unknown, but Rollouts must not claim every project is current
+ * while one exists.
  */
 export function unreadOldPins(
   items: readonly UiShelfItem[],
@@ -727,16 +649,10 @@ export interface CoverageRow {
   ref: string;
   name: string;
   kind: ItemKind;
-  /** One cell per column project; null when the project lacks the item. */
   cells: Array<ProjectUsage | null>;
   used: number;
 }
 
-/**
- * Shelf items by bound projects. A row with no usage is an item no project
- * on this machine holds. Project-scope usage wins over a local one in a
- * cell, because it is the one the project commits.
- */
 export function shelfCoverage(
   items: readonly UiShelfItem[],
   projects: readonly string[],
@@ -748,6 +664,7 @@ export function shelfCoverage(
     .map((item) => {
       const cells = projects.map((project) => {
         const usages = item.usage.filter((usage) => usage.project === project);
+        // Project scope wins because it is the copy the project commits.
         const chosen =
           usages.find((usage) => usage.scope === "project") ?? usages[0];
         return chosen

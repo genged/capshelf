@@ -7,9 +7,8 @@ import { tempDir } from "./cli-fixtures";
 const SCRIPTS = join(import.meta.dir, "..", "scripts");
 
 /**
- * A stand-in for `gh` that applies the real `--jq` expression to a canned
- * payload. Stubbing the whole answer instead would leave the filter — the part
- * that decides whether a release proceeds — untested.
+ * Applies the real `--jq` expression to a canned payload, so the filter that
+ * gates a release is actually exercised.
  */
 const GH_STUB = `#!/usr/bin/env bash
 set -euo pipefail
@@ -107,8 +106,8 @@ describe("require-green-test-run.sh", () => {
   });
 
   /**
-   * A pull-request run carries the head SHA but checks out that commit merged
-   * into its base, so it cannot vouch for the commit a tag points at.
+   * A pull_request run checks out the head merged into base, so it cannot vouch
+   * for the tagged commit.
    */
   test("a successful pull-request run does not count", async () => {
     const result = await run(
@@ -145,7 +144,6 @@ describe("require-green-test-run.sh", () => {
     expect(result.stderr).toContain("Test completion");
   });
 
-  /** A re-run in flight beside a failure is not yet a verdict. */
   test("a queued run beside a failed one is treated as unfinished", async () => {
     const result = await run(
       "require-green-test-run.sh",

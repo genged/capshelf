@@ -40,8 +40,6 @@ export async function verifyDataLockEntries(
     const parsed = parseLockKey(key);
     const relPath = itemRepoRelPath(parsed.kind, parsed.name);
     if (entry.sourcePinDigest !== undefined) {
-      // Lock version 4: one `ls-tree` and a digest — no blob is read, and no
-      // working-tree state participates.
       const digest = sourcePinDigest(
         await itemTreeEntriesAtCommit(
           gitTreeSource({
@@ -98,13 +96,10 @@ export async function verifyDataLockEntries(
 }
 
 /**
- * The lock version 2/3 content hash of an item at a commit, per kind.
- *
- * Version 4 no longer uses this to decide anything, but `lock migrate` needs
- * it once, to audit the old `sha` before discarding it: an entry whose legacy
- * hash disagrees with the commit it names is exactly the failure this whole
- * design exists to repair, and the migration reports it as
- * `repaired-legacy-identity` rather than silently dropping the evidence.
+ * The lock version 2/3 content hash of an item at a commit, per kind. Version 4
+ * does not use it. It verifies older entries, and `lock migrate` uses it to
+ * audit the old `sha` against its commit and report `repaired-legacy-identity`
+ * instead of silently dropping the evidence.
  */
 export async function legacyShaAtCommit(
   dataRepo: string,
@@ -170,11 +165,10 @@ async function shaOfDataAtCommit(
   }
   assertRegularBlobEntries(entries, relPath);
 
-  // Reduce to item-relative paths. hashNamedContents sorts by name in the same
-  // code-unit order as shaOfItemFiles (add-time hashing over
-  // gitVisibleFilesUnderPath), so the recorded sha reproduces here. Sorting by
-  // repo-relative path with localeCompare instead — as this once did — reorders
-  // multi-file items (e.g. SKILL.md vs café.md) and rejects valid rebinds.
+  // hashNamedContents sorts by item-relative name in code-unit order, as
+  // shaOfItemFiles does, so the recorded sha reproduces. Sorting by
+  // repo-relative path with localeCompare would reorder multi-file items
+  // (SKILL.md vs café.md) and reject valid rebinds.
   const rels = entries
     .filter((file) => {
       const rel = posix.relative(relPath, file.path);
@@ -183,9 +177,8 @@ async function shaOfDataAtCommit(
         rel &&
         !rel.startsWith("..") &&
         !hasIgnoredDotSegment(rel) &&
-        // The metadata sidecar is catalog data, never materialized and never
-        // included in the at-commit sha; keep this consistent with
-        // materialize.ts so rebind (set-data) doesn't reject valid locks.
+        // The metadata sidecar is never materialized or hashed; keep consistent
+        // with materialize.ts so rebind does not reject valid locks.
         !isMetadataSidecarPath(rel)
       );
     })

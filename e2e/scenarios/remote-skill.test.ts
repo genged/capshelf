@@ -48,9 +48,6 @@ test(
     });
 
     await withWorld(SCENARIO, async (world) => {
-      // The third-party repository. A bare repo plus the working clone that
-      // pushes to it, which is how a later commit reaches the URL the project
-      // pinned.
       const upstream = await world.git.createBareRemote("third-party");
       const upstreamWork = await world.git.createDataRepo({
         name: "third-party-work",
@@ -75,8 +72,8 @@ test(
         0,
       );
 
-      // Install one skill from the URL. The picker needs a terminal, so a
-      // repository holding two skills is named with --path.
+      // The picker needs a terminal, so a repository with two skills must be
+      // disambiguated with --path.
       const added = await world.capshelf(project, [
         "add",
         upstream.url,
@@ -93,7 +90,6 @@ test(
       ]);
       expect(tracked.stdout.trim()).toBe("");
 
-      // The null second run: byte-stable, and strict status stays clean.
       const afterInstall = await captureOwnedState(world, {
         projectFiles: project,
         projectGit: project,
@@ -121,7 +117,6 @@ test(
         0,
       );
 
-      // The upstream moves. Only the check sees it; a bare status does not.
       await world.git.writeAndCommit(
         upstreamWork,
         { "skills/pdf/SKILL.md": PDF_V2 },
@@ -138,11 +133,9 @@ test(
         ).state,
       ).toBe("ok");
 
-      // D15: one command and two flags carry every network path, and a bare
-      // update is none of them. The cache still holds the commit the install
-      // pinned, so a sweep that fetched could move the pin; this one must not.
-      // Exit 0 alone is not proof, because a failed fetch is reported rather
-      // than thrown — the Git the binary ran is what settles it.
+      // Exit 0 is not proof no fetch happened, because a failed fetch is
+      // reported rather than thrown; the Git invocations the binary ran settle
+      // it.
       const lockPath = join(project, ".capshelf", "remotes.lock.json");
       const lockBeforeSweep = await readFile(lockPath, "utf-8");
       const recorder = await world.git.recordInvocations();
@@ -178,9 +171,8 @@ test(
         ).state,
       ).toBe("update_available");
 
-      // Safe failure: a cold cache refuses and writes nothing. The cache is
-      // machine state outside the project, so deleting it is the state a user
-      // reaches by clearing $XDG_DATA_HOME.
+      // The cache is machine state outside the project, so removing it matches
+      // a user clearing $XDG_DATA_HOME.
       const cacheRoot = join(world.home, ".local", "share", "capshelf");
       await world.run(world.stage, ["rm", "-rf", cacheRoot]);
       const beforeRefusal = await captureOwnedState(world, {
@@ -208,7 +200,6 @@ test(
         "a cold-cache update refusal",
       );
 
-      // Re-fetch, then move the pin. `update` reads the cache the check left.
       expectExit(
         await world.capshelf(project, ["status", "--check-upstream", "--json"]),
         0,
@@ -226,7 +217,6 @@ test(
         await readFile(join(project, ".agents/skills/pdf/SKILL.md"), "utf-8"),
       ).toContain("Extract text and tables");
 
-      // Adopt: the shelf takes ownership and the remote row is released last.
       const shelfHeadBefore = await world.git.head(shelf);
       const adopted = await world.capshelf(project, [
         "share",
@@ -246,7 +236,6 @@ test(
         await readFile(join(shelf, "skills/pdf/.capshelf.yml"), "utf-8"),
       ).toContain("upstreamPath: skills/pdf");
 
-      // The skill is an ordinary shelf item now, and strict status is clean.
       expectExit(
         await world.capshelf(project, ["status", "--strict", "--json"]),
         0,

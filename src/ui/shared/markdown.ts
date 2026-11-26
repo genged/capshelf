@@ -1,9 +1,4 @@
-/**
- * A small Markdown reader for SKILL.md files, enough for the shelf view to
- * show a skill the way its author laid it out. It produces a block tree, not
- * HTML, so the renderer builds elements and untrusted text never becomes
- * markup. Pure: no DOM, no Node.
- */
+/** Produces a block tree, not HTML, so untrusted text never becomes markup. */
 
 export type Inline =
   | { type: "text"; text: string }
@@ -27,9 +22,8 @@ export interface MarkdownDocument {
 }
 
 /**
- * Split a leading `---` YAML block from the body. The same rules as
- * `extractFrontmatter` in `src/metadata.ts`: a byte-order mark and CRLF line
- * endings do not hide it. An unclosed block is body text.
+ * Must match extractFrontmatter in src/metadata.ts: BOM and CRLF do not hide
+ * it, and an unclosed block is body text.
  */
 export interface FrontmatterSplit {
   frontmatter: string | null;
@@ -150,7 +144,6 @@ export function parseBlocks(body: string): Block[] {
           index += 1;
           continue;
         }
-        // An indented continuation line belongs to the item above it.
         if (
           candidate.trim().length > 0 &&
           /^\s+/.test(candidate) &&
@@ -242,10 +235,7 @@ export function parseInlines(text: string): Inline[] {
   return out;
 }
 
-/**
- * A link target the page may open: http, https, mailto, or a relative path.
- * Anything else, `javascript:` included, renders as plain text.
- */
+/** Reject executable link schemes because SKILL.md text is untrusted. */
 export function safeHref(href: string): string | null {
   const trimmed = href.trim();
   if (/^(https?:|mailto:)/i.test(trimmed)) return trimmed;

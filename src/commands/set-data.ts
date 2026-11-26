@@ -43,8 +43,6 @@ export function buildSetData(name: string): Command {
       try {
         await assertDataRepoRoot(dataRepo);
       } catch (err) {
-        // Preserve the historical behavior: any failure to validate the data
-        // repo (including git being unavailable) surfaces as exit 3 here.
         throw new PreconditionError(
           err instanceof Error ? err.message : String(err),
           { cause: err },

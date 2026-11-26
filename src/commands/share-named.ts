@@ -1,8 +1,3 @@
-/**
- * The named share path: `capshelf share <item>`. `share.ts` registers the
- * command and sends a call here or to the picker in `share-interactive.ts`,
- * which runs each planned share through the same functions.
- */
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -135,7 +130,6 @@ import {
 
 type ShareScope = "project" | "local";
 
-/** `share` tracks what it commits, so the `capshelf update` line always applies. */
 const SHARED_COVERAGE = { presentWord: "present", tracked: true } as const;
 
 export interface ShareOptions {
@@ -145,21 +139,13 @@ export interface ShareOptions {
   target?: string;
   message?: string;
   json?: boolean;
-  /**
-   * Not a CLI flag. The interactive loop shares several items in one run and
-   * prints the data-repo guidance once at the end instead of once per item.
-   */
   suppressGuidance?: boolean;
   /**
-   * Not a CLI flag. The interactive loop pins the repository its catalog was
-   * read from and shares into that one — the same pin `runInteractiveAdd`
-   * holds — so `capshelf data bind` in another terminal while the picker is
-   * open cannot move the destination under the marks.
+   * Pins the repo the catalog was read from so `capshelf data bind` elsewhere
+   * while the picker is open cannot move the destination.
    */
   boundRepo?: string;
-  /** Take ownership from a previous owner: a remote row or a skills.sh row. */
   adopt?: boolean;
-  /** Authorize the commands a plugin runs in project scope (D7 point 3). */
   yes?: boolean;
 }
 
@@ -176,9 +162,8 @@ export async function shareOne(
   }
 
   const kind = ref.kind ?? "skills";
-  // Step 1 of the adopt ordering, and it has to be here rather than in
-  // `shareCopyItem`: a fragment or subagent ref is routed away below and would
-  // never reach it.
+  // Checked here rather than in `shareCopyItem` because fragment and subagent
+  // refs are routed away below and never reach it.
   if (opts.adopt === true && !installsAtSkillTarget(kind)) {
     throw new PreconditionError(
       `share --adopt supports skills and plugins only; ${kind}/${ref.name} is a ${kind} item`,
@@ -201,10 +186,9 @@ export async function shareOne(
 }
 
 /**
- * The scope `share` picks when `--to` is absent. Skills and plugins go to
- * local scope, unless project Git already tracks their install path: then
- * teammates already have the files, and `.git/info/exclude` cannot hide them.
- * Pi extensions go to project scope.
+ * Skills and plugins default to local scope unless project Git tracks their
+ * install path, since teammates already have the files and `.git/info/exclude`
+ * cannot hide them.
  */
 export async function defaultCopyItemShareScope(
   project: string,
@@ -221,7 +205,6 @@ export async function defaultCopyItemShareScope(
 export async function shareCopyItem(
   kind: CopyDirectoryItemKind,
   name: string,
-  /** The scope `--to` asked for, or null for the default. */
   requestedScope: ShareScope | null,
   opts: ShareOptions,
   cmd: Command,
@@ -231,8 +214,8 @@ export async function shareCopyItem(
       "--pick is only valid for fragment items (settings, mcp, codex-config)",
     );
   }
-  // Step 2. `--adopt` takes what is already installed; the other three name a
-  // different source, so pairing them would be two answers to one question.
+  // `--adopt` takes what is already installed; the other flags name a different
+  // source, so pairing them gives two answers to one question.
   if (opts.adopt === true) {
     for (const [flag, value] of [
       ["--from", opts.from],
@@ -251,7 +234,6 @@ export async function shareCopyItem(
     assertLocalScopeSupported(kind, name, "share");
   }
 
-  // Step 3.
   const { project, manifest, projectLock, localLock } =
     await loadProjectContext({ cmd });
   const { scope, trackedPath } =
@@ -263,16 +245,9 @@ export async function shareCopyItem(
   const projectKey = lockKeyForRef(projectLock, { kind, name }, "data");
   const localKey = lockKeyForRef(localLock, { kind, name }, "data");
 
-  // Steps 4 to 7. The order is the property that makes an interrupted run
-  // recoverable, and every step here runs before the data repo is resolved:
-  // pulling needs no shelf, and only adopting does.
-  // A plain `share` of a remote skill would commit its bytes to the shelf and
-  // leave the remote row in place — the two-owner state the product itself
-  // labels "an adopt did not finish" and fails `--strict` on, reached by a
-  // documented command rather than by an interruption. `--adopt` is the one
-  // path that transfers ownership, so every other shape refuses the way
-  // promote, move, keep-local, and revert do. Above the data-repo resolution,
-  // like those four: D7 allows a project with remote rows and no shelf.
+  // Refuse non-adopt shares of a remote skill before resolving the data repo:
+  // committing its bytes would leave the remote row in place, the two-owner
+  // state reported as an unfinished adopt.
   if (opts.adopt !== true) {
     await assertNotPulledSkill(project, { kind, name }, "sharing");
   }
@@ -319,10 +294,9 @@ export async function shareCopyItem(
       `already tracked in project scope: ${kind}/${name}`,
     );
   }
-  // Step 8. This is where D7 ends: a missing binding exits 6. It sits below the
-  // refusals above for every caller, not only for `--adopt`, so `share` has one
-  // refusal precedence rather than two — and above the local-manifest check,
-  // which is a write-time precondition rather than a boundary.
+  // Missing-binding refusal sits below the other refusals for every caller so
+  // `share` has one refusal precedence, and above the local-manifest check,
+  // which is a write-time precondition.
   const dataRepo =
     opts.boundRepo ?? (await resolveProjectDataRepo(project, manifest, cmd));
 
@@ -336,8 +310,7 @@ export async function shareCopyItem(
   }
 
   const repoRelPath = itemRepoRelPath(kind, name);
-  // Moved down with the resolution it reads: this refusal needs `dataRepo`.
-  // Under `--adopt` it is replaced by the content comparison in
+  // Under `--adopt` this refusal is replaced by the content comparison in
   // `adoptIntoDataRepo`, which treats identical content as convergence.
   if (opts.adopt !== true && existsSync(join(dataRepo, repoRelPath))) {
     throw new PreconditionError(
@@ -345,23 +318,15 @@ export async function shareCopyItem(
     );
   }
 
-  // Step 9, before any data-repo mutation. This assertion used to run after
-  // `adoptIntoDataRepo`, so a legacy lock refused the share only after the
-  // item was already committed — leaving a data-repo commit with no project
+  // Assert the lock is writable before any data-repo mutation, or a legacy lock
+  // would refuse after the item is committed, leaving a commit with no project
   // tracking.
   const writableProjectLock = assertWritableLock(projectLock, "capshelf share");
   const writableLocalLock = assertWritableLock(localLock, "capshelf share");
 
-  // D2 guard 5, for every share that acquires the skill-target folder, not
-  // only a remote adopt: a plain `share plugins/<n>` beside a tracked
-  // `skills/<n>` finds no plugin lock entry, and only this folder check stops
-  // a second owner. `self` is the key the share takes the folder from: the
-  // remote row an adopt releases, or the local entry a `--to project` share
-  // moves. With neither, `self` is null, which exempts only an unmanaged
-  // folder at the exact destination, the folder being shared. A skills.sh row
-  // of the same name is a legitimate previous owner of a skill, so a skill
-  // share keeps its pre-guard behavior. For a plugin it is a second owner of
-  // the folder, and the share refuses.
+  // Guard every share that acquires the skill-target folder, not just remote
+  // adopts: a plugin share beside a tracked `skills/<n>` finds no plugin lock
+  // entry, and only this folder check stops a second owner.
   if (installsAtSkillTarget(kind)) {
     const self =
       owner?.kind === "remote"
@@ -382,8 +347,6 @@ export async function shareCopyItem(
       { ignoreSkillsSh: kind === "skills" },
     );
   }
-  // The plugin checks (D3, D7 point 3) run inside the adopt, over the
-  // candidate it commits (`checkCandidate`), before any data-repo write.
   const checkCandidate = installsAtSkillTarget(kind)
     ? async (candidate: AdoptionCandidate): Promise<void> => {
         const approved = await checkPluginShareCandidate(
@@ -400,30 +363,16 @@ export async function shareCopyItem(
 
   if (owner !== null) await warnAboutMissingLicense(project, kind, name, owner);
 
-  // Before the snapshot, not after the commit, and unconditional the way
-  // `move --to project` drops it. A project-scope adopt reads the installed
-  // item through project Git, and `add <url>` excludes every remote skill's
-  // install path — so a line left in place makes Git report an empty directory
-  // and the adopt writes nothing to copy. It has to go for the destination's
-  // sake too: a project-scope item named in `.git/info/exclude` is skipped by
-  // `git add -A`, and its unpinned extras are misclassified by
-  // `visibleExtraPaths`, which reads that same ignore stack. Gating this on
-  // `localKey` missed the case entirely, because a remote row is in neither
-  // capshelf lock. A name that owns no line is a no-op here.
-  // Only a line this command actually removed is restored below. Calling
-  // `ensureLocalExcludes` unconditionally would write an exclude for an item
-  // that never had one — a project-scope share of an ordinary unmanaged
-  // directory would start hiding it from the project's own Git.
+  // Drop the exclude line before the snapshot: `add <url>` excludes remote
+  // install paths, so Git would report an empty directory, and a project-scope
+  // item in `.git/info/exclude` is skipped by `git add -A`. Restore only a line
+  // actually removed.
   const excludeDropped =
     scope === "project" && (await removeLocalExcludes(project, kind, name));
 
-  // Steps 10 and 11, under one restore. The window runs until the project lock
-  // names the new owner: until then the item still belongs to whoever owned it
-  // before, and that owner's install path is supposed to be invisible to
-  // project Git. A failure anywhere in here — a dirty data repo, a rejected
-  // commit proof, an unreadable sidecar, a manifest that will not save — would
-  // otherwise leave clone-local third-party files staged by the next
-  // `git add -A`, which is the one thing the exclude exists to stop.
+  // Keep the restore window open until the lock names the new owner: a failure
+  // earlier would leave the previous owner's clone-local files staged by the
+  // next `git add -A`.
   let adopted: PromoteResult;
   let snapshot: Awaited<ReturnType<typeof captureCommittedItemNeeds>>;
   let localChanged = false;
@@ -478,14 +427,13 @@ export async function shareCopyItem(
     if (excludeDropped && !ownerEstablished) {
       await ensureLocalExcludes(project, kind, name).catch(() => {});
     }
-    // The user answered no: nothing was written, and that is not an error.
     if (error instanceof ShareDeclined) return;
     throw error;
   }
   const runtimeWarnings = runtimeWarningsForItem(project, kind, name);
 
-  // Step 12, last. A crash before this leaves two owners rather than none, and
-  // a second run converges through `finishInterruptedAdopt` above.
+  // Release the previous owner last: a crash before this leaves two owners
+  // rather than none, and a rerun converges via `finishInterruptedAdopt`.
   let released = false;
   if (owner !== null) {
     await releasePreviousOwner(project, kind, name, owner);
@@ -538,18 +486,12 @@ export async function shareCopyItem(
   if (!opts.suppressGuidance) await printShareUpstreamGuidance(dataRepo);
 }
 
-/**
- * Step 7: a capshelf entry already exists, so an earlier run reached step 11
- * and stopped before step 12. Release the previous owner and report the
- * convergence; nothing is committed, because the shelf already holds the item.
- */
 async function finishInterruptedAdopt(input: {
   project: string;
   kind: CopyDirectoryItemKind;
   name: string;
   key: string;
   trackedScope: Scope;
-  /** The scope `--to` asked for, or null when it was not given. */
   requestedScope: Scope | null;
   lock: Lock;
   owner: PreviousOwnerRecord | null;
@@ -607,10 +549,6 @@ async function finishInterruptedAdopt(input: {
   }
 }
 
-/**
- * A previous owner exists only for a kind that installs at the skill target,
- * because `findPreviousOwner` is asked for no other kind.
- */
 async function releasePreviousOwner(
   project: string,
   kind: CopyDirectoryItemKind,
@@ -623,7 +561,6 @@ async function releasePreviousOwner(
   await previousOwnerFor(owner.kind).release(project, kind, name, owner);
 }
 
-/** The user declined plugin consent inside the adopt. */
 class ShareDeclined extends Error {
   constructor() {
     super("share declined");
@@ -631,15 +568,8 @@ class ShareDeclined extends Error {
 }
 
 /**
- * The plugin checks of a share, over the candidate the adopt commits and
- * before any data-repo write. D3: a plugin's candidate must hold
- * `.claude-plugin/plugin.json` as a regular file, and the manifest must carry
- * the item name, because Claude Code names the plugin from it. A manifest
- * that exists on disk but that an ignore rule keeps out of the candidate
- * refuses and names the rule. D7 point 3: project scope asks for consent with
- * everything the candidate runs. A skill whose candidate holds a plugin
- * manifest asks the same way (R1), but it keeps its name. Returns false when
- * the user answered no.
+ * A plugin candidate must carry `.claude-plugin/plugin.json` whose name matches
+ * the item, because Claude Code names the plugin from it.
  */
 async function checkPluginShareCandidate(
   project: string,
@@ -687,10 +617,9 @@ async function checkPluginShareCandidate(
 }
 
 /**
- * The refusal for a plugin candidate with no manifest. When the file is on
- * disk, an ignore rule kept it out of the snapshot, and the message names
- * the rule: Git's for a project-scope share, the plugin folder's own
- * `.gitignore` for a local-scope share.
+ * When the manifest is on disk but missing from the snapshot, an ignore rule
+ * hid it: Git's rules for a project-scope share, the plugin folder's own
+ * `.gitignore` for local scope.
  */
 async function missingManifestRefusal(
   project: string,
@@ -724,13 +653,9 @@ function ownerLabel(owner: PreviousOwnerRecord): string {
 }
 
 /**
- * What the sidecar now holds, not what the adopt intended.
- *
- * `adoptIntoDataRepo` writes the provenance inside the commit it makes, so the
- * converging `already-upstream` path writes nothing. Printing "provenance
- * recorded" there claimed the origin of vendored third-party code was on
- * record when the shelf copy might carry none — the one claim this line exists
- * to make.
+ * Report what the sidecar holds, not what the adopt intended: the converging
+ * `already-upstream` path writes nothing, so claiming provenance was recorded
+ * would be false.
  */
 async function printAdoptProvenance(
   owner: PreviousOwnerRecord,
@@ -776,9 +701,8 @@ async function printAdoptProvenance(
 }
 
 /**
- * D10's warning. A license inside the item travels with it; one at the
- * repository root does not, and a skill with neither is someone else's work
- * with no stated terms. It never blocks the adopt.
+ * A license inside the item travels with it, but one at the repo root does not;
+ * warn without blocking.
  */
 async function warnAboutMissingLicense(
   project: string,
@@ -791,8 +715,8 @@ async function warnAboutMissingLicense(
   const found = inspectedRoot
     ? await remoteLicense(owner)
     : { present: installedLicense(project, kind, name), insideItem: true };
-  // D9: a plugin is warned about a license at the repository root too. The
-  // adopt copies the plugin folder only, so a root license stays behind.
+  // The adopt copies only the plugin folder, so a license at the repository
+  // root stays behind.
   if (found.present && !found.insideItem && kind === "plugins") {
     console.error(
       `⚠ the license is at the ${sanitizeDisplayText(owner.provenance.upstream ?? "upstream")} root${found.label ? ` (${found.label})` : ""}, not in the plugin`,
@@ -803,10 +727,8 @@ async function warnAboutMissingLicense(
     return;
   }
   if (found.present) return;
-  // The root is named only when it was read. A skills.sh row carries a `source`
-  // URL too, but capshelf clones nothing for it, so the other branch inspects
-  // the installed directory alone — claiming the root was checked would be a
-  // statement about work that never happened.
+  // Name the root only when it was read: skills.sh rows have a `source` URL but
+  // capshelf clones nothing, so only the installed directory was inspected.
   console.error(
     `⚠ no license file in the remote item${
       inspectedRoot
@@ -821,7 +743,6 @@ async function warnAboutMissingLicense(
 
 interface LicensePresence {
   present: boolean;
-  /** False only when the license was found at the repository root. */
   insideItem: boolean;
   label?: string | null;
 }
@@ -836,8 +757,8 @@ async function remoteLicense(
   if (upstream === null || commit === null || subpath === null) return missing;
   const cache = remoteCacheState(upstream);
   if (!cache.present) return missing;
-  // A cold cache cannot answer, and a warning nobody can act on is worse than
-  // none, so an unreachable cache reports "found" and stays quiet.
+  // Treat a failed license lookup as found: a warning nobody can act on is
+  // worse than none.
   const finding = await findLicense(cache.path, commit, subpath).catch(
     () => null,
   );
@@ -895,9 +816,8 @@ export async function shareSubagent(
       `already tracked in this project: subagents/${name}`,
     );
   }
-  // Before any data-repo mutation. This assertion used to run after the
-  // commit, so a legacy lock refused the share only after the subagent was
-  // already committed — leaving a data-repo commit with no project tracking.
+  // Assert the lock is writable before any data-repo mutation, or a legacy lock
+  // would refuse after the subagent is already committed.
   const writableProjectLock = assertWritableLock(projectLock, "capshelf share");
 
   const allCandidates = subagentSourceCandidates(project, name);
@@ -944,10 +864,9 @@ export async function shareSubagent(
       console.error(`⚠ ${warning}`);
     }
   }
-  // A generated commit: capshelf chose these paths and wrote them, so the
-  // transaction owns them and a failure removes them again. `verify` runs
-  // inside it, so a hook that rewrites a shared file unwinds instead of
-  // leaving the data repo holding content the project never had.
+  // Generated commit: the transaction owns these paths and `verify` runs inside
+  // it, so a hook that rewrites a shared file unwinds instead of leaving unseen
+  // content.
   let pin: PinnedSource | undefined;
   const sourceCommit = await commitDataRepoMutation({
     dataRepo,
@@ -961,8 +880,8 @@ export async function shareSubagent(
         await atomicWriteFile(path, raw, dataRepoScope(dataRepo));
       }
     },
-    // PIN-11: the candidate was generated from the project's own files, so
-    // what the commit holds must equal what was read. `pending` is `A`.
+    // The candidate was generated from the project's files, so the committed
+    // tree must equal what was read.
     verify: async (commit) => {
       pin = await assertCommittedTreeEqualsCandidate({
         dataRepo,
@@ -979,9 +898,7 @@ export async function shareSubagent(
   });
   if (!pin) throw new Error(`expected a verified pin for subagents/${name}`);
   const sha = pin.sourcePinDigest;
-  // `share` lists the canonical sources it wrote, so a one-target share
-  // reported no absence at the moment the item was authored — the same
-  // filtered-list blindness `add` had.
+  // Check all canonical targets so a one-target share reports missing targets.
   const coverage = await itemTargetCoverageAtCommit(
     project,
     dataRepo,
@@ -1052,7 +969,6 @@ export async function shareFragment(
       `share ${kind}/${name} requires --from <path> or --pick <path>; managed values in generated outputs cannot be converted back to one fragment safely`,
     );
   }
-  // For mcp items the item name doubles as the default server pick.
   const picks =
     !opts.from && explicitPicks.length === 0 ? [name] : explicitPicks;
   const cliTarget = sourceTargetForCli(opts.target);
@@ -1068,9 +984,8 @@ export async function shareFragment(
   const project = projectRoot();
   const manifest = await loadManifest(project);
   const projectLock = await loadLock(project);
-  // Before any data-repo mutation. This assertion used to run after the
-  // commit, so a legacy lock refused the share only after the fragment was
-  // already committed — leaving a data-repo commit with no project tracking.
+  // Assert the lock is writable before any data-repo mutation, or a legacy lock
+  // would refuse after the fragment is already committed.
   const writableProjectLock = assertWritableLock(projectLock, "capshelf share");
   const oldManifest = structuredClone(manifest);
   const oldLock = structuredClone(projectLock);
@@ -1100,8 +1015,8 @@ export async function shareFragment(
         autoTarget: kind === "mcp" && cliTarget === null,
       });
 
-  // Validate every source before writing any, so a bad target leaves the
-  // data repo untouched.
+  // Validate every source before writing any, so a bad target leaves the data
+  // repo untouched.
   for (const { source, raw } of pending) {
     const canonicalPath = join(dataRepo, ...source.relPath.split("/"));
     if (existsSync(canonicalPath)) {
@@ -1111,10 +1026,8 @@ export async function shareFragment(
     }
     parseFragmentSourceText(source, raw);
   }
-  // A generated commit: share chose these canonical paths and wrote them, so
-  // the transaction owns them and a rejected commit takes them back out. The
-  // alternative leaves an untracked source behind that the retry then refuses
-  // as already existing.
+  // The transaction owns these paths so a rejected commit removes them;
+  // otherwise an untracked source remains and retry refuses it as existing.
   const sourceCommit = await commitDataRepoMutation({
     dataRepo,
     expectedHead: await headSha(dataRepo).catch(() => null),
@@ -1128,10 +1041,9 @@ export async function shareFragment(
       }
     },
   });
-  // Fragments have no project snapshot: `share --from` writes the user's own
-  // file into the data repo and commits it in place, so PIN-11's `A == B` has
-  // no `A` to compare — the pending set can be a subset of the canonical paths
-  // the item ends up with. The pin still comes from the committed tree.
+  // Pending sources can be only a subset of the item's canonical paths, so they
+  // are not compared with the whole committed item; the pin comes from the
+  // committed tree.
   const pin = await pinItemAtCommit(
     gitTreeSource({ repo: dataRepo, kind, name, commit: sourceCommit }),
     kind,
@@ -1174,10 +1086,8 @@ export async function shareFragment(
     name,
     sourceCommit,
   );
-  // The non-interactive command that repeats this share. For a user who read
-  // the picker's output to learn the CLI, this line is the deliverable; in
-  // `--json` a script records what a human did. A `--from` share has no
-  // repeatable command — the file it read may be gone.
+  // Print the repeatable command, except for `--from` shares whose source file
+  // may be gone.
   const equivalentCommand = opts.from
     ? null
     : shareCommandLine({
@@ -1232,12 +1142,8 @@ export async function shareFragment(
 }
 
 /**
- * The command that would repeat a share: the printed equivalent after a
- * success and the retry line after a failure. Arguments go through `shellArg`:
- * pick paths come from the user's own config files and can hold a space or a
- * `$`, and a printed command must survive being pasted. The commit message is
- * included because the command claims to repeat the share, and the message is
- * part of what it did.
+ * Arguments go through `shellArg` because pick paths can hold spaces or `$`,
+ * and the message is included since it is part of what the share did.
  */
 export function shareCommandLine(opts: {
   ref: string;
@@ -1265,8 +1171,6 @@ export async function printShareUpstreamGuidance(
   if (origin !== null) {
     console.log("");
     console.log("to share upstream:");
-    // The absolute path through `shellArg`, per its contract: this line is a
-    // command to paste, and a repo path may hold a space or a `$`.
     console.log(`  cd ${shellArg(dataRepo)}`);
     console.log("  git push");
   }
@@ -1292,9 +1196,8 @@ async function extractPickedSources(
   opts: PickExtractionOptions,
 ): Promise<PendingFragmentSource[]> {
   if (!opts.autoTarget) {
-    // SAFETY: the one caller refuses an empty candidate list before it calls
-    // this function (the `firstCandidate` check in `shareFragment`), so the
-    // first candidate exists.
+    // SAFETY: the one caller, `shareFragment`, refuses an empty candidate
+    // list first, so the first candidate exists.
     const source = opts.candidates[0] as FragmentSource;
     const remainder = await loadOutputRemainder(opts, source);
     if (remainder === null) {
@@ -1305,7 +1208,6 @@ async function extractPickedSources(
     return [{ source, raw: extractFromRemainder(remainder, opts.picks) }];
   }
 
-  // mcp with no --target: share from every output that contains the picks.
   const pending: PendingFragmentSource[] = [];
   const failures: string[] = [];
   for (const source of opts.candidates) {

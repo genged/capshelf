@@ -78,7 +78,7 @@ type Target = "claude" | "codex";
 
 const ALL_TARGETS: readonly Target[] = ["claude", "codex"];
 
-/** The `--skill` default. Never mutated: the collector copies it. */
+/** Shared default array; never mutate it. */
 const NO_SKILLS: string[] = [];
 
 const InstallationPolicy = z.enum([
@@ -140,7 +140,6 @@ interface ValidateOptions extends CommonOptions {
 interface MutationContext {
   verb: string;
   plugin?: string;
-  /** Extra `--json` fields the mutation reports, such as the skills it changed. */
   fields?: ConfigObject;
 }
 
@@ -154,10 +153,7 @@ interface MarketplaceIssue {
   url?: string;
 }
 
-/**
- * The `--json` payload of one marketplace command. The human summary reads
- * the same object, so the two cannot drift.
- */
+/** The human summary reads this same object so it cannot drift from --json. */
 interface MarketplaceResult
   extends Partial<PackageStats>,
     Partial<FileSetDiff> {
@@ -218,7 +214,6 @@ interface TargetReports {
   codex: CodexTargetReport;
 }
 
-/** The `marketplace validate` report, printed as-is under `--json`. */
 interface MarketplaceValidationReport {
   valid: boolean;
   strict: boolean;
@@ -232,7 +227,6 @@ interface MarketplaceValidationReport {
   warnings: MarketplaceIssue[];
 }
 
-/** The documents `marketplace edit` and `plugin edit` write optional text into. */
 type EditableDocument =
   | ClaudeMarketplace
   | ClaudePlugin
@@ -875,8 +869,8 @@ export function registerMarketplace(program: Command): void {
             collectSelectedSkill(dataRepo, skill, opts.fromHead),
           ),
         );
-        // The entry is a parsed JSON document whose extra keys pass through
-        // untyped; the schema restates them as JSON values before the pick.
+        // The entry is parsed JSON with untyped extra keys; the schema narrows
+        // them to JSON values before the pick.
         const safeMetadata = Object.fromEntries(
           Object.entries(ConfigObjectSchema.parse(entry)).filter(([key]) =>
             [
@@ -1895,8 +1889,8 @@ async function dirtyCodexProjectionPaths(dataRepo: string): Promise<string[]> {
     [...CODEX_PROJECTION_ROOTS],
     { untrackedFiles: "all" },
   );
-  // Both sides of a rename count here: regenerating the projection restores
-  // the original path and removes the new one, so both are at risk.
+  // Count both sides of a rename: regenerating the projection restores the
+  // original path and removes the new one.
   const paths = new Set<string>();
   for (const record of records) {
     paths.add(record.path);

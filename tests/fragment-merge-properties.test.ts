@@ -9,13 +9,6 @@ import {
 } from "../src/config-values";
 import { reconcileFragmentValues, type FragmentValue } from "../src/fragments";
 
-// Property tests for the value rules of fragment reconciliation. Each property
-// runs on many generated outputs and fragment sets. The expected results come
-// from `facts`, a model that is independent of the merge code: an output is the
-// list of its leaf facts, and a fact is a path with one scalar or one array
-// element. Empty objects and arrays hold no facts, because removal prunes them.
-
-/** Deterministic choices, so a failure names a reproducible case. */
 function random(seed: number): () => number {
   let state = seed;
   return () => {
@@ -24,8 +17,6 @@ function random(seed: number): () => number {
   };
 }
 
-// A small alphabet, so generated values overlap often. `__proto__` checks
-// that special keys stay own data properties.
 const KEYS = ["a", "b", "c", "__proto__"];
 const SCALARS: ConfigValue[] = [1, 2, "m", "l", true, null];
 
@@ -93,7 +84,6 @@ function uniqueSorted(values: string[]): string[] {
   return sorted([...new Set(values)]);
 }
 
-/** The output with every array sorted, so array order does not count. */
 function orderFree(value: ConfigValue): string {
   const canonical = (v: ConfigValue): ConfigValue => {
     if (Array.isArray(v)) {
@@ -140,7 +130,6 @@ function managedOf(fragments: FragmentValue[]): ConfigObject {
 
 const ROUNDS = 3000;
 
-/** Fail when too few cases got past the conflict checks to prove anything. */
 function expectEnoughCases(accepted: number): void {
   expect(accepted).toBeGreaterThan(ROUNDS / 4);
 }
@@ -193,7 +182,6 @@ describe("fragment reconciliation properties", () => {
       accepted++;
       const removed = reconcile(added, managedOf(fragments), []);
       const managedFacts = new Set(facts(managedOf(fragments)));
-      // Duplicates count: an rm must not collapse local repeated elements.
       expect({ round, facts: removed && sorted(facts(removed)) }).toEqual({
         round,
         facts: sorted(facts(local).filter((fact) => !managedFacts.has(fact))),
@@ -238,17 +226,14 @@ describe("fragment reconciliation properties", () => {
         value,
       },
     ];
-    // Local-only elements come first, managed elements follow. The order is
-    // the same on the first apply and on every later one.
     const first = reconcile({ x: ["m", "l"] }, {}, fragment({ x: ["m"] }));
     expect(first).toEqual({ x: ["l", "m"] });
     expect(reconcile(first!, { x: ["m"] }, fragment({ x: ["m"] }))).toEqual({
       x: ["l", "m"],
     });
-    // A local value equal to a managed value cannot be told apart from it,
-    // so rm removes it.
+    // A local value equal to a managed value is indistinguishable from it, so
+    // rm removes it.
     expect(reconcile({ y: 1 }, { y: 1 }, [])).toEqual({});
-    // Local duplicates survive add and rm.
     const added = reconcile({ x: ["l", "l"] }, {}, fragment({ x: ["m"] }));
     expect(added).toEqual({ x: ["l", "l", "m"] });
     expect(reconcile(added!, { x: ["m"] }, [])).toEqual({ x: ["l", "l"] });

@@ -71,7 +71,7 @@ interface LsOptions {
   tag: string[];
 }
 
-/** The `--tag` default. Never mutated: the collector copies it. */
+/** Shared default array; never mutate it. */
 const NO_TAGS: string[] = [];
 
 export function registerLs(program: Command): void {
@@ -83,11 +83,7 @@ export function registerLs(program: Command): void {
     .option("--here", "list items installed in the current project")
     .option("--user", "list user-level runtime skills")
     .option("--json", "output JSON")
-    .option(
-      "-k, --kind <kind>",
-      // Derived, not hand-copied: the copied list silently omitted `subagents`.
-      `filter by kind (${ITEM_KINDS.join("|")})`,
-    )
+    .option("-k, --kind <kind>", `filter by kind (${ITEM_KINDS.join("|")})`)
     .option(
       "--tag <tag>",
       "filter by tag (repeatable; repeated tags narrow with AND)",
@@ -108,9 +104,8 @@ export function registerLs(program: Command): void {
       } else if (opts.here) {
         await lsHere(kindFilter, opts.tag, opts.json ?? false);
       } else {
-        // Browse-only: works inside a project (uses its binding) or anywhere
-        // with --data / $CAPSHELF_HOME, so a shelf can be evaluated before it
-        // is adopted.
+        // Works outside a project via --data or $CAPSHELF_HOME so a shelf can
+        // be evaluated before adoption.
         const project = findProjectRoot();
         const manifest = project ? await loadManifest(project) : null;
         const dataRepo = await resolveDataRepo({
@@ -134,13 +129,6 @@ interface PluginNameWarning {
   message: string;
 }
 
-/**
- * D3: a `plugins/<dir>` directory whose manifest names it something else is
- * not a listed item (`isInstallableDataItem` in `src/master.ts`), so `ls`
- * names the mismatch instead of silently omitting the directory. Never
- * throws: a missing or malformed manifest is simply not a mismatch to
- * report — `listMasterItems` already excludes that directory.
- */
 async function pluginNameWarnings(
   dataRepo: string,
 ): Promise<PluginNameWarning[]> {
@@ -176,18 +164,15 @@ async function lsAvailable(
   tags: string[],
   json: boolean,
 ): Promise<void> {
-  // Was previously catching errors and returning [] — that hid bad bindings as
-  // "no data items." Let the assertion / listMasterItems surface real errors.
+  // Errors propagate so bad bindings are not hidden as "no data items".
   await assertIsGitRepo(dataRepo);
   const dataItems = await listMasterItems(dataRepo, kind);
   const systemItems = SYSTEM_ITEMS.filter((s) => !kind || s.kind === kind);
   const pluginWarnings =
     !kind || kind === "plugins" ? await pluginNameWarnings(dataRepo) : [];
 
-  // D2 guard 2: `skills/<n>` and `plugins/<n>` can both be on the shelf, and
-  // a project uses only one. `dataItems` already holds both kinds unless
-  // `--kind` narrowed it to `plugins` alone, in which case the skill names
-  // are fetched separately so the marker still finds the pair.
+  // A skill and plugin of the same name can both be on the shelf but a project
+  // uses only one; with --kind plugins the skill names are fetched separately.
   const skillNames = new Set(
     dataItems.filter((item) => item.kind === "skills").map((item) => item.name),
   );
@@ -213,7 +198,6 @@ async function lsAvailable(
       })),
     )
   ).filter(({ meta }) => matchesTagFilter(meta, tags));
-  // One `ls-files` lists the working-tree files of every copy item shown.
   const listFiles = await sourceVisibleFilesLister(
     dataRepo,
     dataRows
@@ -224,8 +208,6 @@ async function lsAvailable(
     printMetadataWarnings(meta);
   }
 
-  // Bundles are not a kind, so the section is suppressed under --kind;
-  // reads warn-and-degrade (a malformed bundle stays visible, name-only).
   let bundleRows: Bundle[] = [];
   if (!kind) {
     const listing = await listBundles(dataRepo);
@@ -275,7 +257,6 @@ async function lsAvailable(
           system: sysRows,
           data: dataJsonRows,
           externalUserSkills,
-          // Append-only: a sibling top-level key; system/data rows unchanged.
           ...(pluginWarnings.length > 0 && { warnings: pluginWarnings }),
           ...(bundleRows.length > 0 && {
             bundles: bundleRows.map((bundle) => ({
@@ -342,7 +323,6 @@ async function lsAvailable(
     console.log("");
     console.log(`bundles/  (from ${homeRelative(dataRepo)})`);
     for (const bundle of bundleRows) {
-      // Malformed bundles list name-only so someone fixes them.
       const counts = bundle.malformed ? "" : memberCountSummary(bundle);
       const line = `  ${bundle.name.padEnd(33)}${counts ? ` ${counts}` : ""}${metadataLineSuffix(bundleMeta(bundle))}`;
       console.log(line.trimEnd());
@@ -354,7 +334,6 @@ async function lsAvailable(
     console.log(formatUserSkillsHuman(externalUserSkills).join("\n"));
   }
 
-  // An empty data repo is the first thing a new user sees, so name the way out.
   if (dataRows.length === 0 && bundleRows.length === 0) {
     console.log("");
     console.log("next:");
@@ -404,7 +383,6 @@ function currentProjectRootOrNull(): string | null {
   return findProjectRoot();
 }
 
-/** Bundle description/tags shaped as item metadata for shared helpers. */
 function bundleMeta(bundle: Bundle): ItemMetadata {
   return {
     ...(bundle.description !== undefined && {
@@ -448,9 +426,8 @@ async function shaOfDataItem(
 }
 
 /**
- * Best-effort metadata for an installed row. The sidecar is never
- * materialized, so the bound data repo's working tree is the only source;
- * an unbound clone or a missing upstream item must not break `ls --here`.
+ * Best-effort: the sidecar is never materialized and an unbound clone or
+ * missing upstream item must not break `ls --here`.
  */
 async function installedRowMetadata(
   source: ContentSource | null,
@@ -464,8 +441,8 @@ async function installedRowMetadata(
       if (!item || item.kind !== kind) return null;
       return loadSystemItemMetadata(item);
     }
-    // The working tree, not the commit: the sidecar is catalog data, and
-    // `ls --here` describes the shelf as it is now.
+    // Reads the working tree, not the commit, because `ls --here` describes the
+    // shelf as it is now.
     const path = join(source.repo, ...source.itemRoot.split("/"));
     if (!existsSync(path)) return null;
     return await loadDataItemMetadata({ kind, name, path });
@@ -485,11 +462,7 @@ async function lsHere(
   const localLock = await loadLocalLock(project);
   assertNoScopeCollisions(projectLock, localLock);
 
-  // `lockedSha` rather than the raw `entry.sha`: a version-4 data entry has no
-  // `sha` at all — `createDataLockEntry` writes `sourcePinDigest` — so reading
-  // the field directly printed the literal "undefined" in the human column and
-  // dropped the key entirely from `--json`. `entryIdentity` is the accessor
-  // written for this, and `lockedSha` is what `status --json` already calls it.
+  // Use lockedSha: v4 data entries have no `sha`, only `sourcePinDigest`.
   const projectEntries = Object.entries(projectLock.items).map(
     ([key, entry]) => {
       const { kind: k, name } = parseLockKey(key);

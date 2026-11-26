@@ -48,13 +48,9 @@ test(
         0,
       );
 
-      // The machine came back without the clone the binding names.
       const moved = world.path("shelf-elsewhere");
       await rename(shelf, moved);
 
-      // A read-only command degrades rather than refusing: the row says the
-      // source is unavailable and the exit stays 0
-      // (src/commands/status.ts:122-141).
       const degraded = await world.capshelf(project, ["status", "--json"]);
       expectExit(degraded, 0);
       expect(
@@ -66,12 +62,8 @@ test(
         projectFiles: project,
         projectGit: project,
       });
-      // A command that needs shelf bytes cannot proceed. Exit 6 is the
-      // documented code for "no data repo configured for this project"
-      // (docs/cli.md:1250-1261), and the message is the three-step fix
-      // (docs/cli.md:1265-1297): clone it, point capshelf at it, retry. The
-      // repair has to be runnable — the bound directory is gone, so a command
-      // that operates on it cannot be the way out.
+      // The recovery command must not operate on the bound directory, since
+      // that directory is gone.
       const refused = await world.capshelf(project, ["apply", "--json"]);
       expectExit(refused, 6);
       expectOutputContains(refused, "https://example.invalid/shelf");
@@ -86,7 +78,6 @@ test(
         "apply with a missing clone",
       );
 
-      // A remote URL is not a binding; the message points at init.
       const remoteBinding = await world.capshelf(project, [
         "data",
         "bind",
@@ -95,9 +86,6 @@ test(
       expectExit(remoteBinding, 3);
       expectOutputContains(remoteBinding, "init --data");
 
-      // A directory inside a worktree is not a data repo root
-      // (docs/cli.md:189-198). A refused precondition is exit 3
-      // (docs/cli.md:1250-1261).
       const nested = await world.capshelf(project, [
         "data",
         "bind",
@@ -105,7 +93,6 @@ test(
       ]);
       expectExit(nested, 3);
 
-      // A clone of the wrong shelf is refused with both identities printed.
       const wrongShelf = await world.capshelf(project, [
         "data",
         "bind",
@@ -124,7 +111,6 @@ test(
         "refused bindings",
       );
 
-      // The correct clone binds, and the command that failed now works.
       expectExit(await world.capshelf(project, ["data", "bind", moved]), 0);
       expectExit(await world.capshelf(project, ["apply"]), 0);
       expectExit(await world.capshelf(project, ["status", "--strict"]), 0);
@@ -163,7 +149,6 @@ test(
       );
       const systemBytes = await readFile(systemSkill, "utf-8");
 
-      // The binding is the completion marker: an interruption leaves none.
       await rm(join(project, ".capshelf", "local.json"));
 
       const rerun = await world.capshelf(project, ["init", "--data", shelf]);
@@ -235,7 +220,6 @@ test(
 
       expect(await syncState()).toMatchObject({ state: "up_to_date", exit: 0 });
 
-      // An unpushed promote is a designed state, not an error.
       await world.git.writeAndCommit(
         shelf,
         { "skills/csv-report/SKILL.md": "csv report local\n" },
@@ -246,7 +230,6 @@ test(
         exit: 0,
       });
 
-      // The remote is rewritten under the clone: both sides have work.
       const rewriter = await world.git.cloneViaTransport(
         remote.url,
         "rewriter",
@@ -259,8 +242,7 @@ test(
       await world.git.ok(rewriter, ["push", "-q", "origin", "main"]);
 
       const beforeDiverged = await captureOwnedState(world, {
-        // A fetch moves remote-tracking refs by design; the claim here is
-        // that the clone's own branch and worktree do not move.
+        // Exclude remote-tracking refs because a fetch can change them.
         dataRepo: {
           path: shelf,
           paths: ["skills"],
@@ -269,13 +251,11 @@ test(
       });
       const diverged = await syncState();
       expect(diverged).toMatchObject({ state: "diverged", exit: 4 });
-      // The report prints before the non-zero exit, so a wrapper can read it.
       expect(diverged.stdout.length).toBeGreaterThan(0);
       expectSameState(
         beforeDiverged,
         await captureOwnedState(world, {
-          // A fetch moves remote-tracking refs by design; the claim here is
-          // that the clone's own branch and worktree do not move.
+          // Exclude remote-tracking refs because a fetch can change them.
           dataRepo: {
             path: shelf,
             paths: ["skills"],
@@ -285,7 +265,6 @@ test(
         "diverged sync",
       );
 
-      // A clone with no origin cannot sync at all.
       await world.git.ok(shelf, ["remote", "remove", "origin"]);
       expect(await syncState()).toMatchObject({ state: "no_origin", exit: 3 });
     });
@@ -319,8 +298,6 @@ test(
         0,
       );
 
-      // A fresh clone taken before the pin: it can resolve nothing the
-      // project locked, which is what a rewritten history leaves behind.
       const rewritten = await world.git.createDataRepo({
         name: "rewritten-shelf",
         origin: "https://example.invalid/shelf.git",
@@ -336,9 +313,6 @@ test(
         "apply",
         "skills/csv-report",
       ]);
-      // An unresolvable item is reported and the command exits 1
-      // (docs/cli.md:253), with the documented repair sentence
-      // (docs/cli.md:1112-1120).
       expectExit(refusedApply, 1);
       expectOutputContains(
         refusedApply,
@@ -357,7 +331,6 @@ test(
         "the locked source cannot supply a verified target — repair the pin with: capshelf update skills/csv-report",
       );
 
-      // Only update has a new, verified target.
       expectExit(
         await world.capshelf(project, [
           ...item,
@@ -400,8 +373,6 @@ test(
       expectExit(await world.capshelf(project, ["init", "--data", shelf]), 0);
       expectExit(await world.capshelf(project, ["add", "skills/healthy"]), 0);
 
-      // `wedged` is locked to a commit only this shelf has; the replacement
-      // shelf below carries `healthy` at a resolvable commit and not `wedged`.
       expectExit(await world.capshelf(project, ["add", "skills/wedged"]), 0);
       const healthyInstalled = join(
         project,
@@ -417,8 +388,6 @@ test(
         origin: "https://example.invalid/shelf.git",
         skills: { healthy: "healthy\n" },
       });
-      // Re-pin only the healthy item onto the replacement shelf, so exactly
-      // one locked entry is unresolvable there.
       expectExit(
         await world.capshelf(project, [
           "--data",

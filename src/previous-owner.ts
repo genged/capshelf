@@ -1,16 +1,8 @@
 /**
- * Who owned a skill or a plugin before `share --adopt` took it.
- *
- * One interface with two implementations, by D13. A remote row and a skills.sh
- * row differ only in which file holds the record and how one row is deleted
- * from it; everything else in the transfer is identical, so nothing in
- * `share --adopt` branches on which owner it found. A plugin has one possible
- * previous owner, its remote row: skills.sh never installs a plugin.
- *
- * Each record carries a digest over the *whole* file, captured when the record
+ * Each record carries a digest over the whole file, captured when the record
  * was read and re-checked before the release. A file that changed in between is
- * a refusal that keeps the previous owner: a lost row would strand an installed
- * skill with no owner at all, which is worse than two owners.
+ * a refusal that keeps the previous owner, because a lost row would strand an
+ * installed skill with no owner, which is worse than two owners.
  */
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -33,30 +25,21 @@ export interface PreviousOwnerProvenance {
 
 export interface PreviousOwnerRecord {
   kind: PreviousOwnerKind;
-  /** Absolute path of the file that holds the record. */
   path: string;
-  /** sha-256 over the whole file as it was read. */
   digest: string;
-  /** What the record says about the skill, for the provenance fields. */
   provenance: PreviousOwnerProvenance;
 }
 
 export interface PreviousOwner {
   /**
-   * The record for this item, or null when this owner does not hold it.
-   * `kind` only matters to a remote row — a skills.sh row carries no kind, so
-   * `findPreviousOwner` never asks skills.sh about a plugin.
+   * `kind` only matters to a remote row; a skills.sh row carries none, so it is
+   * never asked about a plugin.
    */
   find(
     project: string,
     kind: RemoteItemKind,
     name: string,
   ): Promise<PreviousOwnerRecord | null>;
-  /**
-   * Delete the item's row. Refuses when the file changed since `record` was
-   * captured. Preserves every field capshelf does not understand and the
-   * file's trailing newline. Re-reads afterwards to prove the row is gone.
-   */
   release(
     project: string,
     kind: RemoteItemKind,
@@ -132,9 +115,8 @@ export const SKILLS_SH_PREVIOUS_OWNER: PreviousOwner = {
         `${SKILLS_SH_FILE} has no skills object; Capshelf kept the skills.sh entry`,
       );
     }
-    // Deliberately not `SkillsShLockSchema`: that schema strips every field
-    // capshelf does not read, and stripping is exactly what a release must
-    // never do. The document is mutated by key and re-serialized whole.
+    // Deliberately not `SkillsShLockSchema`, which strips fields capshelf does
+    // not read; a release must preserve them.
     delete skills[name];
     await atomicWriteFile(
       path,
@@ -151,10 +133,8 @@ export const SKILLS_SH_PREVIOUS_OWNER: PreviousOwner = {
 };
 
 /**
- * The first owner that holds the item. A skill asks remote, then skills.sh.
- * A plugin asks its remote row only (spec D9 correction): the skills.sh owner
- * matches a row by name alone, so asking it would find a skills.sh *skill*
- * named like the plugin and release that skill's row.
+ * A plugin asks only its remote row: the skills.sh owner matches by name alone,
+ * so it would find and release a skills.sh skill named like the plugin.
  */
 export async function findPreviousOwner(
   project: string,
@@ -178,7 +158,6 @@ export function previousOwnerFor(kind: PreviousOwnerKind): PreviousOwner {
   return kind === "remote" ? REMOTE_PREVIOUS_OWNER : SKILLS_SH_PREVIOUS_OWNER;
 }
 
-/** Every place `share --adopt` searched, for the refusal that found none. */
 export function previousOwnerSearchPaths(
   project: string,
   kind: RemoteItemKind,
@@ -215,9 +194,7 @@ function digestOf(text: string): string {
 }
 
 /**
- * The document, with only the two things capshelf depends on checked: the
- * version it knows, and an object under `skills`. Everything else stays a free
- * JSON value so the release can write it back untouched.
+ * Keep unknown fields as free JSON so releasing ownership preserves them.
  */
 function parseSkillsShLock(text: string): ConfigObject {
   let value: ConfigValue;

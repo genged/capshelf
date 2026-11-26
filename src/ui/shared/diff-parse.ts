@@ -1,21 +1,10 @@
-/**
- * Unified diff text, parsed for the web UI. The input is what
- * `capshelf status --diff` prints (`unifiedDiff` in `src/status-diff.ts`):
- * one or more file sections, each `--- <label>` and `+++ <label>` followed by
- * `@@` hunks, plus the `Binary files differ` stanza, mode lines, and note
- * lines the CLI adds. Pure: no DOM, no Node.
- */
-
 export type DiffLineKind = "context" | "add" | "del";
 
 export interface DiffLine {
   kind: DiffLineKind;
   text: string;
-  /** Line number on the old (locked) side; null for an added line. */
   oldNo: number | null;
-  /** Line number on the new side; null for a deleted line. */
   newNo: number | null;
-  /** `\ No newline at end of file` followed this line. */
   noNewline?: boolean;
 }
 
@@ -31,22 +20,18 @@ export interface DiffHunk {
 export interface DiffFile {
   oldLabel: string;
   newLabel: string;
-  /** The file path, taken from the old label or the new one for a new file. */
   path: string;
-  /** The parenthesized side name in the old label, for example `locked 7940223`. */
   oldSide: string;
   newSide: string;
   hunks: DiffHunk[];
   binary: boolean;
   oldMode?: string;
   newMode?: string;
-  /** Lines the CLI adds under a file that are not diff syntax. */
   notes: string[];
 }
 
 export interface ParsedDiff {
   files: DiffFile[];
-  /** Note lines that belong to no file. */
   notes: string[];
 }
 
@@ -58,7 +43,6 @@ export interface DiffLabel {
   side: string;
 }
 
-/** `SKILL.md (locked 7940223)` → path `SKILL.md`, side `locked 7940223`. */
 export function parseDiffLabel(label: string): DiffLabel {
   if (label === "/dev/null") return { path: "", side: "" };
   const match = LABEL.exec(label);
@@ -77,9 +61,8 @@ export function parseUnifiedDiff(text: string): ParsedDiff {
   let newNo = 0;
   let pendingOldMode: string | undefined;
   let pendingNewMode: string | undefined;
-  // True from a file's `+++` label until its first hunk, stanza, or note.
-  // Git prints mode lines before the labels of a content change, and the
-  // CLI prints them after the labels of a mode-only change.
+  // Git prints mode lines before a content change's labels, but the CLI prints
+  // them after a mode-only change's labels.
   let fileFresh = false;
 
   const finishFile = (): void => {
@@ -91,12 +74,11 @@ export function parseUnifiedDiff(text: string): ParsedDiff {
   };
 
   const lines = text.split("\n");
-  // A trailing newline produces one empty tail element, which is not a line.
   if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
 
   for (const line of lines) {
-    // `\ No newline at end of file` follows the line it describes, and it
-    // can follow the last line of a hunk, when the counts are already spent.
+    // The no-newline marker can follow a hunk's last line, after the counts are
+    // spent.
     if (hunk && line.startsWith("\\")) {
       const last = hunk.lines[hunk.lines.length - 1];
       if (last) last.noNewline = true;
@@ -115,8 +97,6 @@ export function parseUnifiedDiff(text: string): ParsedDiff {
         oldNo += 1;
         oldRemaining -= 1;
       } else {
-        // A context line starts with a space. Anything else here is a
-        // damaged line; keep it visible as context rather than dropping it.
         hunk.lines.push({
           kind: "context",
           text: prefix === " " ? body : line,
@@ -215,11 +195,6 @@ export interface SideRow {
   changed: boolean;
 }
 
-/**
- * Pair a hunk's lines for two columns. A run of deleted lines pairs with the
- * run of added lines that follows it, index by index; a longer run leaves
- * empty cells on the other side.
- */
 export function sideBySideRows(hunk: DiffHunk): SideRow[] {
   const rows: SideRow[] = [];
   let dels: DiffLine[] = [];
@@ -303,13 +278,6 @@ function indexSide(file: DiffFile | null): SideIndex {
   return index;
 }
 
-/**
- * Three columns from two diffs that share the locked side as their base:
- * installed against locked, and shelf against locked. Rows align on the
- * locked line number. A line one side deleted shows an empty cell there. A
- * line one side added shows in its column with no locked line beside it. A
- * jump in locked line numbers is a gap row.
- */
 export function threeWayRows(
   installed: DiffFile | null,
   shelf: DiffFile | null,
@@ -362,7 +330,6 @@ function sideCell(side: SideIndex, key: number, text: string): ThreeCell {
   return { no: entry.newNo, text: entry.text, kind: "same" };
 }
 
-/** Line count across every hunk, for the size cap. */
 export function diffLineCount(diff: ParsedDiff): number {
   let count = 0;
   for (const file of diff.files) {
@@ -376,11 +343,9 @@ export interface DiffFileStat {
   added: number;
   removed: number;
   binary: boolean;
-  /** `100644 → 100755` when the mode changed, else null. */
   modeChange: string | null;
 }
 
-/** One line per file for a summary: added and removed lines, binary, mode. */
 export function fileStats(parsed: ParsedDiff): DiffFileStat[] {
   return parsed.files.map((file) => {
     let added = 0;
@@ -408,15 +373,9 @@ export interface DiffPreview {
   path: string;
   header: string;
   lines: DiffLine[];
-  /** Changed lines in the whole diff that the preview does not show. */
   hiddenChanges: number;
 }
 
-/**
- * The first hunk of the first text file, cut to `limit` lines that start two
- * lines above its first change. The item pane shows it inline; the dialog
- * shows the rest. Null when no text file has a hunk.
- */
 export function diffPreview(
   parsed: ParsedDiff,
   limit: number,

@@ -117,7 +117,6 @@ describe("atomicWriteFile", () => {
     const target = join(dir, "lock.json");
     await atomicWriteFile(target, '{"ok":true}\n', TEST_SCOPE);
     expect(await readFile(target, "utf-8")).toBe('{"ok":true}\n');
-    // The temp file is renamed into place, never left dangling.
     expect(await readdir(dir)).toEqual(["lock.json"]);
   });
 
@@ -146,7 +145,6 @@ describe("atomicWriteFile", () => {
     expect(await readdir(dir)).toEqual(["folder"]);
   });
 
-  /** A project root, a victim file outside it, and the planted temp names. */
   async function plantedWorld(count: number, pid = process.pid) {
     const project = await realpath(await tmp());
     const outside = await realpath(await tmp());
@@ -162,7 +160,6 @@ describe("atomicWriteFile", () => {
     return { project, outside, victim, target, planted };
   }
 
-  /** The victim keeps its bytes, every planted link stays, and nothing else. */
   async function expectConfined(
     w: Awaited<ReturnType<typeof plantedWorld>>,
     content: string,
@@ -181,15 +178,14 @@ describe("atomicWriteFile", () => {
   }
 
   test("does not follow a symlink planted at the temp name", async () => {
-    // The counter is module state. The range covers every value it can hold
-    // in this test process, and the exclusive create refuses each one.
+    // The temp-name counter is module state; planting the whole range covers
+    // every value it can hold, and exclusive create must refuse each.
     const w = await plantedWorld(1024);
     await atomicWriteFile(w.target, "fresh\n", { root: w.project });
     await expectConfined(w, "fresh\n");
   });
 
   test("a fresh process does not follow a symlink at its first temp name", async () => {
-    // The child starts with counter 0, so its first temp name is planted.
     const w = await plantedWorld(0);
     const count = 16;
     const result = Bun.spawnSync({

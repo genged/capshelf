@@ -1,14 +1,7 @@
 /**
- * Item metadata: the optional `.capshelf.yml` sidecar (all kinds) and SKILL.md
- * YAML frontmatter (skills only). Metadata is catalog data for *choosers* —
- * the sidecar is never hashed or materialized (see master.ts
- * `isMetadataSidecarPath`), while frontmatter stays item content because it is
- * delivered to Claude.
- *
- * Parsing is warn-and-degrade: a malformed sidecar or frontmatter block never
- * fails `ls`/`show`/`search`/`add` — fields are salvaged per-field and
- * per-entry, warnings collect on the returned metadata, and commands print
- * them to stderr via `printMetadataWarnings`.
+ * The sidecar is catalog data and never hashed or materialized, while SKILL.md
+ * frontmatter stays item content because it is delivered to Claude; parsing
+ * warns and degrades rather than failing.
  */
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -44,7 +37,6 @@ export interface ItemMetadata {
   requires: string[];
   conflictsWith: string[];
   needs: ItemNeeds;
-  /** Parse/salvage warnings, already labeled with the item ref. */
   warnings: string[];
 }
 
@@ -73,11 +65,6 @@ export function emptyMetadata(warnings: string[] = []): ItemMetadata {
 const stringField = z.string();
 const listField = z.array(z.unknown());
 
-/**
- * Parse a `.capshelf.yml` sidecar. Unknown fields are ignored for forward
- * compatibility; invalid fields and invalid list entries are dropped with a
- * warning while the rest of the document is kept.
- */
 export function parseSidecar(
   text: string,
   itemLabel: string,
@@ -109,13 +96,10 @@ export function parseSidecar(
 }
 
 export interface FrontmatterBlock {
-  /** Frontmatter YAML text, or null when the file has none. */
   text: string | null;
-  /** True when an opening `---` exists but no closing `---` was found. */
   malformed: boolean;
 }
 
-/** Extract the leading `---` YAML frontmatter block from SKILL.md text. */
 export function extractFrontmatter(skillMd: string): FrontmatterBlock {
   // A UTF-8 BOM before the opening "---" must not hide the frontmatter, and
   // CRLF line endings must not leak a trailing \r into parsed values.
@@ -134,11 +118,6 @@ export function extractFrontmatter(skillMd: string): FrontmatterBlock {
   return { text: null, malformed: true };
 }
 
-/**
- * Parse SKILL.md frontmatter for the catalog. Only `description` (and a
- * `name` sanity check) are read — tags/requires/conflicts-with live in the
- * sidecar only.
- */
 export function parseFrontmatter(
   text: string,
   itemLabel: string,
@@ -159,7 +138,6 @@ export function parseFrontmatter(
   return meta;
 }
 
-/** Per-field merge: sidecar wins; description falls back to frontmatter. */
 export function mergeItemMetadata(
   sidecar: ItemMetadata,
   frontmatter: ItemMetadata,
@@ -176,10 +154,6 @@ export function mergeItemMetadata(
   return merged;
 }
 
-/**
- * Load catalog metadata for a data item from the data repo working tree:
- * the item's root `.capshelf.yml` plus, for skills, SKILL.md frontmatter.
- */
 export async function loadDataItemMetadata(
   item: Pick<MasterItem, "kind" | "name" | "path">,
 ): Promise<ItemMetadata> {
@@ -205,9 +179,8 @@ export async function loadDataItemMetadata(
 }
 
 /**
- * Load the needs declaration from committed Git state. This is deliberately
- * separate from catalog metadata, which reads the working tree: installed
- * decisions must be pinned to a commit and never race an uncommitted sidecar.
+ * Reads committed Git state, not the working tree, so installed decisions are
+ * pinned to a commit and never race an uncommitted sidecar.
  */
 export async function loadCommittedItemNeeds(
   dataRepo: string,
@@ -215,7 +188,6 @@ export async function loadCommittedItemNeeds(
   commit: string,
   memo?: GitReadMemo,
 ): Promise<ItemMetadata> {
-  // Any Git failure means no needs, as it did when this was one `git show`.
   let sidecars: Map<string, Buffer>;
   try {
     sidecars = await committedSidecarsAtCommit(dataRepo, [item], commit, memo);
@@ -226,10 +198,8 @@ export async function loadCommittedItemNeeds(
 }
 
 /**
- * The committed sidecar bytes of each item that has one at `commit`, keyed by
- * `<kind>/<name>`, from one `ls-tree` and one `cat-file --batch`. An item with
- * no sidecar has no entry. A listing that finds no sidecar is a successful
- * read, so `memo` keeps "no sidecar" as well as the bytes.
+ * A listing that finds no sidecar is a successful read, so `memo` caches "no
+ * sidecar" as well as bytes.
  */
 export async function committedSidecarsAtCommit(
   dataRepo: string,
@@ -266,7 +236,6 @@ export async function committedSidecarsAtCommit(
   return sidecars;
 }
 
-/** The needs of one item from `committedSidecarsAtCommit` output. */
 export function committedItemNeedsFromSidecar(
   item: Pick<MasterItem, "kind" | "name">,
   sidecars: ReadonlyMap<string, Buffer>,
@@ -277,10 +246,6 @@ export function committedItemNeedsFromSidecar(
   return parseSidecar(bytes.toString("utf-8"), label, item.name);
 }
 
-/**
- * `head` is a data-repo `HEAD` the caller already read. `memo` is the calling
- * command's memo for reads at a full commit id.
- */
 export async function captureCommittedItemNeeds(
   dataRepo: string,
   item: Pick<MasterItem, "kind" | "name">,
@@ -296,7 +261,6 @@ export async function captureCommittedItemNeeds(
   return { needs: metadata.needs, needsSourceCommit };
 }
 
-/** Load catalog metadata for a bundled system item (SKILL.md frontmatter). */
 export function loadSystemItemMetadata(item: SystemItem): ItemMetadata {
   const label = `${item.kind}/${item.name}`;
   const skillMd = item.files.find((f) => f.relPath === "SKILL.md");
@@ -304,14 +268,12 @@ export function loadSystemItemMetadata(item: SystemItem): ItemMetadata {
   return frontmatterMetadataFromText(skillMd.content, label, item.name);
 }
 
-/** Print metadata warnings to stderr, deduplicated. */
 export function printMetadataWarnings(meta: ItemMetadata): void {
   for (const warning of new Set(meta.warnings)) {
     console.error(`⚠ ${warning}`);
   }
 }
 
-/** Collapse a description to one line and truncate it for listings. */
 export function truncatedDescription(description: string, max = 60): string {
   const collapsed = description.replace(/\s+/g, " ").trim();
   // Truncate by code points, not UTF-16 code units — a code-unit slice can
@@ -321,10 +283,6 @@ export function truncatedDescription(description: string, max = 60): string {
   return `${points.slice(0, max).join("").trimEnd()}…`;
 }
 
-/**
- * Listing-line suffix: `  <truncated description>  #tag1 #tag2`. Empty when
- * the item has no metadata so metadata-less rows stay byte-identical.
- */
 export function metadataLineSuffix(meta: ItemMetadata): string {
   const parts: string[] = [];
   if (meta.description) parts.push(truncatedDescription(meta.description));
@@ -334,10 +292,6 @@ export function metadataLineSuffix(meta: ItemMetadata): string {
   return parts.length > 0 ? `  ${parts.join("  ")}` : "";
 }
 
-/**
- * `--tag` filtering: every requested tag must be present (AND, narrowing),
- * compared case-insensitively. Items without metadata never match a filter.
- */
 export function matchesTagFilter(
   meta: ItemMetadata | null,
   tags: string[],
@@ -349,10 +303,8 @@ export function matchesTagFilter(
 }
 
 /**
- * Read an item directory's root sidecar bytes, or null when absent. Used by
- * promote/share to cache the data-repo sidecar before a directory replace
- * removes it (projects never receive the sidecar, so a naive replace would
- * silently delete upstream metadata).
+ * Cached before a directory replace because projects never receive the sidecar,
+ * so a replace would silently delete upstream metadata.
  */
 export async function readSidecarBytes(
   itemDir: string,
@@ -362,11 +314,6 @@ export async function readSidecarBytes(
   return await readFile(path);
 }
 
-/**
- * Restore a cached sidecar after a directory replace, unless the replaced
- * content supplied its own (the project copy's sidecar wins). Returns true
- * when the cached bytes were written back.
- */
 export async function restoreSidecarBytes(
   itemDir: string,
   cached: Buffer | null,
@@ -584,13 +531,9 @@ export interface SidecarProvenance {
 }
 
 /**
- * Record where an adopted item came from, in the item's sidecar.
- *
- * The sidecar is catalog data: it is never hashed and never materialized, so
- * provenance creates no drift in any consuming project. Nothing reads these
- * three fields either — `parseSidecar` ignores any key it does not know — so
- * they are a record for a person reading the data repo, not an input to any
- * command. Do not promise that `status` will show them.
+ * Provenance is catalog data, never hashed or materialized, and nothing reads
+ * these fields (`parseSidecar` ignores unknown keys), so it creates no drift
+ * and is only a record for readers of the data repo.
  */
 export async function writeSidecarProvenance(
   itemDir: string,

@@ -1,17 +1,3 @@
-/**
- * The two invariants the source and ownership refactor must not move.
- *
- * R1 fixes the default: an item with no explicit root pins at the canonical
- * layout `itemRepoRelPath` derives. Every item does that today, and the
- * refactor turns the derivation into a field with this as its default. A change
- * here is the refactor repointing every item in the product.
- *
- * R2 fixes the boundary: a system entry resolves with no repository at all.
- * Today that is an ambient `dataRepo` argument plus a runtime throw at a
- * distance (`src/materialize.ts:187`, `:773`). After the refactor the
- * repository lives inside the content source, so the disagreement those throws
- * guard against cannot be expressed.
- */
 import { expect, test } from "bun:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -42,12 +28,10 @@ test("R1: a data item pins at its canonical repository path", async () => {
     "skills",
   );
 
-  // Repository-relative paths name the canonical layout.
   expect(entries.map((entry) => entry.repoRelPath)).toEqual([
     "skills/review/SKILL.md",
     "skills/review/references/notes.md",
   ]);
-  // Item-relative paths are rooted at the item, not at the repository.
   expect(entries.map((entry) => entry.path)).toEqual([
     "SKILL.md",
     "references/notes.md",
@@ -91,9 +75,6 @@ test("R2: a system entry needs no repository to resolve its content", () => {
   });
 
   expect(source.kind).toBe("bundled");
-  // No repository was supplied, and none was required. Under the shape this
-  // refactor replaces, the caller passed `dataRepo` separately and a mismatch
-  // was caught at runtime rather than being unrepresentable.
 });
 
 test("R2: a data entry without a repository is a programmer error", () => {
@@ -113,11 +94,6 @@ test("R2: a data entry without a repository is a programmer error", () => {
   ).toThrow(/repository/i);
 });
 
-/**
- * The other axis, which the same two entries answer differently. Ownership is
- * derived from the record alone: it needs no repository, no commit, and no
- * field the lock does not already carry.
- */
 test("ownership is derived from the record, not from the content", () => {
   const shelfEntry: LockEntry = {
     source: "data",

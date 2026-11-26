@@ -11,11 +11,6 @@ import {
   tempRepo,
 } from "./cli-fixtures";
 
-/**
- * Named `capshelf promote <item>` must refuse when git hides a canonical
- * source of the item, the same as the interactive picker does.
- */
-
 const HIDDEN = "hello HIDDEN\n";
 const LOCAL = "hello LOCAL\n";
 

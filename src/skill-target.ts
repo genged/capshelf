@@ -1,19 +1,7 @@
 /**
- * Ownership of the install folder two item kinds share (spec D2).
- *
- * `skills/<n>` and `plugins/<n>` both install into one folder —
- * `.agents/skills/<n>` in codex-compatible mode, `.claude/skills/<n>` in
- * claude-only mode (`installsAtSkillTarget`, `src/master.ts`). The shelf may
- * hold both forms of one name; a project may hold only one. The existing
- * collision check, `assertNoScopeCollisions` (`src/status-core.ts`), compares
- * lock *keys*, so `data/skills/<n>` and `data/plugins/<n>` look like two
- * unrelated items to it even though they are one folder on disk.
- *
- * This module is the folder-level check (spec D2 guard 5). `skillTargetOwners`
- * finds every owner of a skill-target folder: a project-lock entry, a
- * local-lock entry, a remote row, a skills.sh row, or an unmanaged path.
- * `assertSkillTargetFree` refuses a write that would create, replace, or
- * delete that folder while another owner holds it.
+ * `skills/<n>` and `plugins/<n>` install into one folder, but
+ * `assertNoScopeCollisions` compares lock keys and sees two unrelated items, so
+ * this module checks ownership at the folder level.
  */
 import { dirname, join, relative } from "node:path";
 import { readdir, stat } from "node:fs/promises";
@@ -39,9 +27,9 @@ import { parseRemoteKey } from "./remotes-lock";
 import type { RemotesLock } from "./remotes-lock";
 
 /**
- * Always fold case and Unicode normalization, whatever the filesystem of the
- * machine running this check: a project is shared across machines, so a pair
- * that collides on one machine's filesystem must be refused on every one.
+ * Always fold case and Unicode normalization regardless of this machine's
+ * filesystem: a project is shared across machines, so a pair that collides on
+ * one must be refused everywhere.
  */
 const ALL_FOLDING = { caseFolding: true, normalizationFolding: true } as const;
 
@@ -52,27 +40,19 @@ export interface SkillTargetLocks {
 }
 
 /**
- * The item's own lock key in the scope being written. For `move`, this is the
- * key in the scope the item is leaving: an owner equal to it is the item's own
- * folder, not a conflict, and `assertSkillTargetFree` drops it before it
- * refuses on the first owner left. For `share --adopt`, it is the remote key
- * the adopt releases (`remote/<kind>/<n>`).
+ * An owner equal to this key is the item's own folder, not a conflict; for
+ * `move` it is the key in the scope being left, for `share --adopt` the remote
+ * key being released.
  */
 export interface SkillTargetSelf {
   key: string;
 }
 
 /**
- * `addCommand` replaces `capshelf add <kind>/<name>` in the switch message.
- * A remote install passes its own command, because a shelf `add` of the
- * same ref would not install from the upstream.
- *
- * `ignoreSkillsSh` drops a skills.sh owner. Only `share --adopt` of a remote
- * *skill* row sets it: skills.sh is a legitimate previous owner of a skill,
- * and a skill adopt beside a skills.sh row of the same name succeeded before
- * this guard existed. A plugin adopt never sets it: skills.sh never installs
- * a plugin, so its row there is a second owner of the folder (spec D2 guard
- * 5, D9).
+ * `ignoreSkillsSh` is set only when adopting a remote skill, where skills.sh is
+ * a legitimate previous owner. A plugin adopt leaves it unset, so a skills.sh
+ * row of that name still counts as a second owner, because skills.sh never
+ * installs plugins.
  */
 export interface SkillTargetOptions {
   addCommand?: string;
@@ -87,7 +67,6 @@ export type SkillTargetOwner =
   | { owner: "skills.sh"; name: string }
   | UnmanagedOwner;
 
-/** A short label for an owner, for a message that only needs to name it. */
 export function skillTargetOwnerLabel(owner: SkillTargetOwner): string {
   switch (owner.owner) {
     case "project":
@@ -104,17 +83,9 @@ export function skillTargetOwnerLabel(owner: SkillTargetOwner): string {
 }
 
 /**
- * Every owner of the skill-target folder `name` resolves to.
- *
- * An owner is any lock key `<source>/<skills|plugins>/<n2>` in the project or
- * local lock, any remote key `remote/<skills|plugins>/<n2>`, or any skills.sh
- * row `<n2>`, where `destinationKey(n2, ALL)` equals `destinationKey(name,
- * ALL)`. An unmanaged path is an existing directory entry, folded the same
- * way, at the codex or Claude skill location for `name`. It counts as an
- * owner unless it is the exact destination of one of those owners, or the
- * same file as one (an alias symlink, or a folding volume). The scan runs
- * even when a lock explains the name: a lock entry for `rr` does not explain
- * an unmanaged `.agents/skills/RR` on a case-sensitive volume.
+ * The unmanaged-path scan runs even when a lock explains the name: a lock entry
+ * for `rr` does not explain an unmanaged `.agents/skills/RR` on a
+ * case-sensitive volume.
  */
 export async function skillTargetOwners(
   project: string,
@@ -166,9 +137,8 @@ export async function skillTargetOwners(
 }
 
 /**
- * Whether `path` is a managed owner's destination: the exact path, or the
- * same file by device and inode. The second case covers the Claude alias
- * symlink and a volume that folds case, where `RR` and `rr` are one folder.
+ * Match by device and inode as well as path so the Claude alias symlink and
+ * case-folding volumes, where `RR` and `rr` are one folder, count as managed.
  */
 async function isManagedDestination(
   path: string,
@@ -187,18 +157,10 @@ async function isManagedDestination(
 }
 
 /**
- * Refuse a write that would create, replace, or delete the skill-target
- * folder for `kind`/`name` while another owner holds it (spec D2 guard 5).
- *
- * `self === null` means no lock key tracks this item yet — the first install
- * of it, which is exactly `add`'s call. There, an `unmanaged` owner at the
- * item's own destination is not this guard's conflict to report: the install
- * path already has its own recovery rule for a path that exists but is not
- * yet tracked (`matchesPinnedInstall`, `src/commands/add.ts`), which adopts
- * it only when its content exactly matches the pin and refuses otherwise.
- * That rule checks only the exact path. An unmanaged entry that only folds
- * to the name, such as `.agents/skills/RR` for `rr`, stays an owner, because
- * the two folders collide on a volume that folds case.
+ * On first install (`self === null`) an unmanaged owner at the exact
+ * destination is left to the install path's pin-match rule, which adopts it
+ * only when its content matches the pin and refuses otherwise. Entries that
+ * only fold to the name still conflict.
  */
 export async function assertSkillTargetFree(
   project: string,
@@ -278,12 +240,8 @@ async function skillTargetConflictMessage(
 }
 
 /**
- * The switch message (spec D2 guard 3): names the existing owner, the item
- * being written, the two commands that switch between them, and the Claude
- * Code namespace change the switch causes (spec D2 guard 4). `<skill>` is a
- * literal placeholder for whichever skill inside the plugin is named: at this
- * point capshelf knows only the plugin's own name, not the names of the
- * skills nested under it.
+ * `<skill>` is a literal placeholder: only the plugin's own name is known here,
+ * not the names of skills nested under it.
  */
 function lockOwnerConflictMessage(
   folder: string,
@@ -299,9 +257,6 @@ function lockOwnerConflictMessage(
     `${folder} is already installed by ${skillTargetOwnerLabel(owner)}`,
   ];
   if (ownerRef.kind === kind) {
-    // Same kind as the item being written: not the skill/plugin pair this
-    // message exists for. The ordinary scope-collision guards should have
-    // already refused this state; this line is a defensive fallback.
     lines.push(`  remove one owner before installing ${selfLabel}`);
     return lines.join("\n");
   }
@@ -334,16 +289,9 @@ function skillTargetRefFromKey(key: string): SkillTargetRef {
 }
 
 /**
- * Each existing directory entry at the codex or Claude skills directory that
- * folds to `name`, for when nothing else explains the folder. Matched by
- * `readdir` plus `destinationKey`, not by `lstat`-ing the literal name: a
- * committed `.agents/skills/RR` must be found for a write of `rr` on every
- * machine, including one whose filesystem does not fold case or Unicode
- * itself (spec D2 guard 5). Every match is returned, so an exact entry cannot
- * hide a folded one beside it.
- *
- * The codex entries come first. `skillTargetOwners` drops the entries that
- * a managed owner explains.
+ * Match via `readdir` plus `destinationKey`, not `lstat` of the literal name,
+ * so a committed `.agents/skills/RR` is found on filesystems that do not fold
+ * case; every match is returned so an exact entry cannot hide a folded one.
  */
 async function unmanagedSkillTargetOwners(
   project: string,
@@ -362,7 +310,6 @@ async function unmanagedSkillTargetOwners(
   return owners;
 }
 
-/** The entries of `dir` that fold to `wanted`. Never throws. */
 async function foldedDirEntries(
   dir: string,
   wanted: string,

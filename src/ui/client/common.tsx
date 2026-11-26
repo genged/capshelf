@@ -176,7 +176,7 @@ export function formatDay(iso: string): string {
   return iso;
 }
 
-/** The width under which the panes stack; frame.css uses the same. */
+/** Must match the stacking breakpoint in frame.css. */
 const NARROW = "(max-width: 800px)";
 
 function focusQuiet(element: HTMLElement): void {
@@ -185,25 +185,21 @@ function focusQuiet(element: HTMLElement): void {
 }
 
 /**
- * On a phone, a selection hides the list and shows the detail, and going
- * back does the reverse. Focus would stay on a hidden element. This moves it
- * to the detail's title on the way in and back to the row that opened it on
- * the way out, or to the list's title when that row is gone.
+ * On narrow screens the list or detail is hidden, which would strand focus on a
+ * hidden element, so focus moves with the pane.
  */
 export function usePaneFocus(selection: string | null): void {
   const opener = useRef<HTMLElement | null>(null);
-  // Starts empty, so a view that mounts with a selection, as a direct link
-  // does, still moves focus into its detail.
+  // Starts null so a view mounted with a selection (direct link) still moves
+  // focus into the detail.
   const previous = useRef<string | null>(null);
   useEffect(() => {
     const before = previous.current;
     if (before === selection) return;
     previous.current = selection;
     if (!window.matchMedia(NARROW).matches) return;
-    // The row that opened the first detail is where focus returns. Moving
-    // from one detail to another keeps that row.
-    // Only a control in the list counts. On a direct link the body has
-    // focus, and returning focus there would leave it nowhere visible.
+    // Only list controls count as the opener: on a direct link the body has
+    // focus, and returning there would leave focus nowhere visible.
     if (selection !== null && before === null) {
       const active = document.activeElement;
       opener.current =
@@ -225,9 +221,8 @@ export function usePaneFocus(selection: string | null): void {
 }
 
 /**
- * `usePaneFocus` as an element, for views that know the selection only after
- * an early return, where a hook cannot be called. `selection` names the open
- * entry, or is null when the list shows.
+ * Element form of usePaneFocus for views that learn the selection after an
+ * early return, where hooks cannot be called.
  */
 export function PaneFocus({ selection }: { selection: string | null }): null {
   usePaneFocus(selection);

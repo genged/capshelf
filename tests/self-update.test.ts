@@ -14,8 +14,8 @@ import {
 } from "../src/self-update";
 
 const FORMULA = "genged/tap/capshelf";
-// A fixture "latest" strictly newer than the running CLI, derived so a
-// version bump can never silently turn these into no-update scenarios.
+// Derived from CLI_VERSION so a version bump can't silently turn these into
+// no-update scenarios.
 const FIXTURE_LATEST = CLI_VERSION.replace(/(\d+)$/, (n) =>
   String(Number(n) + 1),
 );
@@ -420,7 +420,6 @@ describe("startup self-update prompt", () => {
 
   test("a failed startup check is cached for one interval", async () => {
     const cachePath = await tempFilePath();
-    // `brew outdated` fails, for example on a timeout.
     const results = homebrewResults(FIXTURE_LATEST);
     results.set(
       commandKey(["brew", "outdated", "--json=v2", "--formula", FORMULA]),

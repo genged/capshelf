@@ -1,8 +1,6 @@
 /**
- * Display names and the display order of the item kinds, for the web UI's
- * group headings. The order is the order `ITEM_KINDS` declares in
- * `src/master.ts`, which `ls` prints. A unit test holds the two lists equal,
- * because this file cannot import that module into the browser bundle.
+ * Order must match ITEM_KINDS in src/master.ts; a unit test enforces it because
+ * the browser bundle cannot import that module.
  */
 import type { ItemKind } from "../../master";
 
@@ -39,7 +37,6 @@ export function kindLabel(kind: ItemKind): string {
   }
 }
 
-/** The word for one item of a kind, set quietly beside its name in a list. */
 export function kindNoun(kind: ItemKind): string {
   switch (kind) {
     case "skills":

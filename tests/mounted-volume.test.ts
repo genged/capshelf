@@ -12,10 +12,8 @@ import {
   tempRepo,
 } from "./cli-fixtures";
 
-// A container can attach a volume on a folder inside an installed item, for
-// example a skill's node_modules. These tests mount a tmpfs there in a new
-// user and mount namespace, so they need no root. They skip where the system
-// does not allow such a namespace.
+// Tests mount a tmpfs in a new user and mount namespace (no root needed) and
+// skip where such namespaces are disallowed.
 const canMount =
   process.platform === "linux" &&
   spawnSync("unshare", [
@@ -29,10 +27,6 @@ const canMount =
 
 const CLI = join(import.meta.dir, "..", "src", "cli.ts");
 
-/**
- * Run `script` with a tmpfs mounted on `mountPoint`, which holds `lib.js`.
- * The mount exists only for this one process tree.
- */
 function withVolume(mountPoint: string, cwd: string, script: string) {
   return spawnSync(
     "unshare",
@@ -201,7 +195,6 @@ console.log((await readdir(join(installed, ".."))).filter((name) => name.startsW
 
 const SRC = join(import.meta.dir, "..", "src");
 
-/** A project with `skills/draw` installed. `gitignore` null means none. */
 async function projectWith(opts: {
   gitignore: string | null;
   local?: boolean;
@@ -378,8 +371,8 @@ await removeScratchTree(process.argv[2], { exempt: "test" }).catch((error) => co
     expect(result.stdout).toEndWith("lib\n");
   });
 
-  // The restore used to clear the target with mounts even when the detach
-  // moved nothing, which deleted the original install.
+  // Restore must not clear the target with mounts when the detach moved
+  // nothing, or the original install is deleted.
   test("a failed detach around a mount keeps the original install", async () => {
     const root = await tempDir("capshelf-mount-detach-");
     const target = join(root, "draw");

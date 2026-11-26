@@ -2721,6 +2721,10 @@ facts it read and enumerates the fixes as pasteable commands:
   URLs and the two fixes: bind a clone of the declared upstream, or change
   the project's declared upstream.
 
+Without `--strict`, `status` exits 0 when no data repo is available, and
+each `missing_upstream` data row shows `data repo not available — run:
+capshelf data bind <path>`.
+
 ### missing_source_commit
 
 `status` checks that each data item's locked `sourceCommit` is reachable in

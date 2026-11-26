@@ -219,7 +219,6 @@ describe("ensureClone", () => {
     const clonePath = join(base, "clone");
     await ensureClone(url, clonePath, upstream);
 
-    // Advance the source; a reuse must not pick this commit up.
     await writeFile(join(repo, "skills", "hello", "SKILL.md"), "hello v2\n");
     await $`git -C ${repo} add -A`.quiet();
     await $`git -C ${repo} commit -qm v2`.quiet();
@@ -270,7 +269,6 @@ describe("ensureClone", () => {
     const upstream = normalizeRemoteUrl(url, { allowFileUrls: true })!;
     const base = await mkdtemp(join(tmpdir(), "capshelf-clone-dst-"));
     const clonePath = join(base, "clone");
-    // Simulate a partial clone: origin configured, no commit checked out.
     await mkdir(clonePath, { recursive: true });
     await $`git -C ${clonePath} init -q`.quiet();
     await $`git -C ${clonePath} remote add origin ${url}`.quiet();
