@@ -10,16 +10,23 @@ import {
   parse as parseToml,
   stringify as stringifyToml,
   TomlDate,
+  type TomlTable,
 } from "smol-toml";
 
 export function parseTomlConfigObject(
   raw: string,
   label: string,
 ): ConfigObject {
+  let parsed: TomlTable;
+  try {
+    parsed = parseToml(raw);
+  } catch (cause) {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(`${label}: ${reason}`, { cause });
+  }
   // The boundary predicate, not `isConfigObject`: smol-toml's table type
   // admits dates, which the JSON value model does not. `validateTomlValue`
   // rejects a date that reaches it.
-  const parsed = parseToml(raw);
   if (!isPlainConfigObject(parsed)) {
     throw new Error(`${label} must contain a TOML table`);
   }

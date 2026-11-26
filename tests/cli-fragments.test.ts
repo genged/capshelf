@@ -1066,4 +1066,16 @@ describe("cli integration", () => {
     expect(written).toContain("[mcp_servers.github]");
     expect(written).toContain("[mcp_servers.other]");
   });
+
+  test("add names the project file when .codex/config.toml is not valid TOML", async () => {
+    const { project } = await dirtyDeletedCodexSource("capshelf-add-bad-toml");
+    const codexOutput = join(project, ".codex", "config.toml");
+    await mkdir(join(project, ".codex"), { recursive: true });
+    await writeFile(codexOutput, "approval =\n");
+
+    const add = await runInProcess(project)(["add", "mcp/github"]);
+    expect(add.exitCode).toBe(1);
+    expect(add.stderr.toString()).toContain(".codex/config.toml");
+    expect(await readFile(codexOutput, "utf-8")).toBe("approval =\n");
+  });
 });

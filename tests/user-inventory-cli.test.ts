@@ -172,6 +172,21 @@ describe("user-level inventory CLI", () => {
     );
   });
 
+  test("status ignores an empty project .claude/settings.json", async () => {
+    const home = await tempDir("capshelf-empty-settings-home-");
+    const project = await tempDir("capshelf-empty-settings-project-");
+    const cli = join(import.meta.dir, "..", "src", "cli.ts");
+
+    await writeProjectManifest(project);
+    await mkdir(join(project, ".claude"), { recursive: true });
+    await writeFile(join(project, ".claude", "settings.json"), "");
+
+    const result = runCli(cli, project, home, ["status", "--json"]);
+
+    expect(result.stderr.toString()).toBe("");
+    expect(result.exitCode).toBe(0);
+  });
+
   test("status includes user-level skills by default", async () => {
     const home = await tempDir("capshelf-user-status-default-home-");
     const project = await tempDir("capshelf-user-status-default-project-");

@@ -11,7 +11,7 @@ import {
 import type { ConfigValue } from "./config-values";
 import type { Lock } from "./lock";
 import { parseLockKey } from "./installed";
-import { parseJsonc } from "./json-fragments";
+import { parseJsonConfigObject } from "./json-fragments";
 
 export type UserSkillSurface = "claude" | "codex";
 
@@ -186,10 +186,11 @@ async function readClaudePluginsFromSettings(settings: {
 }): Promise<ExternalClaudePlugin[]> {
   if (!existsSync(settings.path)) return [];
 
-  // settings.json is JSONC, which Claude Code accepts, so parse tolerantly to
-  // avoid crashing on comments.
   const parsed = ClaudeSettingsSchema.parse(
-    parseJsonc(await readFile(settings.path, "utf-8")),
+    parseJsonConfigObject(
+      await readFile(settings.path, "utf-8"),
+      settings.path,
+    ),
   );
   return parseEnabledPlugins(parsed.enabledPlugins).map(({ id, enabled }) => {
     const { name, marketplace } = splitPluginId(id);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
@@ -185,6 +185,54 @@ describe("Claude plugin settings reader", () => {
       "trailing@": { name: "trailing@", marketplace: undefined },
       "@scope/tool@market": { name: "@scope/tool", marketplace: "market" },
     });
+  });
+
+  for (const [label, content] of [
+    ["empty", ""],
+    ["whitespace-only", "  \n\t\n"],
+  ] as const) {
+    test(`treats a settings file that is ${label} like a missing file`, async () => {
+      const project = await tempDir();
+      const home = await tempDir();
+      const user = join(home, "settings.json");
+      const localSettings = join(project, ".claude", "settings.local.json");
+      await mkdir(join(project, ".claude"), { recursive: true });
+      await writeFile(
+        localSettings,
+        JSON.stringify({ enabledPlugins: { "alpha@market": true } }),
+      );
+
+      await writeFile(user, content);
+      const blank = await listClaudePlugins(project, { managed: [], user });
+
+      await rm(user);
+      const missing = await listClaudePlugins(project, { managed: [], user });
+
+      expect(blank).toEqual(missing);
+      expect(blank.map((p) => [p.id, p.scope])).toEqual([
+        ["alpha@market", "local"],
+      ]);
+    });
+  }
+
+  test("names the settings file when it is malformed", async () => {
+    const project = await tempDir();
+    const home = await tempDir();
+    const user = join(home, "settings.json");
+    await writeFile(user, '{"enabledPlugins": ');
+    await expect(
+      listClaudePlugins(project, { managed: [], user }),
+    ).rejects.toThrow(user);
+  });
+
+  test("names the settings file when the root is not an object", async () => {
+    const project = await tempDir();
+    const home = await tempDir();
+    const user = join(home, "settings.json");
+    await writeFile(user, "[]");
+    await expect(
+      listClaudePlugins(project, { managed: [], user }),
+    ).rejects.toThrow(`${user} must contain a JSON object`);
   });
 
   // `findClaudePlugin` has no settings-path injection and scans real
