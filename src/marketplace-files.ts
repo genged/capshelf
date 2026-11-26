@@ -48,7 +48,7 @@ export async function readFilesBelow(
 ): Promise<ProjectionFile[]> {
   const files: ProjectionFile[] = [];
   for (const relRoot of relRoots) {
-    await assertConfined(root, relRoot, "deny");
+    if (relRoot !== ".") await assertConfined(root, relRoot, "deny");
     await walk(root, relRoot, files);
   }
   return files.sort((a, b) => a.path.localeCompare(b.path));
