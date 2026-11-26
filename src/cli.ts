@@ -34,6 +34,13 @@ export function createProgram(): Command {
   // Commander 12 retains parsed option state, so build a fresh tree per call;
   // exitOverride keeps in-process callers from having their host terminated.
   program.exitOverride();
+  // Commander 12 accepts excess positionals by default
+  // (commander 12.1.0 lib/command.js:28), so `rm a b` would remove only `a`
+  // and exit 0. Commander copies this setting into each subcommand when
+  // `.command()` (lib/command.js:164) or `copyInheritedSettings()`
+  // (lib/command.js:96) creates it, so it must be set before any command is
+  // registered.
+  program.allowExcessArguments(false);
   program
     .name(PRODUCT_NAME)
     .description(
