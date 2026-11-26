@@ -23,32 +23,45 @@ interface ResolveOpts {
   project?: string;
 }
 
+type CandidateSource = "override" | "local" | "env";
+
 interface DataRepoCandidate {
   path: string;
   /**
    * Recorded bindings can go stale (clone moved, renamed, or not restored); a
    * `--data` value is typed into the running command so it cannot.
    */
-  recorded: boolean;
+  source: CandidateSource;
+}
+
+interface RejectedBinding {
+  path: string;
+  source: Exclude<CandidateSource, "override">;
+  reason: "does not exist" | "is not a Git repository";
+}
+
+interface Resolution {
+  path: string | null;
+  rejected: RejectedBinding | null;
 }
 
 async function candidateDataRepo(
   opts: ResolveOpts,
 ): Promise<DataRepoCandidate | null> {
   if (opts.override) {
-    return { path: normalizePath(opts.override), recorded: false };
+    return { path: normalizePath(opts.override), source: "override" };
   }
   if (opts.project) {
     const localConfig = await loadLocalConfig(opts.project);
     if (localConfig) {
       return {
         path: normalizePath(localConfig.dataRepo, opts.project),
-        recorded: true,
+        source: "local",
       };
     }
   }
   const home = process.env[HOME_ENV];
-  if (home) return { path: normalizePath(home), recorded: true };
+  if (home) return { path: normalizePath(home), source: "env" };
   return null;
 }
 
@@ -57,25 +70,47 @@ async function candidateDataRepo(
  * no repository answers "no origin", and the repair for that upstream error
  * cannot run in a directory that does not exist.
  */
-async function resolveOptional(opts: ResolveOpts): Promise<string | null> {
+async function resolveBinding(opts: ResolveOpts): Promise<Resolution> {
   const candidate = await candidateDataRepo(opts);
-  if (candidate === null) return null;
-  if (existsSync(candidate.path) && (await isGitRepo(candidate.path))) {
+  if (candidate === null) return { path: null, rejected: null };
+  const present = existsSync(candidate.path);
+  if (present && (await isGitRepo(candidate.path))) {
     if (opts.manifest) {
       await verifyDataRepoUpstream(candidate.path, opts.manifest);
     }
-    return candidate.path;
+    return { path: candidate.path, rejected: null };
   }
   // A recorded binding with no clone is treated as no binding, routing to the
   // clone-and-rebind repair; a `--data` path is returned as-is so
   // `assertDataRepoRoot` names the wrong path.
-  return candidate.recorded ? null : candidate.path;
+  if (candidate.source === "override") {
+    return { path: candidate.path, rejected: null };
+  }
+  return {
+    path: null,
+    rejected: {
+      path: candidate.path,
+      source: candidate.source,
+      reason: present ? "is not a Git repository" : "does not exist",
+    },
+  };
 }
 
-function noConfigMessage(manifest: Manifest | null | undefined): string {
+function noConfigMessage(
+  manifest: Manifest | null | undefined,
+  rejected: RejectedBinding | null,
+): string {
+  const source =
+    rejected?.source === "local"
+      ? `${METADATA_DIR}/${LOCAL_CONFIG_FILE}`
+      : `$${HOME_ENV}`;
+  const fact = rejected
+    ? `recorded data repo ${rejected.path} (from ${source}) ${rejected.reason}.\n`
+    : "";
   if (manifest?.dataRepoUpstream) {
     return (
       "no data repo configured for this project.\n" +
+      fact +
       `upstream (per ${METADATA_DIR}/${MANIFEST_FILE}): ${manifest.dataRepoUpstream}\n\n` +
       "  1. clone it somewhere you control:\n" +
       `       git clone ${manifest.dataRepoUpstream} <path>\n` +
@@ -86,10 +121,15 @@ function noConfigMessage(manifest: Manifest | null | undefined): string {
     );
   }
   return (
-    "no data repo configured for this project.\n\n" +
-    `  pass --data <path>, or create ${METADATA_DIR}/${LOCAL_CONFIG_FILE}:\n` +
-    `    mkdir -p ${METADATA_DIR}\n` +
-    `    echo '{"dataRepo": "/path/to/clone"}' > ${METADATA_DIR}/${LOCAL_CONFIG_FILE}\n` +
+    "no data repo configured for this project.\n" +
+    fact +
+    "\n" +
+    (rejected?.source === "local"
+      ? `  pass --data <path>, or bind a clone in ${METADATA_DIR}/${LOCAL_CONFIG_FILE}:\n` +
+        `    ${PRODUCT_NAME} set-data <path>\n`
+      : `  pass --data <path>, or create ${METADATA_DIR}/${LOCAL_CONFIG_FILE}:\n` +
+        `    mkdir -p ${METADATA_DIR}\n` +
+        `    echo '{"dataRepo": "/path/to/clone"}' > ${METADATA_DIR}/${LOCAL_CONFIG_FILE}\n`) +
     "  or set the env var for machine-wide default:\n" +
     `    export ${HOME_ENV}=/path/to/clone\n\n` +
     `  if this is a cloned project, ${METADATA_DIR}/${MANIFEST_FILE} does not declare dataRepoUpstream,\n` +
@@ -104,13 +144,15 @@ function noConfigMessage(manifest: Manifest | null | undefined): string {
  * repository.
  */
 export async function resolveDataRepo(opts: ResolveOpts): Promise<string> {
-  const r = await resolveOptional(opts);
-  if (r !== null) return r;
-  throw new DataRepoNotConfiguredError(noConfigMessage(opts.manifest));
+  const { path, rejected } = await resolveBinding(opts);
+  if (path !== null) return path;
+  throw new DataRepoNotConfiguredError(
+    noConfigMessage(opts.manifest, rejected),
+  );
 }
 
 export async function resolveDataRepoOptional(
   opts: ResolveOpts,
 ): Promise<string | null> {
-  return await resolveOptional(opts);
+  return (await resolveBinding(opts)).path;
 }

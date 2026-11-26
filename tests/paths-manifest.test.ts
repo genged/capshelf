@@ -1,6 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
 import { rejection } from "./cli-fixtures";
+import { DataRepoNotConfiguredError } from "../src/errors";
 import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -142,9 +143,19 @@ describe("path normalization", () => {
     expect(
       await resolveDataRepoOptional({ manifest: emptyManifest(), project }),
     ).toBeNull();
-    await expect(
+    const { message } = await rejection(
       resolveDataRepo({ manifest: emptyManifest(), project }),
-    ).rejects.toThrow(/no data repo configured/);
+      DataRepoNotConfiguredError,
+    );
+    expect(message).toContain("no data repo configured");
+    expect(message).toContain(
+      `recorded data repo ${gone} (from .capshelf/local.json) does not exist.`,
+    );
+    expect(message).toContain(
+      "or bind a clone in .capshelf/local.json:\n    capshelf set-data <path>\n",
+    );
+    expect(message).not.toContain("or create .capshelf/local.json");
+    expect(message).not.toContain('echo \'{"dataRepo"');
 
     expect(
       await resolveDataRepo({
@@ -153,6 +164,66 @@ describe("path normalization", () => {
         project,
       }),
     ).toBe(gone);
+  });
+
+  test("a recorded binding that is not a Git repository names the cause", async () => {
+    const project = await tempDir();
+    const plain = await tempDir();
+    await saveLocalConfig(project, {
+      dataRepo: plain,
+      skills: [],
+      plugins: [],
+      piExtensions: [],
+      settings: [],
+      mcp: [],
+    });
+
+    await expect(
+      resolveDataRepo({ manifest: emptyManifest(), project }),
+    ).rejects.toThrow(
+      `recorded data repo ${plain} (from .capshelf/local.json) is not a Git repository.`,
+    );
+    expect(
+      await resolveDataRepoOptional({ manifest: emptyManifest(), project }),
+    ).toBeNull();
+  });
+
+  test("a stale CAPSHELF_HOME names the path and the variable", async () => {
+    const oldCapshelfHome = process.env.CAPSHELF_HOME;
+    const gone = join(await tempDir(), "gone-home");
+    process.env.CAPSHELF_HOME = gone;
+    try {
+      const { message } = await rejection(
+        resolveDataRepo({ manifest: null }),
+        DataRepoNotConfiguredError,
+      );
+      expect(message).toContain(
+        `recorded data repo ${gone} (from $CAPSHELF_HOME) does not exist.`,
+      );
+      expect(message).toContain("or create .capshelf/local.json");
+      expect(await resolveDataRepoOptional({ manifest: null })).toBeNull();
+    } finally {
+      if (oldCapshelfHome === undefined) delete process.env.CAPSHELF_HOME;
+      else process.env.CAPSHELF_HOME = oldCapshelfHome;
+    }
+  });
+
+  test("with no recorded binding the message has no recorded-path line", async () => {
+    const oldCapshelfHome = process.env.CAPSHELF_HOME;
+    delete process.env.CAPSHELF_HOME;
+    try {
+      const { message } = await rejection(
+        resolveDataRepo({ manifest: null }),
+        DataRepoNotConfiguredError,
+      );
+      expect(message).not.toContain("recorded data repo");
+      expect(message).toStartWith(
+        "no data repo configured for this project.\n\n  pass --data <path>, or create .capshelf/local.json:",
+      );
+    } finally {
+      if (oldCapshelfHome === undefined) delete process.env.CAPSHELF_HOME;
+      else process.env.CAPSHELF_HOME = oldCapshelfHome;
+    }
   });
 
   test("projectRoot accepts only the current capshelf project root", async () => {

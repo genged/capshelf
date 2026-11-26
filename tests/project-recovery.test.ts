@@ -101,6 +101,9 @@ describe("project recovery", () => {
       expect(refused.exitCode).toBe(6);
       const message = refused.stderr.toString();
       expect(message).toContain("no data repo configured for this project");
+      expect(message).toContain(
+        `recorded data repo ${dataRepo} (from .capshelf/local.json) does not exist.`,
+      );
       expect(message).toContain(upstream);
       expect(message).toContain("capshelf set-data <path>");
       expect(message).not.toContain(`git -C ${dataRepo}`);
