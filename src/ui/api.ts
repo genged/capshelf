@@ -609,7 +609,7 @@ function toUiItem(
     stateLabel: hidden
       ? warningLabel(hidden.type)
       : stateLabel(row.state, row.source),
-    stateDetail: hidden ? hidden.message : describe(row),
+    stateDetail: hidden ? hidden.message : describe(row, dataRepo),
     actions: actionsForRow(row, {
       dataOverride: commandDataOverride(dataOverride, dataRepo),
       dataRepo,

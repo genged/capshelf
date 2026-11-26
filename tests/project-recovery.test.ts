@@ -95,6 +95,14 @@ describe("project recovery", () => {
         )?.state,
       ).toBe("missing_upstream");
 
+      const human = run(["status"]);
+      expect(human.exitCode).toBe(0);
+      expect(human.stdout.toString()).toContain(
+        "data repo not available — run: capshelf data bind <path>",
+      );
+      expect(human.stdout.toString()).not.toContain("no longer in data repo");
+      expect(run(["status", "--strict"]).exitCode).toBe(4);
+
       // The repair must not be a git command: the bound directory is gone, so
       // nothing can run inside it.
       const refused = run(["apply", "--json"]);

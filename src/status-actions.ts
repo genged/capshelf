@@ -160,6 +160,9 @@ export function actionsForRow(
       );
       break;
     case "missing_upstream":
+      if (!system && options.dataRepo === null) {
+        return out;
+      }
       add(
         verb("rm"),
         system

@@ -51,7 +51,7 @@ export function glyph(s: State): string {
   }
 }
 
-export function describe(r: StatusRow): string {
+export function describe(r: StatusRow, dataRepo: string | null): string {
   switch (r.state) {
     case "ok":
       return "up-to-date";
@@ -76,6 +76,9 @@ export function describe(r: StatusRow): string {
     case "missing_output":
       return "generated output missing — run: capshelf apply";
     case "missing_upstream":
+      if (r.source === "data" && dataRepo === null) {
+        return "data repo not available — run: capshelf data bind <path>";
+      }
       return r.source === "data"
         ? "no longer in data repo"
         : r.source === "remote"
@@ -163,8 +166,8 @@ export function formatStatusHuman(input: FormatStatusHumanInput): string[] {
   ].find((r) => r.kind === "plugins" && r.claudeTrust === "untrusted");
   const formatRowWithTrustHint = (r: StatusRow): string[] =>
     r === firstUntrustedPluginRow
-      ? [...formatRow(r), `      ${CLAUDE_TRUST_HINT}`]
-      : formatRow(r);
+      ? [...formatRow(r, dataRepo), `      ${CLAUDE_TRUST_HINT}`]
+      : formatRow(r, dataRepo);
 
   if (projectRows.length > 0) {
     lines.push("project/");
@@ -289,7 +292,7 @@ export const REMOTE_GROUP_HEADING =
 export const CLAUDE_TRUST_HINT =
   "Claude Code does not load plugins in an untrusted workspace. Open the project in Claude Code and trust it.";
 
-function formatRow(r: StatusRow): string[] {
+function formatRow(r: StatusRow, dataRepo: string | null): string[] {
   // Visible extras fail `status --strict`, so an otherwise clean row must not
   // show the clean glyph.
   const extras = r.visibleExtras?.length ?? 0;
@@ -303,7 +306,7 @@ function formatRow(r: StatusRow): string[] {
   ).padEnd(39);
   const label = r.label ? ` ${r.label}` : "";
   return [
-    `  ${g} ${id} ${shortIdentity(r.lockedSha)}${label}  ${describe(r)}${extrasLabel}${runsSuffix(r)}`,
+    `  ${g} ${id} ${shortIdentity(r.lockedSha)}${label}  ${describe(r, dataRepo)}${extrasLabel}${runsSuffix(r)}`,
     ...remoteRowDetail(r),
     ...visibleExtrasGuidance(r),
     ...targetCoverageGuidance(r),
