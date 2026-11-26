@@ -81,14 +81,9 @@ export async function adoptIntoDataRepo(
   if (!isCopyDirectoryItemKind(kind)) {
     throw new Error(`no adoption strategy for ${kind}/${name}`);
   }
-  // `--adopt` exists to take ownership *from* skills.sh, so it sets
-  // `allowPreviousOwner` and this refusal steps aside. Every other path still
-  // refuses: adopting a name another tool manages would give one skill two
-  // owners with nothing recording the fact.
-  //
-  // `kind === "skills"` deliberately, not `installsAtSkillTarget(kind)`:
-  // skills.sh never installs a plugin, so a plugin adopt has no previous
-  // owner to bypass here (spec D9).
+  // `--adopt` takes ownership from skills.sh so it bypasses this refusal; any
+  // other path would give a skill two owners. Checks `kind === "skills"`
+  // because skills.sh never installs plugins.
   if (kind === "skills" && opts.allowPreviousOwner !== true) {
     const external = await findSkillsShSkill(project, name);
     if (external) {
@@ -107,9 +102,9 @@ export async function adoptIntoDataRepo(
 
   const repoRelPath = itemRepoRelPath(kind, name);
   const dataPath = join(dataRepo, repoRelPath);
-  // Recorded rather than refused under `--adopt`: the comparison that decides
-  // whether an existing upstream item is the same content needs the project
-  // snapshot, which is taken forty lines below.
+  // Recorded rather than refused under `--adopt`, because deciding whether
+  // existing upstream content is identical needs the project snapshot taken
+  // later.
   const upstreamExists = existsSync(dataPath);
   if (upstreamExists && opts.allowExistingUpstream !== true) {
     throw new PreconditionError(
@@ -128,9 +123,6 @@ export async function adoptIntoDataRepo(
     opts.sourceScope ?? "project",
   );
   const privateDotenvWarnings = privateDotenvFiles(snapshot.files);
-  // Defensive cache-and-restore: share refuses an existing upstream item
-  // above, but recovery flows can encounter a pre-existing target directory
-  // whose metadata sidecar must survive the replace.
   const upstreamSidecar = await readSidecarBytes(dataPath);
   const projectionRoots =
     kind === "skills" && hasCodexMarketplace(dataRepo)
@@ -159,10 +151,10 @@ export async function adoptIntoDataRepo(
       dataRepoScope(dataRepo),
     );
     if (!restored) await warnAboutAdoptedSidecar(dataPath, kind, name);
-    // Inside the mutation, so the provenance is part of the one commit rather
-    // than an uncommitted change left in the shelf. The sidecar is excluded
-    // from the pin, so it changes no identity and PIN-11 still compares the
-    // same two trees.
+    // Written inside the mutation so provenance lands in the same commit, not
+    // as an uncommitted change. The sidecar is excluded from the pin, so
+    // identity is unchanged and the commit proof still compares the same two
+    // trees.
     if (opts.provenance) {
       await writeSidecarProvenance(
         dataPath,
@@ -171,28 +163,27 @@ export async function adoptIntoDataRepo(
       );
     }
     if (kind === "skills") await refreshCodexProjection(dataRepo);
-    // Provenance rewrites the sidecar above, so it is then new content to
-    // publish, not a file kept in place.
+    // Rewritten provenance makes the sidecar new content to publish, not a file
+    // kept in place.
     return restored && !opts.provenance
       ? [`${repoRelPath}/${METADATA_SIDECAR}`]
       : [];
   };
-  // PIN-11: `A`, captured from the project *before* the copy. The bytes are
-  // held so their Git ids can be computed after the commit, using whatever
-  // object-name width the committed tree turns out to use.
+  // Captured from the project before the copy. The bytes are held so Git ids
+  // can be computed after the commit, using the object-name width of the
+  // committed tree.
   const projectSnapshot = await namedFilesFromInstalledSnapshot(snapshot);
-  // Before any data-repo write. The commit proof below refuses a tree that
-  // differs from `projectSnapshot`, so a check over it binds the commit.
+  // Runs before any data-repo write; the commit proof refuses trees differing
+  // from `projectSnapshot`, so checking it binds the commit.
   await opts.checkCandidate?.({
     files: projectSnapshot,
     snapshot,
     path: adoption.path,
   });
 
-  // The already-upstream case. The data repo can already hold the item, from
-  // an interrupted run or from another project. Identical content is not an
-  // error: it reports `already-upstream`, commits nothing, and the caller still
-  // releases the previous owner.
+  // The data repo may already hold the item from an interrupted run or another
+  // project; identical content is not an error, commits nothing, and the caller
+  // still releases the previous owner.
   if (upstreamExists) {
     await assertRepoClean(dataRepo);
     const existingPin = await pinItemAtCommit(
@@ -288,10 +279,8 @@ export async function adoptIntoDataRepo(
 }
 
 /**
- * The sidecar is invisible in normal project listings (capshelf never
- * materializes it), so committing one silently would surprise data-repo
- * owners. A malformed adopted sidecar warns and adoption continues — it gets
- * fixed upstream like any other file.
+ * The sidecar is never materialized, so committing one silently would surprise
+ * data-repo owners; a malformed one warns and adoption continues.
  */
 async function warnAboutAdoptedSidecar(
   dataPath: string,
@@ -337,9 +326,8 @@ function assertCanNormalizeAdoptedSkill(
 }
 
 /**
- * Where a `share` of this copy item would read from, or null when no local
- * copy exists. Exported for the share picker's scanner, so a scanned row
- * points at exactly the directory the named command adopts.
+ * Exported so the share picker's scanned rows point at exactly the directory
+ * the named command adopts.
  */
 export function findAdoptionSource(
   project: string,
@@ -393,8 +381,7 @@ function existingItemDir(
   sourceKind: AdoptionSource["kind"],
   kind: CopyDirectoryItemKind,
 ): AdoptionSource | null {
-  // The read root of a copy-up: a symlink that leaves the project must not
-  // publish what lies outside it.
+  // A symlink leaving the project must not publish what lies outside it.
   assertConfinedSync(project, path);
   const stat = lstatOrNull(path);
   if (!stat) return null;

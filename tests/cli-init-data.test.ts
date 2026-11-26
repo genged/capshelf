@@ -111,7 +111,6 @@ describe("cli integration", () => {
     });
     expect(init.exitCode).toBe(0);
 
-    // A nested subdirectory resolves up to the project root (git-style).
     await mkdir(join(project, "nested", "deep"), { recursive: true });
     const fromNested = Bun.spawnSync({
       cmd: [process.execPath, cli, "status"],
@@ -122,7 +121,6 @@ describe("cli integration", () => {
     });
     expect(fromNested.exitCode).toBe(0);
 
-    // Outside any project it still fails with a clear message.
     const outside = await tempDir("capshelf-root-discovery-outside-");
     const fromOutside = Bun.spawnSync({
       cmd: [process.execPath, cli, "status"],
@@ -140,8 +138,6 @@ describe("cli integration", () => {
     const outside = await tempDir("capshelf-browse-outside-");
     const cli = join(import.meta.dir, "..", "src", "cli.ts");
 
-    // ls/search/show are read-only inspection of the shelf, so a user can
-    // evaluate a data repo before adopting it into any project.
     for (const args of [["ls"], ["search", "skill"]]) {
       const result = Bun.spawnSync({
         cmd: [process.execPath, cli, "--data", dataRepo, ...args],
@@ -170,14 +166,12 @@ describe("cli integration", () => {
 
     expect(run(["init", "--no-upstream"]).exitCode).toBe(0);
 
-    // Grouped form and the legacy top-level alias behave identically.
     const grouped = run(["data", "path"]);
     const legacy = run(["data-path"]);
     expect(grouped.exitCode).toBe(0);
     expect(legacy.exitCode).toBe(0);
     expect(grouped.stdout.toString()).toBe(legacy.stdout.toString());
 
-    // Help shows the `data` group but hides the legacy top-level names.
     const help = run(["--help"]).stdout.toString();
     expect(help).toContain("data ");
     expect(help).not.toContain("data-path");
@@ -196,17 +190,13 @@ describe("cli integration", () => {
       stderr: "pipe",
     });
 
-    // "not a capshelf project" is a precondition (exit 3), and --json means an
-    // agent gets a parseable envelope on stderr, not prose.
     expect(result.exitCode).toBe(3);
     const envelope = JSON.parse(result.stderr.toString());
     expect(envelope.error.exitCode).toBe(3);
     expect(envelope.error.message).toContain("not a capshelf project");
-    // Human channel is untouched — no bare ✗ prose leaked into the JSON.
     expect(result.stderr.toString()).not.toContain("✗");
-    // No ANSI escapes either. Bun colorizes console.error when stderr is a
-    // TTY, which would wrap the envelope in escape codes and break
-    // JSON.parse for any agent running capshelf through a pty.
+    // Bun colorizes console.error on a TTY, wrapping the envelope in escape
+    // codes and breaking JSON.parse for agents using a pty.
     expect(result.stderr.toString()).not.toContain(String.fromCharCode(27));
   });
 
@@ -231,8 +221,6 @@ describe("cli integration", () => {
     expect(run(["init", "--no-upstream"]).exitCode).toBe(0);
     expect(run(["add", "skills/greet"]).exitCode).toBe(0);
 
-    // Freshly added: installed content matches the lock, so there is no drift
-    // to accept — keep-local must refuse rather than silently marking it local.
     const kept = run(["keep-local", "skills/greet"]);
     expect(kept.exitCode).toBe(3);
     expect(kept.stderr.toString()).toContain("no local divergence");
@@ -364,8 +352,6 @@ describe("cli integration", () => {
     expect(stdout).toContain(
       "bound project data repo:\n  .capshelf/local.json",
     );
-    // A machine-local file:// path is not a portable upstream, so it is
-    // neither printed nor written to the committed manifest.
     expect(stdout).not.toContain("upstream:\n");
     expect(
       await file(join(clonePath, "skills", "hello", "SKILL.md")).text(),
@@ -408,7 +394,6 @@ describe("cli integration", () => {
     await writeFile(join(dataRepo, "README.md"), "data\n");
     await commitAll(dataRepo, "baseline");
     const clonePath = join(base, "agent-shared");
-    // An existing empty directory is a valid clone destination.
     await mkdir(clonePath, { recursive: true });
 
     const result = Bun.spawnSync({
@@ -563,7 +548,6 @@ describe("cli integration", () => {
     expect(stderr).toContain(
       "--upstream normalizes to: https://github.com/other/agent-shared",
     );
-    // Nothing was cloned or written.
     expect(
       await file(join(project, ".capshelf", "capshelf.json")).exists(),
     ).toBe(false);
@@ -601,8 +585,6 @@ describe("cli integration", () => {
       stderr: "pipe",
     });
 
-    // file:// is rejected as a committed upstream even when it matches the
-    // bootstrap URL, since --upstream writes the manifest.
     expect(result.exitCode).toBe(3);
     expect(result.stderr.toString()).toContain(
       `unsupported git remote URL: ${url}`,

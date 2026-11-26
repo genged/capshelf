@@ -58,12 +58,8 @@ export async function moveScope(
     from = to === "project" ? "local" : "project";
     const fromEntry = from === "project" ? projectData : localData;
     const otherEntry = from === "project" ? localData : projectData;
-    // A partial recovery can pair a migrated v2 entry (unknown needs) with
-    // the same v3 content pin. Preserve the known snapshot when either side
-    // has one instead of degrading it during the scope repair.
-    // Every loaded lock pairs `needs` with `needsSourceCommit`
-    // (`withNeedsPairing`, `src/lock.ts:112`), so the snapshot predicate asks
-    // the same question as a check on `needs` alone.
+    // A partial recovery can pair a migrated v2 entry (unknown needs) with the
+    // same v3 pin, so keep whichever side has a known needs snapshot.
     sourceEntry =
       !hasNeedsSnapshot(fromEntry) && hasNeedsSnapshot(otherEntry)
         ? otherEntry
@@ -100,9 +96,9 @@ export async function moveScope(
     );
   }
 
-  // PIN-5: the drift gate is filesystem work over the pinned path set, not a
-  // Git-visible snapshot of the project. A `--local` item is excluded from
-  // project Git by capshelf itself, so the old snapshot hashed it as empty.
+  // Hash a `--local` item without a Git-visible snapshot of the project:
+  // capshelf excludes it from project Git, so that snapshot would hash it as
+  // empty.
   const currentSha =
     sourceEntry.sourcePinDigest !== undefined
       ? await installedTreeIdentity(

@@ -3,12 +3,9 @@ import { access, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 
 /**
- * The E2E layer exists to test the packaged program, so the executable is an
- * input, never a guess. There is deliberately no fallback to
- * `bun run src/cli.ts`, to `process.execPath` plus the entry file, to a
- * `capshelf` found on PATH, or to an in-process `main()` call: any of those
- * would let one run mix packaged and source components, which is the exact
- * fault this layer is meant to catch.
+ * The binary is always an explicit input with no fallback to source, PATH, or
+ * in-process calls, since mixing packaged and source components is the fault
+ * this layer exists to catch.
  */
 export const BIN_ENV = "CAPSHELF_E2E_BIN";
 
@@ -49,7 +46,6 @@ export async function resolveCapshelfBinary(): Promise<string> {
   return configured;
 }
 
-/** Test-only: drop the memoized path so a self-test can vary the variable. */
 export function resetResolvedBinary(): void {
   cached = null;
 }

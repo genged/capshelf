@@ -15,11 +15,9 @@ import { asObject, parseJsonText } from "../support/json";
 import { E2E_TEST_TIMEOUT_MS, withWorld } from "../support/world";
 
 /**
- * `promote` is the one verb that writes to state a whole team shares, so its
- * blast radius is the shelf rather than the calling project. Three limits are
- * what make it safe to run, and each one is silent when it breaks: it must not
- * push, it must not reach another project, and it must not overwrite upstream
- * content the caller has not seen.
+ * promote writes team-shared state and its limits break silently, so tests
+ * check it never pushes, never reaches another project, and never overwrites
+ * unseen upstream content.
  */
 const SCENARIO = "promote";
 
@@ -49,8 +47,6 @@ test(
       });
       await world.git.ok(shelf, ["push", "-q", "-u", "origin", "main"]);
 
-      // Two projects on one shelf: the second one is the subject of the
-      // isolation claim, not scenery.
       const install = async (name: string): Promise<string> => {
         const project = await world.git.createProject(name);
         expectExit(
@@ -68,7 +64,6 @@ test(
       const atlas = await install("atlas");
       const borealis = await install("borealis");
 
-      // Atlas edits its installed copy. That is the state promote publishes.
       await world.git.writeFiles(atlas, {
         ".agents/skills/hello/SKILL.md": WARMER,
       });
@@ -105,20 +100,16 @@ test(
       expect(payload.dataRepo).toBe(shelf);
       expect(payload.dataRepoHasOrigin).toBe(true);
 
-      // The edit reached the shelf as a commit, not just as a working-tree
-      // change: a later clone has to receive it.
+      // Asserts a commit, not just a working-tree change, so later clones
+      // receive the edit.
       expect(await world.git.head(shelf)).not.toBe(shelfHeadBefore);
       expect(await world.git.isCleanWorktree(shelf)).toBe(true);
       expect(
         await Bun.file(join(shelf, "skills", "hello", "SKILL.md")).text(),
       ).toBe(WARMER);
 
-      // Never pushes. Publication stays the user's step, so the refs the
-      // remote advertises are the ones it advertised before.
       expect(await world.git.advertisedRefs(remote.url)).toEqual(refsBefore);
 
-      // Never reaches another project. Borealis shares the shelf and is
-      // untouched, down to its Git index.
       expectSameState(
         borealisBefore,
         await captureOwnedState(world, {
@@ -128,7 +119,6 @@ test(
         "borealis after atlas promoted",
       );
 
-      // Borealis changes only when it asks to.
       expect(
         statusRow(
           parseStatusRows(
@@ -145,8 +135,6 @@ test(
         ).text(),
       ).toBe(WARMER);
 
-      // Null second run. Promote re-pinned atlas, so the same command now has
-      // nothing to publish and must not build an empty commit.
       const headAfterPromote = await world.git.head(shelf);
       const second = await world.capshelf(atlas, [
         "promote",
@@ -191,7 +179,6 @@ test(
       expectExit(await world.capshelf(project, ["init", "--data", shelf]), 0);
       expectExit(await world.capshelf(project, ["add", "skills/hello"]), 0);
 
-      // Someone else's change lands on the shelf after this project pinned.
       await world.git.writeAndCommit(
         shelf,
         {
@@ -200,7 +187,6 @@ test(
         },
         "upstream rewrite",
       );
-      // This project edits the same item, unaware of that.
       await world.git.writeFiles(project, {
         ".agents/skills/hello/SKILL.md": WARMER,
       });
@@ -221,9 +207,6 @@ test(
       ]);
       expectExit(refused, 3);
       expectOutputContains(refused, "changed in the data repo since");
-      // Both ways out, because taking upstream and overwriting it are
-      // different decisions and the refusal must not make either one for the
-      // user.
       expectRecovery(refused, "capshelf update skills/hello");
       expectRecovery(refused, "capshelf promote skills/hello --stale-ok");
 
@@ -267,9 +250,8 @@ test(
       expectExit(await world.capshelf(project, ["add", "skills/hello"]), 0);
       const refsBefore = await world.git.advertisedRefs(remote.url);
 
-      // The flag is passed with nothing stale. It must stay silent: a
-      // consumer keys "was upstream work discarded" on this field, so
-      // reporting it here would raise an alarm on an ordinary promote.
+      // The field must stay silent here: consumers key "upstream work
+      // discarded" on it, so reporting it would falsely alarm.
       await world.git.writeFiles(project, {
         ".agents/skills/hello/SKILL.md": WARMER,
       });
@@ -289,8 +271,6 @@ test(
       expect(quietPayload.action).toBe("promoted");
       expect(quietPayload.staleOverride).toBeUndefined();
 
-      // Now upstream really does move past the lock, and the project
-      // overwrites it knowingly.
       const overwritten = await world.git.writeAndCommit(
         shelf,
         { "skills/hello/SKILL.md": `${HELLO_HEAD}Upstream rewrote this.\n` },
@@ -317,18 +297,12 @@ test(
       expect(payload.action).toBe("promoted");
       expect(payload.staleOverride).toBe(true);
 
-      // The shelf now holds this project's version.
       expect(
         await Bun.file(join(shelf, "skills", "hello", "SKILL.md")).text(),
       ).toBe(chosen);
 
-      // Overwritten, not erased. The override lands as a new commit on top,
-      // so the discarded upstream work is still recoverable from history —
-      // that is what makes the escape hatch safe to offer.
-      //
-      // Reachability from HEAD, not object presence: a `reset --hard` that
-      // dropped the upstream commit would leave the object in place until the
-      // next gc, so `hasCommit` here would report success over lost history.
+      // Check reachability from HEAD, not object presence: a `reset --hard`
+      // would leave the object until gc and `hasCommit` would still pass.
       expectExit(
         await world.git.run(shelf, [
           "merge-base",
@@ -340,7 +314,6 @@ test(
       );
       expect(await world.git.isCleanWorktree(shelf)).toBe(true);
 
-      // Overriding a stale check is still not publishing.
       expect(await world.git.advertisedRefs(remote.url)).toEqual(refsBefore);
     });
   },
@@ -366,9 +339,8 @@ test(
       expectExit(await world.capshelf(project, ["init", "--data", shelf]), 0);
       expectExit(await world.capshelf(project, ["add", "skills/hello"]), 0);
 
-      // A half-finished edit in the shelf worktree. It has no commit, so
-      // there is no provenance to overwrite and nothing for --stale-ok to
-      // weigh: the guard is about missing history, not about staleness.
+      // An uncommitted shelf edit has no provenance to overwrite, so --stale-ok
+      // does not apply: the guard is about missing history, not staleness.
       await world.git.writeFiles(shelf, {
         "skills/hello/SKILL.md": `${HELLO_HEAD}Half-finished shelf edit.\n`,
       });

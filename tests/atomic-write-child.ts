@@ -1,10 +1,6 @@
 /**
- * A child process for the `atomicWriteFile` planted-temp-name test. The temp
- * name counter is module state, so a fresh process starts it at 0. This script
- * plants symlinks at the first `count` temp names for its own pid, then writes
- * `target` inside `root`. The parent process checks the disk afterwards.
- *
- * Arguments: root, target, victim, count, content.
+ * Temp-name counter is module state, so a fresh process starts at 0 and the
+ * planted symlink names are predictable.
  */
 import { symlink } from "node:fs/promises";
 import { atomicWriteFile } from "../src/fs-utils";

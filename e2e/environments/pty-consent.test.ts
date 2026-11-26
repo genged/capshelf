@@ -21,10 +21,8 @@ const PROJECT_MCP =
 const PULLED_SKILL = "---\nname: pdf\ndescription: Extract text\n---\n\nbody\n";
 
 /**
- * The terminal dimension. Every other cell runs through pipes, where a
- * destructive change is refused outright; with a controlling terminal the same
- * state asks, and the answer decides. Both halves have to be exercised, or the
- * prompt is only ever proved to be absent.
+ * Pipes refuse a destructive change outright while a terminal asks, so both
+ * halves must run or the prompt is only ever proved absent.
  */
 test(
   "with a terminal, a destructive change asks first and a refusal writes nothing",
@@ -52,8 +50,6 @@ test(
       expectExit(await world.capshelf(project, ["init", "--data", shelf]), 0);
       expectExit(await world.capshelf(project, ["add", "mcp/github"]), 0);
 
-      // Remove the managed contribution by hand: reconciling it back is a
-      // destructive change to local state.
       await writeFile(join(project, ".mcp.json"), PROJECT_MCP);
 
       const before = await captureOwnedState(world, {
@@ -93,11 +89,9 @@ test(
 );
 
 /**
- * A remote skill opens its own gate, not the destructive-change planner above:
- * a fresh install destroys nothing, so the question is new. It is also the one
- * gate that authorizes content nobody on the team reviewed to run with the
- * user's permissions, so both answers are driven on a terminal here. Every
- * other cell reaches this path with `--yes`, which never asks.
+ * A remote skill authorizes unreviewed content to run with the user's
+ * permissions, and every other cell uses `--yes` which never asks, so both
+ * answers must be driven on a terminal here.
  */
 test(
   "with a terminal, a remote skill states its facts, asks once, and a refusal writes nothing",
@@ -157,7 +151,6 @@ test(
         { answer: "n\n" },
       );
       expectExit(declined, 0);
-      // The facts the gate has to carry before it asks.
       expectOutputContains(declined, upstream.url);
       expectOutputContains(declined, "SKILL.md");
       expectOutputContains(
@@ -177,8 +170,6 @@ test(
       );
       expectExit(accepted, 0);
       expectOutputContains(accepted, "added local/remote/skills/pdf");
-      // D5: a user arriving from skills.sh expects the opposite, so the
-      // install says what it did not do.
       expectOutputContains(
         accepted,
         "not committed, so your teammates do not get it",

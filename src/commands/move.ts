@@ -83,8 +83,8 @@ export function registerMove(program: Command): void {
       if (to === "local") {
         assertLocalScopeSupported(resolved.kind, resolved.name, "move");
       }
-      // PIN-12: before the drift comparison, so an unmigrated project gets the
-      // migration guidance rather than a drift refusal it cannot act on.
+      // Runs before the drift comparison so an unmigrated project gets
+      // migration guidance instead of an unactionable drift refusal.
       const writableProjectLock = assertWritableLock(
         projectLock,
         "capshelf move",
@@ -104,9 +104,8 @@ export function registerMove(program: Command): void {
 
       const dataRepo = await resolveProjectDataRepo(project, manifest, cmd);
 
-      // D2 guard 5: before the scope-change write. `self` is the item's
-      // current key, the same in either scope (a lock key carries no scope),
-      // so the item's own entry is never reported as its own conflict.
+      // A lock key carries no scope, so `self` is the same in either scope and
+      // the item's own entry is not reported as a conflict.
       if (installsAtSkillTarget(resolved.kind)) {
         await assertSkillTargetFree(
           project,
@@ -135,13 +134,9 @@ export function registerMove(program: Command): void {
         },
       );
 
-      // D7 point 3, before any save. Two trees reach teammates: the pinned
-      // tree, through the committed lock, and the installed folder, which
-      // the project commits once its excludes go. `moveScope` refuses drift
-      // only on pinned paths, so an extra file such as an unpinned
-      // `hooks/hooks.json` passes it. The point asks for the union of both.
-      // A skill that holds a plugin manifest in either tree is a plugin to
-      // Claude Code (R1) and asks too.
+      // Check the union of the pinned tree and the installed folder, since
+      // `moveScope` only refuses drift on pinned paths; a skill with a plugin
+      // manifest in either tree counts as a plugin to Claude Code.
       if (
         !result.alreadyCurrent &&
         result.to === "project" &&

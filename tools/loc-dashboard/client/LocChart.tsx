@@ -1,10 +1,6 @@
 /**
- * Two step lines on one axis. A count changes at a commit and holds until
- * the next, so the line steps. There is no area wash: the axis does not
- * start at zero, so a fill would overstate the size of a change. The
- * crosshair snaps to the nearest commit,
- * one tooltip lists both series, the legend toggles a series without
- * repainting the other, and a drag across the plot zooms into that span.
+ * No area fill: the axis does not start at zero, so a fill would overstate the
+ * size of a change.
  */
 import type { JSX } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
@@ -482,7 +478,6 @@ interface EndLabel {
   moved: boolean;
 }
 
-/** Two labels that would overlap are pushed apart and get leader lines. */
 function placeEndLabels(
   labels: Array<{ series: SeriesId; value: number; y: number }>,
 ): EndLabel[] {

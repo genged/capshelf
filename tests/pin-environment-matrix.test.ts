@@ -7,50 +7,23 @@ import { join } from "node:path";
 import { CLI_INTEGRATION_TEST_TIMEOUT_MS, tempDir } from "./cli-fixtures";
 
 /**
- * A CLASS DEFENCE, not a checklist.
- *
- * The bug this design exists to fix is one member of a family: *the same commit
- * produces a different answer in a different clone*. Enumerating members one at
- * a time loses, because Git keeps adding them. So the matrix is data — adding a
- * Git feature means adding a row here, not writing a test — and the properties
- * asserted in every cell name no mechanism at all.
- *
- * The rows split by where the configuration acts:
- *
- * - **Consumption** cells clone one canonical commit and vary how the clone is
- *   configured. Identity and delivery must be *identical* to the baseline, for
- *   every one of them. This is the class the original bug belonged to.
- * - **Authoring** cells change what gets committed in the first place, so the
- *   tree legitimately differs. What must still hold is that the project
- *   receives what Git stores, that `add` and `apply` agree, and that a fresh
- *   install is clean.
- *
- * Property 5 spans both: a cell either succeeds or fails with a refusal this
- * design names. An unclassified failure is the signal that a Git feature nobody
- * anticipated has reached an answer it must not decide.
+ * The matrix is data so new Git features add a row, and each cell asserts
+ * mechanism-free properties: same commit must give the same identity and
+ * delivery in any clone.
  */
 
 interface Cell {
   name: string;
-  /**
-   * Configuration applied to the repository capshelf reads. For a consumption
-   * cell that is a clone of the canonical commit; for an authoring cell it is
-   * the repository the fixture is committed into.
-   */
   config?: Record<string, string>;
-  /** A committed `.gitattributes` — authoring only, it changes the tree. */
   attributes?: string;
   objectFormat?: "sha256";
   indexBit?: "assume-unchanged" | "skip-worktree";
   replaceRef?: boolean;
-  /** Ambient repository-selecting variables set for the CLI run. */
   ambientEnv?: boolean;
   partialClone?: boolean;
-  /** Cells that legitimately refuse, with the refusal this design names. */
   refusal?: RegExp;
 }
 
-/** Same commit, different clone. Identity and delivery must not move. */
 const CONSUMPTION_CELLS: Cell[] = [
   { name: "baseline" },
   { name: "autocrlf=false", config: { "core.autocrlf": "false" } },
@@ -76,7 +49,6 @@ const CONSUMPTION_CELLS: Cell[] = [
   },
 ];
 
-/** Different commit, because the configuration changed what got committed. */
 const AUTHORING_CELLS: Cell[] = [
   {
     name: "authored under autocrlf=input",
@@ -101,10 +73,6 @@ const AUTHORING_CELLS: Cell[] = [
   },
 ];
 
-/**
- * One fixture item, built identically in every cell: multi-file, a non-ASCII
- * name, one executable, one CRLF-authored file, and a metadata sidecar.
- */
 async function buildFixture(root: string): Promise<void> {
   const item = join(root, "skills", "matrix");
   await mkdir(join(item, "scripts"), { recursive: true });
@@ -128,8 +96,8 @@ async function commitFixture(repo: string, cell: Cell): Promise<void> {
     await writeFile(join(repo, ".gitattributes"), cell.attributes);
   }
   await $`git -C ${repo} add -A`.quiet();
-  // The executable bit goes into the *index* as well as onto disk, so a
-  // `core.fileMode=false` repository still commits the mode the fixture means.
+  // The executable bit is set in the index too so a `core.fileMode=false`
+  // repository still commits the intended mode.
   await $`git -C ${repo} update-index --chmod=+x skills/matrix/scripts/run.sh`.quiet();
   await $`git -C ${repo} commit -qm fixture`.quiet();
 }
@@ -163,11 +131,9 @@ async function consumptionRepo(cell: Cell): Promise<string> {
     );
   }
   if (cell.replaceRef === true) {
-    // The commit capshelf pins stays HEAD; a *replacement* is registered for it
-    // that resolves to a different tree. Plain git honors that graft in every
-    // read, so this cell fails outright unless source reads disable it — and
-    // replacement refs are not fetched by default, so the lock would record an
-    // object id that resolves differently in every other clone.
+    // Git honors replace refs in every read and does not fetch them, so source
+    // reads must disable them or the lock records an object id that resolves
+    // differently elsewhere.
     const pinned = (await $`git -C ${clone} rev-parse HEAD`.quiet()).stdout
       .toString()
       .trim();
@@ -283,7 +249,6 @@ async function runCell(cell: Cell, kind: "consumption" | "authoring") {
   const installedRoot = join(project, ".agents", "skills", "matrix");
   const afterAdd = await readInstalledTree(installedRoot);
 
-  // Property 3: installing by the other route gives an identical tree.
   const second = await tempDir("capshelf-matrix-apply-");
   expect(
     runCli(second, ["init", "--data", dataRepo, "--no-upstream"], env).exitCode,
@@ -299,10 +264,8 @@ async function runCell(cell: Cell, kind: "consumption" | "authoring") {
     await readInstalledTree(join(second, ".agents", "skills", "matrix")),
   ).toEqual(afterAdd);
 
-  // Property 4: a fresh install is clean.
   expect(runCli(project, ["status", "--strict"], env).exitCode).toBe(0);
 
-  // Row 5 of the object model: the sidecar never reaches a project.
   expect(existsSync(join(installedRoot, ".capshelf.yml"))).toBe(false);
 
   const lock = parseLock(
@@ -329,15 +292,12 @@ describe("environment matrix", () => {
 
       for (const cell of CONSUMPTION_CELLS.slice(1)) {
         const result = await runCell(cell, "consumption");
-        // Property 5, first: no cell may fail with an unclassified error.
         expect(`${cell.name}: ${result.refusal ?? "ok"}`).toBe(
           `${cell.name}: ok`,
         );
-        // Property 1: identity is clone-independent.
         expect(`${cell.name}: ${result.digest}`).toBe(
           `${cell.name}: ${baseline.digest}`,
         );
-        // Property 2: delivery is clone-independent — bytes, names, and modes.
         expect(result.installed?.names).toEqual(baseline.installed!.names);
         expect(result.installed?.bytes).toEqual(baseline.installed!.bytes);
         expect(result.installed?.executable).toEqual(
@@ -354,7 +314,6 @@ describe("environment matrix", () => {
       for (const cell of AUTHORING_CELLS) {
         const result = await runCell(cell, "authoring");
         if (cell.refusal) {
-          // Property 5: a refusal must be one this design names.
           expect(`${cell.name}: ${result.refusal ?? "(succeeded)"}`).toMatch(
             cell.refusal,
           );
@@ -364,9 +323,6 @@ describe("environment matrix", () => {
           `${cell.name}: ok`,
         );
         expect(result.digest).toMatch(/^[0-9a-f]{64}$/);
-        // Whatever the repository decided to store, the project holds exactly
-        // that — the assertions inside `runCell` already proved `add` and
-        // `apply` agree and that the fresh install reports clean.
         expect(result.installed?.names).toEqual([
           "SKILL.md",
           "café.md",

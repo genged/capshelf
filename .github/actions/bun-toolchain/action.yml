@@ -14,17 +14,14 @@ inputs:
 runs:
   using: composite
   steps:
-    # An empty bun-version falls through to bun-version-file
-    # (oven-sh/setup-bun src/index.ts:27-29).
+    # An empty bun-version falls through to bun-version-file.
     - uses: oven-sh/setup-bun@v2
       with:
         bun-version: ${{ inputs.bun-version }}
         bun-version-file: package.json
 
-    # setup-bun warns and falls back to the newest Bun when it cannot read the
-    # declared version, and a warning does not fail a job. This turns that
-    # silent un-pin into a red build. A caller that asked for a version by name
-    # gets what it asked for instead.
+    # setup-bun only warns and falls back to the newest Bun when it can't read
+    # the declared version; fail the build instead of silently un-pinning.
     - name: Check the installed Bun is the expected one
       shell: bash
       env:

@@ -129,7 +129,6 @@ test("a browser URL offers every ref/subpath split, longest ref first", () => {
     ref: "feature/login",
     subpath: "skills/pdf",
   });
-  // The one-segment split stays the fallback for a caller that cannot resolve.
   expect(parsed.ref).toBe("feature");
   expect(parsed.subpath).toBe("login/skills/pdf");
 });

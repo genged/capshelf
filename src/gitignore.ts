@@ -14,8 +14,8 @@ export async function gitignoreVisibleFiles(
   root: string,
   options: {
     /**
-     * List a visible symlink as a path instead of refusing it. A reader that
-     * only classifies installed paths uses this. A source read must refuse.
+     * Classification-only readers list a visible symlink instead of refusing;
+     * source reads must refuse.
      */
     listSymlinks?: boolean;
   } = {},
@@ -60,12 +60,6 @@ export async function gitignoreVisibleFiles(
   return out.sort();
 }
 
-/**
- * The paths that the given item `.gitignore` files ignore. The files are
- * held in memory, for example the ones a write is about to install, so a
- * caller can ask "will Git see this path after the write". A path below an
- * ignored folder is ignored, as in Git.
- */
 export function ignoredByItemGitignores(
   gitignores: readonly { path: string; content: Buffer }[],
   paths: readonly string[],
@@ -81,7 +75,7 @@ export function ignoredByItemGitignores(
           : file.path.slice(0, -"/.gitignore".length),
       matcher: ignore().add(file.content.toString("utf-8")),
     }))
-    // Outer files first, so a nested file can re-include a path.
+    // Sort outer files first so a nested .gitignore can re-include a path.
     .sort((left, right) => left.relDir.length - right.relDir.length);
   const ignored = new Set<string>();
   if (scopes.length === 0) return ignored;
@@ -103,19 +97,13 @@ export interface LocalTreeObject {
 }
 
 export interface LocalTreeInventory {
-  /** Regular files, sorted. */
   files: string[];
-  /** Everything that is not a regular file or directory, sorted by path. */
   irregular: LocalTreeObject[];
 }
 
 /**
- * Inventory every physical object below an installed item, including paths
- * hidden by nested `.gitignore` rules. This is row 4 of the object-model
- * table in `master.ts`: the population is the user's own local state, so
- * non-regular objects are classified rather than refused and the caller
- * decides whether to preserve, list, or delete them. `gitignoreVisibleFiles`
- * keeps its throw — that is the row-1 trust boundary and it does not move.
+ * Classifies rather than refuses non-regular objects because this is the user's
+ * own local state; `gitignoreVisibleFiles` still throws as the trust boundary.
  */
 export async function inventoryLocalTree(
   root: string,
@@ -179,7 +167,7 @@ function isIgnoredByScopes(
   let ignored = false;
   for (const scope of scopes) {
     const scopedRelPath = relativeToScope(relPath, scope.relDir);
-    if (scopedRelPath === null) continue;
+    if (scopedRelPath === null || scopedRelPath === "") continue;
     const pathForMatch = isDirectory ? `${scopedRelPath}/` : scopedRelPath;
     const result = scope.matcher.test(pathForMatch);
     if (result.ignored) ignored = true;

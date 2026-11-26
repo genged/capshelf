@@ -1,19 +1,7 @@
 /**
- * Pin, install, and reconcile one remote skill or plugin.
- *
- * A remote row reuses the copy-directory machinery rather than growing a second
- * reconciler. `materializeLockEntry` and `copyDirectoryReconciliationFiles`
- * hold the five-population object model, the preserved-versus-extra
- * classification, and the transactional write; a second implementation would be
- * a second object model that has to agree with the first.
- *
- * The content half needs nothing new: a remote row hands those functions a
- * `ContentSource` naming the cache clone, the commit, and the subpath, which is
- * the value they already take. The identity half is still synthetic —
- * `materializeLockEntry` verifies what it read against a digest that lives on a
- * `LockEntry` — so this module builds an in-memory `DataLockEntryV4` carrying
- * the remote row's digest. That value is never serialized: no writer puts it in
- * a `Lock`.
+ * Reuses the copy-directory reconciler instead of a second object model; the
+ * synthetic `DataLockEntryV4` carries the remote digest and is never
+ * serialized.
  */
 import { isConfigObject, isConfigString } from "./config-values";
 import type { ConfigObject, ConfigValue } from "./config-values";
@@ -65,7 +53,6 @@ import type { PinnedSource, PinTreeEntry } from "./pin";
 
 export interface RemoteInstallRequest {
   project: string;
-  /** The cache clone the pin was read from. */
   cachePath: string;
   kind: RemoteItemKind;
   name: string;
@@ -73,9 +60,8 @@ export interface RemoteInstallRequest {
   ref: string;
   subpath: string;
   /**
-   * The pin the consent gate was shown. Pinning again here would reopen the
-   * window between the prompt and the write, so the approved tree is the
-   * written tree by construction.
+   * The pin the consent gate showed. Pinning again would reopen a window
+   * between prompt and write, so the approved tree is the written tree.
    */
   pin: PinnedSource;
 }
@@ -87,7 +73,6 @@ export interface RemoteInstallResult {
   files: number;
 }
 
-/** Write the item and return the row. Never saves the lock: the caller does. */
 export async function installRemoteItem(
   request: RemoteInstallRequest,
 ): Promise<RemoteInstallResult> {
@@ -108,9 +93,6 @@ export async function installRemoteItem(
     ),
     kind: request.kind,
     name: request.name,
-    // The writer's key is internal and never printed by this path: the result
-    // row's `source` is an `ItemSource`, and the row a user sees is built by
-    // `status` with `source: "remote"`.
     key: dataKey(request.kind, request.name),
     entry: remoteEntryAsDataEntry(entry),
     scope: "local",
@@ -123,29 +105,22 @@ export async function installRemoteItem(
   };
 }
 
-/** Reconcile an installed remote row against its recorded pin. Offline. */
 export async function reconcileRemoteItem(opts: {
   project: string;
   kind: RemoteItemKind;
   name: string;
   entry: RemoteLockEntry;
   /**
-   * The pin being replaced, when this reconcile moves one.
-   *
-   * Without it `materializeLockEntry` treats the new pin as the previous one,
-   * so a path the new commit dropped is not known to have been managed. A
-   * dropped path that reads as hidden to `visibleExtraPaths` would then be
-   * preserved as the user's file and survive the update. The shelf pass in
-   * `update` supplies the same value for the same reason; `apply` converges to
-   * the pin it already holds and has none.
+   * Without the previous pin, a path the new commit dropped is not known to be
+   * managed. If it is ignored by Git, it is kept as the user's file and
+   * survives the update.
    */
   previous?: RemoteLockEntry;
   env?: Record<string, string | undefined>;
   dryRun?: boolean;
 }): Promise<MaterializeResult> {
-  // The refusal belongs here, with the derivation of the path: every caller
-  // that reconciles offline needs it, and one that only built the path reported
-  // whatever git printed about a directory that is not a repository.
+  // Refuse a cold cache here: a caller that only built the path would surface
+  // git's error about a non-repository directory.
   const cache = remoteCacheState(opts.entry.upstream, opts.env);
   if (!cache.present) throw coldCacheRefusal(opts.kind, opts.name, opts.entry);
   return await materializeLockEntry({
@@ -174,12 +149,6 @@ export async function reconcileRemoteItem(opts: {
   });
 }
 
-/**
- * The synthetic data entry a remote row reconciles through.
- *
- * Both needs fields are null, which the pairing refinement allows. The value
- * never reaches a file.
- */
 export function remoteEntryAsDataEntry(
   entry: RemoteLockEntry,
 ): DataLockEntryV4 {
@@ -194,10 +163,8 @@ export function remoteEntryAsDataEntry(
 }
 
 /**
- * The refusal every offline command prints for a cache that is not there.
- *
- * `update` and `apply` never create a cache. Creating one would make them
- * network commands, which is the property D15 exists to protect.
+ * `update` and `apply` never create a cache, since that would make them network
+ * commands.
  */
 export function coldCacheRefusal(
   kind: RemoteItemKind,
@@ -205,10 +172,8 @@ export function coldCacheRefusal(
   entry: RemoteLockEntry,
   detail = "has no local cache",
 ): PreconditionError {
-  // The fetch command is in the message, not only in the hint. A sweep records
-  // this refusal as a result row, and a row carries the message alone, so a
-  // hint-only instruction would never reach the one caller that cannot rerun
-  // the command to see it.
+  // The fetch command is in the message, not just the hint, because a sweep
+  // records only the message in its result row.
   return new PreconditionError(
     `${remoteKey(kind, name)} ${detail} for ${entry.upstream}; fetch it with ${PRODUCT_NAME} status --check-upstream`,
     {
@@ -218,12 +183,8 @@ export function coldCacheRefusal(
 }
 
 /**
- * The refusal a verb with nowhere to publish prints for a remote skill.
- *
- * `promote`, `move`, `keep-local`, and `revert` all act on an item the shelf
- * owns. A remote skill's upstream is a repository nobody on the team can
- * publish to, and its record is a different document, so `share --adopt` is the
- * one exit. Every verb prints the same two facts, so they cannot drift apart.
+ * A remote skill's upstream isn't publishable by the team, so `share --adopt`
+ * is the only exit; one shared refusal keeps every verb consistent.
  */
 export function remoteVerbRefusal(
   verb: string,
@@ -244,34 +205,24 @@ export function remoteVerbRefusal(
 export interface RemoteUpdatePreview {
   from: string;
   to: string;
-  /** Item-relative paths that differ between the two pins. */
   changed: string[];
-  /** True when the cache already holds the pinned content. */
   current: boolean;
-  /** The pin at the cached ref. Null when nothing would move. */
   pin: PinnedSource | null;
-  /** A plugin row's pin move. Null for a skill row and when nothing moves. */
   plugin: RemotePluginChange | null;
   /**
-   * The runs entries the new pin adds (D7 point 2): for a plugin row, and
-   * for a skill row whose new tree holds a plugin manifest, because Claude
-   * Code loads that skill as a plugin (R1). Null for any other row and when
-   * nothing moves.
+   * The runs entries the new pin adds: for a plugin row, and for a skill row
+   * whose new tree holds a plugin manifest, because Claude Code loads that
+   * skill as a plugin. Null for any other row and when nothing moves.
    */
   newRuns: PluginRuns | null;
 }
 
-/** What a plugin pin move changes in what the consent prompt reports. */
 export interface RemotePluginChange {
-  /** The manifest `version` at the old pin, or null when it has none. */
   versionFrom: string | null;
-  /** The manifest `version` at the new pin, or null when it has none. */
   versionTo: string | null;
-  /** The runs entries the new pin has and the old pin did not (D7 point 2). */
   newRuns: PluginRuns;
 }
 
-/** Read the pending change without moving anything. Offline. */
 export async function previewRemoteUpdate(opts: {
   project: string;
   kind: RemoteItemKind;
@@ -306,9 +257,8 @@ export async function previewRemoteUpdate(opts: {
     kind,
     name,
   );
-  // Content decides, not the commit. Two skills installed from one repository
-  // share a commit, so a repository that moved for the other one leaves this
-  // row exactly where it was.
+  // Compare content, not commits: skills from one repository share a commit, so
+  // another skill's move must not change this row.
   if (pin.sourcePinDigest === entry.sourcePinDigest) return unchanged;
 
   const before = await itemTreeEntriesAtCommit(
@@ -324,9 +274,8 @@ export async function previewRemoteUpdate(opts: {
   const changed = [...new Set([...previous.keys(), ...next.keys()])]
     .filter((path) => previous.get(path) !== next.get(path))
     .sort();
-  // The move keeps ignored local files beside the new pinned files (row 4),
-  // so the runs reader reads both. A kept local manifest can arm a hook the
-  // new tree adds.
+  // The move keeps ignored local files, and a kept local manifest can arm a
+  // hook the new tree adds, so read both.
   const extras = (
     await installedPreservedEntries({
       project: opts.project,
@@ -359,15 +308,9 @@ export async function previewRemoteUpdate(opts: {
 }
 
 /**
- * D3 and D7 point 2 for a plugin pin move. The new tree must keep the item
- * name in its manifest, or the move refuses before any write: Claude Code
- * names the plugin from the manifest, so a renamed tree installed under the
- * old folder would load under a name that no capshelf row holds.
- *
- * `previewRemoteUpdate` is the one producer of the pin that `updateRemoteItem`
- * and `updateMergeRemoteTarget` write, and the dry run reads the same
- * preview, so this one check covers every remote update path. The shelf
- * `update` calls it with the data repo for a `data/plugins/<n>` pin move.
+ * The new tree must keep the item name in its manifest, or the move refuses
+ * before any write: Claude Code names the plugin from the manifest, so a
+ * renamed tree would load under a name no row holds.
  */
 export async function pluginChange(
   repo: string,
@@ -395,7 +338,6 @@ export async function pluginChange(
   };
 }
 
-/** The refusal for a new tree whose manifest names another plugin (D3). */
 function pluginRenameRefusal(
   name: string,
   manifestName: string | null,
@@ -412,10 +354,6 @@ function pluginRenameRefusal(
   });
 }
 
-/**
- * The manifest in a pinned plugin tree, parsed. Null when the tree holds no
- * regular manifest blob, or when the blob is not a JSON object.
- */
 async function pluginManifestAt(
   repo: string,
   entries: readonly PinTreeEntry[],
@@ -438,10 +376,8 @@ async function pluginManifestAt(
 }
 
 /**
- * D3 for a merge result: the files a merge writes keep the item name in
- * their manifest. A local edit can rename the plugin while the upstream
- * changes another file, so the upstream check alone does not cover it. A
- * merged tree with no manifest is not checked here.
+ * Check the merged result too: a local edit can rename the plugin while
+ * upstream changes another file.
  */
 export function assertMergedPluginName(
   kind: ItemKind,
@@ -450,16 +386,14 @@ export function assertMergedPluginName(
   kept: readonly KeptInstalledEntry[],
 ): void {
   if (kind !== "plugins") return;
-  // The effective tree: the merged files, then the installed entries the
-  // writer keeps. An ignored installed manifest is not in `files`, but it
-  // stays in the folder and Claude Code loads it.
+  // An ignored installed manifest isn't in `files` but stays in the folder, and
+  // Claude Code loads it.
   const file =
     files.find((candidate) => candidate.path === PLUGIN_MANIFEST_REL) ??
     kept.find((candidate) => candidate.path === PLUGIN_MANIFEST_REL);
   if (file === undefined) return;
   let parsed: ConfigValue = null;
   try {
-    // A kept non-regular entry has no content and names no plugin.
     if (file.content !== null) {
       parsed = JSON.parse(file.content.toString("utf8"));
     }
@@ -482,20 +416,9 @@ function manifestString(
 }
 
 /**
- * The freshness fields a moved pin carries.
- *
- * `lastChecked`, `upstreamHead`, and `upstreamPinDigest` describe one
- * measurement of the repository. Carrying them across a pin move leaves the row
- * claiming the upstream holds content the pin has already taken: `status` then
- * reports `update_available` against a digest *older* than the pin, `--strict`
- * fails, and the update it suggests answers `already-current`. Only the next
- * check clears it.
- *
- * A move onto the head the check recorded consumes exactly that measurement, so
- * the timestamp and head still hold and the digest becomes the pinned one. A
- * move onto anything else means the cache ran ahead of the check — `add <url>`
- * fetches a warm cache — and nothing measured is true of it, so the row goes
- * back to never checked.
+ * Freshness fields measure one check; carrying them across a pin move would
+ * claim upstream holds content the pin already took, so they are kept only when
+ * the move lands on the checked head.
  */
 function freshnessAfterMove(
   entry: RemoteLockEntry,
@@ -512,7 +435,6 @@ function freshnessAfterMove(
   };
 }
 
-/** The moved row, with the previous check's measurement resolved, not carried. */
 function movedRemoteEntry(
   entry: RemoteLockEntry,
   pin: PinnedSource,
@@ -534,9 +456,8 @@ function movedRemoteEntry(
 
 export interface RemoteUpdateResult {
   /**
-   * `skipped` is what a bare `capshelf update` returns for every remote row.
-   * A9 forbids a routine sweep from moving a remote pin, and a result value is
-   * how the sweep reports the row without a branch that silently drops it.
+   * `skipped` lets a bare `update` report a remote row without moving its pin,
+   * rather than silently dropping it.
    */
   action: "updated" | "would-update" | "already-current" | "skipped";
   from: string;
@@ -545,8 +466,7 @@ export interface RemoteUpdateResult {
 }
 
 /**
- * Move a remote pin to what the cache already holds. Never fetches, and never
- * prompts: the command layer owns consent, because only it can see `--yes`,
+ * Never prompts: the command layer owns consent because only it sees `--yes`,
  * `--json`, and whether a terminal is attached.
  */
 export async function updateRemoteItem(opts: {
@@ -579,7 +499,7 @@ export async function updateRemoteItem(opts: {
     action: opts.dryRun ? "would-update" : "updated",
     from: entry.sourceCommit,
     to: next.sourceCommit,
-    entry: opts.dryRun ? entry : next,
+    entry: next,
   };
 }
 
@@ -590,12 +510,8 @@ export interface RemoteMergeResult extends RemoteUpdateResult {
 }
 
 /**
- * Three-way merge of the locked pin, the installed copy, and the cached ref.
- *
- * A sibling of `updateMergeTarget` rather than a widening of it. That function's
- * provenance checks all speak in terms of a data repo and a master item, and a
- * remote row has neither; the duplication here is the five steps, and it is
- * smaller than the branching the shared version would need.
+ * Sibling of `updateMergeTarget` rather than a widening: its provenance checks
+ * assume a data repo and master item, which a remote row lacks.
  */
 export async function updateMergeRemoteTarget(opts: {
   project: string;
@@ -605,8 +521,8 @@ export async function updateMergeRemoteTarget(opts: {
   preview: RemoteUpdatePreview;
   dryRun: boolean;
   /**
-   * The merged files a consent prompt approved. The merge refuses when its
-   * own result differs, so the approved files are the written files.
+   * The merge refuses when its result differs from the approved files, so
+   * approved files are the written files.
    */
   approvedFiles?: readonly NamedFile[];
 }): Promise<RemoteMergeResult> {
@@ -643,7 +559,7 @@ export async function updateMergeRemoteTarget(opts: {
       action: "would-update",
       from: entry.sourceCommit,
       to: next.sourceCommit,
-      entry,
+      entry: next,
       merged: performedMerge,
       mergeBase: entry.sourceCommit,
       mergeResultDigest,
@@ -688,14 +604,11 @@ type RemoteMergePlan =
       upstreamFiles: NamedFile[];
       baseEntries: PinTreeEntry[];
       cachePath: string;
-      /** The merged files the write puts in the folder. */
       files: NamedFile[];
-      /** The installed entries the writer keeps beside `files`. */
       kept: KeptInstalledEntry[];
       pin: PinnedSource;
     };
 
-/** The merge `updateMergeRemoteTarget` writes, computed and not written. */
 async function planRemoteMerge(opts: {
   project: string;
   kind: RemoteItemKind;
@@ -718,8 +631,8 @@ async function planRemoteMerge(opts: {
     return { kind: "current", to: preview.to };
   }
 
-  // The base has to reproduce the locked pin, or the merge is against content
-  // the lock never described. The same guard the shelf merge applies.
+  // The base must reproduce the locked pin, or the merge is against content the
+  // lock never described.
   const baseEntries = await itemTreeEntriesAtCommit(
     remoteTreeSource(cache.path, entry.sourceCommit, entry.subpath),
     kind,
@@ -761,11 +674,8 @@ async function planRemoteMerge(opts: {
 }
 
 /**
- * D7 point 2 for a remote `update --merge`: the runs entries the merged
- * files add over the locked pin, and those files. A merge can run a command
- * that neither the local copy nor the upstream runs alone, so the prompt
- * reads the merged files. Null `files` when nothing would move; `newRuns` is
- * null when the merged files are not a plugin to Claude Code.
+ * A merge can run a command neither side runs alone, so the consent prompt
+ * reads the merged files.
  */
 export async function remoteMergeNewRuns(opts: {
   project: string;
@@ -778,7 +688,6 @@ export async function remoteMergeNewRuns(opts: {
   if (plan.kind === "current") {
     return { newRuns: opts.preview.newRuns, files: null };
   }
-  // Every installed entry the merge writer keeps, from the writer's rule.
   const extras = plan.kept;
   const merged = await itemPluginRunsFromFiles(opts.kind, plan.files, extras);
   if (merged === null) return { newRuns: null, files: plan.files };
@@ -791,7 +700,6 @@ export async function remoteMergeNewRuns(opts: {
   return { newRuns: newRunsEntries(previous, merged), files: plan.files };
 }
 
-/** The bytes of a pinned tree, named the way the merge machinery names them. */
 async function namedFilesFromEntries(
   repo: string,
   entries: readonly PinTreeEntry[],

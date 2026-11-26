@@ -1,29 +1,14 @@
-/**
- * The two questions `LockEntry.source` used to answer at once.
- *
- * `ContentSource` says where an item's bytes come from. `Ownership` says who
- * owns the content and who owns the record. Two populations differ on both
- * axes at the same time, so one field could answer both; a third population
- * separates them, and every site that reads `entry.source === "data"` to decide
- * a content question would route that population into the bundled-item branch.
- *
- * Both values are derived in memory at the read boundary. Nothing new is
- * written to a lock file, and identity is unchanged.
- */
 import type { LockEntry } from "./lock";
 import { itemRepoRelPath } from "./master";
 import type { ItemKind } from "./master";
 
-/** Bytes in a git tree: one repository, one commit, one root. */
 export interface GitTreeSource {
   readonly kind: "git-tree";
   readonly repo: string;
   readonly commit: string;
-  /** Repository-relative, POSIX-separated root of the item. */
   readonly itemRoot: string;
 }
 
-/** Bytes in the running CLI binary. */
 export interface BundledSource {
   readonly kind: "bundled";
   readonly sha: string;
@@ -31,18 +16,11 @@ export interface BundledSource {
 
 export type ContentSource = GitTreeSource | BundledSource;
 
-/**
- * Who owns the content and who owns the record.
- *
- * `shelf`: the data repo owns the content, capshelf owns the record.
- * `system`: the CLI binary owns both.
- */
 export type Ownership = "shelf" | "system";
 
 /**
- * Both predicates accept null, which is what a reporting path holds when it
- * cannot reach the item at all. "Not a git tree" and "unreachable" are
- * different states, so each has its own answer.
+ * Both predicates accept null for a reporting path that cannot reach the item;
+ * "not a git tree" and "unreachable" are different states.
  */
 export function isGitTree(
   source: ContentSource | null,
@@ -56,15 +34,6 @@ export function isBundled(
   return source !== null && source.kind === "bundled";
 }
 
-/**
- * A git-tree source at an explicit commit, for a caller that selects one
- * rather than reading one from a lock entry — `add`, `update`, `promote`, and
- * `share` all pin a commit they just chose.
- *
- * `itemRoot` defaults to the canonical layout, which is where every item lives
- * today. The item root was always a field of the data model; it stayed
- * invisible while `itemRepoRelPath` could derive it for every item.
- */
 export function gitTreeSource(input: {
   repo: string;
   kind: ItemKind;
@@ -80,14 +49,6 @@ export function gitTreeSource(input: {
   };
 }
 
-/**
- * The content source a lock entry selects.
- *
- * `entry.source` is read here and nowhere else afterwards: a consumer asks
- * `isGitTree(source)` instead. A data entry with no repository is a programmer
- * error, which is what `materialize.ts` used to report from a distance through
- * an ambient `dataRepo` argument that had to agree with the entry.
- */
 export function contentSourceFor(input: ContentSourceInput): ContentSource {
   return requireContentSource(
     contentSourceOrNull(input),
@@ -97,9 +58,8 @@ export function contentSourceFor(input: ContentSourceInput): ContentSource {
 }
 
 /**
- * The same refusal for a caller that already holds a source and has to state
- * that it needs one. One sentence, one place: the text a user sees must not
- * depend on which function noticed the missing repository.
+ * Shares one refusal message with contentSourceFor so the user-facing text does
+ * not depend on which function noticed.
  */
 export function requireContentSource(
   source: ContentSource | null,
@@ -118,18 +78,13 @@ export interface ContentSourceInput {
   entry: LockEntry;
   kind: ItemKind;
   name: string;
-  /** The resolved repository, when the entry needs one. */
   repo?: string | null;
-  /** Overrides the canonical layout. Nothing supplies one yet. */
   itemRoot?: string;
 }
 
 /**
- * The same source for a reporting path, which must degrade rather than fail.
- *
- * Null means one thing only: the entry reads from a repository and none is
- * available. A bundled entry still returns a source, so a caller can still tell
- * "the CLI owns these bytes" from "I cannot reach them".
+ * Null means only "needs a repository and none is available"; bundled entries
+ * still return a source so callers can tell owned bytes from unreachable ones.
  */
 export function contentSourceOrNull(
   input: ContentSourceInput,
@@ -148,15 +103,13 @@ export function contentSourceOrNull(
 }
 
 /**
- * Ownership is derived, never stored. It is a function of which document holds
- * the record and the record's own `source` field. `capshelf.lock.json` and
- * `local.lock.json` hold both populations, and `source` tells them apart.
+ * Ownership is derived from the entry's `source` field rather than stored,
+ * because both lock documents hold both populations.
  */
 export function ownershipFor(entry: LockEntry): Ownership {
   return entry.source === "system" ? "system" : "shelf";
 }
 
-/** True when two sources resolve to the same tree, so one read serves both. */
 export function sameContentSource(
   left: ContentSource,
   right: ContentSource,
@@ -168,7 +121,7 @@ export function sameContentSource(
       left.itemRoot === right.itemRoot
     );
   }
-  // A bundled source always resolves to the running binary's tree, so two of
-  // them select the same content whatever the entries record.
+  // A bundled source always resolves to the running binary's tree, so any two
+  // select the same content.
   return !isGitTree(left) && !isGitTree(right);
 }

@@ -2,11 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { promoteRowDisposition } from "../src/promote-catalog";
 import type { State } from "../src/status-core";
 
-/**
- * Every member of `State`, written out so a new state fails this test until
- * the disposition decides it. The type alone cannot force that: a `default`
- * branch would silently classify a new state.
- */
 const ALL_STATES: State[] = [
   "ok",
   "source_filtered",

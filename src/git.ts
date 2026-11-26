@@ -22,10 +22,9 @@ const GIT_MISSING_MESSAGE =
   "git is required but was not found on PATH\n  install Git, then retry";
 
 /**
- * `git check-attr --source=<tree-ish>` arrived in Git 2.40.0, and PIN-9 has no
- * working-tree fallback: reading attributes from the worktree would let a
- * machine-local file decide whether a pin is portable, which is the class of
- * failure this design exists to remove.
+ * `git check-attr --source=<tree-ish>` needs Git 2.40.0, and there is no
+ * worktree fallback because machine-local attributes would decide whether a pin
+ * is portable.
  */
 export const MIN_GIT_VERSION: readonly [number, number, number] = [2, 40, 0];
 
@@ -44,29 +43,12 @@ export class GitTooOldError extends CliError {
   }
 }
 
-/*
- * THE EXECUTION PROFILES (PIN-4)
- *
- * A repository path is not a complete Git safety policy. A read from the data
- * repo must ignore replacement refs. A project ignore query must use the
- * project's own configuration. A commit must keep the transaction's index and
- * hook policy. A no-index diff must not run an external helper. One nullable
- * `repo` argument cannot express those differences — and could not: `null`
- * meant both "no repository needed" and "use whatever repository the process
- * working directory happens to be in", which is what made `status --diff`
- * render its answer under the user's own `core.autocrlf`.
- *
- * | profile          | binding                | policy                                                              |
- * | ---------------- | ---------------------- | ------------------------------------------------------------------- |
- * | source-read      | -C <dataRepo>          | replacement refs and core.fsmonitor disabled; repository-selecting environment stripped |
- * | source-write     | -C <dataRepo>          | fixed binding; index/hook policy owned by the caller's transaction    |
- * | project-policy   | -C <project>           | fixed binding; project ignore and tracking configuration retained     |
- * | repository-free  | explicit cwd           | repository-selecting environment stripped; transport config retained  |
- * | isolated-diff    | disposable directory   | neutral attributes and line endings; no external diff or textconv     |
- * | isolated-merge   | disposable repository  | neutral config, hooks, attributes, and environment                    |
- *
- * Every wrapper below names exactly one. There is no default and no fallback
- * to the process working directory.
+/**
+ * One nullable repo argument cannot express the Git policy each use needs:
+ * replacement refs, project config, index and hook policy, and no external diff
+ * helper. Every wrapper therefore names exactly one profile and no profile is
+ * the default. The `isolated-merge` caller supplies its own repo or cwd and its
+ * own environment.
  */
 type GitBinding =
   | { profile: "source-read"; repo: string }
@@ -98,7 +80,6 @@ export async function assertGitAvailable(): Promise<void> {
   checkedVersion = reported;
 }
 
-/** Test seam: forget the cached `git --version` answer for this process. */
 export function resetGitVersionCache(): void {
   checkedPath = undefined;
   checkedVersion = undefined;
@@ -119,9 +100,8 @@ async function reportedGitVersion(): Promise<string> {
 }
 
 /**
- * The leading numeric triple of a `git --version` string. Vendor builds append
- * their own suffix (`2.39.5 (Apple Git-154)`, `2.40.0.windows.1`), which must
- * not change the comparison.
+ * Vendor builds append suffixes (`2.39.5 (Apple Git-154)`, `2.40.0.windows.1`)
+ * that must not affect the comparison.
  */
 export function parseGitVersion(
   reported: string,
@@ -144,25 +124,17 @@ function compareVersions(
 export interface GitInvocation {
   exitCode: number;
   stdout: Buffer;
-  /** trimmed */
   stderr: string;
 }
 
 export interface GitRunOptions {
-  /**
-   * Replaces the profile's environment entirely. Only `source-write` and
-   * `isolated-merge` use it — a transaction supplies its own `GIT_INDEX_FILE`,
-   * and the merge sandbox supplies a whole neutral environment.
-   */
   env?: NodeJS.ProcessEnv;
   stdin?: string | Uint8Array;
 }
 
 /**
- * Variables that redefine which repository, index, or object store a git
- * command actually touches. An ambient `GIT_DIR` or
- * `GIT_ALTERNATE_OBJECT_DIRECTORIES` silently makes `-C <repo>` a lie, so any
- * profile whose whole point is a fixed binding removes them.
+ * An ambient GIT_DIR or GIT_ALTERNATE_OBJECT_DIRECTORIES silently defeats `-C
+ * <repo>`, so fixed-binding profiles strip these.
  */
 const REPOSITORY_SELECTING_ENV = [
   "GIT_DIR",
@@ -184,7 +156,6 @@ const REPOSITORY_SELECTING_ENV = [
   "GIT_ICASE_PATHSPECS",
 ] as const;
 
-/** Command-line config injection and diff helper selection. */
 const DIFF_HELPER_ENV = [
   "GIT_EXTERNAL_DIFF",
   "GIT_DIFF_OPTS",
@@ -211,11 +182,8 @@ function environmentFor(
     case "source-read":
       return {
         ...withoutVariables(process.env, REPOSITORY_SELECTING_ENV),
-        // Replacement refs are honored by default, so `log`, `ls-tree`, and
-        // `cat-file` would agree with each other on a rewritten history while
-        // the lock recorded an object id that resolves differently in every
-        // other clone. They are a legitimate local tool, so they are ignored
-        // here rather than refused.
+        // Replacement refs are ignored so the lock never records an object id
+        // that resolves differently in other clones.
         GIT_NO_REPLACE_OBJECTS: "1",
       };
     case "source-write":
@@ -275,12 +243,9 @@ function cwdFor(binding: GitBinding): string | undefined {
   }
 }
 
-// Execute git with args as an explicit argv array — never a shell string. This
-// is the ONLY way capshelf runs git: Bun's `$` applies a shell-escape layer
-// that also mis-serializes some non-Latin1 strings when building argv,
-// corrupting pathspecs/refs for non-ASCII item names. Bun.spawn takes argv
-// directly and bypasses that layer. Never throws on nonzero exit — callers
-// decide how to treat exit codes.
+// Use Bun.spawn with an argv array, never `$`: its shell-escape layer
+// mis-serializes some non-Latin1 strings, corrupting pathspecs and refs for
+// non-ASCII names.
 async function runGit(
   binding: GitBinding,
   args: string[],
@@ -319,11 +284,6 @@ async function runGit(
   return { exitCode, stdout, stderr: stderr.trim() };
 }
 
-/**
- * A `source-read` call whose output goes to `consume` as it arrives. When
- * `consume` returns true, Git is stopped and the call counts as complete.
- * Returns false when Git fails before that.
- */
 async function sourceReadUntil(
   repo: string,
   args: string[],
@@ -353,7 +313,6 @@ async function sourceReadUntil(
       }
     }
   } finally {
-    // Stopped on purpose, or `consume` threw: Git must not keep running.
     if (!ended) {
       proc.kill();
       await reader.cancel();
@@ -373,8 +332,6 @@ function throwOnFailure(result: GitInvocation, args: string[]): Buffer {
   }
   return result.stdout;
 }
-
-/* ---------------------------------------------------------------- profiles */
 
 export async function sourceRead(
   repo: string,
@@ -476,18 +433,10 @@ export async function isolatedMergeText(
 }
 
 /**
- * Render a diff between two files that are already on disk in `cwd`.
- *
- * The argv is fixed, not composed by the caller, because every one of these
- * flags closes a way for the machine's configuration to answer instead of the
- * bytes: `--no-ext-diff` blocks `diff.external` and `GIT_EXTERNAL_DIFF`,
- * `--no-textconv` blocks a driver selected through attributes, `--text` makes
- * the output independent of Git's binary heuristic, and the two `-c` settings
- * stop `core.autocrlf` and `.gitattributes` from normalizing the very
- * difference the user is trying to see. Before this, `git diff --no-index` ran
- * in the user's own directory under their global config, so a CRLF-versus-LF
- * difference reported *nothing* on a machine with `core.autocrlf=input` — the
- * one command run to investigate shared the defect it was meant to expose.
+ * The argv is fixed so the bytes answer, not the machine configuration.
+ * --no-ext-diff blocks external diff helpers, --no-textconv blocks attribute
+ * drivers, --text ignores Git's binary heuristic, and the -c settings stop
+ * core.autocrlf, core.eol, and attributes from normalizing the difference.
  */
 export async function isolatedNoIndexDiff(
   cwd: string,
@@ -515,8 +464,6 @@ export async function isolatedNoIndexDiff(
     newPath,
   ]);
 }
-
-/* ------------------------------------------------------- repository facts */
 
 export async function assertIsGitRepo(path: string): Promise<void> {
   await assertGitAvailable();
@@ -574,9 +521,8 @@ export async function isGitWorkTreeRoot(path: string): Promise<boolean> {
 }
 
 /**
- * Where the project's own `.git/info/exclude` lives. Project policy, not
- * identity: capshelf writes this file so a `--local` item stays out of the
- * project's history (PIN-5's second retained job).
+ * Project policy, not identity: capshelf writes this file so `--local` items
+ * stay out of the project's history.
  */
 export async function gitInfoExcludePath(
   project: string,
@@ -591,7 +537,6 @@ export async function gitInfoExcludePath(
   return resolve(project, out.trim());
 }
 
-/** `isGitWorkTreeRoot`, bound to the consuming project instead of a data repo. */
 export async function isProjectWorkTreeRoot(project: string): Promise<boolean> {
   return (await projectWorkTreeRoot(project)) !== null;
 }
@@ -611,15 +556,9 @@ async function projectWorkTreeRoot(project: string): Promise<string | null> {
 }
 
 /**
- * The commit whose tree at `relPath` matches the current HEAD content.
- * Used as the `sourceCommit` recorded in lock entries.
- */
-/**
- * Where a last-touching-commit walk starts. `head` is a commit the caller
- * already read as `HEAD`. When it is given, the walk starts there instead of
- * at the live `HEAD`, so one command pass that reads `HEAD` once sees one
- * history for all of its items. The history from a full commit id cannot
- * change, so `memo` keeps that answer for the rest of the command.
+ * A caller-supplied `head` makes one command pass see one history for all
+ * items, and a full commit id's history is immutable so `memo` can keep the
+ * answer.
  */
 export interface LastTouchingOptions {
   head?: string;
@@ -654,13 +593,9 @@ export async function lastTouchingCommitForPaths(
 }
 
 /**
- * The `sourceCommit` for a copy item: the last commit touching the item path
- * with the root metadata sidecar excluded via a git pathspec. A
- * `.capshelf.yml`-only commit therefore never moves the result, so `update`
- * after a metadata-only data-repo commit stays a true no-op (no lock rewrite
- * in any consuming project). Falls back to the unfiltered commit for the
- * degenerate history where only the sidecar has ever been committed under
- * the path.
+ * Excludes the item's `.capshelf.yml` sidecar, so a metadata-only commit never
+ * moves sourceCommit and `update` stays a no-op. Falls back to the unfiltered
+ * commit if only the sidecar was ever committed under the path.
  */
 export async function lastTouchingContentCommit(
   repo: string,
@@ -676,7 +611,6 @@ export async function lastTouchingContentCommit(
   return await lastTouchingCommit(repo, relPath, options);
 }
 
-/** The pathspecs `lastTouchingContentCommit` walks for one copy item. */
 export function contentCommitPathspecs(relPath: string): string[] {
   return [
     literalPathspec(relPath),
@@ -690,7 +624,6 @@ interface WalkRequest {
   exclude: string[];
 }
 
-/** A list of `:(literal)` and `:(literal,exclude)` paths, or null. */
 function walkRequestOf(
   key: string,
   pathspecs: readonly string[],
@@ -711,31 +644,10 @@ function walkRequestOf(
 }
 
 /**
- * Answer `log -1 <head> -- <pathspecs>` for many pathspec lists with one walk,
- * and keep each answer in `memo`. Each item then needs no Git process to
- * select its commit.
- *
- * One `log --name-only` over the union of the lists prints every commit that
- * changes a path in the union, newest first, with the changed paths. The first
- * commit that changes a path of one list, outside that list's exclusions, is
- * the commit `log -1` selects for that list. This holds only for a linear
- * history. At a merge, `log` follows one parent, and the parent it follows can
- * depend on the paths. So a history with a merge commit fills nothing.
- *
- * Other limits keep the answers exact:
- * - A list of one pathspec is skipped, because `log.follow` follows renames
- *   only when one path is given.
- * - A list whose paths fall under another list's exclusion is skipped, because
- *   the union walk applies every exclusion to every path.
- * - `--no-renames` lists a rename as a deletion and an addition, and `--root`
- *   lists the files of the root commit. Neither depends on the configuration.
- * - `--ignore-submodules=none` lists a gitlink change that a submodule
- *   `ignore` setting would hide. A commit listed with no path still fills
- *   nothing, in case another setting hides a change.
- *
- * The walk stops when every list has its commit, so an active history costs
- * about as much as the separate walks. A failed walk fills nothing, and each
- * item then runs its own `log -1`.
+ * One union `log --name-only` walk answers every list only for linear history
+ * (at a merge `log` follows a parent that can depend on paths), so merges,
+ * single-pathspec lists, and overlapping exclusions fall back to per-item `log
+ * -1`.
  */
 export async function prefetchLastTouchingCommits(
   repo: string,
@@ -782,10 +694,9 @@ export async function prefetchLastTouchingCommits(
   if (answers === null) return;
   // The answers hold only when no merge lies between `head` and the oldest
   // commit the walk read. When every list has its commit, only that range is
-  // checked, so a long history costs no full `rev-list`. A list with no
-  // commit depends on the whole history, so then all of it is checked. The
-  // oldest commit itself, if it is a merge, was listed with no path, and
-  // `finish` already refused the walk.
+  // checked, and the oldest commit is excluded. If it is a merge, it was listed
+  // with no path and `finish` already refused the walk. A list with no commit
+  // depends on the whole history, so all of it is checked.
   const oldest = reader.lastCommit();
   const range =
     [...answers.values()].every((commit) => commit !== null) &&
@@ -804,7 +715,6 @@ export async function prefetchLastTouchingCommits(
   for (const [key, commit] of answers) memo.lastTouching.set(key, commit);
 }
 
-/** The one `log` that `prefetchLastTouchingCommits` runs. */
 export function logWalkArgs(head: string, union: readonly string[]): string[] {
   return [
     "log",
@@ -825,12 +735,8 @@ export function logWalkArgs(head: string, union: readonly string[]): string[] {
 }
 
 /**
- * Reads the output of `logWalkArgs` in chunks of any size, and finds the
- * newest commit that changes a path of each request.
- *
- * `%x00%H` with `-z` gives an empty field, then the commit id, then a field
- * that starts with the newline before the first changed path. A changed path
- * is never empty, so an empty field always comes before a commit id.
+ * `%x00%H` with `-z` yields an empty field, then the commit id; a changed path
+ * is never empty, so an empty field always precedes a commit id.
  */
 export class LogWalkReader {
   private readonly requests: ReadonlyArray<{ key: string; include: string[] }>;
@@ -841,8 +747,8 @@ export class LogWalkReader {
   private afterId = false;
   private afterEmpty = false;
   /**
-   * A commit that `log` selects but lists with no changed path means that
-   * the listing hid a change. Then no answer of this walk is trusted.
+   * A commit that `log` selects but lists with no changed path means the
+   * listing hid a change, so no answer from this walk is trusted.
    */
   private hiddenChange = false;
 
@@ -850,11 +756,6 @@ export class LogWalkReader {
     this.requests = requests;
   }
 
-  /**
-   * True when every request has its commit. The walk is newest first, so an
-   * older commit cannot change an answer that is already found, and the
-   * caller can stop Git.
-   */
   done(): boolean {
     return this.hiddenChange || this.answers.size === this.requests.length;
   }
@@ -877,12 +778,10 @@ export class LogWalkReader {
     return false;
   }
 
-  /** The last commit id the reader took, which is the oldest one it read. */
   lastCommit(): string | undefined {
     return this.commit;
   }
 
-  /** The answer of each request, or null when the walk cannot be trusted. */
   finish(): Map<string, string | null> | null {
     if (!this.done()) {
       if (this.rest.length > 0) this.take(this.rest.toString("utf-8"));
@@ -950,7 +849,6 @@ async function tryLastTouchingCommitForPathspecs(
   if (head !== undefined && key === undefined) {
     throw new Error(`last touching commit needs a full commit id, got ${head}`);
   }
-  // A walk from the live `HEAD` has no key and is never reused.
   const cached = key === undefined ? undefined : memo?.lastTouching.get(key);
   if (cached !== undefined) return cached;
   const result = await sourceRead(repo, [
@@ -1046,10 +944,6 @@ export interface GitTreeEntry {
   path: string;
 }
 
-/**
- * The refusal `assertRegularBlobEntries` throws. A caller that can say more
- * about the refusal catches this class, not every `PreconditionError`.
- */
 export class UnsupportedGitEntryError extends PreconditionError {}
 
 export function assertRegularBlobEntries(
@@ -1069,10 +963,6 @@ export function assertRegularBlobEntries(
   }
 }
 
-/**
- * List files in a directory at a specific commit. Returns paths relative to
- * the repo root. Used by `apply` to enumerate what to restore.
- */
 export async function lsTreeAtCommit(
   repo: string,
   commit: string,
@@ -1094,15 +984,9 @@ export async function lsTreeEntriesAtCommit(
 }
 
 /**
- * One `ls-tree -r -z` over an explicit pathspec list. PIN-1 takes item
- * identity from exactly this output, so it must stay one call: two calls could
- * observe two different repository states, and a per-path call would let a
- * missing path be silently dropped.
- *
- * `-z` terminates records with NUL and, crucially, emits pathnames verbatim
- * instead of git's default octal-quoting. Without it, filenames with
- * non-ASCII/control/quote characters come back quoted (e.g. `"caf\303\251"`)
- * and every downstream read fails to find them.
+ * Must stay one call, so item identity sees one repository state and no missing
+ * path is dropped. `-z` emits pathnames verbatim, without octal-quoting of
+ * non-ASCII, control, or quote characters.
  */
 export async function lsTreeEntriesForPathspecs(
   repo: string,
@@ -1160,11 +1044,6 @@ function parseLsTree(out: string): GitTreeEntry[] {
     });
 }
 
-/**
- * The paths of a pathspec list in which every entry is `:(literal)<path>` with
- * a normalized path, or null. Only these lists are answered from a batch
- * listing. Any other magic or shape goes to Git itself.
- */
 function literalPathsOf(pathspecs: readonly string[]): string[] | null {
   const paths: string[] = [];
   for (const pathspec of pathspecs) {
@@ -1177,9 +1056,8 @@ function literalPathsOf(pathspecs: readonly string[]): string[] | null {
 }
 
 /**
- * A relative path with no empty, `.`, or `..` segment. A tree can hold
- * entries named `.` or `..`, and Git refuses a path that climbs out of the
- * repository, so only these paths go into a batch.
+ * A tree can hold entries named `.` or `..` and Git refuses paths climbing out
+ * of the repo, so only normal paths are batched.
  */
 function isNormalRelPath(path: string): boolean {
   return path
@@ -1188,13 +1066,8 @@ function isNormalRelPath(path: string): boolean {
 }
 
 /**
- * The entries `ls-tree -r [-t] -- <literal paths>` prints, taken from an
- * `ls-tree -r -t` listing of the same commit over paths that cover them. A
- * literal path selects itself and everything under it. With `-t`, Git also
- * prints each tree it enters on the way to a selected path. Each such tree is
- * a parent of a covering path or lies under one, so the listing holds it. The
- * listing is in tree order, and a filter keeps that order.
- * tests/git-batch-reads.test.ts compares this with Git.
+ * With `-t` Git also prints each tree entered on the way to a selected path;
+ * each is a parent of or under a covering path, so the batch listing holds it.
  */
 function entriesUnderLiteralPaths(
   whole: readonly GitTreeEntry[],
@@ -1219,20 +1092,10 @@ function batchKey(repo: string, commit: string): string | undefined {
   return gitObjectReadKey(repo, commit, ["batch"]);
 }
 
-/**
- * Whether `path` is `root` or lies under it. This is what a literal pathspec
- * of `root` selects.
- */
 function isAtOrUnder(path: string, root: string): boolean {
   return path === root || path.startsWith(`${root}/`);
 }
 
-/**
- * Register the items a command will read at one commit. Later tree reads and
- * attribute queries at that commit that stay inside these paths are answered
- * from one Git process each. A path that is not literal and normalized is not
- * registered, so a read of it goes to Git as before.
- */
 export function registerBatchReads(
   memo: GitReadMemo,
   repo: string,
@@ -1246,15 +1109,12 @@ export function registerBatchReads(
   const grown = [...new Set([...registered, ...paths])];
   if (grown.length === registered.length) return;
   memo.batchPaths.set(key, grown);
-  // The cached listing covers only the older path set.
   memo.batchTrees.delete(key);
 }
 
 /**
- * The one listing of every registered path at a commit, or undefined when the
- * commit is not registered or the requested paths are not inside it. A failed
- * read returns undefined and leaves nothing behind, so the caller asks Git
- * with its own arguments and reports its own error.
+ * A failed read returns undefined and leaves nothing cached, so the caller asks
+ * Git with its own arguments and reports its own error.
  */
 async function batchTreeAtCommit(
   repo: string,
@@ -1289,14 +1149,8 @@ async function batchTreeAtCommit(
 }
 
 /**
- * Read blobs straight out of the object database, in one subprocess.
- *
- * `cat-file` applies no smudge filter and consults no working tree, so what
- * this returns is exactly what the commit holds — the same bytes every `git
- * clone` of that repository produces. That is the whole of PIN-3: `add` used
- * to copy the data repo's *working tree* while `apply` read the commit, and
- * the two disagreeing is what let a lock be written that no later command
- * could satisfy.
+ * `cat-file` applies no smudge filter and ignores the working tree, so the
+ * bytes match what every clone of the commit produces.
  */
 export class GitBlobReadError extends Error {
   readonly blobId: string;
@@ -1316,9 +1170,8 @@ function assertValidObjectNames(ids: readonly string[]): void {
 }
 
 /**
- * The largest blob a memo keeps. Managed config files are far smaller. A
- * larger blob, such as an image in a skill, is read again when a command needs
- * it twice, so the memo never holds a second copy of large content.
+ * Large blobs (e.g. images in a skill) are re-read instead of memoized so the
+ * memo never holds a second copy of large content.
  */
 export const MEMO_BLOB_LIMIT = 1024 * 1024;
 
@@ -1326,7 +1179,6 @@ export async function catFileBlobs(
   repo: string,
   blobIds: Iterable<string>,
   memo?: GitReadMemo,
-  /** False reads from `memo` but adds nothing to it. */
   keep = true,
 ): Promise<Map<string, Buffer>> {
   const requestedIds = [...blobIds];
@@ -1397,11 +1249,8 @@ export async function catFileBlobs(
 }
 
 /**
- * The size of each blob, from one `cat-file --batch-check` process.
- *
- * Discovery must decide what to skip before it reads: `catFileBlobs` holds the
- * whole batch output in one buffer, so a size limit applied after that read
- * limits nothing.
+ * Sizes are read first because `catFileBlobs` buffers the whole batch output,
+ * so a size limit applied after reading limits nothing.
  */
 export async function catFileSizes(
   repo: string,
@@ -1424,34 +1273,15 @@ export async function catFileSizes(
 export interface CheckAttrResult {
   path: string;
   attribute: string;
-  /** `unspecified`, `unset`, `set`, or the attribute's string value. */
   value: string;
 }
 
 /**
- * Read attributes as the *commit* declares them (PIN-9).
- *
- * `check-attr` resolves a stack of sources, three of which are machine-local:
- * `$GIT_DIR/info/attributes`, `core.attributesFile`, and the system-wide
- * `gitattributes`. Letting any of them decide would make the same commit
- * portable on one machine and not on another — a machine-local identity input
- * reintroduced through the back door, which is the failure this whole design
- * removes.
- *
- * **Correction to the spec's stated mechanism.** The design says the three are
- * neutralized by `GIT_ATTR_NOSYSTEM=1`, `-c core.attributesFile=/dev/null`,
- * and `--source=<commit>`. Those cover only two: `GIT_ATTR_NOSYSTEM` disables
- * the *system* file, and neither it nor `--source` disables
- * `$GIT_DIR/info/attributes`, which still wins over the committed
- * `.gitattributes`. Reproduced here — with `plain.md filter=local-only` in
- * `.git/info/attributes`, `check-attr --source=<commit>` reported
- * `filter: local-only` for a commit that declares nothing for that path.
- *
- * So the query is bound instead to a throwaway bare repository that has no
- * `info/attributes` at all and reaches the real objects through
- * `objects/info/alternates`. It is four small file writes and no extra
- * subprocess, and it makes the local override structurally unable to
- * participate rather than merely unlikely to.
+ * Attributes come only from the commit's own .gitattributes, never from
+ * machine-local sources. GIT_ATTR_NOSYSTEM and --source do not disable
+ * $GIT_DIR/info/attributes, which still beats the committed .gitattributes. So
+ * the query runs in a throwaway bare repository that has no info/attributes and
+ * reaches the real objects through objects/info/alternates.
  */
 export async function repositoryObjectsDirectory(
   repo: string,
@@ -1470,13 +1300,12 @@ export async function repositoryObjectsDirectory(
 }
 
 /**
- * `memo` keeps a successful answer for the rest of the command. The query
- * reads only the commit's own `.gitattributes`: the shadow repository has no
- * `info/attributes`, and the system and global files are disabled. So the
- * answer for one full commit id, path, and attribute list cannot change, and
- * it does not depend on the other paths in the query. With a memo, a query at
- * a registered commit therefore also asks for the files of every registered
- * item, and later queries of those files need no Git process.
+ * A successful answer is kept in `memo` for the rest of the command. The query
+ * reads only the commit's own `.gitattributes`, because the shadow repository
+ * has no `info/attributes` and the system and global files are disabled. So the
+ * answer for one full commit id, path, and attribute list cannot change, and it
+ * does not depend on the other paths in the query. A query at a registered
+ * commit therefore also asks for the files of every registered item.
  */
 export async function checkAttrAtCommit(
   repo: string,
@@ -1531,7 +1360,6 @@ export async function checkAttrAtCommit(
     }
   }
   if (wanted.size === 0) return answersFor(byPath, paths);
-  // One objects-directory read serves the batch and a retry.
   let objectsDir: string | undefined;
   const observe = async (): Promise<string> =>
     (objectsDir ??= await (observeObjectsDir
@@ -1539,17 +1367,14 @@ export async function checkAttrAtCommit(
       : repositoryObjectsDirectory(repo)));
   await observe();
   const query = [...wanted];
-  // The files of other items must not fail this caller's query. A failed
-  // batch keeps nothing, and the retry below gives the caller its own error.
-  // A query of only the caller's paths has nothing to retry.
+  // Other items' files must not fail this caller's query; a failed batch keeps
+  // nothing and the retry reports the caller's own error.
   const results =
     query.length === own.size
       ? await runCheckAttr(repo, commit, query, attributes, observe)
       : await runCheckAttr(repo, commit, query, attributes, observe).catch(
           () => [],
         );
-  // A path is kept only when Git answered every attribute for it, in the
-  // order asked. A path Git did not answer that way is not kept.
   const answered = new Map<string, CheckAttrResult[]>();
   for (const result of results) {
     const list = answered.get(result.path) ?? [];
@@ -1597,9 +1422,8 @@ async function runCheckAttr(
   try {
     await mkdir(join(shadow, "objects", "info"), { recursive: true });
     await mkdir(join(shadow, "refs"), { recursive: true });
-    // Hash width selects the repository format, exactly as it selects the
-    // digest algorithm in PIN-1 — no `rev-parse --show-object-format` call and
-    // no cached repository state.
+    // Hash width selects the repository format, so no `rev-parse
+    // --show-object-format` call or cached repository state is needed.
     const sha256 = commit.length === 64;
     await Promise.all([
       writeFile(join(shadow, "HEAD"), "ref: refs/heads/main\n"),
@@ -1651,10 +1475,6 @@ async function runCheckAttr(
   }
 }
 
-/**
- * Files under relPath that git would treat as owned working-tree content in
- * the *data repo*: tracked files plus untracked files that are not ignored.
- */
 export async function sourceVisibleFilesUnderPath(
   repo: string,
   relPath: string,
@@ -1672,18 +1492,8 @@ export async function sourceVisibleFilesUnderPath(
   return await presentFilesRelativeTo(repo, normalized, out);
 }
 
-/** Lists the files `sourceVisibleFilesUnderPath` lists for one path. */
 export type VisibleFilesLister = (relPath: string) => Promise<string[]>;
 
-/**
- * `sourceVisibleFilesUnderPath` for many paths with one `ls-files`. Each path
- * takes the listed files that are equal to it or under it, which is what a
- * literal pathspec of that path selects. The listing is taken once, so all
- * paths see one state of the working tree.
- *
- * Each path still gets its own result or error. A path outside the list, or
- * every path when the batched `ls-files` fails, runs its own call.
- */
 export async function sourceVisibleFilesLister(
   repo: string,
   relPaths: readonly string[],
@@ -1691,8 +1501,6 @@ export async function sourceVisibleFilesLister(
   const paths = [...new Set(relPaths.map(normalizeGitPath))].filter(
     (path) => path.length > 0,
   );
-  // A spawn that fails, for example on a very long argument list, falls back
-  // to one call per path.
   const result =
     paths.length < 2
       ? undefined
@@ -1726,7 +1534,6 @@ export async function sourceVisibleFilesLister(
   };
 }
 
-/** The same question, asked of the consuming project's own Git policy. */
 export async function projectVisibleFilesUnderPath(
   project: string,
   relPath: string,
@@ -1745,16 +1552,14 @@ export async function projectVisibleFilesUnderPath(
 }
 
 export interface IgnoreRule {
-  /** The file that holds the rule, as git reports it. */
   source: string;
   line: number;
   pattern: string;
 }
 
 /**
- * The project ignore rule that hides `relPath`, or null when no rule matches.
- * This only diagnoses an error that the caller already has. A git failure
- * returns null, so the diagnosis cannot replace the original error.
+ * Diagnosis only: a git failure returns null so it never replaces the caller's
+ * original error.
  */
 export async function projectIgnoreRule(
   project: string,
@@ -1773,12 +1578,10 @@ export async function projectIgnoreRule(
 }
 
 /**
- * Untracked files under `relPaths` that the repository's ignore rules hide.
- * `git add -- <dir>` skips exactly these and exits 0 (verified on git
- * 2.53.0), so a commit that names `relPaths` would not contain them and
- * nothing would say so. Git computes the set with its own rules, including
- * `!` re-includes, `.git/info/exclude`, and `core.excludesFile`, so no
- * pattern is parsed here. A guard, not a diagnosis: a git failure throws.
+ * `git add -- <dir>` skips untracked files the ignore rules hide and exits 0
+ * (verified on git 2.53.0), so a commit that names `relPaths` would omit them
+ * silently. Git computes the set with its own rules, so no pattern is parsed
+ * here. A Git failure throws.
  */
 export async function ignoredUntrackedPaths(
   repo: string,
@@ -1801,12 +1604,9 @@ export async function ignoredUntrackedPaths(
 }
 
 /**
- * The rule that ignores each of `relPaths` in a source repository. This only
- * diagnoses, so any git failure returns no rules.
- *
- * `check-ignore --verbose` also prints a record for a path that a `!` rule
- * re-includes, and that path is not ignored. Such a record's pattern starts
- * with `!`; an escaped literal prints as `\!` (verified on git 2.53.0).
+ * `check-ignore --verbose` also prints records for paths a `!` rule
+ * re-includes; those patterns start with `!` (an escaped literal prints as
+ * `\!`).
  */
 export async function sourceIgnoreRules(
   repo: string,
@@ -1836,10 +1636,10 @@ export async function sourceIgnoreRules(
 
 /**
  * Refuse a publication commit that `git add -- <ownedRoots>` would silently
- * shorten. Runs after the files are written and before anything is staged,
- * so it sees the ignore rules the copy left behind. `keptInPlace` names files
- * the caller wrote back unchanged and does not publish, such as a restored
- * upstream sidecar.
+ * shorten because ignore rules skip files. Runs after the files are written and
+ * before staging, so it sees the ignore rules the copy left behind.
+ * `keptInPlace` names files the caller wrote back unchanged and does not
+ * publish, such as a restored upstream sidecar.
  */
 export async function assertNoIgnoredPublicationFiles(
   repo: string,
@@ -1859,14 +1659,9 @@ export async function assertNoIgnoredPublicationFiles(
 
 /**
  * Repo-relative paths under `relPath` that the project's complete ignore stack
- * treats as visible — `.gitignore` at every level, parent ignore files,
- * `.git/info/exclude`, and `core.excludesFile`.
- *
- * Unlike `projectVisibleFilesUnderPath` this neither `lstat`s nor rejects what
- * it returns: PIN-5 uses it only to classify unpinned extras, and the caller
- * intersects the result with a real filesystem inventory. Rejecting here would
- * make an ignore rule able to fail a command about pinned content, which is
- * exactly the coupling PIN-5 removes.
+ * treats as visible. It does not `lstat` or reject what it returns, so an
+ * ignore rule cannot fail a command about pinned content. The caller intersects
+ * the result with a real filesystem inventory.
  */
 export async function gitPolicyVisiblePathsUnderPath(
   project: string,
@@ -1891,13 +1686,10 @@ export async function gitPolicyVisiblePathsUnderPath(
 }
 
 /**
- * `gitPolicyVisiblePathsUnderPath` for a local-scope item. Capshelf lists a
- * local item in `.git/info/exclude`, so project Git sees all of it as ignored.
- * This asks Git with the same ignore stack minus the lines in `ownLines`:
- * every `.gitignore`, the other `info/exclude` lines, and `core.excludesFile`.
- * The kept `info/exclude` lines go in on stdin. Command-line patterns would
- * outrank the `.gitignore` files, so `-x` cannot express this. Null when
- * `project` is not a Git work tree root.
+ * Like `gitPolicyVisiblePathsUnderPath`, but without capshelf's own `ownLines`
+ * in `.git/info/exclude`, so a local item is not all ignored. The other
+ * `info/exclude` lines go in on stdin, because command-line patterns would
+ * outrank `.gitignore` files. Null when `project` is not a Git work tree root.
  */
 export async function gitPolicyVisiblePathsWithoutExcludes(
   project: string,
@@ -1943,11 +1735,6 @@ export async function gitPolicyVisiblePathsWithoutExcludes(
     .sort();
 }
 
-/**
- * The user's global ignore file when it exists: `core.excludesFile`, else
- * `$XDG_CONFIG_HOME/git/ignore`, else `$HOME/.config/git/ignore`
- * (gitignore(5)).
- */
 async function userExcludesFile(project: string): Promise<string | null> {
   const configured = await projectPolicy(project, [
     "config",
@@ -2014,39 +1801,30 @@ async function presentFilesRelativeTo(
 }
 
 export interface StatusPorcelainRecord {
-  /** The two-character XY status code, e.g. `??`, ` M`, `R `. */
   code: string;
-  /** Repo-relative path, verbatim. */
   path: string;
-  /** For a rename or copy, the path the entry moved from. */
   origPath?: string;
 }
 
 /**
- * `git status --porcelain -z`, parsed into records.
- *
- * `-z` is not optional. Without it git octal-quotes any path containing
- * non-ASCII, control, quote, or backslash characters
- * (`"codex/generated/caf\303\251/plugin.json"`), so every caller that
- * compares a parsed path against a real one silently stops matching — which
- * fails open for a dirty-state guard and fails closed for a diagnosis.
- *
- * `-z` also changes the rename encoding, and a naive `split("\0")` gets it
- * wrong: the original path arrives as a **bare follow-on record with no
- * status prefix**, so the parser must consume the next record when the code
- * is `R` or `C` or it will slice a status prefix off a plain path. That is
- * why this is the only place in the codebase that parses porcelain paths.
+ * Keep `-z`: without it Git quotes paths with non-ASCII, control, quote, or
+ * backslash characters, path comparisons stop matching, and dirty-state guards
+ * fail open. R/C records need the next field because it holds the original
+ * path without a status prefix.
  */
 export async function statusPorcelainRecords(
   repo: string,
   relPaths: string[] = [],
   options: { untrackedFiles?: "all" } = {},
 ): Promise<StatusPorcelainRecord[]> {
-  const args = ["status", "--porcelain", "-z"];
-  if (options.untrackedFiles === "all") args.push("--untracked-files=all");
+  const args = [
+    "status",
+    "--porcelain",
+    "-z",
+    `--untracked-files=${options.untrackedFiles ?? "normal"}`,
+  ];
   if (relPaths.length > 0) args.push("--", ...relPaths.map(literalPathspec));
   const out = await sourceReadText(repo, args);
-  // The stream is NUL-terminated, so the trailing element is always empty.
   const fields = out.split("\0");
   const records: StatusPorcelainRecord[] = [];
   for (let index = 0; index < fields.length; index += 1) {
@@ -2069,47 +1847,17 @@ export async function statusPorcelainRecords(
   return records;
 }
 
-/** One tracked path and the index bits that make git stop looking at it. */
 export interface IndexEntryFlags {
   path: string;
-  /** `--assume-unchanged`: a promise to git that the file did not change. */
   assumeUnchanged: boolean;
-  /** `--skip-worktree`: also how a sparse checkout excludes a file. */
   skipWorktree: boolean;
 }
 
 /**
- * The index entry for each of `relPaths` that git tracks, carrying the two
- * bits that make `git status` blind to a real change.
- *
- * Two questions, one `ls-files` call. A caller asks which paths carry a bit,
- * and also which paths are missing from the answer, because a path git does
- * not track is one `git add` may not stage.
- *
- * This is the blind spot every porcelain check shares. Git skips the worktree
- * comparison for such a path, so `status` reports nothing, `add` stages
- * nothing, and a command that reads cleanliness from porcelain alone concludes
- * there is no change when there is one. Verified against git 2.55.0: an edited
- * `assume-unchanged` file produces empty `status --porcelain` output and an
- * empty `git add`.
- *
- * `ls-files -v` is the question git answers directly. It tags each path with a
- * letter: `H` cached, `S` skip-worktree, and a lowercase letter for
- * assume-unchanged (`h`, or `s` when both bits are set). Comparing bytes
- * instead would be wrong — a clean filter or `core.autocrlf` makes worktree
- * bytes legitimately differ from the committed blob, and every clean repo with
- * one configured would be reported as hiding a change.
- *
- * The two bits are reported separately because a caller may want to name them
- * separately: they are cleared by different options, and `git update-index`
- * applies only the first `--no-*` option of an invocation (verified on 2.55.0,
- * where a combined command took `s` to `S` and left it there). Both clear
- * cleanly when run one at a time, present or absent, and `status` then reports
- * the change git had been ignoring.
- *
- * One record per path, not per index stage: git prints an unmerged path three
- * times (verified on 2.55.0, which prints `M f.txt` three times during a
- * conflict), and the bits are merged across those records.
+ * Git skips the worktree comparison for assume-unchanged/skip-worktree paths,
+ * so `status` and `add` miss real edits; `ls-files -v` reports those bits
+ * directly, whereas comparing bytes false-positives under clean filters or
+ * autocrlf.
  */
 export async function indexEntryFlags(
   repo: string,
@@ -2143,6 +1891,7 @@ export async function indexEntryFlags(
 /**
  * Raw porcelain text. Callers must only test this for emptiness — parsing
  * paths out of it is unsafe without `-z`; use `statusPorcelainRecords`.
+ * Git's untracked-file setting must not change capshelf's cleanliness checks.
  */
 export async function statusPorcelain(
   repo: string,
@@ -2152,11 +1901,16 @@ export async function statusPorcelain(
     return await sourceReadText(repo, [
       "status",
       "--porcelain",
+      "--untracked-files=normal",
       "--",
       literalPathspec(relPath),
     ]);
   }
-  return await sourceReadText(repo, ["status", "--porcelain"]);
+  return await sourceReadText(repo, [
+    "status",
+    "--porcelain",
+    "--untracked-files=normal",
+  ]);
 }
 
 export async function isRepoClean(repo: string): Promise<boolean> {
@@ -2185,6 +1939,7 @@ export async function statusPorcelainOutsidePaths(
   return await sourceReadText(repo, [
     "status",
     "--porcelain",
+    "--untracked-files=normal",
     "--",
     ".",
     ...relPaths.map(excludePathspec),
@@ -2210,10 +1965,6 @@ export async function assertRepoCleanOutsidePaths(
   );
 }
 
-/**
- * Returns true if the working tree under `relPath` matches HEAD —
- * no modified, staged, or untracked files within that path.
- */
 export async function isPathClean(
   repo: string,
   relPath: string,
@@ -2222,18 +1973,15 @@ export async function isPathClean(
   return out.trim().length === 0;
 }
 
-/** Whether a repository-relative path has no uncommitted change. */
 export type PathCleanCheck = (relPath: string) => Promise<boolean>;
 
 /**
- * `isPathClean` for many paths from one `git status` of the whole repository.
- *
- * A path is dirty when a record, or the original path of a rename, is the
- * path itself or lies under it. That is what `git status -- <path>` reports.
- * `--untracked-files=all` lists each untracked file, so a collapsed untracked
- * parent directory cannot make a path dirty that holds no file. The snapshot
- * is one observation: a caller takes it once for one report, never for a
- * plan that a later pass revalidates.
+ * One `git status` of the whole repository answers for many paths. A path is
+ * dirty when a record, or the original path of a rename, is the path itself or
+ * lies under it. `--untracked-files=all` lists each file, so a collapsed
+ * untracked directory cannot mark a path dirty that holds no file. The snapshot
+ * is one observation: use it for one report, never for a plan that a later pass
+ * revalidates.
  */
 export async function worktreeCleanSnapshot(
   repo: string,
@@ -2250,12 +1998,8 @@ export async function worktreeCleanSnapshot(
 }
 
 /**
- * Throws if the path has uncommitted changes.
- *
- * Under tree identity this is an *authoring* check, not an identity check:
- * a dirty item means the commit capshelf is about to pin is stale relative to
- * what the author is looking at. The recorded pin comes from the commit either
- * way, so nothing downstream depends on this passing.
+ * Authoring check only: the pin comes from the commit, but a dirty item means
+ * the pinned commit is stale relative to what the author sees.
  */
 export async function assertPathClean(
   repo: string,
@@ -2264,11 +2008,9 @@ export async function assertPathClean(
   const records = await statusPorcelainRecords(repo, [relPath]);
   if (records.length === 0) return;
   const sidecarPath = `${relPath}/.capshelf.yml`;
-  // Renames are attributed to the new path; a rename *of* the sidecar moved
-  // content and correctly falls through to the strict branch.
+  // A rename of the sidecar moved content, so it must fall through to the
+  // strict branch.
   if (records.every((record) => record.path === sidecarPath)) {
-    // Metadata-dirty, not content-dirty: the catalog must not be read from
-    // limbo, but no item content is at risk — the fix is a one-line commit.
     throw new PreconditionError(
       `data repo has uncommitted metadata changes: ${sidecarPath}\n  no item content is at risk — commit the sidecar in the data repo first:\n    git -C ${repo} add ${sidecarPath} && git -C ${repo} commit -m "..."`,
     );
@@ -2280,25 +2022,16 @@ export async function assertPathClean(
 
 export interface FetchResult {
   ok: boolean;
-  /** git's stderr, trimmed; empty on success */
   stderr: string;
 }
 
 /**
- * `git fetch origin`. Fetch is always safe: it only updates remote-tracking
- * refs and never touches the worktree or local branches. Failures (network,
- * auth, missing remote repo) are reported, not thrown, so `sync-data` can
- * include git's stderr in its `fetch_failed` state.
+ * Failures are returned, not thrown, so `sync-data` can include git's stderr in
+ * its `fetch_failed` state.
  */
 /**
- * `prune` is opt-in, and only the clone cache asks for it.
- *
- * Without pruning, a branch or tag deleted upstream keeps resolving from the
- * stale remote-tracking ref the clone already holds, so a freshness check
- * reports a ref that no longer exists as healthy. That matters for the remote-
- * skill cache, which capshelf derives and owns outright. A user's data-repo
- * clone is not ours to prune: `--prune-tags` there would delete tags they
- * created locally.
+ * Prune is opt-in: only the capshelf-owned clone cache wants it, and pruning a
+ * user's data-repo clone with `--prune-tags` would delete their local tags.
  */
 export async function fetchOrigin(
   repo: string,
@@ -2315,7 +2048,6 @@ export async function fetchOrigin(
   };
 }
 
-/** Current branch name, or null when HEAD is detached. */
 export async function currentBranch(repo: string): Promise<string | null> {
   const result = await sourceRead(repo, [
     "symbolic-ref",
@@ -2328,11 +2060,6 @@ export async function currentBranch(repo: string): Promise<string | null> {
   return branch || null;
 }
 
-/**
- * The integration target for `branch`: its configured `@{upstream}` when set,
- * else `origin/<branch>` when that remote-tracking ref exists, else null.
- * The fallback is transient — this never writes branch config.
- */
 export async function trackingRef(
   repo: string,
   branch: string,
@@ -2356,7 +2083,6 @@ export async function trackingRef(
   return exists.exitCode === 0 ? fallback : null;
 }
 
-/** Commit counts on each side of HEAD...<ref> (left = ahead, right = behind). */
 export async function aheadBehind(
   repo: string,
   ref: string,
@@ -2379,7 +2105,6 @@ export async function aheadBehind(
   return { ahead, behind };
 }
 
-/** Fast-forward the current branch to `ref`; throws when not a fast-forward. */
 export async function fastForwardTo(repo: string, ref: string): Promise<void> {
   await sourceWriteBuffer(repo, ["merge", "--ff-only", ref]);
 }
@@ -2398,10 +2123,9 @@ export async function commitInRepo(
 }
 
 /**
- * Commit exactly the supplied repository-relative paths with Git pathspec
- * magic disabled. Marketplace transactions use fixed owned roots plus skill
- * paths that can originate in user data; literal mode prevents metacharacters
- * from widening the staged set.
+ * Commit exactly the supplied repository-relative paths. Literal pathspecs stop
+ * metacharacters in paths that can originate in user data from widening the
+ * staged set.
  */
 export async function commitLiteralPathsInRepo(
   repo: string,
@@ -2416,29 +2140,17 @@ export async function commitLiteralPathsInRepo(
 
 export interface CommitExistingPathsInput {
   repo: string;
-  /** Repository-relative paths the user edited where they already live. */
   relPaths: string[];
   message: string;
   expectedHead: string;
-  /** Prove the new commit before the transaction accepts it. */
   verify?: (commit: string) => Promise<void>;
 }
 
 /**
- * Commit content the user authored in place inside the data repo.
- *
- * The other commit operation, `commitDataRepoMutation`, owns the files it
- * writes and restores them on failure. That is exactly wrong here: the
- * canonical file *is* the user's own edit, and putting back the version
- * capshelf found would throw their work away. So "what it changed" is the index
- * and `HEAD` only (GIT-7); the working tree is never touched.
- *
- * The commit runs the repository's normal hooks (GIT-9), which is the whole
- * point of the rollback — a `pre-commit` hook that rejects used to leave the
- * paths staged in the user's index after a command that failed. A hook can also
- * *add* to a partial commit, because git runs it against the temporary index it
- * built for the named paths, so the resulting commit is checked against the
- * paths this operation was allowed to publish.
+ * The canonical files are the user's own edits, so rollback must not restore
+ * the working tree or undo another writer's HEAD change. Hooks can add paths
+ * to a partial commit, so the resulting commit must be checked against the
+ * paths this operation may publish.
  */
 export async function commitExistingPaths(
   input: CommitExistingPathsInput,
@@ -2451,8 +2163,6 @@ export async function commitExistingPaths(
     throw new PreconditionError("data repo HEAD changed during the commit");
   }
   await assertRepoCleanOutsidePaths(repo, relPaths);
-  // Before the index backup: nothing is staged yet, so a refusal here needs
-  // no rollback. The files are the user's own edits, so nothing is exempt.
   await assertNoIgnoredPublicationFiles(repo, relPaths);
 
   const indexPath = resolve(
@@ -2473,11 +2183,8 @@ export async function commitExistingPaths(
   try {
     createdCommit = await commitLiteralPathsInRepo(repo, relPaths, message);
     createdParent = (await commitParents(repo, createdCommit))[0] ?? null;
-    // The `expectedHead` check above cannot bind the commit that happens
-    // after it. Reading the parent can: if another writer advanced HEAD in
-    // between, this commit sits on their work rather than on the state the
-    // caller validated, and publishing it would fold an unreviewed advance
-    // into the lock.
+    // Checking the commit's parent catches another writer advancing HEAD after
+    // the `expectedHead` check, which would publish unreviewed work.
     if (createdParent !== expectedHead) {
       throw new PreconditionError("data repo HEAD changed during the commit");
     }
@@ -2487,9 +2194,8 @@ export async function commitExistingPaths(
   } catch (error) {
     const current = await headSha(repo).catch(() => null);
     if (createdCommit !== null && current === createdCommit) {
-      // Back to this commit's own parent, not to `expectedHead`: they are the
-      // same in the ordinary case, and where they differ the parent is a
-      // commit somebody else landed, which is not this operation's to delete.
+      // Revert to this commit's own parent, not `expectedHead`, so a commit
+      // another writer landed is never deleted.
       const reverted =
         createdParent === null
           ? false
@@ -2503,8 +2209,8 @@ export async function commitExistingPaths(
               .catch(() => false);
       if (!reverted) throw error;
     } else if (current !== expectedHead) {
-      // Something outside this operation moved HEAD. Its index state is not
-      // ours to put back.
+      // Skip index restore when something else moved HEAD; its index state
+      // isn't ours.
       throw error;
     }
     if (hadIndex) await copyFile(backupIndex, indexPath).catch(() => {});
@@ -2515,7 +2221,6 @@ export async function commitExistingPaths(
   }
 }
 
-/** The parent commits of `commit`, in order; empty for a root commit. */
 export async function commitParents(
   repo: string,
   commit: string,
@@ -2562,7 +2267,6 @@ async function assertCommitTouchedOnly(
   );
 }
 
-/** `git clone`, which by definition does not start inside a repository. */
 export async function cloneRepository(
   cwd: string,
   url: string,
@@ -2573,10 +2277,8 @@ export async function cloneRepository(
 
 export interface NormalizeRemoteUrlOptions {
   /**
-   * Accept file:// URLs. Only the remote bootstrap path opts in, for clone
-   * identity and origin comparison; everywhere else (committed manifest
-   * upstreams, set-upstream, init origin auto-detection) a machine-local
-   * file:// path is not a portable upstream and stays rejected.
+   * Only the remote bootstrap path opts in; elsewhere a machine-local file://
+   * path is not a portable upstream and is rejected.
    */
   allowFileUrls?: boolean;
 }
@@ -2622,10 +2324,8 @@ function normalizeUrlLike(
 
   if (parsed.protocol === "file:") {
     if (!options.allowFileUrls) return null;
-    // file:// remotes only make sense for the local machine; a non-localhost
-    // host would not be resolvable as a git remote here. The path names a
-    // real directory, so a trailing .git is kept: /tmp/repo.git and
-    // /tmp/repo are distinct directories.
+    // For `file://` remotes, keep a trailing `.git`: the path names a real
+    // directory, and /tmp/repo.git and /tmp/repo are distinct directories.
     const host = parsed.hostname.toLowerCase();
     if (host && host !== "localhost") return null;
     const path = normalizeRemotePath(parsed.pathname, { stripDotGit: false });
@@ -2652,8 +2352,8 @@ function normalizeRemotePath(
   pathname: string,
   opts: { stripDotGit: boolean },
 ): string {
-  // Strip until stable so normalization is idempotent: a path like
-  // "owner/repo/.git" first loses ".git", then the exposed trailing slash.
+  // Strip until stable so normalization is idempotent (e.g.
+  // `owner/repo/.git/`).
   let path = pathname;
   let previous: string;
   do {
@@ -2676,11 +2376,8 @@ export function literalPathspec(path: string): string {
 }
 
 /**
- * The same renderer for the other direction (GIT-4). Item names reach pathspecs
- * from user data, so an exclusion built by string concatenation is a pathspec
- * whose meaning depends on the name — `literal` disables the glob and magic
- * interpretation that would otherwise widen or narrow what is excluded. Git
- * accepts the combined magic words, verified.
+ * `literal` stops glob/magic in user-supplied item names from widening or
+ * narrowing the exclusion.
  */
 export function excludePathspec(path: string): string {
   return `:(literal,exclude)${normalizeGitPath(path)}`;

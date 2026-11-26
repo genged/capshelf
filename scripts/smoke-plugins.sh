@@ -1,16 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# One non-interactive pass over the plugin lifecycle: install two plugins from
-# an upstream repository, report what they run, adopt one onto the shelf,
-# give it to the team, install it in a second project, and remove it.
-#
-# The upstream is a local bare repository. `git clone` from github.com is not
-# available in the project container, and the harness rule is that every fetch
-# in the suite uses a local bare repository.
-#
-# `smoke-lib.sh` detaches stdin, so every consent point refuses with exit 3
-# unless the call passes `--yes`. The suite checks both.
+# The upstream is a local bare repository because `git clone` from github.com is
+# unavailable in the project container.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/smoke-lib.sh"
@@ -35,7 +27,6 @@ set_portable_origin "$DATA" smoke-plugins-data
 git -C "$DATA" add -A
 git -C "$DATA" commit -qm baseline
 
-# --- the upstream: rust-review runs nothing, gh-cli runs one hook ---
 RR="$UPSTREAM_WORK/plugins/rust-review"
 GH="$UPSTREAM_WORK/plugins/gh-cli"
 mkdir -p "$RR/.claude-plugin" "$RR/skills/rust-review" "$RR/agents" \
@@ -72,7 +63,6 @@ init_git_repo "$P2"
 (cd "$P" && "${CLI[@]}" init --data "$DATA" >/dev/null)
 (cd "$P2" && "${CLI[@]}" init --data "$DATA" >/dev/null)
 
-# --- add <url> --path <plugin>: a plugin that runs nothing installs whole ---
 (cd "$P" && "${CLI[@]}" add "$URL" --path plugins/rust-review --yes \
   > "$TMP/add-rr.txt")
 assert_fixed_contains 'added local/remote/plugins/rust-review' "$TMP/add-rr.txt"
@@ -83,8 +73,6 @@ test -L "$P/.claude/skills/rust-review"
 assert_fixed_contains '"remote/plugins/rust-review"' \
   "$P/.capshelf/remotes.lock.json"
 
-# --- consent point 1: a plugin with a hook refuses with no terminal, names
-#     the hook, and writes nothing ---
 cp "$P/.capshelf/remotes.lock.json" "$TMP/remotes-before-gh.json"
 set +e
 (cd "$P" && "${CLI[@]}" add "$URL" --path plugins/gh-cli \
@@ -101,14 +89,12 @@ assert_fixed_contains 'SessionStart   bash hooks/setup.sh' "$TMP/gh-refused.err"
 cmp -s "$TMP/remotes-before-gh.json" "$P/.capshelf/remotes.lock.json"
 test ! -e "$P/.agents/skills/gh-cli"
 
-# --- --yes authorizes it, and prints what it authorized to stderr ---
 (cd "$P" && "${CLI[@]}" add "$URL" --path plugins/gh-cli --yes \
   > "$TMP/add-gh.txt" 2> "$TMP/add-gh.err")
 assert_fixed_contains 'added local/remote/plugins/gh-cli' "$TMP/add-gh.txt"
 assert_fixed_contains 'SessionStart   bash hooks/setup.sh' "$TMP/add-gh.err"
 test -f "$P/.agents/skills/gh-cli/hooks/hooks.json"
 
-# --- status: the hook count, as text and as JSON ---
 (cd "$P" && "${CLI[@]}" status > "$TMP/status.txt")
 assert_contains 'plugins/gh-cli .* hooks: 1$' "$TMP/status.txt"
 assert_not_contains 'plugins/rust-review .* hooks:' "$TMP/status.txt"
@@ -117,7 +103,6 @@ assert_fixed_contains '"hooks": 1' "$TMP/status.json"
 assert_fixed_contains '"claudeTrust": "unknown"' "$TMP/status.json"
 (cd "$P" && "${CLI[@]}" status --strict --json >/dev/null)
 
-# --- share --adopt: the plugin moves onto the shelf, in local scope ---
 (cd "$P" && "${CLI[@]}" share plugins/rust-review --adopt -m a --yes \
   > "$TMP/adopt.txt" 2> "$TMP/adopt.err")
 assert_fixed_contains 'adopted local/data/plugins/rust-review' "$TMP/adopt.txt"
@@ -133,7 +118,6 @@ assert_fixed_contains '"rust-review"' "$P/.capshelf/local.json"
 assert_fixed_contains '"shelves"' "$P/.capshelf/local.json"
 test -z "$(git -C "$DATA" status --porcelain)"
 
-# --- move --to project: the manifest takes the plugin and the fence ---
 (cd "$P" && "${CLI[@]}" move plugins/rust-review --to project --yes \
   > "$TMP/move.txt")
 assert_fixed_contains 'moved data/plugins/rust-review from local to project' \
@@ -144,7 +128,6 @@ assert_fixed_not_contains '"shelves"' "$P/.capshelf/local.json"
 assert_fixed_contains '"data/plugins/rust-review"' \
   "$P/.capshelf/capshelf.lock.json"
 
-# --- a second project adds it from the shelf ---
 (cd "$P2" && "${CLI[@]}" add plugins/rust-review > "$TMP/add-p2.txt")
 assert_fixed_contains 'added project/data/plugins/rust-review' \
   "$TMP/add-p2.txt"
@@ -152,8 +135,6 @@ test -f "$P2/.agents/skills/rust-review/agents/rust-review-worker.md"
 test ! -e "$P2/.agents/skills/rust-review/.capshelf.yml"
 (cd "$P2" && "${CLI[@]}" status --strict --json >/dev/null)
 
-# Run a command in project "$1" that must refuse with exit 3 and no terminal.
-# Its stderr goes to "$2".
 expect_consent_refusal() {
   local project="$1" err="$2" code
   shift 2
@@ -168,8 +149,6 @@ expect_consent_refusal() {
   fi
 }
 
-# --- consent point 2: the upstream adds a hook to gh-cli. The pin move
-#     refuses with no terminal and names the new hook ---
 cat > "$GH/hooks/hooks.json" <<'JSON'
 {
   "hooks": {
@@ -206,9 +185,8 @@ test ! -e "$P/.agents/skills/gh-cli/hooks/format.sh"
 assert_fixed_contains 'PostToolUse   bash hooks/format.sh' "$TMP/update.err"
 test -f "$P/.agents/skills/gh-cli/hooks/format.sh"
 
-# --- consent point 3: an adopt into project scope commits the hooks for
-#     every teammate. It refuses with no terminal, before the data repo
-#     changes ---
+# Adopting into project scope commits the hooks for every teammate, so consent
+# must come before the data repo changes.
 DATA_HEAD="$(git -C "$DATA" rev-parse HEAD)"
 expect_consent_refusal "$P" "$TMP/adopt-gh-refused.err" \
   share plugins/gh-cli --adopt --to project -m gh
@@ -221,7 +199,6 @@ test ! -e "$DATA/plugins/gh-cli"
 assert_fixed_contains 'adopted project/data/plugins/gh-cli' "$TMP/adopt-gh.txt"
 assert_fixed_contains '"data/plugins/gh-cli"' "$P/.capshelf/capshelf.lock.json"
 
-# --- a shelf add of a plugin with hooks asks too ---
 expect_consent_refusal "$P2" "$TMP/add-gh-p2.err" add plugins/gh-cli
 assert_fixed_contains 'not installing plugins/gh-cli without consent' \
   "$TMP/add-gh-p2.err"
@@ -234,7 +211,6 @@ for project in "$P" "$P2"; do
   test ! -e "$project/.agents/skills/gh-cli"
 done
 
-# --- rm in both projects: the files, the lock rows, and the fence go ---
 for project in "$P" "$P2"; do
   (cd "$project" && "${CLI[@]}" rm plugins/rust-review --yes > "$TMP/rm.txt")
   assert_fixed_contains 'removed data/plugins/rust-review' "$TMP/rm.txt"
@@ -245,7 +221,6 @@ for project in "$P" "$P2"; do
     "$project/.capshelf/capshelf.lock.json"
 done
 
-# --- the shelf copy stays: rm never edits the data repo ---
 test -f "$DATA/plugins/rust-review/.claude-plugin/plugin.json"
 
 (cd "$P" && "${CLI[@]}" status --strict --json >/dev/null)

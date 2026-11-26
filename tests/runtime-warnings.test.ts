@@ -117,7 +117,6 @@ describe("codexProjectTrustWarnings", () => {
   test("does not warn when the codex CLI is not installed", async () => {
     const project = await tempDir();
     const codexHome = await tempDir();
-    // Even with no trust entry at all, an absent codex binary means silence.
     const warnings = await withCodexEnv({ codexOnPath: false, codexHome }, () =>
       codexProjectTrustWarnings(project),
     );

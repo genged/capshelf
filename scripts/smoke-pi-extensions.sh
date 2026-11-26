@@ -30,7 +30,7 @@ init_git_repo "$C"
 (cd "$B" && "${CLI[@]}" init --data ../data >/dev/null)
 (cd "$C" && "${CLI[@]}" init --data ../data >/dev/null)
 
-# Both projects pin v1 so a promote in A cannot mutate B implicitly.
+# Both projects pin v1 so a promote in A cannot implicitly change B.
 (cd "$A" && "${CLI[@]}" add pi-extensions/path-guard --json > "$TMP/add-a.json")
 (cd "$B" && "${CLI[@]}" add pi-extensions/path-guard --json > "$TMP/add-b.json")
 assert_contains '"type": "pi_extension_executes_code"' "$TMP/add-a.json"
@@ -39,7 +39,6 @@ test -f "$A/.pi/extensions/path-guard/index.ts"
 test -f "$A/.pi/extensions/path-guard/src/rules.ts"
 test ! -e "$A/.pi/extensions/path-guard/.capshelf.yml"
 
-# Copy-directory items share the clone-local lifecycle and Git exclusion rules.
 (cd "$C" && "${CLI[@]}" add pi-extensions/path-guard --local --json > "$TMP/add-local.json")
 assert_contains '"scope": "local"' "$TMP/add-local.json"
 assert_contains '"piExtensions": \[' "$C/.capshelf/local.json"
@@ -67,7 +66,6 @@ assert_contains "promoted" "$EXT/src/rules.ts"
 assert_contains 'tags: \[safety\]' "$EXT/.capshelf.yml"
 (cd "$A" && "${CLI[@]}" status pi-extensions/path-guard --strict --json >/dev/null)
 
-# B remains on v1 until its explicit update.
 assert_contains "v1" "$B/.pi/extensions/path-guard/src/rules.ts"
 (cd "$B" && "${CLI[@]}" status pi-extensions/path-guard --json > "$TMP/status-update.json")
 assert_contains '"state": "update_available"' "$TMP/status-update.json"
@@ -76,7 +74,6 @@ assert_contains "v1" "$B/.pi/extensions/path-guard/src/rules.ts"
 assert_contains "promoted" "$B/.pi/extensions/path-guard/src/rules.ts"
 (cd "$B" && "${CLI[@]}" status pi-extensions/path-guard --strict --json >/dev/null)
 
-# Local pins also remain on v1 until their explicit scoped update.
 assert_contains "v1" "$C/.pi/extensions/path-guard/src/rules.ts"
 (cd "$C" && "${CLI[@]}" status pi-extensions/path-guard --local --json > "$TMP/status-local-update.json")
 assert_contains '"state": "update_available"' "$TMP/status-local-update.json"

@@ -11,9 +11,8 @@ export type ParsedYaml =
   | { ok: false; warnings: string[] };
 
 /**
- * Parse one YAML document into the JSON value model. The default `yaml`
- * schema (YAML 1.2 core) emits only null, booleans, numbers, strings,
- * arrays, and plain objects. Timestamps and binary stay strings.
+ * The default YAML 1.2 core schema yields only JSON-model values; timestamps
+ * and binary stay strings.
  */
 export function parseYamlDocument(
   text: string,
@@ -32,7 +31,6 @@ export function parseYamlDocument(
   }
 }
 
-/** The one-line reason a YAML parse failed, with the line when known. */
 export function yamlParseDetail(cause: unknown): string {
   return cause instanceof YAMLParseError && cause.linePos?.[0]
     ? `line ${cause.linePos[0].line}: ${firstLine(cause.message)}`
@@ -44,12 +42,8 @@ function firstLine(text: string): string {
 }
 
 /**
- * Set or delete top-level scalar fields in a YAML document, keeping every other
- * field and the document's comments.
- *
- * Through the document model rather than by appending text: an item's sidecar
- * belongs to whoever wrote it, and an adopt adds three fields to it rather than
- * replacing it. A `null` value deletes the field.
+ * Edit through the document model, not appended text, because an item's sidecar
+ * belongs to its author and adopt only adds fields to it.
  */
 export function setYamlFields(
   text: string,

@@ -6,9 +6,8 @@ export const MANIFEST_FILE = "capshelf.json";
 export const METADATA_DIR = ".capshelf";
 export const LOCAL_CONFIG_FILE = "local.json";
 
-// The per-item catalog sidecar. Lives here (a leaf) rather than in metadata.ts
-// so master.ts can reference it without importing metadata.ts, which imports
-// back from master.ts — that pair was a module cycle.
+// Lives here so master.ts can use it without importing metadata.ts, which
+// imports master.ts (cycle).
 export const METADATA_SIDECAR = ".capshelf.yml";
 
 export const LOCK_FILE = "capshelf.lock.json";

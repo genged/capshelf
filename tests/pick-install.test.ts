@@ -15,23 +15,8 @@ import { setPickContext } from "../src/pick";
 import type { PickContext, PickRequest } from "../src/pick";
 
 /**
- * The interactive install path, driven through the `setPickContext` seam
- * rather than a pseudo-terminal. The terminal itself belongs to
- * `@clack/prompts` and is covered end-to-end; what capshelf owns, and what
- * these tests hold, is which rows reach the picker and what happens to the
- * refs it returns.
- */
-
-/**
- * Whether this file installed a context, tracked apart from the value it
- * replaced.
- *
- * `setPickContext` returns the previous context, and that is `null` for the
- * first install — so a single "restore" variable cannot tell "nothing to undo"
- * from "undo back to null". Testing the value alone left the first test's
- * interactive prompt installed for every test after it, and `runInProcess`
- * deliberately keeps an outer context, so test order decided whether an
- * unrelated `init` prompted.
+ * Tracked separately from the restored value because `setPickContext` returns
+ * null on first install, which is ambiguous with nothing to undo.
  */
 let installedContext = false;
 let previousContext: PickContext | null = null;
@@ -54,7 +39,6 @@ interface PickLog {
   seen: PickRequest[];
 }
 
-/** Install a picker that records the rows it was offered and answers `refs`. */
 function answerWith(refs: string[]): PickLog {
   const seen: PickRequest[] = [];
   installPick({
@@ -85,8 +69,7 @@ async function shelf(): Promise<string> {
     join(dataRepo, "bundles", "review-kit.yml"),
     "description: Review tools\nincludes:\n  skills:\n    - code-review\n",
   );
-  // Claude-only on purpose: an item covering one runtime and not the other is
-  // what makes the coverage report say something a user cannot infer.
+  // Claude-only so coverage reporting says something a user can't infer.
   await mkdir(join(dataRepo, "mcp", "github"), { recursive: true });
   await writeFile(
     join(dataRepo, "mcp", "github", "claude.json"),
@@ -142,9 +125,9 @@ describe("capshelf init offers the shelf", () => {
   test(
     "a cancelled picker still leaves an initialized project",
     async () => {
-      // The point of running the picker after `local.json` is written: a user
-      // who escapes out of it has a working project, not a half-built one that
-      // `init` would then refuse as "already initialized".
+      // The picker runs after `local.json` is written so cancelling leaves a
+      // working project, not a half-built one that `init` would refuse as
+      // already initialized.
       const project = await tempRepo("capshelf-pick-project-");
       const dataRepo = await shelf();
       answerCancel();
@@ -154,8 +137,6 @@ describe("capshelf init offers the shelf", () => {
       expect(result.exitCode).toBe(0);
       expect(existsSync(join(project, ".capshelf", "local.json"))).toBe(true);
       expect(existsSync(skillPath(project, "security-review"))).toBe(false);
-      // And the recovery path is a plain `add`, which needs the binding the
-      // cancelled run still wrote.
       const added = await runInProcess(project)([
         "add",
         "skills/security-review",
@@ -203,7 +184,6 @@ describe("capshelf init offers the shelf", () => {
 
       expect(result.exitCode).toBe(0);
       expect(seen).toEqual([]);
-      // Still one parseable object on stdout, with nothing appended after it.
       const parsed = JSON.parse(result.stdout.toString());
       expect(parsed.project).toBe(project);
       expect(existsSync(skillPath(project, "security-review"))).toBe(false);
@@ -214,10 +194,8 @@ describe("capshelf init offers the shelf", () => {
   test(
     "a remote --data URL reaches the picker as the local clone it created",
     async () => {
-      // `--data` written before the subcommand binds to the ROOT command, so
-      // the value the picker would re-resolve is the raw URL. Resolving that
-      // as a path looks for a directory named `file:/...` under the project
-      // and fails, taking a successful init down with it.
+      // `--data` before the subcommand binds to the root command, so the picker
+      // would re-resolve the raw URL as a path and fail a successful init.
       const project = await tempRepo("capshelf-pick-project-");
       const dataRepo = await shelf();
       const xdg = await tempDir("capshelf-pick-xdg-");
@@ -309,8 +287,6 @@ describe("capshelf add with no item", () => {
   test(
     "an item a picked bundle already installed is reported, not reinstalled",
     async () => {
-      // The single-item installer has no skip guard by design, so picking both
-      // a bundle and one of its members must not install the member twice.
       const { project } = await initialized();
       answerWith(["bundles/review-kit", "skills/code-review"]);
 
@@ -329,10 +305,8 @@ describe("capshelf add with no item", () => {
   test(
     "a bundle's members survive the items installed after it",
     async () => {
-      // `addBundle` loads its own context and saves its own lock. If the
-      // per-item pass reused a context loaded before the bundle ran, it would
-      // save a lock built from a snapshot predating the bundle's entries and
-      // silently drop every member.
+      // `addBundle` loads and saves its own context; reusing a pre-bundle
+      // snapshot would save a lock that drops the bundle's members.
       const { project } = await initialized();
       answerWith(["bundles/review-kit", "skills/security-review"]);
 
@@ -365,9 +339,9 @@ describe("capshelf add with no item", () => {
   test(
     "one failed item does not discard the others",
     async () => {
-      // Best effort, unlike `add bundles/<name>`: a picker selection is a pile
-      // of independent choices, so a ref that cannot resolve must not throw
-      // away the ones that can.
+      // Picker installs are best effort, unlike `add bundles/<name>`:
+      // selections are independent, so an unresolvable ref must not discard the
+      // others.
       const { project } = await initialized();
       answerWith(["skills/code-review", "skills/does-not-exist"]);
 
@@ -403,10 +377,6 @@ describe("capshelf add with no item", () => {
   test(
     "reports which runtimes an installed item covers",
     async () => {
-      // `add` promises a per-runtime target report for mcp and subagent items,
-      // and the bundled agent skill tells agents to read it. The interactive
-      // path printed needs and runtime warnings but omitted it, and a coverage
-      // gap is not a runtime warning, so nothing else covered for it.
       const { project } = await initialized();
       answerWith(["mcp/github"]);
 
@@ -424,11 +394,9 @@ describe("capshelf add with no item", () => {
   test(
     "a system-item name on the shelf is never offered, and is refused if picked",
     async () => {
-      // `add` refuses a data-repo item whose name collides with a system item.
-      // The picker skipped that check, and installed detection would not even
-      // mark the row present, because the system copy is locked under
-      // `system/`, not `data/`. Installing it would give two lock entries
-      // ownership of one destination.
+      // The picker must refuse a data-repo item named like a system item,
+      // because installed detection misses it (system copies lock under
+      // `system/`) and two lock entries would own one destination.
       const { project, dataRepo } = await initialized();
       await addSkill(dataRepo, "capshelf", "# impostor\n");
       await commitAll(dataRepo, "add a system-named item");
@@ -453,14 +421,9 @@ describe("capshelf add with no item", () => {
   test(
     "an item that fails mid-install is not persisted by a later success",
     async () => {
-      // `installDataItem` adds to the manifest and lock *before* it
-      // materializes. A failure between those steps used to leave the entry on
-      // the shared context, and the next item that succeeded saved it —
-      // claiming an install that was never written.
-      //
-      // Constructed failure state: the skills root is made read-only so the
-      // copy item cannot be materialized, while the mcp fragment writes
-      // elsewhere and still succeeds.
+      // installDataItem updates manifest and lock before materializing; a
+      // read-only skills root forces a failure there while the mcp item still
+      // succeeds.
       const { project } = await initialized();
       const skillsRoot = join(project, ".agents", "skills");
       await chmod(skillsRoot, 0o555);
@@ -473,7 +436,6 @@ describe("capshelf add with no item", () => {
         const manifest = await file(
           join(project, ".capshelf", "capshelf.json"),
         ).json();
-        // The failed item must be absent from both, and the healthy one present.
         expect(manifest.skills).not.toContain("code-review");
         expect(manifest.mcp).toEqual(["github"]);
         const lock = await file(
@@ -494,10 +456,8 @@ describe("capshelf add with no item", () => {
   test(
     "a control sequence in a catalog warning never reaches the terminal",
     async () => {
-      // Warnings quote data-repo text back, and an unrecognised `includes` key
-      // goes in verbatim. The picker prints them to a live terminal, and init
-      // does it unprompted, so a shelf could paint over the frame or drive the
-      // terminal.
+      // Warnings quote data-repo text verbatim, so a shelf could inject
+      // terminal escape sequences into the picker frame.
       const project = await tempRepo("capshelf-pick-project-");
       const dataRepo = await shelf();
       const esc = String.fromCharCode(27);
@@ -522,9 +482,8 @@ describe("capshelf add with no item", () => {
   test(
     "--target with no item refuses rather than prompting",
     async () => {
-      // `--target` is never supported by add. The refusal lived only in the
-      // named path, so the no-argument branch returned before it and the flag
-      // was silently ignored while every runtime target was written.
+      // The no-argument branch must refuse `--target` too; otherwise it returns
+      // before the named-path check and silently writes every runtime target.
       const { project } = await initialized();
       const { seen } = answerWith(["skills/code-review"]);
 
@@ -542,11 +501,9 @@ describe("capshelf add with no item", () => {
   test(
     "state written while the picker is open is not discarded",
     async () => {
-      // The picker holds the terminal for an unbounded time, so the context
-      // read before it can be arbitrarily stale. Installing from that snapshot
-      // would save a manifest and lock that predate anything another capshelf
-      // run did meanwhile, silently dropping it. The prompt below installs a
-      // second item mid-prompt to stand in for that concurrent run.
+      // The picker can block indefinitely, so the prompt installs a second item
+      // mid-prompt to simulate a concurrent run that a stale snapshot would
+      // drop.
       const { project } = await initialized();
       installPick({
         stdinIsTTY: true,

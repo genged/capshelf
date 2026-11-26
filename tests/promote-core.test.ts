@@ -244,8 +244,6 @@ describe("syncTrackedIntoDataRepo sidecar preservation", () => {
     expect(await file(join(dataItem, ".capshelf.yml")).text()).toBe(
       "tags: [upstream]\n",
     );
-    // The restored sidecar is byte-identical to HEAD, so the promote commit
-    // did not touch it.
     const committedFiles =
       await $`git -C ${dataRepo} diff-tree --no-commit-id --name-only -r HEAD`
         .quiet()
@@ -303,16 +301,12 @@ describe("syncTrackedIntoDataRepo sidecar preservation", () => {
     await commitAll(dataRepo, "hello v2");
     const contentCommit = await lastTouchingCommit(dataRepo, "skills/hello");
 
-    // A metadata-only commit moves the naive lastTouchingCommit.
     await writeFile(join(dataItem, ".capshelf.yml"), "tags: [a]\n");
     await commitAll(dataRepo, "sidecar only");
     expect(await lastTouchingCommit(dataRepo, "skills/hello")).not.toBe(
       contentCommit,
     );
 
-    // The installed copy already matches upstream content, but the lock holds
-    // a stale sha; promote converges (metadata-only lock repin, no commit)
-    // and stays sidecar-blind: the recorded pin is the content commit.
     const installed = join(project, ".agents", "skills", "hello");
     await mkdir(installed, { recursive: true });
     await writeFile(join(installed, "SKILL.md"), "hello v2\n");
@@ -343,7 +337,6 @@ describe("syncTrackedIntoDataRepo sidecar preservation", () => {
 
   test("the filesystem snapshot sha ignores a project-authored sidecar (non-git project)", async () => {
     const dataRepo = await tempRepo("capshelf-promote-fs-sidecar-data-");
-    // A non-git project forces installedSnapshot down the filesystem branch.
     const project = await mkdtemp(
       join(tmpdir(), "capshelf-promote-fs-sidecar-project-"),
     );
@@ -378,9 +371,6 @@ describe("syncTrackedIntoDataRepo sidecar preservation", () => {
     );
 
     expect(result.action).toBe("promoted");
-    // The recorded lock sha is the sidecar-less sha: it equals both the
-    // post-promote upstream sha and the installed-copy sha, so status stays
-    // ok instead of reporting permanent drift.
     expect(result.sha).toBe(
       await currentPinDigest(dataRepo, "skills", "hello"),
     );
@@ -391,11 +381,9 @@ describe("syncTrackedIntoDataRepo sidecar preservation", () => {
       dataEntryOrThrow(lock.items[dataKey("skills", "hello")], "test")
         .sourcePinDigest,
     ).toBe(result.sha);
-    // The authored sidecar still traveled up (the files list is unfiltered).
     expect(await file(join(dataItem, ".capshelf.yml")).text()).toBe(
       "tags: [authored]\n",
     );
-    // Re-promoting converges instead of looping on a tainted sha.
     const again = await syncTrackedIntoDataRepo(
       project,
       dataRepo,
@@ -440,12 +428,9 @@ describe("syncTrackedIntoDataRepo promotion safety", () => {
         error: /installed snapshot changed while it was being read/,
       },
       {
-        // The refusal moved but did not weaken. This used to be caught by a
-        // destination-side hash of the data repo worktree taken after the
-        // copy; PIN-11 removed that check because it compared one working-tree
-        // hash against another and a `pre-commit` hook could change both. The
-        // race is now caught by the post-copy installed-snapshot comparison
-        // before anything is committed, and by `A == B` after it.
+        // A hash of the data repo worktree can't detect this race because a
+        // `pre-commit` hook can change both sides, so compare the installed
+        // snapshot after the copy.
         name: "before canonical copy",
         hook: "beforeCanonicalCopy",
         error: /installed snapshot changed during promotion/,
@@ -700,7 +685,6 @@ async function staleFixture(): Promise<{
     "skills/hello",
   );
 
-  // Upstream advances past the lock (teammate promoted + pushed).
   await writeFile(join(dataItem, "SKILL.md"), "hello v2 from teammate\n");
   await commitAll(dataRepo, "hello v2 upstream");
   const upstreamCommit = await lastTouchingContentCommit(
@@ -709,7 +693,6 @@ async function staleFixture(): Promise<{
   );
   const upstreamSha = await currentPinDigest(dataRepo, "skills", "hello");
 
-  // This project edited from the old base without updating first.
   const installed = join(project, ".agents", "skills", "hello");
   await mkdir(installed, { recursive: true });
   await writeFile(join(installed, "SKILL.md"), "hello v2 local edit\n");
@@ -748,7 +731,6 @@ describe("stale-promote guard (copy items)", () => {
     expect(error.message).toContain("capshelf update skills/hello");
     expect(error.message).toContain("status skills/hello --diff");
     expect(error.message).toContain("capshelf update skills/hello --merge");
-    // Nothing was written or committed.
     expect(
       await file(join(f.dataRepo, "skills", "hello", "SKILL.md")).text(),
     ).toBe("hello v2 from teammate\n");
@@ -802,7 +784,6 @@ describe("stale-promote guard (copy items)", () => {
     );
     const message = error.message;
     expect(message).toContain("capshelf update skills/hello --merge");
-    // Update-time merge keeps both sides, so it is the first choice.
     expect(message.indexOf("--merge")).toBeLessThan(
       message.indexOf("to take the upstream version"),
     );
@@ -943,7 +924,6 @@ describe("stale-promote guard (copy items)", () => {
       expect(error.message).toContain("uncommitted changes");
       expect(error.message).toContain("status --short -- skills/hello");
     }
-    // The uncommitted data-repo edit survives untouched.
     expect(
       await file(join(f.dataRepo, "skills", "hello", "SKILL.md")).text(),
     ).toBe("uncommitted upstream edit\n");
@@ -951,7 +931,6 @@ describe("stale-promote guard (copy items)", () => {
 
   test("convergence: byte-identical content re-pins without a commit", async () => {
     const f = await staleFixture();
-    // The project's edit happens to match what upstream already has.
     await writeFile(
       join(f.project, ".agents", "skills", "hello", "SKILL.md"),
       "hello v2 from teammate\n",
@@ -974,11 +953,9 @@ describe("stale-promote guard (copy items)", () => {
     expect(result.staleOverride).toBeUndefined();
     expect(result.sha).toBe(f.upstreamSha);
     expect(result.sourceCommit).toBe(f.upstreamCommit);
-    // No commit was created and the data repo content is untouched.
     expect(await $`git -C ${f.dataRepo} rev-parse HEAD`.quiet().text()).toBe(
       headBefore,
     );
-    // The repin writes a complete DataLockEntry: fresh appliedAt, kept label.
     const entry = f.lock.items[dataKey("skills", "hello")];
     expect(entry).toEqual({
       source: "data",
@@ -1032,10 +1009,8 @@ describe("stale-promote guard (fragments)", () => {
   test("the dirty branch blocks when HEAD advanced past the lock", async () => {
     const f = await fragmentStaleFixture();
     const source = join(f.dataRepo, "settings", "theme", "settings.json");
-    // Upstream advance committed past the lock...
     await writeFile(source, JSON.stringify({ theme: "v2-upstream" }));
     await commitAll(f.dataRepo, "theme v2 upstream");
-    // ...plus dirty local edits in the canonical source.
     await writeFile(source, JSON.stringify({ theme: "v3-dirty" }));
 
     const headBefore = await $`git -C ${f.dataRepo} rev-parse HEAD`
@@ -1064,7 +1039,6 @@ describe("stale-promote guard (fragments)", () => {
         .sourcePinDigest,
     ).toBe(f.lockedSha);
 
-    // --stale-ok bypasses it and records the override.
     const result = await promoteFragmentSource(
       f.project,
       f.dataRepo,
@@ -1101,7 +1075,6 @@ describe("stale-promote guard (fragments)", () => {
     const message = error.message;
     expect(message).toContain("capshelf update settings/theme");
     expect(message).toContain("--stale-ok");
-    // Update merge does not support fragments, so the refusal must not offer it.
     expect(message).not.toContain("--merge");
   });
 
@@ -1130,11 +1103,6 @@ describe("stale-promote guard (fragments)", () => {
       .quiet()
       .text();
 
-    // Nothing edited anywhere: the canonical source is clean and HEAD is the
-    // commit the lock names. Until 2026-08-26 this threw, because the clean
-    // branch compared against `entry.sha`, which a version 4 entry never has
-    // (`src/lock.ts:188-192`). The refusal named committed changes that did
-    // not exist and sent the user to `capshelf update`.
     const result = await promoteFragmentSource(
       f.project,
       f.dataRepo,
@@ -1148,7 +1116,6 @@ describe("stale-promote guard (fragments)", () => {
     expect(result.action).toBe("already-current");
     expect(result.committed).toBe(false);
     expect(result.sha).toBe(f.lockedSha);
-    // A no-op promote writes nothing: no commit, and the lock keeps its pin.
     expect(await $`git -C ${f.dataRepo} rev-parse HEAD`.quiet().text()).toBe(
       headBefore,
     );
@@ -1197,11 +1164,9 @@ describe("upstreamFactsForItem", () => {
       await upstreamFactsForItem(dataRepo, "skills", "hello", "tree"),
     ).toEqual(clean);
 
-    // Under tree identity a dirty working copy no longer suppresses the
-    // answer: the identity comes from the commit, so what consumers would
-    // receive is unchanged and the divergence is advisory. The legacy
-    // `worktree` model still nulls it out, because there the working copy
-    // *was* the identity.
+    // Under tree identity a dirty worktree only flags divergence, since
+    // identity comes from the commit; the legacy `worktree` model still nulls
+    // it because the working copy was the identity.
     await writeFile(join(dataItem, "SKILL.md"), "dirty\n");
     expect(
       await upstreamFactsForItem(dataRepo, "skills", "hello", "tree"),

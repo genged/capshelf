@@ -1,10 +1,8 @@
 /**
- * The localhost server behind `capshelf ui`.
- *
- * It binds 127.0.0.1 only. Every `/api/` request must carry the bearer token
- * the command printed in its URL, the `Host` header must name this server,
- * no response is cacheable, and nothing here writes: the API is GET only and
- * every handler in `api.ts` reads.
+ * Security: bind 127.0.0.1 only, require the bearer token on /api, check the
+ * Host header, never cache responses, and serve only GET and HEAD. Every
+ * handler in `api.ts` must also only read, since the method check alone does
+ * not stop a write.
  */
 import { CliError, NotFoundError, PreconditionError } from "../errors";
 import { UI_APP_CSS, UI_APP_JS, UI_INDEX_HTML, UI_LOGO_PATH } from "./assets";
@@ -12,14 +10,11 @@ import { createUiApi } from "./api";
 import type { UiApi, UiContext } from "./api";
 import type { UiError } from "./shared/api-types";
 
-/** Whatever one API route resolves to. */
 type UiPayload = Awaited<ReturnType<UiApi[keyof UiApi]>>;
 
 export interface UiServerOptions extends UiContext {
-  /** 0 or undefined picks a free port. */
   port?: number;
   token: string;
-  /** How many project status reports may run at once. */
   concurrency?: number;
 }
 
@@ -95,8 +90,6 @@ export function startUiServer(options: UiServerOptions): UiServer {
             `invalid view ${view}; expected installed or upstream`,
           );
         }
-        // A diff names the status read it belongs to. Without one, the
-        // project's last read answers.
         const snapshot = url.searchParams.get("snapshot") ?? undefined;
         return await api.projectDiff(
           param("project"),
@@ -164,9 +157,8 @@ function staticResponse(pathname: string): Response {
 }
 
 /**
- * The browser sends the host it connected to. A page on another origin that
- * tricks a resolver into pointing a name at 127.0.0.1 sends that name here,
- * and is refused.
+ * Rejects unknown Host headers to block DNS rebinding, where another origin's
+ * name resolves to 127.0.0.1.
  */
 export function hostAllowed(host: string | null, port: number): boolean {
   if (host === null) return false;
@@ -241,9 +233,8 @@ interface Gate {
 }
 
 /**
- * A status report spawns many git processes. Twenty projects refreshed at
- * once would spawn hundreds, so at most `limit` reports run together and the
- * rest wait their turn.
+ * Status reports spawn many git processes, so cap concurrent reports to avoid
+ * hundreds at once.
  */
 function createGate(limit: number): Gate {
   let active = 0;

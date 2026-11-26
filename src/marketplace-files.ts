@@ -48,7 +48,7 @@ export async function readFilesBelow(
 ): Promise<ProjectionFile[]> {
   const files: ProjectionFile[] = [];
   for (const relRoot of relRoots) {
-    await assertConfined(root, relRoot, "deny");
+    if (relRoot !== ".") await assertConfined(root, relRoot, "deny");
     await walk(root, relRoot, files);
   }
   return files.sort((a, b) => a.path.localeCompare(b.path));
@@ -165,18 +165,14 @@ export async function commitDataRepoMutation(options: {
   message: string;
   ownedRoots: string[];
   /**
-   * Writes the owned files. It may return repo-relative files that it wrote
-   * back unchanged and does not publish, such as a restored upstream sidecar.
-   * The ignore preflight skips them, so an ignored sidecar that the data repo
-   * never committed stays unpublished, as it was before the preflight.
+   * May return files written back unchanged (e.g. a restored upstream sidecar);
+   * the ignore preflight skips them so an uncommitted ignored sidecar stays
+   * unpublished.
    */
   mutate: () => Promise<void> | Promise<readonly string[]>;
   /**
-   * Runs after the commit exists and inside the same transaction, so a
-   * refusal unwinds through the established rollback: HEAD returns to
-   * `expectedHead`, the owned files are restored, and the index is put back.
-   * PIN-11's `A == B` proof is the only caller — the thing it checks cannot be
-   * known before the commit it is checking.
+   * Runs after the commit exists, inside the transaction, so a refusal unwinds
+   * through rollback; the checked thing cannot be known before the commit.
    */
   verify?: (commit: string) => Promise<void>;
 }): Promise<string> {
@@ -212,8 +208,8 @@ export async function commitDataRepoMutation(options: {
       );
     }
     await assertRepoCleanOutsidePaths(dataRepo, ownedRoots);
-    // `git add -- <root>` skips an ignored file with exit 0. Refuse here,
-    // inside the try, so the rollback below restores the owned files.
+    // `git add -- <root>` skips ignored files with exit 0, so refuse inside the
+    // try to let rollback restore the owned files.
     await assertNoIgnoredPublicationFiles(dataRepo, ownedRoots, keptInPlace);
     createdCommit = await commitLiteralPathsInRepo(
       dataRepo,
@@ -221,10 +217,9 @@ export async function commitDataRepoMutation(options: {
       message,
     );
     createdParent = (await commitParents(dataRepo, createdCommit))[0] ?? null;
-    // The HEAD check above cannot bind the commit that happens after it. The
-    // created commit's parent can: a writer that advanced HEAD in the gap
-    // would otherwise have its work folded into this publication, and then
-    // deleted by the rollback below.
+    // The earlier HEAD check cannot bind the later commit; checking its parent
+    // stops a concurrent writer's work being folded in and then deleted by
+    // rollback.
     if (createdParent !== expectedHead) {
       throw new PreconditionError(
         "data repo HEAD changed during marketplace mutation",
@@ -235,8 +230,8 @@ export async function commitDataRepoMutation(options: {
   } catch (error) {
     const current = await currentHead(dataRepo);
     if (createdCommit !== null && current === createdCommit) {
-      // To this commit's own parent, not to `expectedHead`: where they differ
-      // the parent is somebody else's commit, not this operation's to delete.
+      // Revert to the commit's own parent, not `expectedHead`, because a
+      // differing parent is someone else's commit and not ours to delete.
       const revertArgs =
         createdParent === null
           ? ["update-ref", "-d", "HEAD", createdCommit]

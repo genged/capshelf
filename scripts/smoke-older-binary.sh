@@ -1,24 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Spec D12 and M9: capshelf 0.13 must refuse a plugin project, and must leave
-# the manifest and both locks byte for byte. 0.13 runs from its own source at
-# tag v0.13.0, with this tree's node_modules (the dependencies did not change).
-#
-# The new CLI arranges each project, because 0.13 cannot write a version 5
-# lock. Then each 0.13 command runs against it. Every command must exit
-# non-zero, say "upgrade capshelf", and change none of the snapshot files.
-#
-# A command that names a plugin can fail at 0.13's item ref parser before it
-# reads a file. That still proves the files stay the same. `data upstream`
-# never reads the lock, so it must fail at the fence: the `shelves` key.
+# 0.13 runs from its own source at tag v0.13.0 with this tree's node_modules; it
+# must refuse a plugin project with "upgrade capshelf" and leave the manifest
+# and locks byte-identical, because it cannot write a v5 lock.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/smoke-lib.sh"
 
-# A local clone can lack the tag, so the script skips there. In CI it must
-# run: the test lane checks out with full history and tags, and a missing tag
-# means that checkout is wrong, so the script fails.
+# Skip when a local clone lacks the tag; in CI a missing tag means the checkout
+# is wrong, so fail.
 if ! git -C "$ROOT" rev-parse -q --verify 'v0.13.0^{commit}' >/dev/null; then
   if [ -n "${CI:-}" ]; then
     echo "smoke-older-binary: tag v0.13.0 is not in this clone, and CI is set." >&2
@@ -44,7 +35,6 @@ ln -s "$ROOT/node_modules" "$OLD/node_modules"
 (cd "$OLD" && bun run build:ui >/dev/null)
 OLD_CLI=(bun run "$OLD/src/cli.ts")
 
-# --- the shelf: one skill 0.13 knows, and one plugin it does not ---
 mkdir -p "$DATA/skills/placeholder" "$DATA/plugins/x/.claude-plugin" \
   "$DATA/plugins/x/skills/x"
 printf '%s\n' '---' 'name: placeholder' '---' '' 'placeholder' \
@@ -59,8 +49,8 @@ set_portable_origin "$DATA" smoke-older-binary-data
 git -C "$DATA" add -A
 git -C "$DATA" commit -qm baseline
 
-# Copy each snapshot file to "$2". A file that does not exist is recorded as
-# a marker, so an old command that creates it is caught too.
+# A missing file is recorded as a marker so an old command that creates it is
+# caught.
 snapshot() {
   local project="$1" dest="$2" file
   mkdir -p "$dest"
@@ -89,9 +79,6 @@ assert_snapshot() {
   done
 }
 
-# Run one 0.13 command in "$1" with the rest as its arguments. It must exit
-# non-zero, print "upgrade capshelf", and leave every snapshot file the same.
-# Sets REFUSAL to the file that holds its stderr.
 expect_refusal() {
   local project="$1" label
   shift
@@ -106,8 +93,8 @@ expect_refusal() {
     exit 1
   fi
   local expected='upgrade capshelf'
-  # 0.13 does not know the plugins kind, so its ref parser can refuse a
-  # plugin ref before any file is read.
+  # 0.13 does not know the plugins kind, so its ref parser can refuse a plugin
+  # ref before reading any file.
   case "$label" in
     *plugins/*) expected='upgrade capshelf|invalid item kind "plugins"' ;;
   esac
@@ -119,7 +106,6 @@ expect_refusal() {
   assert_snapshot "$project" "$TMP/snap-$(basename "$project")" "$label"
 }
 
-# --- arrange: a project-scope plugin, written by this tree's CLI ---
 init_git_repo "$P"
 (cd "$P" && "${CLI[@]}" init --data "$DATA" --no-pick >/dev/null)
 (cd "$P" && "${CLI[@]}" add skills/placeholder >/dev/null)
@@ -145,13 +131,13 @@ for args in \
   expect_refusal "$P" $args
 done
 
-# `data upstream` saves the manifest and never reads the lock, so only the
-# fence stops it.
+# `data upstream` saves the manifest without reading the lock, so only the fence
+# stops it.
 expect_refusal "$P" data upstream https://github.com/o/r
 assert_fixed_contains 'declares "shelves"' "$REFUSAL"
 
-# --- init: a fresh clone has no local.json, so 0.13 init goes on to read the
-#     manifest. This is the teammate who clones a plugin project. ---
+# A fresh clone has no local.json, so 0.13 `init` goes on to read the manifest,
+# as for a teammate cloning a plugin project.
 C="$TMP/clone"
 cp -R "$P" "$C"
 rm -f "$C/.capshelf/local.json" "$C/.capshelf/local.lock.json"
@@ -160,7 +146,6 @@ expect_refusal "$C" init --no-pick
 expect_refusal "$C" init --data "$DATA" --no-pick
 test ! -e "$C/.capshelf/local.json"
 
-# --- arrange: a local-scope plugin, so only local.json holds the fence ---
 init_git_repo "$L"
 (cd "$L" && "${CLI[@]}" init --data "$DATA" --no-pick >/dev/null)
 (cd "$L" && "${CLI[@]}" add skills/placeholder --local >/dev/null)

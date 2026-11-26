@@ -1,10 +1,6 @@
 /**
- * Test coverage and Oxlint results for the checkout. Neither can be read
- * from history the way line counts can, so a run measures the working tree
- * now, and every run is recorded in a local store so a history builds up.
- *
- * The parsers are pure and unit tested. The runner spawns `bun test` and
- * `oxlint` in the repository and never writes inside it.
+ * Coverage and Oxlint cannot be read from history, so each run measures the
+ * working tree and is stored locally to build a history.
  */
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -30,7 +26,6 @@ const OXLINT_TIMEOUT_MS = 5 * 60_000;
 const TOP = 12;
 const MAX_FAILED_TESTS = 20;
 
-/** Sum an lcov report. Files are sorted by line coverage, lowest first. */
 export function parseLcov(text: string): CoverageFile[] {
   const files: CoverageFile[] = [];
   let current: CoverageFile | null = null;
@@ -85,7 +80,6 @@ const BunfigSchema = z.object({
     .optional(),
 });
 
-/** The `[test] coverageThreshold` table in bunfig.toml, when it exists. */
 export function parseThreshold(bunfig: string | null): CoverageThreshold {
   const none: CoverageThreshold = { line: null, function: null };
   if (bunfig === null) return none;
@@ -161,7 +155,6 @@ const OxlintReportSchema = z.object({
   number_of_files: z.number().default(0),
 });
 
-/** Count `oxlint --format json` output by severity, rule, and file. */
 export function summarizeOxlint(
   text: string,
   durationMs: number,
@@ -210,7 +203,6 @@ export function historyPoint(run: MeasureRun): MeasureHistoryPoint {
   };
 }
 
-/** Runs live under the cache directory, one file per repository path. */
 export function storePath(repo: string): string {
   const base = process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache");
   const key = createHash("sha256").update(repo).digest("hex").slice(0, 16);
@@ -231,8 +223,8 @@ export async function readStore(path: string): Promise<MeasureRun[]> {
     return [];
   }
   try {
-    // SAFETY: the file is written only by writeStore below; a hand-edited
-    // or foreign file that lacks `runs` reads as an empty store.
+    // SAFETY: the file is written only by writeStore; a foreign file lacking
+    // `runs` reads as an empty store.
     const parsed = JSON.parse(text) as Partial<StoreFile>;
     return Array.isArray(parsed.runs) ? parsed.runs : [];
   } catch {
@@ -361,10 +353,6 @@ function lastLines(text: string, count = 3): string {
   return text.trim().split("\n").slice(-count).join(" ");
 }
 
-/**
- * Owns the store and the one run at a time. `state()` is what the API
- * returns; `start()` begins a run unless one is already going.
- */
 export class Measures {
   readonly repo: string;
   private readonly path: string;
@@ -392,7 +380,6 @@ export class Measures {
     };
   }
 
-  /** True when the newest run measured the current clean HEAD. */
   async isCurrent(): Promise<boolean> {
     const latest = this.runs[this.runs.length - 1];
     if (!latest || latest.dirty) return false;

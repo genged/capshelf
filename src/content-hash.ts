@@ -1,21 +1,8 @@
 /**
- * The single content-hashing convention for items and fragments.
- *
- * Every place that pins or verifies content — add-time working-tree hashing,
- * at-commit hashing for `apply`/`status`, and rebind verification (`set-data`)
- * — MUST agree byte-for-byte, or a project's locked shas stop matching their
- * source and every item looks drifted. That agreement used to live as five
- * hand-copied loops that silently drifted (a missing sidecar filter here, a
- * localeCompare sort there). This is now the one definition:
- *
- *   for each entry, sorted by name (UTF-16 code-unit order):
- *     sha256 <- name, NUL, content, NUL
- *   digest -> first 12 hex chars
- *
- * `name` is the caller's stable key (item-relative path for copy items,
- * repo-relative path for fragments); both sides of any comparison must use the
- * same key convention. Content is hashed as raw bytes (Buffer/Uint8Array) or
- * UTF-8 (string).
+ * Every pinning and verifying path must hash identically byte-for-byte, or
+ * locked shas stop matching and every item looks drifted. Hash is sha256 of
+ * name, NUL, content, NUL per entry sorted by UTF-16 order, truncated to 12 hex
+ * chars.
  */
 export function hashNamedContents(
   entries: Array<{ name: string; content: string | Uint8Array }>,

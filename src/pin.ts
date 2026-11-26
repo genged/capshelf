@@ -36,61 +36,26 @@ import { gitTreeSource } from "./item-source";
 import type { GitTreeSource } from "./item-source";
 import type { GitFileMode } from "./merge-tree";
 
-/*
- * PIN-1: IDENTITY IS THE GIT TREE
- *
- * A data lock entry records a content identity and a source commit. Every
- * consumer depends on one claim:
- *
- *     identity(content at entry.sourceCommit) == entry identity
- *
- * Before lock version 4 capshelf never verified that claim where entries were
- * written. It took identity from the data repo *working tree* and the commit
- * from `git log -1`, and treated a clean `git status` as proof the two agreed.
- * Git's cleanliness is not byte equality, so a clean filter, an index bit, or a
- * sparse checkout produced a lock that no later command could apply, reported
- * as `up-to-date` forever.
- *
- * Here identity *is* the tree:
- *
- *     sourcePinDigest = sha256 over sorted (name, mode, blobId) from one ls-tree
- *
- * There is nothing left to prove, because there is no second input set to
- * disagree with the first. Computing it reads no file content — not one byte —
- * so working-tree state, Git configuration, checkout filters, ignore rules, and
- * the filesystem cannot reach it.
- *
- * Mode is inside identity, where it used to be outside. That is a correctness
- * gain (an executable-bit flip is a real content change) and it is free, since
- * `ls-tree` already carries the mode.
- *
- * The name is deliberate: the unified Git content and transaction spec defines
- * a different `treeDigest` over path, **bytes**, and mode. Two different values
- * under one name would produce comparisons that look valid and are not.
+/**
+ * Identity comes from committed names, modes, and blob ids, so working-tree
+ * state and checkout filters cannot change the pinned identity.
  */
 
 const PIN: unique symbol = Symbol("capshelf.pin");
 
 export interface PinTreeEntry {
-  /** Item-relative, POSIX-separated. */
   readonly path: string;
   readonly mode: GitFileMode;
   readonly blobId: string;
-  /** Repo-relative path the entry was read from. */
   readonly repoRelPath: string;
 }
 
 /**
- * PIN-2: a `(sourcePinDigest, sourceCommit)` pair may be built in exactly one
- * place. `createDataLockEntry` and `refreshDataLockEntry` take this type
- * instead of loose strings, so no call site can assemble a pin from parts.
- *
  * The brand is compile-time pressure, not enforcement: a type assertion, a
- * deserializer, or a second lock serializer can bypass it. What makes it hold
- * is that construction is module-private, the digest is computed inside this
- * module, the entries handed out are frozen, and lock mutation lives in one
- * place. The brand key is a module-private symbol, which `JSON.stringify`
- * never writes, so the lock bytes do not carry it.
+ * deserializer, or a second lock serializer can bypass it. It holds because
+ * construction is module-private, the digest is computed inside this module,
+ * the entries and the pin are frozen, and lock mutation lives in one place. The
+ * brand key is a module-private symbol that `JSON.stringify` never writes.
  */
 export interface PinnedSource {
   readonly [PIN]: true;
@@ -101,15 +66,14 @@ export interface PinnedSource {
 
 export const PIN_DIGEST_PATTERN = /^[0-9a-f]{64}$/;
 
-/** Human display width. The lock always carries the full digest. */
+/** Display only; the lock always carries the full digest. */
 export function abbreviatePin(digest: string): string {
   return digest.slice(0, 12);
 }
 
 /**
- * Abbreviate an identity for a human line, whichever model produced it.
- * A `sourcePinDigest` is a full sha-256 and unreadable in a column; a
- * version-3 `sha` was already 12 characters and passes through unchanged.
+ * Version-3 `sha` values are already 12 characters, so only a 64-character
+ * digest is abbreviated.
  */
 export function shortIdentity(value: string | null | undefined): string {
   if (!value) return "(missing)";
@@ -117,11 +81,8 @@ export function shortIdentity(value: string | null | undefined): string {
 }
 
 /**
- * The digest itself.
- *
- * Sorting is by item-relative name in UTF-16 code-unit order — the same order
- * `hashNamedContents` uses — so two implementations of the same tree cannot
- * disagree because one of them used `localeCompare`.
+ * Sort by UTF-16 code units, matching `hashNamedContents`, so `localeCompare`
+ * can't make implementations disagree.
  */
 export function sourcePinDigest(entries: readonly PinTreeEntry[]): string {
   const sorted = [...entries].sort((a, b) =>
@@ -142,10 +103,8 @@ export function sourcePinDigest(entries: readonly PinTreeEntry[]): string {
 export type GitHashWidth = 40 | 64;
 
 /**
- * Which object-name width this repository uses, inferred from the ids
- * `ls-tree` has just returned rather than from configuration. A SHA-256
- * repository names blobs with 64 hex characters; hardcoding SHA-1 would
- * classify every file in one as modified.
+ * Infer width from `ls-tree` ids: SHA-256 repos use 64-hex object names, and
+ * assuming SHA-1 would mark every file modified.
  */
 export function hashWidthOf(entries: readonly PinTreeEntry[]): GitHashWidth {
   for (const entry of entries) {
@@ -156,7 +115,6 @@ export function hashWidthOf(entries: readonly PinTreeEntry[]): GitHashWidth {
   return 40;
 }
 
-/** `<algorithm>("blob " + length + "\0" + bytes)`, Git's own blob naming. */
 export function blobIdOf(bytes: Uint8Array, width: GitHashWidth): string {
   const hasher = new Bun.CryptoHasher(width === 64 ? "sha256" : "sha1");
   hasher.update(`blob ${bytes.length}\0`);
@@ -164,24 +122,9 @@ export function blobIdOf(bytes: Uint8Array, width: GitHashWidth): string {
   return hasher.digest("hex");
 }
 
-/* ------------------------------------------------------------ item trees */
-
 /**
- * The tree entries that make up an item at a commit.
- *
- * `ls-tree -r` covers a copy-directory item directly. The other two shapes
- * name their own path sets, and the digest is taken over exactly those entries
- * at the commit:
- *
- * | kind                                     | tree entries                                       |
- * | ---------------------------------------- | -------------------------------------------------- |
- * | copy-directory (`skills`, `pi-extensions`) | every blob under the item path, sidecar excluded   |
- * | copy-target-file (`subagents`)            | canonical target paths present at the commit       |
- * | fragments (`settings`, `mcp`, `codex-config`) | canonical source paths present at the commit    |
- *
- * The source names the repository, the commit, and the root. The kind names
- * the paths inside that root, so the two axes stay separate: a source with a
- * root other than the canonical one needs no second path rule.
+ * The source names repo, commit and root while the kind names the paths inside
+ * it, so a non-canonical root needs no second path rule.
  */
 export async function itemTreeEntriesAtCommit(
   source: GitTreeSource,
@@ -195,8 +138,8 @@ export async function itemTreeEntriesAtCommit(
     itemTreePathspecs(source, kind),
     { memo },
   );
-  // Refuses gitlinks and symlinks before they can reach the digest, so a pin
-  // can never name something materialization is unable to write.
+  // Refuse gitlinks and symlinks up front so a pin never names something
+  // materialization can't write.
   assertRegularBlobEntries(raw, itemRoot);
   const entries: PinTreeEntry[] = [];
   for (const entry of raw) {
@@ -215,7 +158,6 @@ export async function itemTreeEntriesAtCommit(
   );
 }
 
-/** The pathspecs `itemTreeEntriesAtCommit` lists for one item. */
 function itemTreePathspecs(source: GitTreeSource, kind: ItemKind): string[] {
   return isCopyDirectoryItemKind(kind)
     ? [literalPathspec(source.itemRoot)]
@@ -230,10 +172,9 @@ function itemRelativePath(
 ): string | null {
   const rel = posix.relative(itemRoot, entry.path);
   if (!rel || rel.startsWith("..")) return null;
-  // Git paths on Unix are byte strings; `-z` framing makes parsing safe but
-  // does not make arbitrary bytes valid UTF-8. A path that does not round-trip
-  // is refused with a precise error rather than aliased through replacement
-  // characters into a digest that two machines would compute differently.
+  // Git paths are bytes, not necessarily UTF-8; refuse non-round-tripping paths
+  // rather than alias them via replacement characters into machine-dependent
+  // digests.
   if (rel.includes("�")) {
     throw new PreconditionError(
       `${entry.path} does not round-trip through UTF-8; capshelf cannot pin it`,
@@ -242,9 +183,6 @@ function itemRelativePath(
   return rel;
 }
 
-/* -------------------------------------------------------------- pinning */
-
-/** Nothing outside this module may build a `PinnedSource`. */
 function brandPin(sourceCommit: string, entries: PinTreeEntry[]): PinnedSource {
   const frozen = Object.freeze(entries.map((entry) => Object.freeze(entry)));
   const pin: PinnedSource = {
@@ -257,20 +195,14 @@ function brandPin(sourceCommit: string, entries: PinTreeEntry[]): PinnedSource {
 }
 
 export interface PinOptions {
-  /** Skip PIN-9. Only the one-time `lock migrate` audit path sets this. */
+  /**
+   * Skips the filter check; only the one-time `lock migrate` audit sets this.
+   */
   skipFilterCheck?: boolean;
   memo?: GitReadMemo;
-  /**
-   * A data-repo `HEAD` the caller already read. `pinCurrentSource` selects
-   * the commit from that history instead of the live `HEAD`.
-   */
   head?: string;
 }
 
-/**
- * Build the pin for an item at a specific commit, refusing anything the design
- * says must never be pinned.
- */
 export async function pinItemAtCommit(
   source: GitTreeSource,
   kind: ItemKind,
@@ -286,7 +218,6 @@ export async function pinItemAtCommit(
   return await pinResolvedCommit(source, resolved, kind, name, options);
 }
 
-/** `pinItemAtCommit` after Git resolved `source.commit` to `resolved`. */
 async function pinResolvedCommit(
   source: GitTreeSource,
   resolved: string,
@@ -316,9 +247,8 @@ async function pinResolvedCommit(
 }
 
 /**
- * The commit `add`/`update` select for an item: the last commit touching its
- * content. For a copy item the metadata sidecar is excluded, so a
- * sidecar-only commit never moves the pin.
+ * For a copy-directory item the metadata sidecar is excluded, so a sidecar-only
+ * commit never moves the pin.
  */
 export async function currentSourceCommit(
   dataRepo: string,
@@ -344,10 +274,8 @@ export async function currentSourceCommit(
 }
 
 /**
- * Select the source commit of many items from `head` with one history walk,
- * and keep each answer in `memo`. `currentSourceCommit` with the same `head`
- * and memo then needs no Git process. The pathspecs are the ones
- * `currentSourceCommit` walks, so each answer is the one it would compute.
+ * One history walk fills `memo` so later `currentSourceCommit` calls with the
+ * same `head` spawn no Git process.
  */
 export async function prefetchSourceCommits(
   dataRepo: string,
@@ -368,12 +296,8 @@ export async function prefetchSourceCommits(
 }
 
 /**
- * `currentSourceCommit` followed by `pinItemAtCommit`. It reads the shelf's
- * own working tree to select the commit, so it takes a repository rather than
- * a content source.
- *
- * `git log --format=%H` prints only the full id of a commit it walked, so the
- * selected commit needs no second `rev-parse --verify`.
+ * `git log --format=%H` prints the full id of a walked commit, so no second
+ * `rev-parse --verify` is needed.
  */
 export async function pinCurrentSource(
   dataRepo: string,
@@ -394,8 +318,6 @@ export async function pinCurrentSource(
   );
 }
 
-/* ------------------------------------------------------------- PIN-9 */
-
 export interface FilteredPath {
   ref: string;
   path: string;
@@ -409,24 +331,10 @@ export interface FilterCheckSubject {
 }
 
 /**
- * PIN-9: no managed path may declare an external filter driver.
- *
- * Under tree identity capshelf faithfully delivers what Git stores. For Git's
- * own transformations that is the right answer — a `core.autocrlf=input`
- * repository *does* hold LF, and every clone produces LF, so LF is the
- * content. For an external filter driver it is the wrong answer: what Git
- * stores is a pointer or ciphertext standing in for content that lives
- * elsewhere, and it would be delivered consistently, and consistently wrong,
- * to every consumer.
- *
- * Tree identity makes this rule *more* important than it was: the working-tree
- * design would have caught an active driver by accident, through a byte
- * mismatch. This one delivers the stored bytes faithfully and would never
- * notice.
- *
- * The scope is deliberately narrow. `text`, `eol`, `ident`, and
- * `working-tree-encoding` are applied by Git itself in every clone, so
- * refusing on their declaration would reject legitimate repositories.
+ * Refuse external filter drivers: Git stores a pointer or ciphertext, which
+ * tree identity would deliver faithfully and wrongly to every consumer. Git's
+ * built-in transforms (text, eol, ident, working-tree-encoding) apply in every
+ * clone and are allowed.
  */
 export async function filteredPathsAtCommit(
   dataRepo: string,
@@ -455,8 +363,6 @@ export async function filteredPathsAtCommit(
   const filtered: FilteredPath[] = [];
   for (const result of results) {
     if (result.attribute !== "filter") continue;
-    // `unspecified`, `unset`, and `set` are not driver names. Only a real
-    // driver name means Git hands the bytes to an external program.
     if (
       result.value === "unspecified" ||
       result.value === "unset" ||
@@ -512,9 +418,8 @@ export function filterRefusalMessage(
 }
 
 /**
- * Group items by their source commit so a multi-item command makes one
- * attribute query per distinct commit rather than one per item. No call mixes
- * attribute sources.
+ * Group by source commit: one attribute query per distinct commit, because a
+ * single query cannot mix attribute sources.
  */
 export async function filteredPathsForPins(
   dataRepo: string,
@@ -533,13 +438,9 @@ export async function filteredPathsForPins(
   return filtered;
 }
 
-/* ------------------------------------------------- installed comparison */
-
 export interface InstalledEntryObservation {
   path: string;
-  /** Absent from the install. */
   missing?: true;
-  /** Present but not a regular file, or unreadable. */
   unusable?: "unsupported-type" | "unreadable";
   mode?: GitFileMode;
   blobId?: string;
@@ -547,30 +448,15 @@ export interface InstalledEntryObservation {
 }
 
 /**
- * PIN-6 stage 1: read the installed files and name them the way Git would,
- * without reading a single pinned blob. A clean project therefore settles its
- * whole installation axis with zero object reads; stage 2 fetches blobs only
- * for the paths already known to differ, which is the same set `--diff`
- * renders.
- *
- * Leaf reads are opened once and revalidated. `lstat`-then-`readFile` leaves a
- * window in which the leaf can become a symlink, so each file is opened with
- * `O_NOFOLLOW` and then `fstat`-ed and read through that descriptor. This
- * closes leaf substitution. It does not close concurrent replacement of an
- * ancestor directory, which is outside this design's threat model.
+ * O_NOFOLLOW prevents leaf symlink substitution. Check that the opened
+ * descriptor is a regular file before reading from that same descriptor.
+ * Concurrent replacement of an ancestor directory is outside the threat model.
  */
 export interface InstalledTarget {
-  /** The pinned entry's item-relative name. */
   path: string;
-  /** Where that entry lives in the project. */
   absolutePath: string;
 }
 
-/**
- * The default mapping: a copy-directory item installs its tree verbatim under
- * one root. Subagents map each canonical source to its own output file, so
- * they build their targets themselves.
- */
 export function targetsUnderRoot(
   root: string,
   entries: readonly PinTreeEntry[],
@@ -598,8 +484,8 @@ export async function observeInstalledEntries(
         out.push({ path: entry.path, missing: true });
         continue;
       }
-      // ELOOP is the O_NOFOLLOW refusal; EISDIR is a directory where a file is
-      // pinned. Both are "capshelf must not overwrite this".
+      // ELOOP is the O_NOFOLLOW refusal and EISDIR means a directory sits where
+      // a file is pinned; both must not be overwritten.
       out.push({
         path: entry.path,
         unusable:
@@ -632,10 +518,8 @@ export async function observeInstalledEntries(
 }
 
 /**
- * The installed tree's identity, in the same shape as `sourcePinDigest`, so a
- * clean install digests to exactly the pin. An absent or unusable path is
- * given a sentinel that no real entry can produce, which keeps the comparison
- * total instead of silently narrowing the set that feeds the hash.
+ * Absent or unusable paths get a sentinel no real entry can produce, so the
+ * comparison stays total instead of silently narrowing the hashed set.
  */
 export async function installedPinDigest(
   targets: readonly InstalledTarget[],
@@ -654,8 +538,6 @@ export async function installedPinDigest(
   );
 }
 
-/* --------------------------------------------------------- materializing */
-
 export interface PinnedBytes {
   path: string;
   mode: GitFileMode;
@@ -663,10 +545,8 @@ export interface PinnedBytes {
 }
 
 /**
- * PIN-3: every command that writes managed files reads bytes the same way —
- * the pin's blob ids through one `cat-file --batch`. `add` used to copy the
- * data repo working tree while `apply` read the commit, and the asymmetry is
- * what made the original bug invisible from inside the project.
+ * Every command that writes managed files reads bytes the same way: the pin's
+ * blob ids through one `cat-file --batch`, never the data repo working tree.
  */
 export async function readPinnedBytes(
   dataRepo: string,
@@ -703,12 +583,9 @@ export interface ItemAtCommit {
 }
 
 /**
- * Register each commit that two or more of these items share, with the paths
- * of those items. The tree reads and attribute queries of those items then
- * share one Git process per commit. A commit that one item uses alone is not
- * registered: its own reads are already one process each, and a batch would
- * only read more. Only the paths of the items are read, never the whole
- * commit, so the cost follows the items and not the size of the repository.
+ * Only commits shared by two or more items are batched, since a batch for a
+ * lone item would only read more; only item paths are read so cost doesn't
+ * scale with repo size.
  */
 export function batchItemReads(
   dataRepo: string,
@@ -744,19 +621,14 @@ export function batchItemReads(
 }
 
 /**
- * The most bytes one prefetch reads. The batch is one buffer, and the memo
- * keeps a copy of each small blob until the command ends. Above this size,
- * each item reads its own bytes.
+ * Caps the single prefetch buffer, since the memo retains a copy of each small
+ * blob until the command ends; above it, items read their own bytes.
  */
 export const PREFETCH_BYTE_BUDGET = 32 * 1024 * 1024;
 
 /**
- * Read the blobs of many data-repo items in one `cat-file --batch`, and keep
- * them in `memo`. A later read of the same blob id in this command starts no
- * Git process. A blob id names its bytes, so the answer cannot change.
- *
- * This only fills the memo. An item whose tree or blobs cannot be read is
- * skipped, and its own read later reports its own error.
+ * A blob id names its bytes, so memoized reads cannot go stale; unreadable
+ * items are skipped so their own read reports the error.
  */
 export async function prefetchItemBlobs(
   dataRepo: string,
@@ -774,8 +646,6 @@ export async function prefetchItemBlobs(
     );
     for (const entry of entries) ids.add(entry.blobId);
   }
-  // A blob already in the memo needs no read, and one item alone gains
-  // nothing from a batch: its own read is one process too.
   for (const id of ids) {
     const key = gitObjectReadKey(dataRepo, id);
     if (key !== undefined && memo.blobs.has(key)) ids.delete(id);
@@ -784,8 +654,6 @@ export async function prefetchItemBlobs(
   if (ids.size === 0 || distinct.size < 2) return;
   const sizes = await catFileSizes(dataRepo, ids).catch(() => undefined);
   if (sizes === undefined) return;
-  // The memo keeps no large blob, so a prefetch does not read one. Its item
-  // reads it when it needs it.
   const small = [...sizes].filter(([, size]) => size <= MEMO_BLOB_LIMIT);
   const total = small.reduce((sum, [, size]) => sum + size, 0);
   if (small.length === 0 || total > budget) return;
@@ -796,37 +664,16 @@ export async function prefetchItemBlobs(
   ).catch(() => undefined);
 }
 
-/* --------------------------------------------------------------- PIN-11 */
-
 export interface CommitProofMismatch {
   path: string;
-  /** Blob id of the selected candidate, or null when it had no such path. */
   candidate: string | null;
-  /** Blob id of what the commit holds, or null when the commit has no such path. */
   committed: string | null;
 }
 
 /**
- * PIN-11: prove the selected publication candidate equals the committed tree.
- *
- * Let `A` be the candidate `promote` or `share` selected. It can come from a
- * project snapshot, a merge, or canonical fragment source bytes. Git or the
- * repository's own policy may turn `A` into `B` before the commit completes.
- * A destination-side check then compares `B` with the commit it produced.
- * Those values agree, but they are not the selected candidate.
- *
- *     A == B                    selected candidate equals the committed tree
- *     B == tree at newCommit    the commit is what was staged
- *     ────────────────────────
- *     ⇒ sourcePinDigest(B) describes the selected publication content
- *
- * `A`'s ids are computed in process from the selected bytes, using the
- * width the committed tree reports, so a SHA-256 repository compares correctly
- * without asking Git what format it uses.
- */
-/**
- * Name candidate files the way `ls-tree` names a committed tree, so both sets
- * can be digested with the same formula.
+ * Compute candidate ids from the selected bytes because Git or repository
+ * policy can change them before commit. A comparison of destination bytes alone
+ * cannot prove that the selected candidate was committed.
  */
 export function namedFilesTreeEntries(
   files: ReadonlyArray<{ path: string; mode: GitFileMode; content: Buffer }>,
@@ -901,25 +748,15 @@ export function commitProofRefusalMessage(
   ].join("\n");
 }
 
-/* --------------------------------------------------------------- PIN-10 */
-
 export interface NameCollision {
   key: string;
   paths: string[];
 }
 
 /**
- * PIN-10: the tree is case-sensitive and byte-addressed; the destination may
- * be neither. Two pinned paths differing only in case, or in Unicode
- * normalization, collapse onto one file on APFS or NTFS — the install then
- * holds one file where the tree holds two, and every later comparison reads
- * the same bytes under two names.
- *
- * The key comes from a measurement, not from assumed folding rules:
- * lowercasing plus NFC is a guess about the filesystem and it is wrong in both
- * directions. `caseFolding` and `normalizationFolding` come from probing the
- * destination, and the probe is skipped entirely when no two pinned paths
- * could collide under either rule — which is almost every item.
+ * The tree is case-sensitive and byte-addressed but APFS/NTFS can collapse
+ * paths differing in case or Unicode normalization; folding is probed rather
+ * than assumed because lowercase+NFC guesses are wrong in both directions.
  */
 export function findNameCollisions(
   paths: readonly string[],
@@ -945,7 +782,6 @@ export function destinationKey(
   return key;
 }
 
-/** True when some pair of paths could fold together under *either* rule. */
 export function couldFold(paths: readonly string[]): boolean {
   const all = { caseFolding: true, normalizationFolding: true };
   return findNameCollisions(paths, all).length > 0;
@@ -962,14 +798,8 @@ const NO_FOLDING: DestinationFolding = {
 };
 
 /**
- * Measure the destination's name-folding behavior in a temporary sibling
- * directory: write one probe name, then ask whether the case-flipped and
- * normalization-flipped forms resolve to it.
- *
- * Two booleans, both observed. `.toLowerCase() + NFC` as an assumption
- * over-folds on a case-sensitive volume (refusing an item that installs fine)
- * and under-folds on a filesystem with its own equivalence rules (accepting
- * one that does not).
+ * Folding is observed, not assumed: lowercase+NFC over-folds on case-sensitive
+ * volumes and under-folds on filesystems with their own equivalence rules.
  */
 export async function probeDestinationFolding(
   destination: string,
@@ -980,7 +810,6 @@ export async function probeDestinationFolding(
   try {
     workspace = await mkdtemp(join(parent, ".capshelf-name-probe-"));
   } catch {
-    // Unwritable parent: the write itself will fail with a better error.
     return NO_FOLDING;
   }
   try {
@@ -1028,10 +857,6 @@ async function nearestExistingAncestor(path: string): Promise<string | null> {
   }
 }
 
-/**
- * The complete PIN-10 check for one destination: skip the probe unless two
- * pinned paths could fold together, then refuse on a real collision.
- */
 export async function assertNoDestinationCollisions(
   ref: string,
   destination: string,

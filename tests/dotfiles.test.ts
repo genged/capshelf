@@ -28,8 +28,6 @@ describe("dotenv safety policy", () => {
       privateDotenvFiles([
         ".env.custom.local",
         "nested/.env.ci.local",
-        // Near misses: a template for a local file is shareable, and a
-        // non-".env."-prefixed name is not a dotenv file at all.
         ".env.local.example",
         ".envx.local",
       ]),

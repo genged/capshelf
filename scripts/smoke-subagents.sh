@@ -57,14 +57,12 @@ assert_contains '"action": "promoted"' "$TMP/promote.json"
 assert_contains "reliability" "$AGENT/claude.md"
 (cd "$A" && "${CLI[@]}" status subagents/reviewer --strict --json >/dev/null)
 
-# Project B remains pinned until its own explicit update.
 assert_contains "correctness and security" "$B/.claude/agents/reviewer.md"
 (cd "$B" && "${CLI[@]}" status subagents/reviewer --json > "$TMP/status-update.json")
 assert_contains '"state": "update_available"' "$TMP/status-update.json"
 (cd "$B" && "${CLI[@]}" update subagents/reviewer --json >/dev/null)
 assert_contains "reliability" "$B/.claude/agents/reviewer.md"
 
-# Removing an upstream target removes only the formerly managed runtime file.
 rm "$AGENT/codex.toml"
 git -C "$DATA" add -A
 git -C "$DATA" commit -qm 'make reviewer Claude only'

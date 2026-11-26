@@ -85,8 +85,8 @@ function parsePort(value: string | undefined): number | undefined {
 }
 
 /**
- * Best effort. The URL is already printed, so a machine with no opener, or
- * a headless session, loses nothing when this fails.
+ * Best effort: the URL is already printed, so a missing opener or headless
+ * session loses nothing.
  */
 function openBrowser(url: string): void {
   const command =

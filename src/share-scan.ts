@@ -1,21 +1,7 @@
 /**
- * The share picker's scanner: one row per untracked skill, Pi extension, or
- * subagent output found on disk (picker spec, phase 3).
- *
- * `src/installed.ts` maps a tracked item to its paths; this module walks the
- * install locations the other way and reports what no lock entry claims. Each
- * row points at exactly the source a named `capshelf share <kind>/<name>`
- * would adopt (`findAdoptionSource`), so the printed equivalent command holds
- * by construction.
- *
- * A subagent row is one runtime output file, like an mcp share row is one
- * server in one output (spec decision 1): mark both files and the share needs
- * no `--target`, mark one and the command carries it. An item the named
- * command would refuse stays visible and disabled with the refusal as its
- * detail — silence would let real content read as "nothing to share".
- *
- * `untrackedItemRows` and `plannedItemSharesFromMarks` are pure, like
- * `share-catalog.ts`; `scanUntrackedShareItems` is the filesystem half.
+ * A row the named command would refuse stays visible and disabled with the
+ * refusal as detail, because silence would let real content read as "nothing to
+ * share".
  */
 import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
@@ -44,57 +30,39 @@ import { subagentCandidates, validateSubagentSource } from "./subagents";
 import type { SubagentTarget } from "./subagents";
 import { holdsOnlyMountPoints } from "./mount-points";
 
-/** The kinds the scanner can offer: copy items and subagents. */
 export type ShareableItemKind = CopyDirectoryItemKind | "subagents";
 
-/** One on-disk candidate, before it becomes a row. */
 export interface UntrackedItemCandidate {
   kind: ShareableItemKind;
   name: string;
-  /** The runtime output this row is; null for copy-directory items. */
   target: SubagentTarget | null;
-  /** The source path, project-relative, for the detail column. */
   label: string;
-  /** Right-hand shape summary for a shareable candidate, e.g. `3 files`. */
   summary: string | null;
-  /** Why the named share would refuse this candidate; null means shareable. */
   refusal: string | null;
-  /** Content fingerprint for the post-prompt staleness check; null when refused. */
   digest: string | null;
 }
 
-/** What one marked item row means to `share`. */
 export interface ItemSharePick {
   id: string;
   kind: ShareableItemKind;
   name: string;
-  /** The output this row covers; null for copy-directory items. */
   target: SubagentTarget | null;
-  /**
-   * Every shareable output this subagent has, so the mark grouping can tell
-   * "all of them" (no `--target`) from "one of them" (`--target <t>`).
-   */
   presentTargets: SubagentTarget[];
-  /** See `SharePick.digest`: the value the frame showed, not a later one. */
   digest: string;
 }
 
-/** One `capshelf share <kind>/<name>` invocation the item marks add up to. */
 export interface PlannedItemShare {
   kind: ShareableItemKind;
   name: string;
-  /** The `--target` flag; null means no flag. */
   target: SubagentTarget | null;
   marks: ItemSharePick[];
 }
 
-/** A directory the scanner looked in, for the empty-state report. */
 export interface ShareScanLocation {
   label: string;
   exists: boolean;
 }
 
-/** The item rows of the share catalog and what each mark means. */
 export interface UntrackedItemCatalog {
   rows: PickRow[];
   picks: Map<string, ItemSharePick>;
@@ -105,11 +73,8 @@ export interface UntrackedItemScan extends UntrackedItemCatalog {
 }
 
 /**
- * Rows and their meanings from scanned candidates.
- *
- * Labels and details pass through `sanitizeDisplayText`: the names come from
- * the user's filesystem, not from a validated lock, and the frame is live. A
- * refused candidate keeps its row, disabled, with the refusal as the detail.
+ * Labels and details go through `sanitizeDisplayText` because names come from
+ * the user's filesystem, not a validated lock, and the frame is live.
  */
 export function untrackedItemRows(
   candidates: UntrackedItemCandidate[],
@@ -160,12 +125,9 @@ export function untrackedItemRows(
 }
 
 /**
- * Group marked item rows into the share invocations they mean.
- *
- * A copy-directory mark is one item already. Subagent marks group by name,
- * and the marked outputs decide the `--target` flag exactly like mcp rows:
- * every shareable output marked drops it, a subset adds one flag per marked
- * output, because the named command shares every present output by default.
+ * Marking every shareable output drops `--target`, since the named command
+ * shares every present output by default; a subset adds one flag per marked
+ * output.
  */
 export function plannedItemSharesFromMarks(
   marks: ItemSharePick[],
@@ -211,8 +173,6 @@ export async function scanUntrackedShareItems(opts: {
   projectLock: Lock;
   localLock: Lock;
 }): Promise<UntrackedItemScan> {
-  // Candidates are independent reads (a directory walk and hash each), so
-  // they build concurrently; the pending order is the row order.
   const pending: Array<Promise<UntrackedItemCandidate>> = [];
   const scanned: ShareScanLocation[] = [];
   const tracked = (kind: ShareableItemKind, name: string): boolean =>
@@ -221,9 +181,8 @@ export async function scanUntrackedShareItems(opts: {
         opts.projectLock.items[key] !== undefined ||
         opts.localLock.items[key] !== undefined,
     );
-  // A plugin installs at the same folder as a skill (spec D2), so a folder
-  // under `.agents/skills/` that either lock tracks as `plugins/<n>` is the
-  // plugin's install, not an untracked skill.
+  // A plugin installs at the same folder as a skill, so a folder tracked as
+  // `plugins/<n>` is the plugin's install, not an untracked skill.
   const trackedAtSkillTarget = (name: string): boolean =>
     (["skills", "plugins"] as const).some((kind) => tracked(kind, name));
 
@@ -247,8 +206,6 @@ export async function scanUntrackedShareItems(opts: {
       if (!existsSync(dir)) continue;
       for (const entry of await readdir(dir, { withFileTypes: true })) {
         if (entry.name.startsWith(".")) continue;
-        // A plain file here is not item material; a directory or a symlink
-        // is, and the named command's own checks decide what to say about it.
         if (entry.isFile()) continue;
         // What `rm` leaves for an item with a mounted volume is not an item.
         if (
@@ -338,7 +295,6 @@ async function copyItemCandidate(
       opts.manifest.installMode,
     );
     if (source === null) {
-      // A dangling compatibility alias: nothing a share could read.
       return refused("no local copy to adopt");
     }
     label = relative(opts.project, source.path);
@@ -355,8 +311,8 @@ async function copyItemCandidate(
       digest: await shaOfItemFiles(source.path, files),
     };
   } catch (error) {
-    // Per candidate, not all-or-nothing: one refused directory must not hide
-    // the other untracked items (share-catalog.ts follows the same rule).
+    // Refuse per candidate, not all-or-nothing: one refused directory must not
+    // hide the other untracked items.
     return refused(firstErrorLine(error));
   }
 }
@@ -393,9 +349,9 @@ async function subagentCandidate(
   }
   try {
     const raw = await readFile(outputPath, "utf-8");
-    // The named share would refuse an invalid source outright; an enabled row
-    // for one would fail every time after selection. Warnings stay for act
-    // time, where the named command prints them too.
+    // Refuse an invalid source here, since an enabled row would fail every time
+    // after selection; warnings wait until act time, where the named command
+    // prints them.
     validateSubagentSource(target, name, raw);
     return {
       ...base,
@@ -407,7 +363,6 @@ async function subagentCandidate(
   }
 }
 
-/** Why this on-disk name cannot become an item name, or null. */
 function itemNameRefusal(kind: ShareableItemKind, name: string): string | null {
   if (!isAddressableItemName(kind, name)) {
     return "name cannot become an item name";

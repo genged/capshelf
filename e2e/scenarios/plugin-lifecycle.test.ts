@@ -116,7 +116,6 @@ test(
       );
       const installed = join(app, ".agents", "skills", "gh-cli");
 
-      // ---- install from upstream ------------------------------------------
       declareEvidence({
         scenario: SCENARIO,
         property:
@@ -198,7 +197,6 @@ test(
         unknown: [],
       });
 
-      // ---- check upstream -------------------------------------------------
       declareEvidence({
         scenario: SCENARIO,
         property:
@@ -224,7 +222,6 @@ test(
       );
       expect((await pluginState(world, app)).state).toBe("update_available");
 
-      // ---- move the pin ---------------------------------------------------
       declareEvidence({
         scenario: SCENARIO,
         property:
@@ -256,7 +253,6 @@ test(
       );
       expect((await pluginState(world, app)).state).toBe("ok");
 
-      // ---- keep a local fix: adopt ---------------------------------------
       declareEvidence({
         scenario: SCENARIO,
         property:
@@ -299,7 +295,6 @@ test(
         source: "data",
       });
 
-      // ---- give to the team -----------------------------------------------
       declareEvidence({
         scenario: SCENARIO,
         property:
@@ -346,7 +341,6 @@ test(
       );
       expectExit(await world.capshelf(app, ["status", "--strict"]), 0);
 
-      // ---- another project ------------------------------------------------
       declareEvidence({
         scenario: SCENARIO,
         property:
@@ -383,7 +377,6 @@ test(
         source: "data",
       });
 
-      // ---- change it ------------------------------------------------------
       declareEvidence({
         scenario: SCENARIO,
         property:

@@ -3,8 +3,8 @@ import { assertNever, isSafeGitRef } from "../src/assert";
 
 describe("assertNever", () => {
   test("throws with the offending value when reached at runtime", () => {
-    // SAFETY: the test reaches assertNever with a value the type system calls
-    // impossible. `never` is comparable to string, so one assertion is enough.
+    // SAFETY: deliberately passes a value the type system calls impossible to
+    // exercise the runtime guard.
     expect(() => assertNever("surprise" as never)).toThrow(
       /unexpected value: "surprise"/,
     );

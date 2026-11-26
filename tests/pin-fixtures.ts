@@ -8,11 +8,8 @@ import type { ItemKind } from "../src/master";
 import { installedTreeIdentity } from "../src/install-identity";
 
 /**
- * The `sourcePinDigest` a lock entry would record for an item, computed the
- * same way `add`/`update` compute it: from the committed tree, never from the
- * data repo's working copy. Fixtures use this instead of hardcoding a digest
- * so a change to the formula shows up as one failing assertion rather than
- * fifty stale constants.
+ * Computed from the committed tree, never the working copy, so a formula change
+ * fails one assertion instead of many hardcoded digests.
  */
 export async function pinDigestAtCommit(
   dataRepo: string,
@@ -41,10 +38,6 @@ export async function currentPinDigest(
   );
 }
 
-/**
- * The installed identity of an item, named the way the pin names it. A clean
- * install equals `pinDigestAtCommit` for the same commit.
- */
 export async function installedPinDigestFor(
   project: string,
   dataRepo: string,
@@ -65,10 +58,6 @@ export async function installedPinDigestFor(
   );
 }
 
-/**
- * The `(sourcePinDigest, sourceCommit)` pair for an item's current source, as
- * a spreadable fixture fragment.
- */
 export async function currentPin(
   dataRepo: string,
   kind: ItemKind,

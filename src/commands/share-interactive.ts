@@ -1,18 +1,7 @@
 /**
- * The interactive share path: `capshelf share` with no item.
- *
- * The picker lists every unmanaged config value as one row per legal `--pick`
- * path, plus every untracked skill, Pi extension, and subagent output found
- * on disk (`share-scan.ts`). The marks group into share invocations
- * (`share-catalog.ts`, `share-scan.ts`), and each one then runs through the
- * same command a named share runs — which re-reads its sources and checks the
- * data repo is clean *after* the prompt, so content that changed while the
- * picker was open fails its own row instead of being committed from a stale
- * read.
- *
- * Best effort per item, like the `add` picker's install loop: a failure names
- * its reason and the command that retries that one item, and the other items
- * stay shared.
+ * Each share re-reads its sources and checks the data repo is clean after the
+ * prompt, so content changed while the picker was open fails its own row
+ * instead of being committed from a stale read.
  */
 import type { Command } from "commander";
 import { existsSync } from "node:fs";
@@ -57,7 +46,6 @@ export type InteractiveShareSummary =
   | { outcome: "unavailable"; reason: PickUnavailableReason }
   | { outcome: "cancelled" }
   | { outcome: "nothing-selected" }
-  /** Every output is clean or absent; the picker never opened. */
   | { outcome: "empty" }
   | {
       outcome: "shared";
@@ -70,17 +58,14 @@ export async function runInteractiveShare(request: {
   share: ShareOptions;
   cmd: Command;
 }): Promise<InteractiveShareSummary> {
-  // Before any filesystem work: with no terminal there is nothing to offer,
-  // and building the rows reads the outputs and the data repo.
   const blocked = pickTerminalUnavailable();
   if (blocked) return { outcome: "unavailable", reason: blocked };
 
   const project = projectRoot();
   const manifest = await loadManifest(project);
   const projectLock = await loadLock(project);
-  // Fail a legacy lock before the prompt opens, not after a selection: the
-  // refusal is the same one `shareFragment` makes, moved ahead of the
-  // unbounded terminal hold.
+  // Refuse a legacy lock before the prompt opens, not after a selection made
+  // over an unbounded terminal hold.
   assertWritableLock(projectLock, "capshelf share");
   const localLock = await loadLocalLock(project);
   const dataRepo = await resolveProjectDataRepo(project, manifest, request.cmd);
@@ -93,7 +78,6 @@ export async function runInteractiveShare(request: {
   });
 
   if (catalog.rows.length === 0) {
-    // An empty answer is a valid answer, like a `search` with no matches.
     console.log("nothing to share: no unmanaged values or untracked items in");
     for (const location of [...catalog.outputs, ...catalog.scanned]) {
       console.log(`  ${location.label}${location.exists ? "" : " (absent)"}`);
@@ -125,18 +109,12 @@ export async function runInteractiveShare(request: {
   const failed: string[] = [];
   const dataOverride = globalOpts(request.cmd).data;
   for (const planned of plannedItemSharesFromMarks(itemMarks)) {
-    // The named command's own default, so the printed equivalent command
-    // needs no --to flag. Skills and plugins adopt into local scope unless
-    // project Git tracks them; Pi extensions and subagents into project scope.
     const scope =
       planned.kind === "subagents"
         ? "project"
         : (await defaultCopyItemShareScope(project, planned.kind, planned.name))
             .scope;
     const ref = sanitizeDisplayText(`${planned.kind}/${planned.name}`);
-    // The equivalent line after a success and the retry line after a failure
-    // are the same string for an on-disk item, because the item's name was
-    // never chosen in the frame.
     const command = shareCommandLine({
       ref: `${planned.kind}/${planned.name}`,
       picks: [],
@@ -145,16 +123,14 @@ export async function runInteractiveShare(request: {
       dataOverride,
     });
     try {
-      // The digest proves the directory or file is still the content the
-      // frame offered.
       await assertMarksFresh(planned, { project, dataRepo }, () => ref);
       const options: ShareOptions = {
         ...(request.share.message !== undefined && {
           message: request.share.message,
         }),
         suppressGuidance: true,
-        // The repository the catalog and the staleness check read. A rebind
-        // while the picker was open must not move the destination.
+        // Pin the repo the catalog was read from so a `data bind` while the
+        // picker is open cannot move the destination.
         boundRepo: dataRepo,
       };
       if (planned.kind === "subagents") {
@@ -199,11 +175,9 @@ export async function runInteractiveShare(request: {
     }
     const ref = sanitizeDisplayText(`${planned.kind}/${name}`);
     try {
-      // A server-derived name skipped the prompt, so it must pass the same
-      // boundary a typed ref passes. The catalog disables such rows, but a
-      // mark is data, and `shareFragment` takes the name without re-parsing —
-      // an unvalidated name would create an item no named command can
-      // address.
+      // Validate server-derived names like typed refs: marks are data and
+      // `shareFragment` doesn't re-parse, so a bad name would create an item no
+      // command can address.
       if (planned.name !== null) {
         const refusal = itemNameRefusal(planned.kind, planned.name, {
           dataRepo,
@@ -215,10 +189,6 @@ export async function runInteractiveShare(request: {
       await assertMarksFresh(planned, { project, dataRepo }, (changed) =>
         changed.map((mark) => mark.pick).join(", "),
       );
-      // `shareFragment` then reloads the manifest and lock, re-reads the
-      // output, re-runs the extraction, and asserts the data repo clean,
-      // which narrows the remaining window to the one every command has
-      // between its own read and its own write.
       await shareFragment(
         planned.kind,
         name,
@@ -230,8 +200,6 @@ export async function runInteractiveShare(request: {
             message: request.share.message,
           }),
           suppressGuidance: true,
-          // The repository the catalog and the staleness check read. A
-          // rebind while the picker was open must not move the destination.
           boundRepo: dataRepo,
         },
         request.cmd,
@@ -264,11 +232,8 @@ export async function runInteractiveShare(request: {
 }
 
 /**
- * Ask for the new item's name, after the full-screen frame has closed (spec
- * decision 2). No default is offered: a wrong default one Enter away is worse
- * than a question. An empty answer skips the item; an unusable name prints its
- * reason and asks again — the same checks a named `share` would refuse on,
- * moved before anything is written.
+ * No default name is offered: a wrong default one Enter away is worse than
+ * asking.
  */
 async function promptItemName(
   kind: FragmentItemKind,
@@ -291,9 +256,8 @@ function itemNameRefusal(
   ctx: { dataRepo: string; projectLock: Lock; localLock: Lock },
 ): string | null {
   try {
-    // Round trip, not just parse: the parser trims and splits, so a name with
-    // surrounding whitespace or a slash parses into a *different* ref, and
-    // the item it creates could never be addressed by the name it carries.
+    // Require an exact round trip so parsing cannot change the name of the
+    // item being created.
     const parsed = parseItemRef(`${kind}/${name}`);
     if (parsed.kind !== kind || parsed.name !== name) {
       return `"${name}" cannot be addressed as an item ref — pick another name`;
@@ -323,11 +287,8 @@ function isFragmentSharePick(
 }
 
 /**
- * Re-derive after the prompt, then act. The consent was for the content the
- * frame showed, and the prompt held the terminal for an unbounded time — so
- * first prove each marked value is still the one that was offered, against a
- * catalog rebuilt from fresh reads. A changed or vanished mark fails its row;
- * it is not committed from a stale read.
+ * The prompt holds the terminal for unbounded time, so prove each mark still
+ * matches what was offered, against fresh reads, before acting.
  */
 async function assertMarksFresh<M extends { id: string; digest: string }>(
   planned: { marks: M[] },
@@ -350,11 +311,9 @@ async function assertMarksFresh<M extends { id: string; digest: string }>(
 }
 
 /**
- * The command's standing recovery note, surfaced here because the interactive
- * user never sees `share --help`: every share path commits to the data repo
- * before persisting the manifest and lock, and a failure between those two
- * steps leaves an item the retry command would refuse as already existing.
- * `add` is the documented repair for that state.
+ * Surfaced here because interactive users never see `share --help`: a failure
+ * after the data-repo commit but before manifest/lock persist leaves an item
+ * retry refuses, and `add` repairs it.
  */
 function printAddRepairHint(
   ref: string,

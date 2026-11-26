@@ -88,9 +88,8 @@ export function registerShow(program: Command): void {
     .option("--json", "output JSON (no content dump)")
     .option("--no-content", "skip content dump")
     .action(async (itemRef: string, opts: ShowOptions, cmd: Command) => {
-      // Bundle refs branch BEFORE parseItemRef: the parser rejects "bundles"
-      // as an item kind, so testing afterwards would be dead code behind an
-      // exit-1 throw.
+      // Check bundle refs before `parseItemRef`, which rejects "bundles" as an
+      // item kind.
       const bundleName = isBundleRef(itemRef);
       if (bundleName !== null) {
         await showBundle(bundleName, opts, cmd);
@@ -98,9 +97,6 @@ export function registerShow(program: Command): void {
       }
 
       const ref = parseItemRef(itemRef);
-      // Browse-only: works inside a project (showing install/tracking status)
-      // or anywhere with --data / $CAPSHELF_HOME (locks default to empty), so an
-      // item can be inspected before its shelf is adopted.
       const project = findProjectRoot();
       const manifest = project ? await loadManifest(project) : null;
       const lock = project ? await loadLock(project) : emptyLock();
@@ -167,13 +163,8 @@ export function registerShow(program: Command): void {
       const projectEntry = lock.items[dataKey(item.kind, item.name)];
       const lockEntry =
         projectEntry ?? localLock.items[dataKey(item.kind, item.name)] ?? null;
-      // `update` needs an item this project tracks; the canonical-path
-      // sentence needs nothing, so browse-only show prints it alone.
       const tracked = project !== null && lockEntry !== null;
       const itemLabel = `${item.kind}/${item.name}`;
-      // Where this project's locked copy reads from, when it has one. `show`
-      // resolves a data repo before it reaches here, so a data entry always
-      // produces a git tree.
       const lockedSource =
         lockEntry === null
           ? null
@@ -192,11 +183,8 @@ export function registerShow(program: Command): void {
       const coverage = wholeCoverage
         ? restrictCoverage(wholeCoverage, cliTarget)
         : null;
-      // A canonical source reached through a symlink is not a source. The pin
-      // refuses the item outright (`assertRegularBlobEntries`), and coverage
-      // now reports mode-120000 entries as absent — so without this, `show`
-      // would print "Codex absent" and then dump the link's target, which can
-      // be any file the link points at, inside the item or not.
+      // Skip symlinked canonical sources: a link target can be any file, inside
+      // the item or not, and the pin already refuses such items.
       for (const relPath of [
         ...fragmentSources.map((source) => source.relPath),
         ...subagentSources.map((source) => source.relPath),
@@ -292,16 +280,10 @@ export function registerShow(program: Command): void {
       console.log(`data/${item.kind}/${item.name}`);
       console.log(`  master sha: ${masterSha}`);
       if (lockEntry) {
-        // No drift claim here. `masterSha` is a content hash of the data repo's
-        // working tree; the lock holds a digest over a committed Git tree. They
-        // answer different questions and can never be equal, so comparing them
-        // printed "(update available)" for every item, forever — the exact
-        // mixing the contract on `entryIdentity` (`src/lock.ts`) forbids.
-        // `status` owns update detection and gets it right; `show` describes
-        // one item.
+        // No drift claim: `masterSha` is a working-tree content hash and the
+        // lock holds a committed-tree digest, so they can never be equal;
+        // `status` owns update detection.
         console.log(`  locked sha: ${shortIdentity(entryIdentity(lockEntry))}`);
-        // Two fields, two questions. The commit says where the bytes came
-        // from; the label is a record field the user set on this entry.
         if (isGitTree(lockedSource)) {
           console.log(`  source commit: ${lockedSource.commit}`);
         }
@@ -388,10 +370,9 @@ export function registerShow(program: Command): void {
 }
 
 /**
- * One file of the content dump. The name and the content come from the
- * repository, so each line goes through `sanitizeDisplayText`: an ESC or OSC
- * sequence could clear or forge the output a person reviews. Line breaks and
- * tabs are kept, because they cannot move the cursor back over text.
+ * Name and content come from the repo, so strip ESC/OSC sequences that could
+ * clear or forge reviewed output; newlines and tabs cannot move the cursor
+ * back, so they stay.
  */
 function printFile(name: string, content: string): void {
   console.log(`─── ${sanitizeDisplayText(name)} ─────────────────────`);
@@ -408,9 +389,8 @@ function relativeProjectPath(project: string, path: string): string {
 }
 
 /**
- * Coverage is read at a commit, never at the worktree. An installed item is
- * described by what the project actually has — its locked `sourceCommit`. For
- * an item nothing has pinned, `HEAD` is what a later `add` would pin.
+ * Read coverage at a commit, never the worktree: the locked `sourceCommit` if
+ * installed, else `HEAD`, which is what a later `add` would pin.
  */
 async function showTargetCoverage(
   project: string | null,
@@ -446,9 +426,8 @@ async function showTargetCoverage(
 }
 
 /**
- * `--target <t>` on an item with no `<t>` source keeps refusing with exit 3:
- * turning a documented failure into a success would break scripts. Only the
- * message improves — it names the canonical path a `<t>` source belongs at.
+ * Keep exit 3 when `--target` has no matching source; turning a documented
+ * failure into success would break scripts.
  */
 function missingTargetSource(
   itemLabel: string,
@@ -460,18 +439,9 @@ function missingTargetSource(
     return new PreconditionError(`no matching source for ${itemLabel}`);
   }
   const row = coverage?.rows.find((candidate) => candidate.target === target);
-  // `show` dumps the data repo's working tree, but coverage is read at a
-  // commit, so the two can disagree — and they say opposite things to the
-  // user. Telling someone to author and commit a file that is already
-  // committed, and merely absent from their working tree, sends them to the
-  // wrong repair.
-  //
-  // It states the fact and stops, for the reason this design withdrew every
-  // other computed repair: a printed command has to succeed in the exact state
-  // it is printed in, and this one cannot. `git checkout -- <path>` fixes an
-  // uncommitted deletion and fails on a staged one or on a target a later
-  // upstream commit removed — and `present` here only says the commit this
-  // project reads has the file, never which of those happened.
+  // States the fact and no repair command: `present` only says the read commit
+  // has the file, and `git checkout -- <path>` fails for staged deletions or
+  // upstream-removed targets.
   if (row?.present === true) {
     return new PreconditionError(
       [
@@ -488,9 +458,8 @@ function missingTargetSource(
   return new PreconditionError(
     [
       `${itemLabel} has no ${target} source`,
-      // Not `formatCoverageGap`: that one is gap-gated, and this refusal must
-      // still name where the source belongs when coverage is `unknown` — a
-      // state where there is no known gap to report but the path is still true.
+      // Not `formatCoverageGap`: it is gap-gated, but this refusal must name
+      // the source path even when coverage is `unknown`.
       ...(row
         ? [
             `  ${RUNTIME_TARGET_LABELS[target]} reads ${row.sourcePath} in your data repo.`,
@@ -503,13 +472,6 @@ function missingTargetSource(
   );
 }
 
-/**
- * Preview a bundle: the literal member list with per-member availability and
- * install state ("installed" reads both locks, same definition as items).
- * Bundles have no content to dump and no fragment target to pick, so
- * `--target` and `--no-content` are rejected (exit 3). Malformed bundles
- * degrade: the warning and path stay visible (read path).
- */
 async function showBundle(
   name: string,
   opts: ShowOptions,
@@ -692,10 +654,6 @@ interface RelationState {
   installed: boolean;
 }
 
-/**
- * "Installed" means present in either capshelf.lock.json or local.lock.json,
- * under either the data or system source prefix.
- */
 function relationStates(refs: string[], locks: Lock[]): RelationState[] {
   return refs.map((ref) => ({
     ref,
@@ -707,7 +665,6 @@ function relationStates(refs: string[], locks: Lock[]): RelationState[] {
   }));
 }
 
-/** The always-present `metadata` JSON object appended to show --json. */
 interface MetadataJson {
   description?: string;
   tags: string[];

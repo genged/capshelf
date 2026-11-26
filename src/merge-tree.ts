@@ -12,13 +12,10 @@ import { tmpdir } from "node:os";
 import { isolatedMerge, isolatedMergeText } from "./git";
 
 /**
- * One step of the merge sandbox. `repo === null` is the `git init` that
- * creates it, which by definition does not start inside a repository — the
- * only place in the codebase where an unbound git invocation is correct, and
- * it is bound instead to a disposable working directory and a neutral
- * environment (`isolatedGitEnv`).
+ * The `git init` step (`repo === null`) is the one git call not bound to an
+ * existing repository. It runs from the system temp directory under a neutral
+ * environment (`isolatedGitEnv`) and creates the disposable repo.
  */
-/** The complete, fully defined environment the merge sandbox runs git in. */
 interface SpawnEnvironment {
   [name: string]: string;
 }

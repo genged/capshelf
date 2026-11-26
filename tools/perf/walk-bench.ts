@@ -1,13 +1,3 @@
-// Time the one history walk against one `git log -1` per item, on long
-// histories that `git fast-import` builds in a few seconds.
-//
-// Usage: bun tools/perf/walk-bench.ts [commits] [items]
-//
-// Two histories are built. In the first, every item changes in the newest
-// commits, so the walk stops early. In the second, items change only in the
-// first commit, so the walk reads the whole history. Each line prints the
-// walk time, the number of answers it filled, and the time of the separate
-// `log -1` calls. The walk must fill every answer in both cases.
 import { $ } from "bun";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

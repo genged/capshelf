@@ -1,15 +1,6 @@
 /**
- * Stop a local run on a Bun that `package.json#packageManager` does not
- * declare. Bun does not enforce that field, so `bun run test` would use any
- * Bun on PATH. `bun run test`, `bun run build`, and `bun run e2e:run` run this
- * first.
- *
- * Run it as `bun scripts/check-bun-version.ts` inside the script line, not
- * through `bun run`: the outer `bun run` does not put its own binary on PATH,
- * so the `bun` that this check sees is the one that runs the next command.
- *
- * Set CAPSHELF_ANY_BUN=1 to run on another Bun on purpose. The scheduled
- * canary does this to test the newest Bun.
+ * Bun doesn't enforce packageManager; run as `bun scripts/...` not `bun run`,
+ * since the outer `bun run` doesn't put its own binary on PATH.
  */
 import { join } from "node:path";
 import { z } from "zod";

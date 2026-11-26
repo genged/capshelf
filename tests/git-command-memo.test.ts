@@ -16,7 +16,6 @@ async function skillRepo(prefix: string): Promise<string> {
   return repo;
 }
 
-/** Count the git processes `run` starts. */
 async function gitSpawns(run: () => Promise<void>): Promise<number> {
   const reads = spyOn(gitMeasure, "recordGitRead");
   try {
@@ -44,7 +43,6 @@ test("a walk from a given HEAD ignores later commits and reuses the memo", async
   expect(await git.lastTouchingContentCommit(repo, "skills/alpha")).toBe(
     secondHead,
   );
-  // A new HEAD is a new key, so a pass that reads HEAD again sees the move.
   expect(
     await git.lastTouchingContentCommit(repo, "skills/alpha", {
       head: secondHead,
@@ -122,8 +120,6 @@ test("a pin and its needs reuse the HEAD the caller read", async () => {
       { head: firstHead, memo },
     );
     expect(needs.needsSourceCommit).toBe(firstHead);
-    // `log --format=%H` already named the commit, and the caller already read
-    // HEAD, so neither is read again.
     expect(resolve).not.toHaveBeenCalled();
     expect(head).not.toHaveBeenCalled();
   } finally {
@@ -131,7 +127,6 @@ test("a pin and its needs reuse the HEAD the caller read", async () => {
     head.mockRestore();
   }
 
-  // A second pass at the same HEAD with the same memo starts no git process.
   const secondPass = async () => {
     await pinCurrentSource(repo, "skills", "alpha", { head: firstHead, memo });
     await captureCommittedItemNeeds(

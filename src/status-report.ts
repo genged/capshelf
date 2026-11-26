@@ -1,9 +1,7 @@
 import { GitReadMemo } from "./git-read-memo";
 /**
- * The status report as a function: the per-item rows `capshelf status`
- * prints, computed for one project, without the command's option parsing or
- * output. The command and the web UI both call it, so a row in the dashboard
- * is the row `status --json` prints and never a second opinion.
+ * The command and the web UI share this function so a dashboard row is always
+ * the row `status --json` prints.
  */
 import { existsSync } from "node:fs";
 import { relative } from "node:path";
@@ -113,9 +111,7 @@ import {
 import type { TargetCoverageReport } from "./target-coverage";
 
 export interface StatusScope {
-  /** Restrict to project scope (`status --project`). */
   project?: boolean;
-  /** Restrict to clone-local scope (`status --local`). */
   local?: boolean;
 }
 
@@ -124,13 +120,7 @@ export interface StatusReportInput {
   manifest: Manifest;
   projectLock: Lock;
   localLock: Lock;
-  /**
-   * The data repo to read upstream facts from, or null when none is usable.
-   * `resolveStatusDataRepo` produces this value with the command's degrade
-   * rules.
-   */
   dataRepo: string | null;
-  /** The remote-skill record. Its rows are local scope and never committed. */
   remotes: RemotesLock;
   ref?: ItemRef;
   scope?: StatusScope;
@@ -145,14 +135,9 @@ export interface StatusReport {
 }
 
 /**
- * The data repo `status` reads, or null.
- *
- * Status still produces a report when the data repo is not configured or has
- * gone missing on disk: data items report missing_upstream instead of
- * crashing. A configured-but-absent path degrades to null here so fragment
- * and copy items degrade uniformly, and the per-item master/git calls surface
- * genuine errors (ambiguous refs, permission failures) instead of swallowing
- * them. A bound path that is not a git repo degrades the same way.
+ * An unconfigured, missing, or non-git data repo degrades to null, so data
+ * items report missing_upstream instead of crashing. Genuine git errors still
+ * surface from the per-item calls.
  */
 export async function resolveStatusDataRepo(opts: {
   override?: string;
@@ -165,31 +150,19 @@ export async function resolveStatusDataRepo(opts: {
     : null;
 }
 
-/**
- * The rule `status --strict` applies to one row: anything other than
- * up-to-date or kept-local fails, and so does a strict runtime warning. The
- * web UI calls this "needs attention".
- */
 export function rowFailsStrict(row: StatusRow): boolean {
   return (
     (row.state !== "ok" && row.state !== "kept-local") ||
     (row.runtimeWarnings?.some(isStrictRuntimeWarning) ?? false) ||
-    // D18: an unfinished adopt is a warning line rather than a new `State`, so
-    // every consumer that switches on state is untouched. It still has to fail
-    // strict while the condition lasts.
+    // An unfinished adopt is a warning, not a new `State`, so state switches
+    // are untouched; it still fails strict while it lasts.
     row.remote?.alsoTrackedInShelf === true ||
-    // D12, the same pattern: a visible extra is row-3 drift, which `update`
-    // deletes, so it fails strict. A kept-local row is exempt, as above.
+    // A visible extra is drift that `update` deletes, so it fails strict;
+    // kept-local rows are exempt.
     (row.state !== "kept-local" && (row.visibleExtras?.length ?? 0) > 0)
   );
 }
 
-/**
- * Which `--diff-view` comparisons a state can render. Mirrors the gates in
- * `buildStatusDiff` (`src/status-diff.ts`): the installed view exists for
- * local drift states, the upstream view for states with committed upstream
- * content to compare.
- */
 export function statusDiffViews(
   state: State,
 ): Array<Exclude<StatusDiffView, "all">> {
@@ -235,8 +208,8 @@ export async function buildStatusReport(
   const { project, manifest, projectLock, localLock, dataRepo, ref } = input;
   const scope = input.scope ?? {};
   const targets = statusTargets(projectLock, localLock, ref, scope);
-  // M8: read once per status run. Every plugin row in this project — shelf or
-  // remote — shares the same workspace trust fact.
+  // Read once per status run: every plugin row, shelf or remote, shares the
+  // same workspace trust fact.
   const claudeTrust = claudeTrustFor(project);
   const external = (await listSkillsShSkills(project)).filter(
     (skill) =>
@@ -260,9 +233,8 @@ export async function buildStatusReport(
   const externalSkillNames = new Set(external.map((skill) => skill.name));
 
   const memo = new GitReadMemo();
-  // One `HEAD` read serves the history walk and the sidecar reads of every
-  // row, so both see one commit. A failed read is not kept: the walk is then
-  // skipped, and the next row reads `HEAD` again.
+  // One `HEAD` read is shared so the history walk and every row's sidecar read
+  // see the same commit; a failed read is not cached.
   let observedHead: string | undefined;
   const observeHead = async (): Promise<string | undefined> => {
     observedHead ??= await headSha(dataRepo!).catch(() => undefined);
@@ -273,28 +245,19 @@ export async function buildStatusReport(
     observedObjectsDir ??= await repositoryObjectsDirectory(dataRepo!);
     return observedObjectsDir;
   };
-  // One `git status` of the data repo answers every row's dirty check, in
-  // place of one `git status -- <path>` per row.
   let observedClean: PathCleanCheck | undefined;
   const isDataPathClean: PathCleanCheck = async (relPath) => {
     observedClean ??= await worktreeCleanSnapshot(dataRepo!);
     return await observedClean(relPath);
   };
-  // One listing reads the committed sidecar of every data row at `HEAD`.
   const dataItems = targets
     .map((target) => parseLockKey(target.key))
     .filter((parsed) => parsed.source === "data");
   let observedSidecars: Map<string, Buffer> | undefined;
   let walkHead: string | undefined;
-  // Rows that share a pinned commit share its tree and attribute reads.
-  // Subagent and fragment rows also hash their pinned bytes, so one read
-  // covers them all. A copy-directory row compares blob ids and reads no bytes.
   if (dataRepo) {
     const pinned = pinnedDataItems(targets, projectLock, localLock);
     batchItemReads(dataRepo, pinned, memo);
-    // One history walk selects the upstream commit of every row. If the
-    // `HEAD` read fails, each row walks from the live `HEAD` as before. One
-    // row has nothing to share.
     if (pinned.length >= 2) {
       walkHead = await observeHead();
       if (walkHead !== undefined) {
@@ -318,10 +281,8 @@ export async function buildStatusReport(
     }
 
     const entry = lock.items[key]!;
-    // The one place this row decides where its bytes come from. A null content
-    // source means the item reads from a repository and none is usable, which
-    // is a degraded row rather than a failed command. `tree` narrows that to
-    // the case this row can actually read a commit from.
+    // A null content source means no usable repository: the row degrades
+    // instead of failing the command.
     const contentSource = contentSourceOrNull({
       entry,
       kind,
@@ -329,20 +290,14 @@ export async function buildStatusReport(
       repo: dataRepo,
     });
     const tree = isGitTree(contentSource) ? contentSource : null;
-    // Reachability must be gathered before computing currentSha: the
-    // sourceCommit-dependent computations below (`git show` /
-    // `ls-tree` at the pinned commit) would error out on an
-    // unreachable pin. When the commit is missing they are skipped and
-    // the row degrades to missing_source_commit instead of crashing.
+    // Probe commit reachability first: commit-dependent git reads error on an
+    // unreachable pin, so those are skipped and the row degrades to
+    // missing_source_commit.
     const sourceCommitPresent: boolean | null = tree
       ? await commitExists(tree.repo, tree.commit, memo)
       : null;
-    // Under lock version 4 the installed state is named the way Git
-    // names it — a blob id per pinned path plus its mode — so the same
-    // `sourcePinDigest` formula covers the pin, the install, and the
-    // upstream. Mode is inside the digest, which is why `modeDrifted`
-    // stays false on that path: an executable-bit flip is already a
-    // different identity rather than a separate flag.
+    // Mode is inside the digest under lock v4, so an executable-bit flip is a
+    // different identity and `modeDrifted` stays false.
     const treeIdentity = isTreePinned(entry);
     const installation =
       treeIdentity && tree
@@ -365,8 +320,6 @@ export async function buildStatusReport(
     } else if (isFragmentItemKind(kind)) {
       currentSha = await shaOfInstalled(project, kind, itemName);
     } else if (isCopyDirectoryItemKind(kind)) {
-      // An unreachable commit is the same answer as an unreachable repository:
-      // there is no locked content to compare the install against.
       const lockedSource = sourceCommitPresent === false ? null : contentSource;
       currentSha = await currentCopyDirectoryItemSha({
         project,
@@ -399,10 +352,9 @@ export async function buildStatusReport(
       throw new Error(`no status strategy for ${kind}/${itemName}`);
     }
     let fragmentOutputState: FragmentContributionState | null = null;
-    // Two questions under one guard, and they are not the same one. The outer
-    // test is about the record: only a shelf fragment contributes to a merged
-    // output. The inner test is about the content: the contribution can only be
-    // computed from a readable commit.
+    // The outer test asks whether the record is a shelf fragment that
+    // contributes to merged output; the inner asks whether the commit is
+    // readable, so they must not be merged.
     if (source === "data" && isFragmentItemKind(kind)) {
       if (tree === null || sourceCommitPresent === false) {
         currentSha = entryIdentity(entry);
@@ -450,8 +402,6 @@ export async function buildStatusReport(
             upstream.sourceCommit !== entry.sourceCommit);
         if (upstreamSha !== null || upstreamDirty) {
           const head = await observeHead();
-          // A sidecar that does not parse leaves the needs unknown, as a
-          // failed `HEAD` read does.
           if (head !== undefined) {
             try {
               const item = { kind, name: itemName };
@@ -461,7 +411,7 @@ export async function buildStatusReport(
                 head,
                 memo,
               ).catch(() => undefined);
-              // A failed batch read falls back to this row's own read, which
+              // If the batch read failed, fall back to a per-row read, which
               // reports no needs when Git cannot read the sidecar.
               currentNeeds = (
                 observedSidecars === undefined
@@ -481,9 +431,8 @@ export async function buildStatusReport(
       upstreamChanged = upstreamSha !== entryIdentity(entry);
     }
 
-    // PIN-9 on the reporting path: one `check-attr` per item, against
-    // the commit the pin names, so the verdict is identical in every
-    // clone whether or not that clone holds the driver's key.
+    // Run `check-attr` against the pinned commit so the verdict is identical in
+    // every clone, whether or not it holds the driver's key.
     const filteredPaths =
       treeIdentity && tree && sourceCommitPresent !== false
         ? await filteredPathsForEntry(
@@ -532,13 +481,10 @@ export async function buildStatusReport(
       sourceCommitPresent,
       sourceFiltered: filteredPaths.length > 0,
     });
-    // Coverage is read at the locked commit, never at the worktree, so
-    // `status` describes what the project actually has. When it cannot
-    // be read at all — no data repo, or an unreachable pin — the rows
-    // degrade to `present: null` instead of the command crashing.
+    // Read coverage at the locked commit, not the worktree, so `status` reports
+    // what the project actually has.
     let targetCoverage: TargetCoverageReport | null = null;
     if (isBundled(contentSource)) {
-      // Bundled content carries no runtime targets to cover.
       targetCoverage = null;
     } else if (tree === null) {
       targetCoverage = unknownTargetCoverage(
@@ -555,9 +501,6 @@ export async function buildStatusReport(
         "locked commit unreachable",
       );
     } else {
-      // `sourceCommitPresent` is already true here — it was probed at
-      // the top of the row, before anything commit-dependent ran. Saying
-      // so skips a second identical `git cat-file -e` per row.
       targetCoverage = await itemTargetCoverageAtCommit(
         project,
         tree.repo,
@@ -572,19 +515,10 @@ export async function buildStatusReport(
       kind === "subagents" &&
       tree &&
       sourceCommitPresent !== false &&
-      // The locked commit resolves but its tree does not read.
-      // `subagentSourcesAtCommit` cannot tell that from "this item has
-      // no sources" and throws, which would exit the whole report;
-      // `status` degrades instead, the way `describeInstallation`
-      // already does for the same failure
-      // (`src/install-identity.ts:107-111`). This is a gate rather than
-      // a catch on purpose: a blob that fails to read *after* the tree
-      // enumerated is a different state, one in which `apply` cannot run
-      // either, and swallowing it would print an apparently healthy row.
-      // `targets` is omitted rather than emptied, because an empty array
-      // would claim the item has no targets — the false absence this
-      // report exists to remove. `targetCoverage` says `unknown` beside
-      // it.
+      // Gate rather than catch: a blob failing after the tree enumerated means
+      // `apply` can't run either, and swallowing it would show a healthy row.
+      // `targets` is omitted, not emptied, since an empty array falsely claims
+      // no targets.
       targetCoverage?.state !== "unknown"
         ? (
             await subagentTargetStatusAtCommit(
@@ -600,8 +534,6 @@ export async function buildStatusReport(
           }))
         : undefined;
 
-    // D11. A plugin row in either shelf scope carries the counts a remote
-    // plugin row carries, read the same way.
     const runs =
       kind === "plugins"
         ? await pluginRunCounts(
@@ -641,9 +573,9 @@ export async function buildStatusReport(
     );
   }
 
-  // Every remote row is local scope by D5, so `--project` excludes them. An
-  // unconditional append would put a gitignored row in a report that promises
-  // committed state only.
+  // Remote rows are local scope, so `--project` excludes them; appending
+  // unconditionally would put a gitignored row in a committed-state-only
+  // report.
   if (!scope.project) {
     rows.push(
       ...(await buildRemoteStatusRows({
@@ -676,9 +608,6 @@ export interface StatusDiffsInput {
   view: StatusDiffView;
 }
 
-/**
- * The `--diff` comparisons for a set of rows, each path and view once.
- */
 export async function collectStatusDiffs(
   input: StatusDiffsInput,
 ): Promise<StatusDiff[]> {
@@ -700,8 +629,6 @@ export async function collectStatusDiffs(
     plansByTarget.set(opts.target, plan);
     return plan;
   };
-  // One memo for the diff pass. Rows that share a pinned commit share its
-  // tree reads, and one `cat-file` reads the bytes of every data row.
   const memo = new GitReadMemo();
   if (input.dataRepo) {
     const pinned: ItemAtCommit[] = input.rows.flatMap((row) =>
@@ -740,9 +667,8 @@ export async function collectStatusDiffs(
 }
 
 /**
- * PIN-9 for one item at one commit. `status` calls this per row. The memo
- * answers every row at one commit from one attribute query of that commit, so
- * rows that share a commit share one Git process.
+ * Memoized so all rows at one commit are answered from a single attribute
+ * query, sharing one Git process.
  */
 async function filteredPathsForEntry(
   source: GitTreeSource,
@@ -766,13 +692,9 @@ async function filteredPathsForEntry(
 }
 
 /**
- * The Codex project-trust warning used to be emitted for every `mcp` item,
- * whatever its sources: a claude-only item warned about the harness it does
- * not reach, and said nothing about the one it does not cover.
- *
- * The gate may only *remove* a warning on evidence that the locked commit has
- * no Codex source. Unknown coverage falls back to today's behavior and emits,
- * so a degraded project never silently loses a warning.
+ * For an mcp item, drop the Codex trust warning only on evidence that the
+ * locked commit has no Codex source. Unknown coverage still emits, so a
+ * degraded project never loses it.
  */
 function codexWarningsForItem(
   project: string,

@@ -15,11 +15,9 @@ import { asBoolean, asObject, asString, parseJsonText } from "../support/json";
 import { E2E_TEST_TIMEOUT_MS, withWorld } from "../support/world";
 
 /**
- * `update --merge` is the way out of a stale promote that keeps both sides of
- * the work. It is the only verb that writes a file neither the shelf nor the
- * project authored, so what it may touch is narrow: the installed copy and the
- * lock, never the data repo. A merge that quietly published, or a conflict
- * that half-wrote, would lose work that exists in no other place.
+ * Merge writes content neither side authored, so it may touch only the
+ * installed copy and lock, never the data repo; a quiet publish or half-written
+ * conflict would lose work found nowhere else.
  */
 const SCENARIO = "merge";
 
@@ -31,8 +29,7 @@ interface MergeRow {
 }
 
 /**
- * The first row of `update --json`. Its rows report `action`, not `state`, so
- * the shared status parser rejects them by design.
+ * Rows report `action`, not `state`, so the shared status parser rejects them.
  */
 function mergeRow(stdout: string): MergeRow {
   const payload = asObject(
@@ -87,8 +84,6 @@ test(
       expectExit(await world.capshelf(project, ["init", "--data", shelf]), 0);
       expectExit(await world.capshelf(project, ["add", "skills/hello"]), 0);
 
-      // The base is what the lock pinned. Both sides move away from it, in
-      // regions far enough apart that Git can reconcile them.
       const baseCommit = await world.git.head(shelf);
       const upstreamCommit = await world.git.writeAndCommit(
         shelf,
@@ -110,26 +105,19 @@ test(
       const row = mergeRow(merged.stdout);
       expect(row.action).toBe("merged");
       expect(row.merged).toBe(true);
-      // Full commits, not abbreviations: a consumer resolving them cannot
-      // depend on an abbreviation staying unambiguous as the repo grows.
+      // Full commits, since an abbreviation can become ambiguous as the repo
+      // grows.
       expect(row.mergeBase).toBe(baseCommit);
       expect(row.mergedUpstreamCommit).toBe(upstreamCommit);
 
-      // Both edits survive. This is the whole point of the verb: taking
-      // upstream would lose ALPHA-local, keeping local would lose
-      // GAMMA-upstream.
       await expectBytes(installed, MERGED);
 
-      // The shelf is not a party to this. The merged text exists only in the
-      // project until someone promotes it on purpose.
       expect(await world.git.head(shelf)).toBe(upstreamCommit);
       expect(await world.git.isCleanWorktree(shelf)).toBe(true);
       expect(
         await Bun.file(join(shelf, "skills", "hello", "SKILL.md")).text(),
       ).toBe(UPSTREAM);
 
-      // The lock moved to upstream, so the merged copy now reads as local
-      // drift rather than as an item waiting for an update.
       expect(
         statusRow(
           parseStatusRows(
@@ -140,9 +128,7 @@ test(
         ).state,
       ).toBe("drifted_local");
 
-      // Null second run. There is nothing left to merge, so the merge fields
-      // are absent — and, more importantly, the repeat must not discard the
-      // merged work, which exists in no other place.
+      // The repeat must not discard the merged work, which exists nowhere else.
       const second = await world.capshelf(project, [
         "update",
         "skills/hello",
@@ -170,9 +156,8 @@ test(
     });
 
     await withWorld(SCENARIO, async (world) => {
-      // Created out of alphabetical order on purpose: a listing that merely
-      // echoed discovery order would pass a single-file check and still be
-      // unreadable on a real conflict.
+      // Created out of alphabetical order so a listing that echoes discovery
+      // order fails the check.
       const shelf = await world.git.createDataRepo({
         origin: "https://example.invalid/shelf.git",
         files: {
@@ -221,8 +206,6 @@ test(
       );
       expectOutputContains(refused, "nothing changed");
 
-      // The order is the contract, not just the membership: a user reads this
-      // list to decide what to open first.
       const listed = `${refused.stdout}${refused.stderr}`
         .split("conflicting paths:")[1]
         ?.split("\n")
