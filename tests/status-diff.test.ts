@@ -668,7 +668,9 @@ describe("status diff helpers", () => {
       expect(malformed.exitCode).toBe(1);
       const malformedError = JSON.parse(malformed.stderr.toString());
       expect(malformedError.error.exitCode).toBe(1);
-      expect(directMessage).toContain(malformedError.error.message);
+      expect(malformedError.error.message).toContain(
+        `${settingsPath}: JSON Parse error`,
+      );
       expect(directMessage).toContain("JSON Parse error");
 
       await writeFile(settingsPath, edited);

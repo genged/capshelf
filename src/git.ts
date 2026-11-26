@@ -1817,8 +1817,12 @@ export async function statusPorcelainRecords(
   relPaths: string[] = [],
   options: { untrackedFiles?: "all" } = {},
 ): Promise<StatusPorcelainRecord[]> {
-  const args = ["status", "--porcelain", "-z"];
-  if (options.untrackedFiles === "all") args.push("--untracked-files=all");
+  const args = [
+    "status",
+    "--porcelain",
+    "-z",
+    `--untracked-files=${options.untrackedFiles ?? "normal"}`,
+  ];
   if (relPaths.length > 0) args.push("--", ...relPaths.map(literalPathspec));
   const out = await sourceReadText(repo, args);
   const fields = out.split("\0");
@@ -1887,6 +1891,7 @@ export async function indexEntryFlags(
 /**
  * Raw porcelain text. Callers must only test this for emptiness — parsing
  * paths out of it is unsafe without `-z`; use `statusPorcelainRecords`.
+ * Git's untracked-file setting must not change capshelf's cleanliness checks.
  */
 export async function statusPorcelain(
   repo: string,
@@ -1896,11 +1901,16 @@ export async function statusPorcelain(
     return await sourceReadText(repo, [
       "status",
       "--porcelain",
+      "--untracked-files=normal",
       "--",
       literalPathspec(relPath),
     ]);
   }
-  return await sourceReadText(repo, ["status", "--porcelain"]);
+  return await sourceReadText(repo, [
+    "status",
+    "--porcelain",
+    "--untracked-files=normal",
+  ]);
 }
 
 export async function isRepoClean(repo: string): Promise<boolean> {
@@ -1929,6 +1939,7 @@ export async function statusPorcelainOutsidePaths(
   return await sourceReadText(repo, [
     "status",
     "--porcelain",
+    "--untracked-files=normal",
     "--",
     ".",
     ...relPaths.map(excludePathspec),

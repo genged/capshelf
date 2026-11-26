@@ -167,7 +167,7 @@ function isIgnoredByScopes(
   let ignored = false;
   for (const scope of scopes) {
     const scopedRelPath = relativeToScope(relPath, scope.relDir);
-    if (scopedRelPath === null) continue;
+    if (scopedRelPath === null || scopedRelPath === "") continue;
     const pathForMatch = isDirectory ? `${scopedRelPath}/` : scopedRelPath;
     const result = scope.matcher.test(pathForMatch);
     if (result.ignored) ignored = true;
