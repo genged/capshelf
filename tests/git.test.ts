@@ -19,6 +19,7 @@ import {
   assertPathClean,
   assertRepoClean,
   assertRepoCleanOutsidePath,
+  assertRepoCleanOutsidePaths,
   commitExistingPaths,
   commitInRepo,
   commitParents,
@@ -235,6 +236,44 @@ describe("git cleanliness helpers", () => {
       "keep.txt",
       "new.txt",
     ]);
+  });
+});
+
+describe("status.showUntrackedFiles=no", () => {
+  async function repoWithUntracked(): Promise<string> {
+    const repo = await tempRepo();
+    await mkdir(join(repo, "skills"), { recursive: true });
+    await writeFile(join(repo, "skills", "kept.md"), "kept\n");
+    await commitAll(repo, "init");
+    await $`git -C ${repo} config status.showUntrackedFiles no`.quiet();
+    await writeFile(join(repo, "stray.md"), "stray\n");
+    return repo;
+  }
+
+  test("isRepoClean sees an untracked file", async () => {
+    const repo = await repoWithUntracked();
+    expect(await isRepoClean(repo)).toBe(false);
+  });
+
+  test("isPathClean sees an untracked file", async () => {
+    const repo = await repoWithUntracked();
+    expect(await isPathClean(repo, "stray.md")).toBe(false);
+  });
+
+  test("statusPorcelainRecords returns the untracked file", async () => {
+    const repo = await repoWithUntracked();
+    expect(await statusPorcelainRecords(repo)).toEqual([
+      { code: "??", path: "stray.md" },
+    ]);
+  });
+
+  test("assertRepoCleanOutsidePaths refuses an untracked file outside the paths", async () => {
+    const repo = await repoWithUntracked();
+    const error = await rejection(
+      assertRepoCleanOutsidePaths(repo, ["skills"]),
+      PreconditionError,
+    );
+    expect(error.message).toContain("uncommitted changes outside skills");
   });
 });
 
