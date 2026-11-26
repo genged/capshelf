@@ -138,6 +138,49 @@ describe("apply destructive-change preflight", () => {
   );
 
   test(
+    "a nested gitignore keeps ignored extras and refuses other extras like the item root",
+    async () => {
+      const project = await tempRepo("capshelf-apply-nested-project-");
+      const dataRepo = await tempRepo("capshelf-apply-nested-data-");
+      const run = runInProcess(project);
+      const skill = join(dataRepo, "skills", "nest");
+      await mkdir(join(skill, "sub"), { recursive: true });
+      await writeFile(join(skill, "SKILL.md"), "managed\n");
+      await writeFile(join(skill, "sub", "a.txt"), "a\n");
+      await writeFile(join(skill, "sub", ".gitignore"), "*.log\n");
+      await commitAll(dataRepo, "nest skill");
+      expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
+      expect((await run(["add", "skills/nest"])).exitCode).toBe(0);
+
+      const installed = join(project, ".agents", "skills", "nest");
+      await writeFile(join(installed, "sub", "extra.log"), "local\n");
+      await rm(join(installed, "SKILL.md"));
+      const kept = await run(["apply", "skills/nest"]);
+      expect(kept.exitCode).toBe(0);
+      expect(await file(join(installed, "SKILL.md")).text()).toBe("managed\n");
+      expect(await file(join(installed, "sub", "extra.log")).text()).toBe(
+        "local\n",
+      );
+
+      await rm(join(installed, "SKILL.md"));
+      await writeFile(join(installed, "extra.txt"), "root\n");
+      const rootRefused = await run(["apply", "skills/nest"]);
+      await rm(join(installed, "extra.txt"));
+      await writeFile(join(installed, "sub", "extra.txt"), "nested\n");
+      const nestedRefused = await run(["apply", "skills/nest"]);
+
+      expect(rootRefused.exitCode).toBe(3);
+      expect(nestedRefused.exitCode).toBe(3);
+      expect(nestedRefused.stderr.toString()).toContain("sub/extra.txt");
+      expect(nestedRefused.stderr.toString()).not.toContain("path.relative()");
+      expect(await file(join(installed, "sub", "extra.txt")).text()).toBe(
+        "nested\n",
+      );
+    },
+    CLI_INTEGRATION_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "a project-authored sidecar is neither drift nor managed content",
     async () => {
       const project = await tempRepo("capshelf-apply-sidecar-project-");

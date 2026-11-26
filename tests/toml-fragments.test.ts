@@ -18,6 +18,20 @@ describe("parseTomlConfigObject", () => {
     expect(stringifyTomlConfig(parsed)).toContain('name = "api"');
   });
 
+  test("names the label in a parse error and keeps the cause", () => {
+    let thrown: unknown;
+    try {
+      parseTomlConfigObject("approval =\n", ".codex/config.toml");
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    if (!(thrown instanceof Error)) return;
+    expect(thrown.cause).toBeInstanceOf(Error);
+    if (!(thrown.cause instanceof Error)) return;
+    expect(thrown.message).toBe(`.codex/config.toml: ${thrown.cause.message}`);
+  });
+
   test("rejects TOML date values", () => {
     expect(() =>
       parseTomlConfigObject("created = 2026-06-09\n", "config.toml"),
