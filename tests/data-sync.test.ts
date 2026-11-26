@@ -400,6 +400,22 @@ describe("syncData I/O orchestration", () => {
     );
     expect(await Bun.file(join(clone, "new-skill.md")).exists()).toBe(false);
   });
+
+  test("reports an untracked merge collision as a dirty worktree under status.showUntrackedFiles=no", async () => {
+    const { seed, clone } = await syncFixture("capshelf-sync-untracked-");
+    const before = await headOf(clone);
+    await advanceOrigin(seed, "new.md", "theirs\n");
+    await Bun.write(join(clone, "new.md"), "mine\n");
+    await $`git -C ${clone} config status.showUntrackedFiles no`.quiet();
+
+    const report = await syncData(clone);
+
+    expect(report.state).toBe("dirty_worktree");
+    expect(report.exitCode).toBe(4);
+    expect(report.dirty).toBe(true);
+    expect(await headOf(clone)).toBe(before);
+    expect(await Bun.file(join(clone, "new.md")).text()).toBe("mine\n");
+  });
 });
 
 describe("syncGuidance", () => {

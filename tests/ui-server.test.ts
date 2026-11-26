@@ -343,6 +343,21 @@ describe("capshelf ui server", () => {
         ref: "skills/nope",
       });
       expect(noItem.status).toBe(404);
+      const badRefs: [string, string][] = [
+        ["a/b/c", 'invalid item ref "a/b/c"'],
+        ["badkind/x", 'invalid item kind "badkind"'],
+        ["bundles/x", "bundles are not items"],
+        ["a:b", "reserved for future shelf-qualified refs"],
+      ];
+      for (const [badRef, message] of badRefs) {
+        const bad = await get<UiError>("/api/shelf/item", {
+          repo: world.dataRepo,
+          ref: badRef,
+        });
+        expect(bad.status).toBe(400);
+        expect(bad.body.error.message).toContain(message);
+        expect(bad.body.error.exitCode).toBeDefined();
+      }
       const noRepo = await get<UiError>("/api/shelf", { repo: "/nowhere" });
       expect(noRepo.status).toBe(404);
     },

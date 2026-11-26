@@ -499,7 +499,7 @@ export async function updateRemoteItem(opts: {
     action: opts.dryRun ? "would-update" : "updated",
     from: entry.sourceCommit,
     to: next.sourceCommit,
-    entry: opts.dryRun ? entry : next,
+    entry: next,
   };
 }
 
@@ -559,7 +559,7 @@ export async function updateMergeRemoteTarget(opts: {
       action: "would-update",
       from: entry.sourceCommit,
       to: next.sourceCommit,
-      entry,
+      entry: next,
       merged: performedMerge,
       mergeBase: entry.sourceCommit,
       mergeResultDigest,
