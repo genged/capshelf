@@ -1,15 +1,6 @@
 /**
- * `capshelf add <url>`: install a skill, or a whole plugin, from any Git
- * repository.
- *
- * One of the three surfaces that reach the network, and the only one `add` has.
- * A URL on the command line is what makes this command networked; no project
- * state can.
- *
- * The install is local scope and the record is gitignored, by D5. A teammate
- * who clones the project gets neither the files nor the row, which is the
- * opposite of what a user arriving from skills.sh expects — so the success
- * output says so.
+ * The install is local scope and gitignored, so a teammate cloning the project
+ * gets neither files nor the row; the success output says so.
  */
 import type { Command } from "commander";
 import { relative } from "node:path";
@@ -122,7 +113,6 @@ export interface RemoteAddOptions {
   list?: boolean;
 }
 
-/** One unit the user chose, with its install name resolved. */
 type Selected =
   | {
       kind: "skills";
@@ -137,7 +127,6 @@ type Selected =
       manifest: ConfigObject;
     };
 
-/** One picker unit (plugin D5): a whole plugin or one skill. */
 type Unit =
   | { kind: "plugins"; offered: OfferedPlugin }
   | { kind: "skills"; candidate: RemoteSkillCandidate };
@@ -151,9 +140,7 @@ interface Installed {
   action: "created" | "already-current";
   files: number;
   license: string | null;
-  /** Set when the installed skill came from a plugin. */
   plugin?: SkillPluginFacts;
-  /** Set when a whole plugin was installed: what it runs (D6). */
   runs?: PluginRuns;
 }
 
@@ -167,24 +154,18 @@ export async function addRemoteSkill(
       "add --target is not supported; a remote skill installs one directory",
     );
   }
-  // Deliberately not `loadAddContext`: that resolves a data repo, and D7 says
-  // a remote skill needs none.
+  // Deliberately not `loadAddContext`: a remote skill needs no data repo.
   const project = projectRoot();
   const parsed = parseRemoteSkillUrl(input);
 
-  // The network, and the only place this command reaches it.
   const cache = await ensureRemoteCache(
     parsed.cloneUrl,
     parsed.upstream,
     process.env,
   );
-  // `ensureClone` clones once and never fetches again, so a second `add` from
-  // a repository this machine already holds would resolve the ref against a
-  // cache of any age and ask the user to consent to a commit that is not the
-  // one upstream has. `add <url>` is documented as a network operation, so it
-  // goes to the network. A failed fetch is reported rather than fatal: the
-  // cache can still answer, and refusing would break `add` for a warm cache on
-  // a machine that is briefly offline.
+  // `ensureClone` never fetches after the first clone, so fetch here to avoid
+  // consenting to a stale commit; a failed fetch only warns so a warm cache
+  // still works offline.
   if (!cache.cloned) {
     const fetched = await fetchOrigin(cache.path, { prune: true });
     if (!fetched.ok) {
@@ -194,11 +175,9 @@ export async function addRemoteSkill(
       console.error(`  ${fetched.stderr.toString().trim()}`);
     }
   }
-  // A browser URL has no delimiter between the branch and the path inside it,
-  // so the split is settled against the clone rather than guessed: the longest
-  // ref that actually exists wins. Without this, `…/tree/feature/login/skills/x`
-  // reads as ref `feature`, which silently installs from the wrong branch when
-  // one by that name also exists.
+  // A browser URL has no delimiter between branch and path, so the longest ref
+  // that exists in the clone wins; otherwise `feature/login` would silently
+  // resolve to `feature`.
   const browser =
     opts.ref === undefined
       ? await firstResolvableCandidate(cache.path, parsed.refCandidates)
@@ -224,9 +203,8 @@ export async function addRemoteSkill(
   const explicitSubpath = opts.path ?? browser?.subpath ?? parsed.subpath;
   const hasExplicitSubpath =
     explicitSubpath !== null && explicitSubpath !== undefined;
-  // D10 and D5 share one lookup: `--list` with a plugin path lists that
-  // plugin, and a bare `--path` (no `--list`) at the same path refuses before
-  // `candidateAtSubpath` ever reads it as a single skill.
+  // Check plugin scope first to avoid treating a plugin root as one skill,
+  // except when the root is itself a skill and has no Claude manifest.
   const pluginScope = hasExplicitSubpath
     ? await pluginAtSubpath(
         cache.path,
@@ -235,23 +213,17 @@ export async function addRemoteSkill(
         parsed.repoName,
       )
     : null;
-  // A plugin whose manifest names its own directory as a skill (`"skills":
-  // "./"`): `explicitSubpath` is the plugin's source *and* one of its own
-  // `skillDirs`. With a Claude manifest it installs whole (below). With none,
-  // it installs as a skill, as it did before plugins were installable.
   const pluginRootIsAlsoASkill =
     hasExplicitSubpath &&
     (pluginScope?.plugin.skillDirs.includes(explicitSubpath) ?? false);
-  // D3 takes the item name from `.claude-plugin/plugin.json`. Read only for
-  // an install at a plugin root, never for `--list`.
+  // Read only for an install at a plugin root, never for `--list`, since the
+  // item name comes from `.claude-plugin/plugin.json`.
   const claudeManifest =
     pluginScope !== null && hasExplicitSubpath && opts.list !== true
       ? await readClaudePluginManifest(cache.path, commit, explicitSubpath)
       : null;
-  // A plugin root with a Claude manifest installs whole, even when the
-  // manifest also names the root as one of its own skills: the whole plugin
-  // wins, so its hooks reach the consent prompt. A self-skill root with no
-  // Claude manifest still installs as a skill, below.
+  // With a Claude manifest the whole plugin wins even if it names its root as a
+  // skill, so its hooks reach the consent prompt.
   if (
     pluginScope !== null &&
     hasExplicitSubpath &&
@@ -261,8 +233,6 @@ export async function addRemoteSkill(
     for (const warning of pluginScope.warnings) {
       console.error(`⚠ ${safe(`${warning.path} ${warning.message}`)}`);
     }
-    // A plugin with only a Codex manifest, or only a catalog entry, has no
-    // Claude manifest name, so it keeps the step 1 refusal.
     if (claudeManifest === null) throw pluginRootRefusal(input, pluginScope);
     const name = pluginItemName(explicitSubpath, claudeManifest);
     refusePluginRename(name, opts);
@@ -306,20 +276,15 @@ export async function addRemoteSkill(
             ],
             plugins: [],
             skipped: [],
-            // Set only for a self-skill plugin root (`pluginRootIsAlsoASkill`).
-            // Its catalog or manifest can still warn, and this install reads
-            // that plugin.
             warnings: pluginScope?.warnings ?? [],
           };
-  // Sanitized like every other repository-controlled string here: a warning
-  // about a malformed catalog or manifest quotes the repository's own text.
+  // Warnings quote repository-controlled text, so sanitize them.
   for (const warning of discovery.warnings) {
     console.error(`⚠ ${safe(`${warning.path} ${warning.message}`)}`);
   }
 
-  // `--list` answers a question about the repository. It returns before the
-  // cardinality rule below, because "too many to install without choosing" is
-  // not a reason to refuse to say what is there.
+  // `--list` returns before the cardinality check: too many candidates is no
+  // reason to refuse to list them.
   if (opts.list === true) {
     await printCandidateList(
       input,
@@ -333,9 +298,6 @@ export async function addRemoteSkill(
     return;
   }
 
-  // Plugin D5: the picker takes its unit from the repository shape. A
-  // `--path` that reaches here names one skill, and its discovery carries no
-  // whole plugin, so the offer is that skill alone.
   const offer = pickerOffer(
     hasExplicitSubpath ? { ...discovery, wholePlugins: [] } : discovery,
   );
@@ -357,8 +319,7 @@ export async function addRemoteSkill(
     );
   }
 
-  // Every name check runs before the first install, so a refusal leaves no
-  // trace. A plugin takes its name from its manifest (D3).
+  // All name checks run before the first install so a refusal leaves no trace.
   const selected: Selected[] = [];
   for (const unit of chosen) {
     if (unit.kind === "plugins") {
@@ -429,12 +390,9 @@ export async function addRemoteSkill(
             remotes,
             opts,
           });
-    // Record each install before the next one can refuse the command. A save
-    // after the loop would leave an earlier skill's files on disk with no row
-    // when a later candidate is declined or refused: invisible to every other
-    // command, and refused by the next `add` as an unmanaged path. The rest of
-    // this feature follows the same rule — write the bytes, then the record,
-    // and never leave content with no owner.
+    // Save the lock after each install, not after the loop: a later refusal
+    // would otherwise leave installed files with no row, which the next `add`
+    // refuses as unmanaged.
     if (outcome !== null && outcome.action === "created") {
       await saveRemotesLock(project, remotes);
     }
@@ -449,12 +407,8 @@ export async function addRemoteSkill(
 }
 
 /**
- * `src/cli.ts`'s `reportError` prints a `CliError`'s `hint` as `` `  ${hint}` ``
- * — one leading two-space indent, added once, before the string's first
- * character. A hint built from several desired on-screen lines must omit
- * that indent from its own first line (the renderer supplies it) and spell
- * every later line's indent itself, because nothing is added after an
- * embedded `\n`.
+ * `reportError` adds one two-space indent before the hint's first character
+ * only, so the first line omits it and later lines spell their own.
  */
 function multilineHint(lines: readonly string[]): string {
   const [first, ...rest] = lines;
@@ -463,14 +417,6 @@ function multilineHint(lines: readonly string[]): string {
 
 const WHOLE_PLUGIN_NEEDS_MANIFEST = `capshelf installs a whole plugin only when it holds ${PLUGIN_MANIFEST_REL}`;
 
-/**
- * Step 1 D5, kept for a plugin directory with no regular
- * `.claude-plugin/plugin.json`: `--path`, or a browser URL subpath, naming
- * that directory refuses before it is read as a single skill. D11: it names
- * no Claude or Codex command. The install command it offers names the
- * plugin's first skill in subpath order, the same order `describeCandidates`
- * sorts every other candidate list.
- */
 function pluginRootRefusal(
   url: string,
   scope: {
@@ -508,11 +454,6 @@ function pluginRootRefusal(
   );
 }
 
-/**
- * The plugin's `.claude-plugin/plugin.json` at the commit, parsed. Null when
- * the directory holds no regular blob at that path. A manifest that is not a
- * JSON object refuses: D3 needs its `name`.
- */
 async function readClaudePluginManifest(
   repo: string,
   commit: string,
@@ -541,13 +482,6 @@ async function readClaudePluginManifest(
   return parsed;
 }
 
-/**
- * D5: install the whole plugin at `subpath` as a remote row, in local scope,
- * and record it in `remotes`. The caller saves the lock and prints the
- * result. D3 names it from its manifest. D8 refuses a symlink before
- * consent. D7 point 1 asks before the install and shows what the plugin runs
- * (D6). Null when the user declines.
- */
 async function installWholePlugin(input: {
   project: string;
   parsed: RemoteSkillUrl;
@@ -668,7 +602,6 @@ async function installWholePlugin(input: {
   };
 }
 
-/** D3: Claude Code names a plugin from its manifest, so `--as` refuses. */
 function refusePluginRename(name: string, opts: RemoteAddOptions): void {
   if (opts.as === undefined) return;
   throw new PreconditionError(
@@ -679,11 +612,6 @@ function refusePluginRename(name: string, opts: RemoteAddOptions): void {
   );
 }
 
-/**
- * D3: the manifest `name` is the item name. It must be a string that a
- * named command can address, and not the name of a system item, which owns
- * the same folder.
- */
 function pluginItemName(subpath: string, manifest: ConfigObject): string {
   const name = manifest.name;
   const manifestPath = safe(pluginPath(subpath, PLUGIN_MANIFEST_REL));
@@ -708,7 +636,6 @@ function pluginItemName(subpath: string, manifest: ConfigObject): string {
   return name;
 }
 
-/** D8: a symlink or a submodule refuses, with one plugin hint line. */
 async function pinPlugin(
   cachePath: string,
   commit: string,
@@ -730,19 +657,14 @@ async function pinPlugin(
   }
 }
 
-/**
- * The consent block's column width: the terminal width of the stream it
- * prints under (`confirmPluginInstall`'s prompt draws on stderr), or 80 when
- * that stream is not a terminal.
- */
 function consentWidth(): number {
   return process.stderr.isTTY === true ? (process.stderr.columns ?? 80) : 80;
 }
 
 /**
- * D7 point 1. A remote add always asks. `--yes` skips the question, so it
- * prints what the plugin runs to stderr instead, where `--json` cannot see
- * it. With `--json` or no terminal, the refusal names what the plugin runs.
+ * With `--yes` the plugin's runs are printed to stderr rather than stdout, so
+ * `--json` consumers never see them mixed into the result; with `--json` or no
+ * terminal it refuses instead of asking.
  */
 async function confirmPluginInstall(input: {
   name: string;
@@ -778,16 +700,9 @@ async function confirmPluginInstall(input: {
 }
 
 /**
- * D6: two or more selected skills that would install under the same name
- * collide, and the check runs after `--as` is resolved and before any
- * project write — `loadRemotesLock` included, so a refused install leaves no
- * trace. `<subpath>` and `<name>` in the hint are literal placeholders, not
- * one of the actual colliding values, because a group can hold more than two
- * and no single pair is "the" example; they are not shell-quoted, because
- * they are not real arguments.
- *
- * A picked plugin installs to the same folder as a skill of its name, so it
- * joins the check. A group that holds a plugin says "items", not "skills".
+ * Runs before any project write so a refusal leaves no trace; the hint's
+ * `<subpath>` and `<name>` are literal placeholders because a group can hold
+ * more than two entries.
  */
 function assertNoNameCollision(
   url: string,
@@ -799,9 +714,8 @@ function assertNoNameCollision(
     if (group === undefined) byName.set(entry.name, [entry]);
     else group.push(entry);
   }
-  // Every colliding name, not only the first found — a picker selection can
-  // reuse more than one name at once, and naming only one would send the
-  // user back here a second time for the next.
+  // List every colliding name, not just the first, so the user is not sent back
+  // for the next.
   const collisionLines = [...byName.entries()]
     .filter(([, group]) => group.length >= 2)
     .map(([name, group]) => {
@@ -849,14 +763,13 @@ async function installOne(input: {
     kind,
     name,
   );
-  // A skill whose tree holds a plugin manifest loads in Claude Code as a
-  // plugin and runs its hooks (R1), so the prompt shows what it runs.
+  // Claude Code loads a skill whose tree holds a plugin manifest as a plugin
+  // and runs its hooks, so the prompt shows what it runs.
   const runs = await itemPluginRunsAtCommit(cachePath, kind, pin.entries);
 
-  // The already-current check runs *before* the ownership checks, and the
-  // order is required. `findInstallConflict` reports any existing output path
-  // with no exemption for the row that wrote it, so running it first would
-  // make a second `add <same-url>` refuse instead of reporting the no-op.
+  // Must run before the ownership checks: `findInstallConflict` has no
+  // exemption for the row's own output, so a repeat `add <same-url>` would
+  // refuse instead of reporting a no-op.
   const current = await currentRow({
     project,
     kind,
@@ -948,11 +861,6 @@ async function installOne(input: {
   };
 }
 
-/**
- * The recorded row when it already pins this exact tree from this upstream,
- * ref, and subpath, and the installed files match it. Null when no such row
- * exists. Refuses when the row matches but the files do not.
- */
 async function currentRow(input: {
   project: string;
   kind: RemoteItemKind;
@@ -974,11 +882,9 @@ async function currentRow(input: {
   ) {
     return null;
   }
-  // The record matching the pin says nothing about the files. Reporting
-  // `already current` beside a path that was deleted or edited would make the
-  // obvious repair command a silent no-op, so the install is measured. The
-  // reconcile itself belongs to `apply`, which owns the destructive plan that
-  // gates a local edit; this only names it.
+  // A matching record says nothing about the files, so measure the install;
+  // reporting `already current` over a deleted or edited path would make the
+  // repair a silent no-op.
   const measured = await reconcileRemoteItem({
     project,
     kind,
@@ -998,14 +904,8 @@ async function currentRow(input: {
 }
 
 /**
- * Every owner that could already hold the name, each naming the record that
- * holds it. Runs only for a row that is new or changed.
- *
- * The checks for the same kind come first, because they name the exact
- * command that frees the name. `assertSkillTargetFree` then covers the other
- * kind that installs to the same folder (spec D2 guard 5). It exempts an
- * unmanaged folder when `self` is null, so `findInstallConflict` stays last
- * and still refuses a folder that capshelf does not manage.
+ * Same-kind checks run first because they name the command that frees the name;
+ * `findInstallConflict` stays last to still refuse an unmanaged folder.
  */
 async function assertNameAvailable(input: {
   project: string;
@@ -1014,7 +914,6 @@ async function assertNameAvailable(input: {
   remotes: RemotesLock;
   upstream: string;
   subpath: string;
-  /** The command that installs this item, for the switch message. */
   addCommand: string;
 }): Promise<void> {
   const { project, kind, name, remotes, upstream } = input;
@@ -1038,12 +937,9 @@ async function assertNameAvailable(input: {
     );
   }
   const held = remoteKeysForRef(remotes, ref).map((key) => remotes.items[key]!);
-  // Same repository means the row is not a name collision at all: the caller
-  // reached here because the upstream moved past the pin, and the command that
-  // moves a pin is `update`. Naming a "different repository" would be false,
-  // and `rm`/`--as` would answer a question nobody asked. A plugin takes its
-  // name from its manifest (D3), so two directories of one repository can
-  // name the same plugin. Only the same directory is the same row.
+  // The same row is not a name collision: the upstream moved past the pin,
+  // which `update` handles. A plugin row is the same only for the same
+  // directory, since two directories can share a manifest name.
   const sameRow = held.some(
     (entry) =>
       entry.upstream === upstream &&
@@ -1098,11 +994,8 @@ async function assertNameAvailable(input: {
 }
 
 /**
- * The first browser split whose ref exists in the clone, or null.
- *
- * `refCandidates` is ordered longest ref first, so a branch named
- * `feature/login` is preferred over one named `feature` when both exist — the
- * URL that produced this was written against the longer one.
+ * Candidates are ordered longest ref first so `feature/login` wins over
+ * `feature` when both exist.
  */
 async function firstResolvableCandidate(
   cachePath: string,
@@ -1116,11 +1009,6 @@ async function firstResolvableCandidate(
   return null;
 }
 
-/**
- * The picker row's `detail`: the plugin's source directory, plus the "uses"
- * label when it names anything, so a picker row carries the same facts the
- * consent prompt and `--list` show.
- */
 function pickDetail(candidate: RemoteSkillCandidate): string {
   if (candidate.plugin === undefined) return candidate.subpath;
   const uses = usesLabel(candidate.plugin);
@@ -1129,8 +1017,8 @@ function pickDetail(candidate: RemoteSkillCandidate): string {
 }
 
 /**
- * A plugin row's id. A skill row's id is its subpath, which never starts
- * with "/" (`isSafeItemRoot`), so the two can never be equal.
+ * The leading "/" keeps plugin row ids from ever equaling a skill subpath,
+ * which `isSafeItemRoot` guarantees never starts with "/".
  */
 function pluginRowId(source: string): string {
   return `/${source}`;
@@ -1139,9 +1027,8 @@ function pluginRowId(source: string): string {
 function unitRow(unit: Unit): PickRow {
   if (unit.kind === "plugins") {
     const { plugin, whole } = unit.offered;
-    // The name comes from repository text and is not checked until install
-    // (D3), so it is sanitized here. The picker sanitizes only the detail
-    // and the description.
+    // The name is repository text not validated until install, so sanitize it
+    // here; the picker sanitizes only detail and description.
     const name = safe(plugin.name);
     return {
       ref: `plugins/${name}`,
@@ -1169,12 +1056,6 @@ function unitRow(unit: Unit): PickRow {
   };
 }
 
-/**
- * D17: never guess. One unit installs, several open the picker, and with no
- * terminal the command names the two flags that answer the question. The
- * unit comes from the repository shape (plugin D5): a plugin row for each
- * whole plugin, then a skill row for each skill that no such plugin holds.
- */
 async function chooseUnits(
   offer: PickerOffer,
   parsed: RemoteSkillUrl,
@@ -1231,15 +1112,13 @@ async function confirmInstall(input: {
     totalBytes: number;
   };
   license: LicenseFinding;
-  /** What the skill runs as a plugin, or null when it holds no manifest. */
   runs: PluginRuns | null;
   opts: RemoteAddOptions;
 }): Promise<boolean> {
   const { runs } = input;
   if (input.opts.yes === true) {
-    // D4/D7: `--yes` skips the prompt, so this is the only place the facts
-    // block reaches a `--yes` install. It goes to stderr, never stdout, so
-    // `--json` still parses.
+    // `--yes` skips the prompt, so print to stderr, never stdout, to keep
+    // `--json` parseable.
     const facts = input.candidate.plugin;
     if (factsWarnOnInstall(facts)) {
       for (const line of renderPluginFacts(facts!)) console.error(line);
@@ -1319,25 +1198,11 @@ function renderConsent(input: {
   ].join("\n");
 }
 
-/**
- * `  plugin    <name>` and, when the skill uses nothing outside itself and
- * every file was checked, a note that says so — the same condition that
- * decides whether `renderPluginFacts` prints anything at all.
- */
 function pluginLine(facts: SkillPluginFacts): string {
   const noParts = facts.usesPluginParts.length === 0 && facts.factsComplete;
   return `  plugin    ${safe(facts.plugin.name)}${noParts ? "  (no parts outside the skill)" : ""}`;
 }
 
-/**
- * `subject` names what the license sits outside of: "item" for the skill
- * prompt (`renderConsent`, unchanged — `tests/cli-remote-plugins.test.ts`'s
- * "consent for a plain skill names a repo-root unrecognized license as
- * outside the item" pins its wording byte for byte), "plugin" for the
- * whole-plugin consent block. Only the "outside the item"/"not recognized"
- * wording the plugin brief named changes. The "inside" and "none found"
- * phrasing stays as it was for both, since nothing asked for that to move.
- */
 function describeLicense(
   license: LicenseFinding,
   subject: "item" | "plugin" = "item",
@@ -1355,11 +1220,8 @@ function describeLicense(
 }
 
 /**
- * The reason text for one skipped catalog entry (`external-source` excluded
- * — it becomes the `elsewhere` summary line, not a warning). `entry.source`
- * is absent for some `unsafe-path` entries (for example a Codex `local`
- * source with no `path` at all); the text then leaves the source out
- * rather than naming the entry itself as its source.
+ * `entry.source` can be absent for `unsafe-path` entries, so the text omits it
+ * rather than naming the entry as its own source.
  */
 function skipReasonText(entry: SkippedEntry): string {
   const source = entry.source;
@@ -1379,7 +1241,6 @@ function skipReasonText(entry: SkippedEntry): string {
         ? "is inside another plugin"
         : `${source} is inside another plugin`;
     case "external-source":
-      // The caller filters this reason out; the elsewhere line covers it.
       return "external source";
   }
 }
@@ -1393,9 +1254,6 @@ async function printCandidateList(
   scope: "repository" | { plugin: DiscoveredPlugin },
   opts: RemoteAddOptions,
 ): Promise<void> {
-  // Skipped entries other than `external-source` (which becomes the
-  // `elsewhere` summary line) are warnings about catalog entries this
-  // listing could not read.
   for (const entry of discovery.skipped) {
     if (entry.reason === "external-source") continue;
     console.error(
@@ -1415,16 +1273,7 @@ async function printCandidateList(
     scope,
   });
 
-  // D9: a long plugin listing asks before it floods the terminal. A pipe,
-  // `--json` (already handled above), and `--yes` print the full list with no
-  // question, so scripts and `| less` work as today. A listing with no
-  // plugin *skill* never asks — `discovery.plugins` also holds a
-  // commands-only plugin, which must not count — which is what keeps a
-  // capshelf-shaped shelf byte-identical in a terminal too (D2).
   const skillPlugins = discovery.plugins.filter(hasSkills);
-  // Plugin D5: a listing that offers a whole plugin asks too, and the
-  // question counts the picker's unit. A plugin-scoped listing (D10) lists
-  // that plugin's skills, so it counts skills.
   const offer = scope === "repository" ? pickerOffer(discovery) : null;
   const wholePlugins = offer?.plugins ?? [];
   const context = confirmationContext();
@@ -1456,16 +1305,11 @@ async function printCandidateList(
     for (const line of lines.slice(summaryLength)) console.log(line);
     return;
   }
-  // The "no" answer, D9. When the listing is already scoped to one plugin
-  // (D10), naming that same plugin back would repeat the command the user
-  // just ran, so only the JSON command prints, in the same scope. Otherwise
-  // the plugin-scoped command names the first plugin *with a skill* in
-  // listing order — a commands-only plugin has nothing to install — so the
-  // user has a short next step instead of the whole list.
+  // When the listing is already plugin-scoped, only the JSON command prints,
+  // since naming the same plugin would repeat the command just run.
   if (scope === "repository") {
-    // SAFETY: `askBeforeShowingAll` already required `skillPlugins.length >
-    // 0` or `wholePlugins.length > 0` above, in this same function, with no
-    // intervening mutation.
+    // SAFETY: `askBeforeShowingAll` above required `skillPlugins` or
+    // `wholePlugins` to be non-empty, and neither changes in between.
     const firstPlugin = skillPlugins[0] ?? wholePlugins[0]!.plugin;
     console.log(
       `  one plugin:   ${safe(shellCommand([PRODUCT_NAME, "add", input, "--list", "--path", firstPlugin.source]))}`,
@@ -1479,11 +1323,8 @@ async function printCandidateList(
 }
 
 /**
- * D9's question. Loops on anything that is not an explicit yes or no, and a
- * rejected prompt counts as "no" the same as typing it. Closed input (EOF)
- * rejects the prompt. So does Ctrl-C at the question: readline holds the
- * terminal in raw mode, reads Ctrl-C as a key, and closes, so no SIGINT is
- * sent. Both exit 0 with the "no" text, as D9 says.
+ * A rejected prompt counts as "no": EOF rejects it, and Ctrl-C does too because
+ * readline's raw mode reads it as a key and closes, so no SIGINT is sent.
  */
 async function confirmShowAll(
   context: DestructiveConfirmationContext,
@@ -1543,8 +1384,6 @@ function printCandidateListJson(
             catalogs: plugin.catalogs,
             ships: plugin.ships,
             skills: plugin.skillDirs.length,
-            // Plugin D5: added fields only. `installable` says whether
-            // `--path <source>` installs the whole plugin.
             installable: whole !== undefined,
             description: whole?.description ?? null,
             skillSubpaths: discovery.candidates
@@ -1564,10 +1403,6 @@ function printCandidateListJson(
   );
 }
 
-/**
- * D7: the fields a plugin skill adds to a JSON row, the same in the `--list`
- * rows and in the install result rows.
- */
 function pluginJsonFields(facts: SkillPluginFacts) {
   return {
     plugin: {
@@ -1580,7 +1415,6 @@ function pluginJsonFields(facts: SkillPluginFacts) {
   };
 }
 
-/** D11's JSON shape for what a plugin runs: two counts and the unknown list. */
 function runsJsonField(runs: PluginRuns) {
   return {
     hooks: runs.hooks.length,
@@ -1665,8 +1499,8 @@ function printInstalled(
     console.log(`  source commit: ${commit}`);
     console.log(`  ${first.path}`);
     if (first.kind === "plugins") {
-      // R1, R5: Claude Code loads a plugin from a skills folder under the
-      // name `<plugin>@skills-dir`, and only after the workspace is trusted.
+      // Claude Code loads a plugin from a skills folder as
+      // `<plugin>@skills-dir`, and only once the workspace is trusted.
       console.log(
         `  Claude Code loads it as ${first.name}@skills-dir in a trusted workspace`,
       );

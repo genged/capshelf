@@ -34,9 +34,10 @@ export async function installedSnapshot(
   if (scope === "local" || !(await isProjectWorkTreeRoot(project))) {
     return await filesystemSnapshot(localPath);
   }
-  // The sha is taken over exactly `files`, never over a separately computed
-  // set: promote re-derives it as a TOCTOU guard, and two different input sets
-  // would make that guard fail on any item that holds an ignored file.
+  // Hash the same Git-visible file list that the snapshot returns, without the
+  // metadata sidecar, never a separately computed set. Promote re-derives the
+  // sha as a TOCTOU guard, and a different input set would fail it for items
+  // with ignored files.
   const files = await projectVisibleFilesUnderPath(project, relPath);
   return {
     source: "git-visible",
@@ -50,11 +51,8 @@ export async function installedSnapshot(
 }
 
 /**
- * Scope-aware installed-content sha. Local-scope installs are deliberately
- * listed in `.git/info/exclude`, so the default Git-visible hashing in
- * `shaOfInstalled` would see an empty file list; this delegates to
- * `installedSnapshot` so the scope branching and hashing conventions stay
- * defined in one place.
+ * Local-scope installs sit in `.git/info/exclude`, so Git-visible hashing would
+ * see no files.
  */
 export async function shaOfInstalledForScope(
   project: string,
@@ -88,11 +86,8 @@ async function filesystemSnapshot(path: string): Promise<ItemSnapshot> {
   return {
     source: "filesystem",
     localPath: path,
-    // The sha must exclude a project-side root .capshelf.yml like every other
-    // hashing path, or promote/share/move would record a tainted lock sha for
-    // local-scope items and non-git projects (permanent false drift). The
-    // unfiltered `files` list is kept: copy-up callers must carry an authored
-    // sidecar to the data repo.
+    // Exclude a root .capshelf.yml from the sha to avoid permanent false drift,
+    // but keep it in `files` so copy-up carries an authored sidecar.
     sha: await shaOfItemFiles(
       path,
       files.filter((rel) => !isMetadataSidecarPath(rel)),

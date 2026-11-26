@@ -54,7 +54,6 @@ export interface CodexState {
   definitions: CodexPluginDefinition[];
 }
 
-/** One entry of the generated `.agents/plugins/marketplace.json`. */
 interface CodexNativePlugin {
   name: string;
   source: { source: "local"; path: string };
@@ -62,7 +61,6 @@ interface CodexNativePlugin {
   category: string;
 }
 
-/** The generated `.agents/plugins/marketplace.json` document. */
 export interface CodexNativeMarketplace {
   name: string;
   interface?: { displayName: string };
@@ -349,7 +347,6 @@ interface CodexPluginInterface {
   defaultPrompt: string[];
 }
 
-/** The generated `.codex-plugin/plugin.json` document. */
 export interface CodexPluginManifest {
   name: string;
   version: string;

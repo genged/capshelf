@@ -41,7 +41,6 @@ import { type Route, routeHash, useRoute } from "./router";
 import { ShelfView } from "./ShelfView";
 import { TopBar, topView } from "./TopBar";
 
-/** The route a jump row opens. */
 function jumpRoute(target: JumpTarget): Route {
   switch (target.type) {
     case "item":
@@ -60,12 +59,10 @@ function jumpRoute(target: JumpTarget): Route {
   }
 }
 
-/** The status read a diff request belongs to. */
 export type DiffSource = Pick<UiProjectStatus, "project" | "snapshot">;
 
 export interface ProjectLoad extends StatusRead {
   error: ApiError | null;
-  /** Item ids whose state moved in the last refresh; highlighted once. */
   changed: Set<string>;
 }
 
@@ -87,11 +84,10 @@ export function Dashboard(): preact.JSX.Element {
   const [filter, setFilter] = useState<ListFilter>("all");
   const [helpOpen, setHelpOpen] = useState(false);
   const [jumpOpen, setJumpOpen] = useState(false);
-  // Shelf catalogs for Jump, read the first time it opens.
   const [shelves, setShelves] = useState<UiShelf[] | null>(null);
   const diffCache = useRef(new Map<string, Promise<UiDiffResponse>>());
-  // Each refresh takes the next number. A reply from an older refresh can
-  // arrive after a newer one, and it must not replace the newer data.
+  // Generation counter so a stale reply arriving after a newer refresh cannot
+  // overwrite newer data.
   const readGeneration = useRef(0);
 
   const loadProject = useCallback(
@@ -200,7 +196,6 @@ export function Dashboard(): preact.JSX.Element {
         setHelpOpen(false);
         return;
       }
-      // A dialog holds the keyboard; the page shortcuts wait for it to close.
       const dialogOpen = document.body.classList.contains("has-dialog");
       if (
         typing ||
@@ -225,12 +220,10 @@ export function Dashboard(): preact.JSX.Element {
     return () => window.removeEventListener("keydown", onKey);
   }, [refreshAll]);
 
-  // Jump ranks shelf items too, so it reads each shelf the first time it
-  // opens. A shelf that fails to read only drops out of the results.
   useEffect(() => {
     if (!jumpOpen || shelves !== null || overview === null) return;
-    // A refresh sets a new overview and clears the catalogs. A read that
-    // started before it must not fill them with the old shelves.
+    // Guard so a read started before a refresh cannot fill the cleared catalogs
+    // with old shelves.
     let current = true;
     void Promise.all(
       overview.shelves.map((shelf) =>
@@ -249,10 +242,8 @@ export function Dashboard(): preact.JSX.Element {
   }, [jumpOpen, shelves, overview]);
 
   const projects = overview?.projects ?? [];
-  // The views across projects read only current statuses (`currentStatus`).
-  // All findings names a project whose read failed as unread. A refresh in
-  // progress keeps the last good read, so the views do not empty while it
-  // runs.
+  // Keep the last good read during a refresh so cross-project views do not
+  // empty while it runs.
   const statuses = useMemo<UiProjectStatus[]>(
     () =>
       [...loads.values()].flatMap((load) => {
@@ -265,9 +256,6 @@ export function Dashboard(): preact.JSX.Element {
     () => new Map(statuses.map((status) => [status.project, status])),
     [statuses],
   );
-  // Projects in a read with no current status: a first read, or a read
-  // after a failed one. Only for these does a shelf view let the shelf's pin
-  // flag stand in for the missing row.
   const pendingProjects = useMemo(
     () =>
       new Set(
@@ -346,8 +334,8 @@ export function Dashboard(): preact.JSX.Element {
       : (projects.find((project) => project.path === selectedPath) ?? null);
   const selectedItem = route.view === "status" ? route.item : null;
 
-  // A diff belongs to the status read on screen. The server keeps each read
-  // by its snapshot, so an older read that finished last cannot answer.
+  // Diffs are keyed by snapshot so an older read finishing last cannot answer
+  // for the one on screen.
   const loadDiff = useCallback(
     (
       status: DiffSource,
@@ -364,8 +352,8 @@ export function Dashboard(): preact.JSX.Element {
         view,
       });
       diffCache.current.set(key, promise);
-      // A refresh clears the cache, so a newer request can hold this key
-      // when an older one fails. Only the failed request's own entry goes.
+      // A refresh clears the cache, so delete only this request's own entry,
+      // not a newer request's.
       promise.catch(() => {
         if (diffCache.current.get(key) === promise) {
           diffCache.current.delete(key);
@@ -376,8 +364,8 @@ export function Dashboard(): preact.JSX.Element {
     [],
   );
 
-  // A bookmark from an earlier dashboard may name a user-level skill row in a
-  // project. Those skills are listed in This machine now.
+  // Old bookmarks may name user-level skill rows under a project; those now
+  // live in This machine.
   const legacyUserSkill =
     route.view === "status" &&
     route.item !== null &&
@@ -401,15 +389,14 @@ export function Dashboard(): preact.JSX.Element {
     );
   }
 
-  // The rail foot names the shelf of the selected project, else the first.
   const railShelf =
     selectedLoad?.data?.shelf ??
     statuses.find((status) => status.shelf !== null)?.shelf ??
     null;
   const shelfRepo =
     railShelf?.dataRepo ?? overview?.shelves[0]?.dataRepo ?? null;
-  // With --data, every project reads the one override repository, so the
-  // first shelf is the resolved path that commands must name.
+  // With --data every project reads one override repo, so the first shelf is
+  // the resolved path commands must name.
   const commandOverride = commandDataOverride(
     overview?.dataOverride,
     overview?.shelves[0]?.dataRepo,
@@ -423,7 +410,6 @@ export function Dashboard(): preact.JSX.Element {
     (sum, status) => sum + projectCounts(status.items).attention,
     0,
   );
-  // Projects with no current status: missing, or the last read failed.
   const unreadProjects = projects
     .filter(
       (registered) =>
@@ -446,9 +432,6 @@ export function Dashboard(): preact.JSX.Element {
       onFindings={openFindings}
     />
   );
-  // A phone shows the detail only for an entry that still exists. A finding
-  // that an update resolved, or an item that a refresh removed, falls back
-  // to the list instead of an empty page with no way back.
   const routedItem =
     route.view === "status" || route.view === "findings" ? route.item : null;
   const routedProject =
@@ -457,8 +440,8 @@ export function Dashboard(): preact.JSX.Element {
       : route.view === "status"
         ? selectedPath
         : null;
-  // The project view still renders a failed refresh's old data, so it
-  // resolves against the load. All findings reads current statuses only.
+  // The project view renders a failed refresh's old data, so it resolves
+  // against the load; findings use current statuses only.
   const routedStatus =
     routedProject === null
       ? undefined

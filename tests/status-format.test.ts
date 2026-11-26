@@ -49,39 +49,77 @@ describe("glyph", () => {
 
 describe("describe", () => {
   test("up-to-date", () => {
-    expect(describeRow(row({ state: "ok" }))).toBe("up-to-date");
+    expect(describeRow(row({ state: "ok" }), "/data/repo")).toBe("up-to-date");
   });
 
   test("update_available distinguishes data from a cli upgrade", () => {
     expect(
-      describeRow(row({ state: "update_available", upstreamSha: "newsha" })),
+      describeRow(
+        row({ state: "update_available", upstreamSha: "newsha" }),
+        "/data/repo",
+      ),
     ).toBe("update available → newsha");
     expect(
       describeRow(
         row({ state: "update_available", source: "system", upstreamSha: "v2" }),
+        "/data/repo",
       ),
     ).toBe("update available → v2 (cli upgraded)");
   });
 
   test("missing_upstream distinguishes data repo from bundled CLI", () => {
     expect(
-      describeRow(row({ state: "missing_upstream", source: "data" })),
+      describeRow(
+        row({ state: "missing_upstream", source: "data" }),
+        "/data/repo",
+      ),
     ).toBe("no longer in data repo");
     expect(
-      describeRow(row({ state: "missing_upstream", source: "system" })),
+      describeRow(
+        row({ state: "missing_upstream", source: "system" }),
+        "/data/repo",
+      ),
     ).toBe("no longer bundled in CLI");
+  });
+
+  test("a data row reads data repo not available when no data repo was read", () => {
+    const unavailable =
+      "data repo not available — run: capshelf data bind <path>";
+    expect(
+      describeRow(row({ state: "missing_upstream", source: "data" }), null),
+    ).toBe(unavailable);
+    expect(
+      describeRow(
+        row({ state: "missing_upstream", source: "data" }),
+        "/data/repo",
+      ),
+    ).toBe("no longer in data repo");
+    expect(
+      describeRow(row({ state: "missing_upstream", source: "system" }), null),
+    ).toBe("no longer bundled in CLI");
+    expect(
+      describeRow(row({ state: "missing_upstream", source: "remote" }), null),
+    ).toBe("no longer in the upstream repository");
   });
 
   test("kept-local includes the reason when present", () => {
     expect(
-      describeRow(row({ state: "kept-local", localReason: "forked" })),
+      describeRow(
+        row({ state: "kept-local", localReason: "forked" }),
+        "/data/repo",
+      ),
     ).toBe("kept local (forked)");
-    expect(describeRow(row({ state: "kept-local" }))).toBe("kept local");
+    expect(describeRow(row({ state: "kept-local" }), "/data/repo")).toBe(
+      "kept local",
+    );
   });
 
   test("drifted_local reports the current sha", () => {
     expect(
-      describeRow(row({ state: "drifted_local", currentSha: "ff00" })),
+      describeRow(
+        row({ state: "drifted_local", currentSha: "ff00" }),
+        "/data/repo",
+      ),
     ).toBe("drifted (current ff00)");
   });
 
@@ -92,6 +130,7 @@ describe("describe", () => {
           state: "missing_source_commit",
           sourceCommit: "abc1234def5678",
         }),
+        "/data/repo",
       ),
     ).toBe("locked sourceCommit abc1234 is not present in the data repo");
   });
@@ -123,6 +162,22 @@ describe("missing_source_commit guidance", () => {
 });
 
 describe("formatStatusHuman", () => {
+  test("a project data row says the data repo is not available when none was read", () => {
+    const missing = row({ name: "foo", state: "missing_upstream" });
+    const render = (dataRepo: string | null): string =>
+      formatStatusHuman({
+        project: "/p",
+        dataRepo,
+        rows: [missing],
+        external: [],
+        externalClaudePlugins: [],
+        personalClaudeExternal: [],
+      }).join("\n");
+    expect(render(null)).toContain("data repo not available");
+    expect(render(null)).not.toContain("no longer in data repo");
+    expect(render("/data/repo")).toContain("no longer in data repo");
+  });
+
   test("reports nothing tracked when everything is empty", () => {
     expect(
       formatStatusHuman({
@@ -222,8 +277,8 @@ describe("formatStatusHuman", () => {
       lines.some((l) => l.includes("skills/ext") && l.includes("acme/ext")),
     ).toBe(true);
     expect(lines).toContain("external/  (Claude plugins)");
-    // D11: the external Claude marketplace plugin id collides with the
-    // `plugins` item kind, so this row is `claude-plugins/<id>`.
+    // The external Claude marketplace plugin id collides with the `plugins`
+    // kind, so the row is `claude-plugins/<id>`.
     expect(
       lines.some(
         (l) => l.includes("claude-plugins/rev@co") && l.includes("enabled"),
@@ -327,8 +382,6 @@ describe("plugin row workspace trust (M8)", () => {
     const lines = formatStatusHuman({
       project: "/p",
       dataRepo: null,
-      // claudeTrust is typed "plugin rows only"; this checks the formatter
-      // itself gates on kind, not merely on the test fixtures being honest.
       rows: [{ ...row({ name: "alpha" }), claudeTrust: "untrusted" }],
       external: [],
       externalClaudePlugins: [],

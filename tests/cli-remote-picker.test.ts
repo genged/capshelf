@@ -1,11 +1,3 @@
-/**
- * `capshelf add <url>` with no `--path`: the picker takes its unit from the
- * repository shape (plugins-on-the-shelf spec D5, the 2026-10-20 reversal).
- *
- * A catalog of plugins that each hold a regular `.claude-plugin/plugin.json`
- * offers plugins. Every other shape offers skills, as before. A repository
- * with both offers one picker with two sections, plugins first.
- */
 import { expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -76,7 +68,6 @@ function threeClaudePlugins() {
   });
 }
 
-/** Two Claude plugins and three skills that no plugin holds. */
 function mixedUpstream() {
   return pluginUpstream(
     [
@@ -100,7 +91,6 @@ function mixedUpstream() {
   );
 }
 
-/** Run with a picker that records its request and marks what `pick` keeps. */
 async function runWithPicker(
   project: string,
   env: Record<string, string>,
@@ -187,7 +177,6 @@ test(
     const dir = join(project, ".agents", "skills", "gh-cli");
     expect(existsSync(join(dir, ".claude-plugin", "plugin.json"))).toBe(true);
     expect(existsSync(join(dir, "hooks", "hooks.json"))).toBe(true);
-    // `--yes` skips the prompt, so what the plugin runs goes to stderr.
     expect(result.stderr.toString()).toContain("bash hooks/setup.sh");
     expect(result.stdout.toString()).toContain(
       "✓ added local/remote/plugins/gh-cli @ ",
@@ -243,7 +232,6 @@ test(
       "skills/pdf",
       "skills/xlsx",
     ]);
-    // The skills that a plugin holds are part of that plugin's row.
     expect(request.rows.some((row) => row.name === "diff")).toBe(false);
 
     expect((await remoteKeys(project)).sort()).toEqual([

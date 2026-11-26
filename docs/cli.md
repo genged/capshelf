@@ -244,7 +244,7 @@ registered.
 | `status [<item>]` | drift / update report plus orthogonal `needsState` freshness and locked needs; subagent JSON includes deterministic per-target state; a sub-line names any runtime target an MCP or subagent item does not cover; a plugin row counts the hooks and MCP servers the plugin runs; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` shows locked-to-installed and locked-to-upstream comparisons; `--diff-view installed\|upstream\|all` selects a comparison; `--check-upstream` fetches every tracked remote repository and reports which remote items moved | implemented |
 | `add [item]` | install a new item from the bound data repo, materializing exactly what the pin contains; with no item, opens the interactive picker (see The picker); MCP and subagent installs report per-runtime target coverage; an already-installed standalone item is a byte- and lock-stable no-op; `--local` installs a clone-local copy item; `--yes` authorizes collateral fragment-output loss for a new fragment, standalone or expanded from a bundle; a ref whose first segment is not an item kind is refused with exit 3 and the supported kinds, because `owner/repo` shorthand is shaped exactly like `kind/name`; a repository URL instead of a ref installs a skill or a whole plugin from outside the shelf, with `--as`, `--ref`, `--path`, and `--list`. A plugin that runs a hook or an MCP server, or has an `unknown` entry, asks for consent, and `--yes` gives it | implemented |
 | `rm <item>` | remove a locked data item and report every output it reconciled; clean reproducible content is prompt-free, while local edits, modes, extra paths, subagent drift, and fragment comment loss require consent or `--yes` | implemented |
-| `get-path <item>` | print the editable path; subagents and MCP support `--target`, while `--output` returns the corresponding runtime output | implemented |
+| `get-path <item>` | print the editable path. It finds the item in project or local scope. It refuses an item that both locks hold. Subagents and MCP support `--target`, while `--output` returns the corresponding runtime output. `--json` adds `scope` (`project` or `local`) | implemented |
 | `apply [<item>]` | reconcile project and local files with lockfiles after a full-set destructive preflight; a failing fragment target aborts every write, while an unresolvable copy or subagent item is reported and the rest still converge (exit 1); supports `--local`, `--dry-run`, and `--yes` | implemented |
 | `update [<item>...]` | bump content and declared-needs pins; needs-only changes do not reinstall unchanged content; `--merge` reconciles one explicit skill, plugin, or Pi extension and pins upstream without publishing; `--local` selects clone-local scope; supports `--dry-run` and explicit drift overwrite consent with `--yes` | implemented |
 | `share [item]` | adopt a not-yet-shared on-disk item into the data repo and report the new item's runtime target coverage; subagents scan both runtime outputs by default and require `--target` with `--from`; with no item, opens the interactive picker over unmanaged config values and untracked skills, Pi extensions, and subagents (see The picker); pick-based fragment shares print and report the equivalent non-interactive command; `--adopt` takes ownership of a skill installed from a repository URL or by skills.sh, or of a plugin installed from a repository URL. `--yes` gives consent for a plugin that `--to project` commits | implemented |
@@ -703,9 +703,9 @@ Codex sees the skills only. Capshelf writes no Claude or Codex setting, cache, o
 catalog to make a plugin load.
 
 Plugins have the same lifecycle as skills, in project scope or local scope:
-`add`, `share`, `move`, `apply`, `update`, `update --merge`, `promote`,
-`keep-local`, `revert`, and `rm`. The manifest field is `plugins`, and the
-lock key is `data/plugins/<name>`. `promote` requires
+`add`, `share`, `move`, `get-path`, `apply`, `update`, `update --merge`,
+`promote`, `keep-local`, `revert`, and `rm`. The manifest field is `plugins`,
+and the lock key is `data/plugins/<name>`. `promote` requires
 `.claude-plugin/plugin.json` in the installed copy, where a skill requires
 `SKILL.md`. A bundle can include `plugins` members.
 
@@ -2670,13 +2670,18 @@ metadata and never adopts the user skill.
 | code | meaning |
 |---|---|
 | 0 | success |
-| 1 | generic error (missing args, bad config, I/O) |
+| 1 | generic error (missing or extra args, bad config, I/O) |
 | 2 | item or bundle not found in data repo |
 | 3 | conflict or refused precondition (project is already initialized, a destructive `add`/`apply`/`update`/`rm`/`revert`/marketplace sync lacks consent, a plugin consent point lacks consent, a project lock is an older version than this capshelf writes, a second item would install into one skill folder, promote would clobber, a system or externally managed item was selected, an untracked target would be overwritten, the data repo ignores a file that a `share` or `promote` commit must contain, a bundle failed preflight, an interactive `add`, `share`, or `promote` had a selection fail or had no usable terminal, `add` was given `<something>/<name>` where the something is not an item kind, or data sync cannot run safely) |
 | 4 | drift detected (for `status --strict`), upstream verification failed, or `data sync` needs human action (diverged history, or upstream commits blocked by a dirty worktree) |
 | 5 | reserved for future unmet-requires checks (`add` with unmet `requires` warns and exits 0) |
 | 6 | no data repo configured for this project (pass `--data`, set `.capshelf/local.json`, or `$CAPSHELF_HOME`) |
 | 7 | required dependency missing (`git` not found on `PATH`, or older than 2.40.0) |
+
+A command refuses an extra positional argument. It prints `too many arguments`
+and exits 1. The refusal comes before the command changes the project, its
+lock, or the data repo. A command that takes a list, such as
+`update` or `search`, accepts many values.
 
 `apply` and `update` report a failed item as a row and continue with the
 others. When every failed row has the same exit code, the command exits with
@@ -2715,6 +2720,10 @@ facts it read and enumerates the fixes as pasteable commands:
 - **Upstream mismatch** (exit 4) prints the declared and actual normalized
   URLs and the two fixes: bind a clone of the declared upstream, or change
   the project's declared upstream.
+
+Without `--strict`, `status` exits 0 when no data repo is available, and
+each `missing_upstream` data row shows `data repo not available — run:
+capshelf data bind <path>`.
 
 ### missing_source_commit
 

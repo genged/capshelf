@@ -41,10 +41,8 @@ async function tempDir(): Promise<string> {
 }
 
 /**
- * A recorded binding only resolves when a Git repository is there, so the
- * candidates a precedence test names have to be real clones. An empty `init` is
- * enough: resolution asks whether the path holds a repository, not what is in
- * it.
+ * Bindings resolve only where a Git repository exists, so candidates must be
+ * real clones; an empty `init` suffices.
  */
 async function gitRepoAt(path: string): Promise<string> {
   await mkdir(path, { recursive: true });
@@ -93,8 +91,6 @@ describe("path normalization", () => {
     });
     process.env.CAPSHELF_HOME = fromEnv;
     try {
-      // The override is the path the user typed for this command, so it is
-      // taken as given — resolution never requires it to exist.
       expect(
         await resolveDataRepo({
           override: "../override",
@@ -143,9 +139,6 @@ describe("path normalization", () => {
       mcp: [],
     });
 
-    // Nothing is there to answer a question about a clone, so `status` gets
-    // null to degrade on and every other command gets the exit-6 message that
-    // names the way back.
     expect(
       await resolveDataRepoOptional({ manifest: emptyManifest(), project }),
     ).toBeNull();
@@ -153,8 +146,6 @@ describe("path normalization", () => {
       resolveDataRepo({ manifest: emptyManifest(), project }),
     ).rejects.toThrow(/no data repo configured/);
 
-    // --data is not a recorded binding. The user supplied it in this command,
-    // so it comes back and the caller's own precondition check names the path.
     expect(
       await resolveDataRepo({
         override: gone,
@@ -185,7 +176,6 @@ describe("path normalization", () => {
     const nested = join(project, "nested", "deep");
     await mkdir(nested, { recursive: true });
 
-    // git/npm/cargo-style upward discovery: a subdirectory resolves to the root.
     expect(projectRoot(nested)).toBe(project);
   });
 
@@ -198,7 +188,6 @@ describe("path normalization", () => {
       JSON.stringify(emptyManifest()),
     );
 
-    // .capshelf is itself a subdirectory of the project, so it resolves up too.
     expect(projectRoot(metadata)).toBe(project);
   });
 
@@ -252,13 +241,12 @@ describe("shellArg", () => {
     expect(shellArg("settings/theme/settings.json")).toBe(
       "settings/theme/settings.json",
     );
-    // `~` is data, not an expansion request, so it is quoted like anything
-    // else. That is why a caller building a command passes the absolute path
-    // and keeps `homeRelative` for the prose around it.
+    // `~` is data, not an expansion request, so callers building commands pass
+    // absolute paths and use `homeRelative` only for prose.
     expect(shellArg("~/code/shelf")).toBe("'~/code/shelf'");
     expect(shellArg("/My Code/shelf")).toBe("'/My Code/shelf'");
-    // Item names reach printed commands from untrusted data-repo input, and
-    // `isSafeItemName` permits both of these.
+    // Item names from untrusted data-repo input reach printed commands, and
+    // `isSafeItemName` permits `$(` and quotes.
     expect(shellArg("settings/$(whoami)/settings.json")).toBe(
       "'settings/$(whoami)/settings.json'",
     );
@@ -305,8 +293,6 @@ describe("legacy root layout fallback", () => {
       piExtensions: [],
       subagents: [],
     });
-    // "claude-only" differs from DEFAULT_INSTALL_MODE, so this proves the
-    // root manifest was actually read rather than falling back to defaults.
     expect(detectInstallMode(project)).toBe("claude-only");
     expect(installBaseDir(project)).toBe(claudeDir(project));
   });
@@ -348,10 +334,8 @@ describe("manifest error handling", () => {
     await mkdir(join(project, ".capshelf"), { recursive: true });
     await writeFile(manifestPath(project), "{ this is not json");
 
-    // A corrupt manifest must be a hard error, never silently loaded as an
-    // empty manifest (which would make the next save wipe the user's config).
-    // The exact message is engine-specific JSON.parse output and does not name
-    // the file, so only the error type is pinned here.
+    // A corrupt manifest must be a hard error, or loading it as empty would
+    // make the next save wipe the user's config.
     await expect(loadManifest(project)).rejects.toThrow(SyntaxError);
   });
 
@@ -359,7 +343,7 @@ describe("manifest error handling", () => {
     const project = await tempDir();
     await mkdir(join(project, ".capshelf"), { recursive: true });
     // A cloned project's manifest is untrusted; a name like ../../evil would
-    // otherwise flow into installedPath. It must be rejected on load.
+    // otherwise flow into installedPath.
     await writeFile(
       manifestPath(project),
       JSON.stringify({ skills: ["../../evil"] }),
@@ -517,7 +501,6 @@ describe("manifest commands migration", () => {
     });
   });
 
-  // "shelves" is reserved for multi-shelf federation.
   test("loadManifest fails loudly on a reserved shelves key", async () => {
     for (const shelves of [[], null, "team"]) {
       const project = await tempDir();
@@ -534,12 +517,9 @@ describe("manifest commands migration", () => {
       await expect(loadManifest(project)).rejects.toThrow(
         /multi-shelf federation, which this capshelf version does not support; upgrade capshelf/,
       );
-      // The error names the manifest path and is distinct from the legacy
-      // dataRepo message.
       const err = await rejection(loadManifest(project), Error);
       expect(err.message).toContain(manifestPath(project));
       expect(err.message).not.toMatch(/legacy dataRepo/);
-      // Nothing was written: the file is byte-identical.
       expect(await readFile(manifestPath(project), "utf-8")).toBe(raw);
     }
   });

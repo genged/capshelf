@@ -1,7 +1,3 @@
-/**
- * The four figures the range resolves to. Each value is the count at the
- * range end; each delta is against the count at the range start.
- */
 import type { JSX } from "preact";
 import {
   type Summary,

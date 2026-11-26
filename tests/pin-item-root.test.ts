@@ -11,11 +11,8 @@ import { itemTreeEntriesAtCommit, sourcePinDigest } from "../src/pin";
 import { commitAll, tempDir, tempRepo } from "./cli-fixtures";
 
 /**
- * A repository that is itself one skill pins with an item root of `"."`.
- *
- * `literalPathspec(".")` renders `:(literal).`, which selects the whole tree,
- * and `posix.relative(".", "skills/pdf/SKILL.md")` returns the path unchanged,
- * so item-relative names stay unprefixed. Verified against git 2.55.0.
+ * A single-skill repo pins with item root `.`: `:(literal).` selects the whole
+ * tree and `posix.relative` leaves names unprefixed (checked on git 2.55.0).
  */
 async function rootSkillRepo(): Promise<string> {
   const repo = await tempRepo("capshelf-root-item-", { origin: null });
@@ -46,8 +43,6 @@ test("an item root of '.' selects the whole tree with unprefixed names", async (
     "SKILL.md",
     "references/locks.md",
   ]);
-  // The repo-relative path is the same here, which is exactly what makes `.`
-  // the right whole-tree root: there is no prefix to strip.
   expect(entries.map((entry) => entry.repoRelPath)).toEqual([
     "SKILL.md",
     "references/locks.md",

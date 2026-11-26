@@ -10,16 +10,23 @@ import {
   parse as parseToml,
   stringify as stringifyToml,
   TomlDate,
+  type TomlTable,
 } from "smol-toml";
 
 export function parseTomlConfigObject(
   raw: string,
   label: string,
 ): ConfigObject {
+  let parsed: TomlTable;
+  try {
+    parsed = parseToml(raw);
+  } catch (cause) {
+    const reason = cause instanceof Error ? cause.message : String(cause);
+    throw new Error(`${label}: ${reason}`, { cause });
+  }
   // The boundary predicate, not `isConfigObject`: smol-toml's table type
   // admits dates, which the JSON value model does not. `validateTomlValue`
   // rejects a date that reaches it.
-  const parsed = parseToml(raw);
   if (!isPlainConfigObject(parsed)) {
     throw new Error(`${label} must contain a TOML table`);
   }
@@ -128,13 +135,9 @@ function validateTomlValue(value: ConfigValue, label: string): void {
   if (value === null) {
     throw new Error(`${label} contains null, which is not valid TOML`);
   }
-  // TOML date/time values are rejected rather than supported: the shared
-  // ConfigValue pipeline hashes and merges via JSON, where a date collapses
-  // into its ISO string (silently changing the TOML type on re-emit), and
-  // structuredClone strips the TomlDate subclass that smol-toml needs to
-  // distinguish local dates/times from offset date-times. Until the value
-  // model carries dates first-class, rejecting is the only round-trip-safe
-  // behavior.
+  // TOML dates are rejected: the JSON-based ConfigValue pipeline would turn
+  // them into strings, and structuredClone strips smol-toml's TomlDate
+  // subclass.
   if (value instanceof TomlDate) {
     throw new Error(
       `${label} contains a TOML date, which capshelf does not support in TOML fragments`,

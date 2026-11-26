@@ -24,8 +24,8 @@ const COMMON_PRIVATE_DOTENV_NAMES = new Set([
 ]);
 
 export function isIgnoredDotEntry(_name: string): boolean {
-  // Dotfiles are item content when they are present in git. Top-level hidden
-  // item directories are still skipped by discovery in master.ts.
+  // Dotfiles are item content when tracked in git; discovery in master.ts still
+  // skips top-level hidden item directories.
   return false;
 }
 

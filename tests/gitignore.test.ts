@@ -4,7 +4,11 @@ import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { PreconditionError } from "../src/errors";
-import { gitignoreVisibleFiles, inventoryLocalTree } from "../src/gitignore";
+import {
+  gitignoreVisibleFiles,
+  ignoredByItemGitignores,
+  inventoryLocalTree,
+} from "../src/gitignore";
 
 async function tempDir(prefix: string): Promise<string> {
   return await mkdtemp(join(tmpdir(), prefix));
@@ -64,8 +68,8 @@ describe("gitignoreVisibleFiles", () => {
     await writeFile(join(root, "real.txt"), "real\n");
     await symlink("real.txt", join(root, "link.txt"));
 
-    // Row 1 of the object-model table: the data-repo trust boundary does not
-    // move when ignored local state learns to carry symlinks across.
+    // Ignored local state carrying symlinks must not move the data-repo trust
+    // boundary.
     const error = await rejection(
       gitignoreVisibleFiles(root),
       PreconditionError,
@@ -105,5 +109,28 @@ describe("inventoryLocalTree", () => {
       files: [".gitignore", "SKILL.md", "node_modules/lib/x.js"],
       irregular: [{ path: "node_modules/.bin/x", type: "symlink" }],
     });
+  });
+});
+
+describe("ignoredByItemGitignores", () => {
+  test("a nested gitignore scopes to its directory and does not throw", () => {
+    const ignored = ignoredByItemGitignores(
+      [{ path: "sub/.gitignore", content: Buffer.from("*.log\n") }],
+      ["sub/a.log", "sub/b.txt", "other/c.log"],
+    );
+
+    expect([...ignored]).toEqual(["sub/a.log"]);
+  });
+
+  test("a nested gitignore can re-include a path the root ignores", () => {
+    const ignored = ignoredByItemGitignores(
+      [
+        { path: ".gitignore", content: Buffer.from("*.log\n") },
+        { path: "sub/.gitignore", content: Buffer.from("!keep.log\n") },
+      ],
+      ["a.log", "sub/keep.log", "sub/drop.log"],
+    );
+
+    expect([...ignored].sort()).toEqual(["a.log", "sub/drop.log"]);
   });
 });

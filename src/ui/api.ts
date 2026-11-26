@@ -1,8 +1,6 @@
 /**
- * What the web UI server answers with. Every function reads the same files
- * and runs the same Git queries as the CLI command it stands in for:
- * `status`, `status --diff`, `ls`, and `show`. It adds display fields and the
- * commands a state can be resolved with; it computes no new fact.
+ * Reads the same files and runs the same Git queries as the matching CLI
+ * commands; it only adds display fields and commands, never new facts.
  */
 import { homedir, hostname } from "node:os";
 import { readFile, stat } from "node:fs/promises";
@@ -21,6 +19,7 @@ import {
 } from "../git";
 import { installedPath, parseLockKey } from "../installed";
 import { findMasterItemByRef, parseItemRef } from "../item-ref";
+import type { ItemRef } from "../item-ref";
 import { entryIdentity, LOCK_VERSION, loadLocalLock, loadLock } from "../lock";
 import type { Lock } from "../lock";
 import { loadRemotesLock } from "../remotes-lock";
@@ -87,9 +86,7 @@ import { stateLabel, stateTone, warningLabel } from "./shared/state-label";
 
 export interface UiContext {
   registryPath: string;
-  /** The global `--data` override, applied to every project. */
   dataOverride?: string;
-  /** The project the command ran inside, selected first in the UI. */
   currentProject?: string | null;
 }
 
@@ -98,17 +95,14 @@ interface LoadedProject {
   manifest: Manifest;
   projectLock: Lock;
   localLock: Lock;
-  /** Retained so a later diff request reaches a remote row without a re-read. */
   remotes: RemotesLock;
   dataRepo: string | null;
   rows: StatusRow[];
 }
 
 /**
- * Status reads kept per project for diff requests. The client shows the
- * newest read it accepted. That read drops out only after this many newer
- * reads of the same project finish. A limit across all projects would drop
- * the current read of some project once enough projects are registered.
+ * Limit is per project: a global cap would evict some project's current read
+ * once enough projects are registered.
  */
 const SNAPSHOTS_PER_PROJECT = 4;
 
@@ -122,7 +116,6 @@ export interface UiApi {
     path: string,
     itemId: string,
     view: DiffViewName,
-    /** The `snapshot` of the status read the client shows. */
     snapshot?: string,
   ): Promise<UiDiffResponse>;
   shelf(dataRepo: string): Promise<UiShelf>;
@@ -140,24 +133,16 @@ export function itemId(
 }
 
 export function createUiApi(ctx: UiContext): UiApi {
-  // `--data` resolves against the directory `capshelf ui` started in
-  // (src/data-repo.ts, candidateDataRepo). Every printed command runs from a
-  // project root instead, so the override is made absolute here, once. The
-  // repository it names is the same; only the spelling changes.
-  // An empty `--data ""` is no override, as in `candidateDataRepo`. The
-  // check runs before `normalizePath`, which turns "" into the start
-  // directory.
+  // Make `--data` absolute once: it resolves against the start directory, but
+  // printed commands run from a project root. An empty value is no override.
   const dataOverride = ctx.dataOverride
     ? normalizePath(ctx.dataOverride)
     : undefined;
-  // The rows a project last reported. A diff request names one of them, so
-  // the comparison is built from the row the user is looking at rather than
-  // from a second status run that could disagree with it.
+  // Diff requests build from the row the user sees, not a second status run
+  // that could disagree.
   const loaded = new Map<string, LoadedProject>();
-  // Recent status reads by project, then by snapshot id. Two reads of one
-  // project can overlap, and the older one can finish last. The client keeps
-  // the newer one, so a diff request names its snapshot instead of trusting
-  // `loaded`.
+  // Overlapping status reads can finish out of order, so diff requests name
+  // their snapshot instead of trusting `loaded`.
   const snapshots = new Map<string, Map<string, LoadedProject>>();
   let nextSnapshot = 0;
 
@@ -190,7 +175,6 @@ export function createUiApi(ctx: UiContext): UiApi {
     return found;
   }
 
-  /** The data repo each existing registered project resolves to. */
   async function boundShelves(): Promise<
     Array<{ project: UiRegisteredProject; dataRepo: string | null }>
   > {
@@ -258,7 +242,6 @@ export function createUiApi(ctx: UiContext): UiApi {
     const reads = snapshots.get(project) ?? new Map<string, LoadedProject>();
     snapshots.set(project, reads);
     reads.set(snapshot, state);
-    // A Map iterates in insertion order, so the first key is the oldest.
     for (const old of reads.keys()) {
       if (reads.size <= SNAPSHOTS_PER_PROJECT) break;
       reads.delete(old);
@@ -337,7 +320,6 @@ export function createUiApi(ctx: UiContext): UiApi {
       view: DiffViewName,
       snapshot?: string,
     ): Promise<UiDiffResponse> {
-      // With no snapshot, the project's last read answers, or a new one.
       const state =
         snapshot === undefined
           ? (loaded.get(path) ?? (await loadProject(path)).state)
@@ -476,7 +458,14 @@ export function createUiApi(ctx: UiContext): UiApi {
           `no registered project is bound to ${dataRepo}`,
         );
       }
-      const ref = parseItemRef(refText);
+      let ref: ItemRef;
+      try {
+        ref = parseItemRef(refText);
+      } catch (error) {
+        throw new PreconditionError(
+          error instanceof Error ? error.message : String(error),
+        );
+      }
       const usage = await usageByRef(projects);
 
       const system = findSystemItem(ref.name);
@@ -600,11 +589,9 @@ function toUiItem(
   try {
     installed = relative(project, installedPath(project, row.kind, row.name));
   } catch {
-    // A subagent owns two output targets; `row.targets` names them.
     installed = null;
   }
-  // A row that is up to date but shadowed for a harness is hidden, not
-  // stale. Its badge and sentence come from the warning.
+  // An up-to-date row shadowed for a harness is hidden, not stale.
   const hidden =
     row.state === "ok" || row.state === "kept-local"
       ? row.runtimeWarnings?.find(isStrictRuntimeWarning)
@@ -622,7 +609,7 @@ function toUiItem(
     stateLabel: hidden
       ? warningLabel(hidden.type)
       : stateLabel(row.state, row.source),
-    stateDetail: hidden ? hidden.message : describe(row),
+    stateDetail: hidden ? hidden.message : describe(row, dataRepo),
     actions: actionsForRow(row, {
       dataOverride: commandDataOverride(dataOverride, dataRepo),
       dataRepo,
@@ -704,7 +691,6 @@ async function recentRevisions(dataRepo: string): Promise<UiRevision[]> {
   return parseRevisions(result.stdout.toString("utf-8"));
 }
 
-/** Details for a set of commits, one `git show` for all of them. */
 async function revisionDetails(
   dataRepo: string,
   shas: string[],

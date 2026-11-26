@@ -109,9 +109,8 @@ describe("trust boundaries", () => {
       "evil\nx",
       "evil\r\nx",
       "evil\u007fx",
-      // C1: U+009B is a single-byte CSI and U+009D a single-byte OSC
-      // terminator, so a name holding one drives the terminal the moment a
-      // picker or a listing renders it, exactly like C0.
+      // U+009B is a single-byte CSI and U+009D a single-byte OSC terminator, so
+      // a name holding one drives the terminal when rendered.
       "evil\u0080x",
       "evil\u009bx",
       "evil\u009fx",
@@ -150,7 +149,7 @@ describe("trust boundaries", () => {
       await $`git -C ${dataRepo} config diff.external ${helper}`.quiet();
       await $`git -C ${dataRepo} config diff.redact.textconv ${helper}`.quiet();
       // A clean filter runs during a worktree diff and no flag disables it, so
-      // this is the case that decides whether the diff comes from the bytes.
+      // this case decides whether the diff comes from raw bytes.
       const clean = join(dataRepo, "clean.sh");
       await writeFile(clean, `#!/bin/sh\ntouch ${sentinel}\ncat\n`);
       await chmod(clean, 0o755);
@@ -165,15 +164,12 @@ describe("trust boundaries", () => {
       ).toBe(0);
       expect((await run(["add", "skills/hello"])).exitCode).toBe(0);
       expect((await run(["add", "settings/base"])).exitCode).toBe(0);
-      // The attribute arrives after the items are locked, which is the only
-      // way a managed path can carry a filter driver: PIN-9 refuses to pin one
-      // that already declares it.
+      // The attribute arrives after locking because pinning refuses a path that
+      // already declares a filter driver.
       await writeFile(
         join(dataRepo, ".gitattributes"),
         "* diff=redact\n*.json filter=redact\n",
       );
-      // One drifted install and one dirty canonical source, so both diff
-      // paths have something to render.
       await writeFile(
         join(project, ".agents", "skills", "hello", "SKILL.md"),
         "drifted skill\n",

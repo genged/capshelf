@@ -79,9 +79,9 @@ describe("lock schema", () => {
     await mkdir(join(project, ".capshelf"), { recursive: true });
     await writeFile(lockPath(project), '{"version":6,"items":{}}\n');
 
-    // This guard *is* the compatibility story for version 5: an older binary
-    // meets a lock it does not understand and stops, instead of parsing it
-    // through a strict schema that strips every `sourcePinDigest` it sees.
+    // This version guard is the compatibility story for v5: older binaries stop
+    // on an unknown version instead of strict-parsing it and stripping every
+    // `sourcePinDigest`.
     await expect(loadLock(project)).rejects.toThrow(
       /lock version 6.*upgrade capshelf/,
     );
@@ -164,10 +164,8 @@ describe("lock schema", () => {
     await mkdir(join(project, ".capshelf"), { recursive: true });
     await writeFile(lockPath(project), "{ this is not json");
 
-    // A corrupt lock must be a hard error: silently treating it as empty
-    // would make capshelf think nothing is installed and re-apply everything.
-    // The exact message is engine-specific JSON.parse output and does not
-    // name the file, so only the error type is pinned here.
+    // A corrupt lock must error: treating it as empty would make capshelf
+    // re-apply everything.
     await expect(loadLock(project)).rejects.toThrow(SyntaxError);
   });
 
@@ -179,9 +177,8 @@ describe("lock schema", () => {
       JSON.stringify({
         version: 2,
         items: {
-          // An option-like sourceCommit would otherwise reach the
-          // `git show <rev>:<path>` argv, where `--output=...` writes an
-          // attacker-chosen file. Reject it at load time.
+          // An option-like sourceCommit would reach `git show <rev>:<path>`
+          // argv, where `--output=...` writes an attacker-chosen file.
           "data/mcp/x": {
             source: "data",
             sha: "abc123",
@@ -212,7 +209,6 @@ describe("lock schema", () => {
       }),
     );
 
-    // Zod's discriminated-union error names the offending entry path.
     await expect(loadLock(project)).rejects.toThrow(/data\/skills\/hello/);
     await expect(loadLock(project)).rejects.toThrow(/source/);
   });
@@ -249,7 +245,6 @@ describe("local lock", () => {
     expect(JSON.parse(await readFile(localLockPath(project), "utf-8"))).toEqual(
       lock,
     );
-    // Local overrides live in their own file; the shared lock stays empty.
     expect(await loadLock(project)).toEqual(emptyLock());
   });
 
@@ -258,8 +253,8 @@ describe("local lock", () => {
     await mkdir(join(project, ".capshelf"), { recursive: true });
     await writeFile(localLockPath(project), "{ this is not json");
 
-    // Only ENOENT maps to emptyLock(); a corrupt file must surface, otherwise
-    // local overrides would silently desync.
+    // Only ENOENT maps to an empty lock; a corrupt file must surface or local
+    // overrides silently desync.
     await expect(loadLocalLock(project)).rejects.toThrow(SyntaxError);
   });
 });

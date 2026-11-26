@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { claudeTrustFor } from "../src/claude-trust";
 import { tempDir } from "./cli-fixtures";
 
-/** No `CLAUDE_CODE_SANDBOXED`, whatever the test process runs under. */
 const env = {};
 
 async function homeTrusting(entries: Record<string, boolean>): Promise<string> {

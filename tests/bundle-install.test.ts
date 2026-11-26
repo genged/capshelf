@@ -100,7 +100,6 @@ describe("planBundleInstall", () => {
 
     expect(result.members.map((m) => m.ref)).toEqual([
       "skills/a",
-      // File order within a kind is preserved (fragment merge order).
       "settings/permissions-go",
       "settings/permissions-base",
       "mcp/github",
@@ -161,7 +160,6 @@ describe("planBundleInstall", () => {
 
   test("member-vs-installed conflicts refuse in both directions", () => {
     const refs = ["skills/quick-review"];
-    // Forward: the member declares the conflict.
     const forward = plan({
       bundle: bundleOf(refs),
       master: [...refs, "skills/security-review"],
@@ -180,7 +178,6 @@ describe("planBundleInstall", () => {
       "declared by: skills/quick-review/.capshelf.yml",
     ]);
 
-    // Reverse: the installed item declares the conflict.
     const reverse = plan({
       bundle: bundleOf(refs),
       master: [...refs, "skills/security-review"],
@@ -212,7 +209,6 @@ describe("planBundleInstall", () => {
     expect(result.members[0]?.reason).toBe(
       "conflicts with bundle member skills/b",
     );
-    // Symmetric: the declared-against sibling refuses too.
     expect(result.members[1]?.reason).toBe(
       "conflicts with bundle member skills/a",
     );
@@ -251,8 +247,6 @@ describe("planBundleInstall", () => {
       scope: "local",
     });
 
-    // One aggregated list naming every fragment member — never a
-    // per-member assertLocalScopeSupported first-violator throw.
     expect(result.localUnsupportedMembers).toEqual([
       "settings/base",
       "settings/go",
@@ -320,8 +314,6 @@ describe("preflightBundleChecks fragment collisions", () => {
       masterByRef,
       planFragmentOutputFn: async (opts) => {
         calls.push(opts);
-        // The plain Error assertNoUnmanagedCollisions throws, naming the
-        // SECOND member's source path.
         throw new Error(
           `cannot reconcile ${join(project, ".claude", "settings.json")}: settings/go/settings.json would overwrite unmanaged local value at env.FROM_GO (string vs string).`,
         );
@@ -332,18 +324,14 @@ describe("preflightBundleChecks fragment collisions", () => {
     const call = calls[0]!;
     expect(call.dryRun).toBe(true);
     expect(call.target).toBe("claude-settings");
-    // The prospective nextLock contains ALL non-skipped fragment members —
-    // not just the members preceding the one under check.
     expect(Object.keys(call.nextLock.items).sort()).toEqual([
       "data/settings/base",
       "data/settings/go",
     ]);
     expect(call.nextManifest?.settings).toEqual(["base", "go"]);
-    // Untouched current state flows in as old manifest/lock.
     expect(call.oldLock.items).toEqual({});
     expect(call.manifest.settings).toEqual([]);
 
-    // The error was wrapped and attributed to the offending member only.
     const failures = planFailures(bundlePlan);
     expect(failures.map((m) => m.ref)).toEqual(["settings/go"]);
     expect(failures[0]?.reason).toContain("unmanaged local value");

@@ -38,10 +38,6 @@ import { currentPin } from "./pin-fixtures";
 
 const T = CLI_INTEGRATION_TEST_TIMEOUT_MS;
 
-/**
- * A data repo with `skills/draw`, and a project that installed it.
- * `gitignore` is the skill's own `.gitignore`, or null for none.
- */
 async function installedSkill(opts: {
   gitignore: string | null;
   local?: boolean;
@@ -72,7 +68,6 @@ async function bump(dataRepo: string, text: string): Promise<void> {
   await commitAll(dataRepo, `draw ${text.trim()}`);
 }
 
-/** `node_modules` the way npm leaves it: a package and a `.bin` symlink. */
 async function nodeModules(installed: string): Promise<void> {
   await mkdir(join(installed, "node_modules", "pkg"), { recursive: true });
   await mkdir(join(installed, "node_modules", ".bin"), { recursive: true });
@@ -94,7 +89,6 @@ describe("D3: ignored state moves by rename", () => {
       });
       await nodeModules(installed);
       const secret = join(installed, "node_modules", "pkg", "index.js");
-      // Unreadable: any read of the bytes fails the command.
       await chmod(secret, 0o000);
       await bump(dataRepo, "v2\n");
       try {
@@ -274,7 +268,6 @@ describe("D9: per-item errors keep their hint and exit code", () => {
       expect(spawnSync("mkfifo", [join(installed, "pipe")]).status).toBe(0);
       await bump(dataRepo, "v2\n");
 
-      // A sweep reports the refusal as a per-item row.
       const update = run(["update"]);
       expect(update.exitCode).toBe(3);
       expect(update.stdout.toString()).toContain(
@@ -412,9 +405,8 @@ describe("D12: status shows visible extra files", () => {
 });
 
 /**
- * A Go module cache style tree: folders 0555, files 0444. Linux refuses to
- * move a read-only folder to a new parent, and a delete cannot remove the
- * entries of a read-only folder. Root bypasses both checks.
+ * Linux refuses to move a read-only folder to a new parent and cannot delete
+ * entries of one; root bypasses both checks.
  */
 async function readOnlyTree(base: string): Promise<string> {
   const module = join(base, "github.com", "x", "y@v1.0.0");
@@ -525,7 +517,6 @@ describe("D7: rm and init", () => {
       });
       const alias = join(project, ".claude", "skills", "draw");
       expect((await lstat(alias)).isSymbolicLink()).toBe(true);
-      // The delete cannot remove the item folder from a read-only parent.
       const stuck = dirname(installed);
       await chmod(stuck, 0o555);
       try {
@@ -571,7 +562,6 @@ describe("D7: rm and init", () => {
       );
       await mkdir(dirname(kept), { recursive: true });
       await writeFile(kept, "local\n");
-      // A fresh clone has the committed lock but no clone-local config.
       await $`rm ${join(project, ".capshelf", "local.json")}`.quiet();
 
       const again = run(["init", "--data", dataRepo, "--no-upstream"]);

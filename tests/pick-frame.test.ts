@@ -36,7 +36,6 @@ const ranked = (r: PickRow, positions: number[] = []): RankedPickRow => ({
   positions,
 });
 
-/** A palette that marks each role, so styling is assertable as text. */
 const MARKUP: PickPalette = {
   accent: (t) => `<a>${t}</a>`,
   dim: (t) => `<d>${t}</d>`,
@@ -80,8 +79,8 @@ describe("renderTabBar", () => {
   });
 
   test("underlines the active tab at the right column", () => {
-    // Measured from unstyled widths: an escape sequence has no width, so
-    // measuring the styled string would put the rule in the wrong place.
+    // Measure unstyled widths: escape sequences have no width, so measuring the
+    // styled string misplaces the rule.
     const [bar, rule] = renderTabBar(tabs, 2, PLAIN_PALETTE);
     expect(rule!.indexOf("━")).toBe(bar!.indexOf("skills"));
     expect(rule!.trim().length).toBe("skills".length);
@@ -117,7 +116,6 @@ describe("renderRows", () => {
   });
 
   test("drops headings once a query is typed", () => {
-    // Headings would split the ranking and bury the best match mid-list.
     const lines = renderRows(frame({ query: "rev" }));
     expect(lines.some((l) => l.trim() === "skills")).toBe(false);
   });
@@ -136,8 +134,6 @@ describe("renderRows", () => {
   });
 
   test("draws the hint only for the focused row", () => {
-    // Every row carrying its description would push the refs apart and turn
-    // the list into prose.
     const rows = [ranked(SHELF[2]!), ranked(SHELF[1]!)];
     const focused = renderRows(frame({ query: "x", rows, cursor: 0 }));
     expect(focused[0]).toContain("Find flaws");
@@ -178,8 +174,6 @@ describe("renderRows", () => {
   });
 
   test("the pointer column is reserved on every row, so boxes align", () => {
-    // A one-cell pointer put the marker hard against the checkbox and the two
-    // rendered as a single blob.
     const lines = renderRows(frame({ query: "x", cursor: 1 }));
     const boxAt = lines.map((line) => line.indexOf(UNMARKED));
     expect(new Set(boxAt.filter((index) => index >= 0)).size).toBe(1);
@@ -187,15 +181,12 @@ describe("renderRows", () => {
   });
 
   test("the marker is not a triangle", () => {
-    // The checkboxes are round. Unicode's right-pointing triangles come in a
-    // small size and a full size, and neither is drawn to the same vertical
-    // metrics as the checkbox, so neither sits level beside it.
+    // Unicode right-pointing triangles do not share the checkbox's vertical
+    // metrics, so a chevron is used.
     expect(POINTER.trimEnd()).toBe("❯");
   });
 
   test("no row carries trailing blanks", () => {
-    // Padding every row to the longest ref aligned a single hint against
-    // nothing and left the rest with invisible trailing space.
     for (const line of renderRows(frame({ query: "x", cursor: 1 }))) {
       expect(line).toBe(line.trimEnd());
     }
@@ -210,13 +201,8 @@ describe("renderRows", () => {
   });
 
   test("a row is kept inside the terminal width", () => {
-    // A row wider than the terminal wraps, and the redraw then counts one line
-    // where two were drawn, so the frame walks up the screen.
-    //
-    // Strictly less than `columns`, not equal to it: a line that fills the
-    // last column wraps on terminals that wrap there, so the budget leaves
-    // that column empty. An assertion of `<= columns` passes with the margin
-    // removed, which is the wrap this test is here to catch.
+    // Lines must be strictly narrower than `columns`: a line filling the last
+    // column wraps on some terminals and the redraw miscounts lines.
     for (const columns of [80, 60, 44, 34]) {
       for (const line of renderRows(frame({ columns, cursor: 2 }))) {
         expect(line.length + GUTTER_WIDTH).toBeLessThan(columns);
@@ -247,8 +233,6 @@ describe("renderRows", () => {
   });
 
   test("a heading is never the last line of the window", () => {
-    // A heading labels the rows under it, so one at the bottom edge labels
-    // nothing and reads as a group with no members.
     const rows = [
       ranked(row("skills/a")),
       ranked(row("skills/b")),
@@ -262,9 +246,8 @@ describe("renderRows", () => {
   });
 
   test("headings count against the height budget", () => {
-    // Windowing the rows and inserting headings afterwards spent more lines
-    // than `height` allows: on the grouped All view a budget of 10 could draw
-    // as many as 17 lines and push the frame past a 24-row terminal.
+    // Headings must count against the height budget, or the grouped view
+    // overruns the terminal.
     const many = [
       ...Array.from({ length: 6 }, (_, i) => ranked(row(`skills/s-${i}`))),
       ...Array.from({ length: 6 }, (_, i) =>
@@ -342,7 +325,6 @@ describe("renderPickBody", () => {
   });
 
   test("counts against the active tab's total, not the whole shelf", () => {
-    // The count read `6 of 1` when the row list and the tab disagreed.
     const lines = renderPickBody(
       frame({
         activeTab: 2,
@@ -378,7 +360,6 @@ describe("renderPickBody", () => {
     const lines = renderTabBar(tabs, 2, PLAIN_PALETTE, bodyBudget(24));
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("skills");
-    // Which of how many, since the other names no longer fit.
     expect(lines[0]).toContain("(3/4)");
     expect(lines[0]!.length + GUTTER_WIDTH).toBeLessThan(24);
   });
@@ -403,8 +384,8 @@ describe("renderPickBody", () => {
   });
 
   test("a query the user keeps typing does not widen the frame", () => {
-    // The query is the one string in the frame that grows without limit, so
-    // the search line is the one that overflows if nothing bounds it.
+    // The query is the only unbounded string in the frame, so the search line
+    // must be bounded.
     for (const columns of [100, 80, 60, 44, 34]) {
       const long = frame({ columns, query: "a".repeat(120) });
       for (const line of renderPickBody(long)) {

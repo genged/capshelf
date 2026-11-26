@@ -3,12 +3,8 @@ import { PreconditionError } from "./errors";
 import { installDifferenceLabel } from "./install-diff";
 
 /**
- * Every kind of local state a consented write can destroy. A reason exists
- * only when a planner emits it: an unimplemented branch of a safety boundary
- * reads as implemented, which is worse than an absent one. `install_target`
- * was declared and never emitted — `add` over a pre-existing unmanaged target
- * is a hard refusal by design (`findInstallConflict`,
- * `assertCanMaterializeInstalled`), not consentable loss — so it is gone.
+ * A reason exists only when a planner emits it: an unimplemented branch of a
+ * safety boundary reads as implemented.
  */
 export type DestructiveChangeReason =
   | "managed_content"
@@ -25,11 +21,8 @@ export interface DestructiveChange {
   path: string;
   reason: DestructiveChangeReason;
   /**
-   * PIN-7: a one-line explanation of *what kind* of difference this is, from
-   * `installDifferenceLabel`. It labels the prompt and never gates it —
-   * whether a write destroys something is decided by `reason` alone, because
-   * the cause of a difference is not decidable from bytes and a wrong guess
-   * would silently discard a deliberate change.
+   * Labels the prompt and never gates it: `reason` alone decides destruction,
+   * since a difference's cause isn't decidable from bytes.
    */
   detail?: string;
   reviewCommand?: string;
@@ -38,7 +31,6 @@ export interface DestructiveChange {
 export interface DestructiveChangePlan {
   changes: DestructiveChange[];
   snapshot: string;
-  /** The sorted snapshot parts, so a mismatch can name what changed. */
   state: readonly string[];
 }
 
@@ -46,11 +38,8 @@ export interface DestructiveConfirmationContext {
   stdinIsTTY: boolean;
   stderrIsTTY: boolean;
   prompt: (message: string) => Promise<string>;
-  /** Where the prompt draws. The return value is never read. */
   stderr: { write(text: string): void };
-  /** D9 of the remote discovery spec. Absent means "not a terminal". */
   stdoutIsTTY?: boolean;
-  /** Terminal height in rows, or null when the terminal does not report it. */
   terminalRows?: number | null;
 }
 
@@ -138,11 +127,6 @@ export function assertDestructivePlanUnchanged(
 
 const CHANGED_PATHS_SHOWN = 5;
 
-/**
- * What differs between two snapshots, as the paths the parts name. A copy or
- * subagent part starts with `<kind>:<absolute path>:`. Any other part names a
- * lock entry or a planned output, and is reported by its kind.
- */
 function changedSnapshotSubjects(
   accepted: readonly string[],
   current: readonly string[],
@@ -170,15 +154,8 @@ function changedSnapshotSubjects(
 let installedConfirmationContext: DestructiveConfirmationContext | null = null;
 
 /**
- * Replace the confirmation context every command uses, or restore the default
- * with `null`. Returns the context that was installed before, so a caller can
- * restore it instead of clobbering an outer one.
- *
- * This is the one seam that lets the interactive consent path be exercised as
- * it actually ships. The alternative — a command-module wrapper that
- * hardcoded its own prompt strings and had zero production callers — made the
- * TTY prompt, the `y`/`N` parsing, and the cancellation message look covered
- * while none of them were.
+ * The one seam that lets the interactive consent path be tested as shipped;
+ * returns the previous context so callers can restore it.
  */
 export function setDestructiveConfirmationContext(
   context: DestructiveConfirmationContext | null,
@@ -189,13 +166,8 @@ export function setDestructiveConfirmationContext(
 }
 
 /**
- * One free-text question on the terminal, through the same injectable context
- * the consent prompt uses.
- *
- * The share picker asks for a new item's name after its full-screen frame
- * closes, and that question must be testable without a pseudo-terminal. The
- * seam already exists for consent; reusing it keeps one prompt mechanism and
- * one way to fake it.
+ * Reuses the consent prompt's injectable context so the picker's name question
+ * is testable without a pseudo-terminal.
  */
 export async function askQuestion(
   message: string,
@@ -206,12 +178,8 @@ export async function askQuestion(
 }
 
 /**
- * The confirmation context in force.
- *
- * A consent gate that is not a destructive-change plan — the remote-skill
- * install gate, where nothing is destroyed and the question is whether to run
- * someone else's code — still has to ask through this one seam, or it becomes
- * a second prompt mechanism with its own untestable TTY branch.
+ * Non-destructive consent gates must ask through this one seam, or they become
+ * a second untestable prompt mechanism.
  */
 export function confirmationContext(): DestructiveConfirmationContext {
   return (
@@ -294,7 +262,6 @@ export function renderDestructiveChanges(
   ].join("\n");
 }
 
-/** Groups larger than this print one line per folder. */
 const FOLD_ABOVE = 10;
 
 const VISIBLE_EXTRA_DETAIL = installDifferenceLabel({
@@ -316,10 +283,8 @@ function groupKey(change: DestructiveChange): string {
 }
 
 /**
- * One line per entry of the deepest folder that holds all of `group`, with
- * the number of listed paths in each subfolder. A Python venv that Git can
- * see is about 1,000 files, and one line for each hides the decision. The
- * plan itself still lists every path.
+ * Folds large listings per subfolder because one line per file (a visible venv
+ * is ~1,000) hides the decision; the plan still lists every path.
  */
 function foldedLines(group: readonly DestructiveChange[]): string[] {
   const [first] = group;
@@ -370,9 +335,8 @@ function defaultDestructiveConfirmationContext(): DestructiveConfirmationContext
     stdinIsTTY: process.stdin.isTTY === true,
     stderrIsTTY: process.stderr.isTTY === true,
     stdoutIsTTY: process.stdout.isTTY === true,
-    // `0` means "a terminal is attached but did not report a height" on some
-    // hosts; D9 cannot compare a listing's length against that, so it is
-    // folded into "unknown" the same as a missing value.
+    // Some hosts report `0` rows for an attached terminal with no height, so
+    // treat it as unknown.
     terminalRows: process.stdout.rows || null,
     prompt: async (message) => {
       const readline = createInterface({
@@ -380,23 +344,8 @@ function defaultDestructiveConfirmationContext(): DestructiveConfirmationContext
         output: process.stderr,
       });
       try {
-        // Under Bun 1.3.14, `readline.question()` does not settle on EOF: a
-        // closed pipe or `< /dev/null` fires the interface's `close` event
-        // right away, but the question promise neither resolves nor rejects
-        // — it hangs forever. Racing it against `close` turns that hang into
-        // a rejection instead. Before this fix every prompt through this
-        // context hung forever on EOF (a closed pipe or `< /dev/null`); now
-        // it does not. Ctrl-C at an open prompt takes this path too:
-        // readline holds the terminal in raw mode, reads Ctrl-C as a key,
-        // and closes, so no SIGINT is sent and the race rejects. A Ctrl-C
-        // that arrives before the prompt opens is still a tty SIGINT, and
-        // the process exits by signal (130). Most callers —
-        // `confirmInstall`, `confirmRemotePinMove`,
-        // `confirmDestructiveChanges`, and a direct `askQuestion` — do not
-        // catch this rejection, so it reaches `main`'s handler, which prints
-        // it and exits 1 before any write (`reportError`, `src/cli.ts:127`).
-        // Only the D9 "show all" question (`confirmShowAllSkills`,
-        // `src/commands/add-remote.ts`) catches it and treats it as "no".
+        // Bun 1.3.14 `readline.question()` never settles on EOF or Ctrl-C at an
+        // open prompt, so race it against `close` to reject instead of hanging.
         const closedBeforeAnswer = new Promise<never>((_, reject) => {
           readline.once("close", () =>
             reject(new Error("prompt closed before an answer")),

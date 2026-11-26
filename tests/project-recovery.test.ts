@@ -82,12 +82,9 @@ describe("project recovery", () => {
       const upstream = manifest.dataRepoUpstream;
       if (upstream === undefined) throw new Error("init recorded no upstream");
 
-      // The machine came back without the clone the binding names.
       const moved = `${dataRepo}-moved`;
       await rename(dataRepo, moved);
 
-      // A read-only command still produces its report: the data rows say the
-      // source is unavailable and the exit stays 0.
       const status = run(["status", "--json"]);
       expect(status.exitCode).toBe(0);
       const report = jsonOutput(status);
@@ -98,9 +95,16 @@ describe("project recovery", () => {
         )?.state,
       ).toBe("missing_upstream");
 
-      // A command that needs data repo bytes refuses with exit 6 and names a
-      // repair the user can run. The bound directory is gone, so a git command
-      // inside it cannot be the way out.
+      const human = run(["status"]);
+      expect(human.exitCode).toBe(0);
+      expect(human.stdout.toString()).toContain(
+        "data repo not available — run: capshelf data bind <path>",
+      );
+      expect(human.stdout.toString()).not.toContain("no longer in data repo");
+      expect(run(["status", "--strict"]).exitCode).toBe(4);
+
+      // The repair must not be a git command: the bound directory is gone, so
+      // nothing can run inside it.
       const refused = run(["apply", "--json"]);
       expect(refused.exitCode).toBe(6);
       const message = refused.stderr.toString();
@@ -109,7 +113,6 @@ describe("project recovery", () => {
       expect(message).toContain("capshelf set-data <path>");
       expect(message).not.toContain(`git -C ${dataRepo}`);
 
-      // Binding the clone where it now lives restores materialization.
       expect(run(["set-data", moved]).exitCode).toBe(0);
       expect(run(["apply"]).exitCode).toBe(0);
       expect(run(["status", "--strict"]).exitCode).toBe(0);
@@ -302,13 +305,10 @@ describe("project recovery", () => {
     async () => {
       const dataRepo = await baselineRepo("capshelf-partial-init-data-");
 
-      // `local.json` is init's last write, so every interruption leaves it
-      // absent. Both prefixes below are reachable states; each must recover
-      // by re-running init, with no new subcommand and no manual repair.
+      // `local.json` is init's last write, so any interruption leaves it absent
+      // and re-running init must recover.
       const leftovers: string[][] = [
-        // Interrupted after saveLock: manifest, lock, and files on disk.
         [],
-        // Interrupted during the installs: files on disk, no lock entry.
         [join(".capshelf", "capshelf.lock.json")],
       ];
       for (const leftover of leftovers) {
@@ -370,9 +370,9 @@ describe("project recovery", () => {
       expect(refused.stderr.toString()).toContain(
         "target already exists but is not managed by capshelf",
       );
-      // Adoption is an exact-content test, so a leftover from a different
-      // capshelf version or a torn write lands here too. The message has to
-      // say that deleting it is safe, because init reinstalls it.
+      // Adoption is an exact-content match, so a leftover from another version
+      // or a torn write lands here; the message must say deletion is safe
+      // because init reinstalls it.
       expect(refused.stderr.toString()).toContain("deleting it is safe");
       expect(existsSync(join(project, ".capshelf", "local.json"))).toBe(false);
 

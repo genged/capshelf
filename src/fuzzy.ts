@@ -1,41 +1,10 @@
 /**
- * fzf's FuzzyMatchV1, ported from its published description.
- *
- * Source: `src/algo/algo.go` in junegunn/fzf, whose header comment is the
- * reference description of the algorithm and whose constants carry the
- * reasoning for their values. Ported rather than depended on: the JavaScript
- * port on npm (`fzf`) has not been published since 2023, and this is ~200
- * lines of pure arithmetic with no reason to drift.
- *
- * The algorithm, quoting the spec:
- *
- *     FuzzyMatchV1 finds the first "fuzzy" occurrence of the pattern within
- *     the given text in O(n) time where n is the length of the text. Once the
- *     position of the last character is located, it traverses backwards to see
- *     if there's a shorter substring that matches the pattern.
- *
- *         a_____b___abc__  To find "abc"
- *         *-----*-----*>   1. Forward scan
- *                  <***    2. Backward scan
- *
- * V1, not V2. The spec is explicit that V1 "only sees the first occurrence"
- * and so "is not guaranteed to find the occurrence with the highest score",
- * while V2 is a Smith-Waterman variant that is optimal at O(nm). That trade
- * was written for million-line inputs. A capshelf shelf holds tens of items
- * whose refs are one or two words, where the backward pass already recovers
- * the tight match, so the optimal search buys ranking nobody can perceive for
- * a dynamic-programming table and its bugs. If a shelf ever grows to where
- * this is wrong, V2 is the documented upgrade.
- *
- * Not ported: fzf's extended-search operators (`^prefix`, `suffix$`, `'exact`,
- * `!invert`, `|`). A query is whitespace-separated terms that must all match,
- * as `capshelf search` already defines one, and one query language across the
- * product is worth more than the operators. `fuzzyTerms` splits them here;
- * combining them across an item's fields belongs to `pick-core.ts`, which is
- * what knows the fields apart.
+ * Ported fzf FuzzyMatchV1 (junegunn/fzf `src/algo/algo.go`) rather than
+ * depending on the stale npm port; V1 over V2 because shelves are tiny, and
+ * extended-search operators are omitted to keep one query language.
  */
 
-/** Character classes, in the spec's order — the ordering is load-bearing. */
+/** Order matters: it must match the spec's character class order. */
 const CHAR_WHITE = 0;
 const CHAR_NON_WORD = 1;
 const CHAR_DELIMITER = 2;
@@ -57,56 +26,30 @@ const SCORE_MATCH = 16;
 const SCORE_GAP_START = -3;
 const SCORE_GAP_EXTENSION = -1;
 
-/**
- * "We prefer matches at the beginning of a word, but the bonus should not be
- * too great to prevent the longer acronym matches from always winning over
- * shorter fuzzy matches. The bonus point here was specifically chosen that the
- * bonus is cancelled when the gap between the acronyms grows over 8
- * characters." — algo.go
- */
+/** Favor word boundaries without letting distant acronym matches dominate. */
 const BONUS_BOUNDARY = SCORE_MATCH / 2;
 const BONUS_NON_WORD = SCORE_MATCH / 2;
-/** camelCase and letter123 edges, minus a gap-extension the boundary case pays. */
 const BONUS_CAMEL_123 = BONUS_BOUNDARY + SCORE_GAP_EXTENSION;
-/** Minimum bonus for a character inside a consecutive chunk. */
 const BONUS_CONSECUTIVE = -(SCORE_GAP_START + SCORE_GAP_EXTENSION);
-/** The first pattern character carries more intent, so its bonus is doubled. */
 const BONUS_FIRST_CHAR_MULTIPLIER = 2;
 const BONUS_BOUNDARY_WHITE = BONUS_BOUNDARY + 2;
 const BONUS_BOUNDARY_DELIMITER = BONUS_BOUNDARY + 1;
 
 export interface FuzzyMatch {
-  /** Higher is better. Only comparable between matches of the same query. */
   score: number;
   /**
-   * Indices in the haystack the pattern matched, ascending, counted in code
-   * points rather than UTF-16 units.
-   *
-   * The whole module counts that way. Indexing a JavaScript string directly
-   * splits any character outside the basic plane into two halves, which made
-   * one emoji report two match positions and let a highlighter paint half a
-   * character. A caller that renders these positions must walk the string by
-   * code point too.
+   * Indices count code points, not UTF-16 units, so an emoji is one position;
+   * renderers must walk by code point too.
    */
   positions: number[];
 }
 
-/** Split a query the way `capshelf search` does — it is the same function. */
 export { splitTerms as fuzzyTerms } from "./search-core";
 
-/**
- * Smart case, as fzf defines it: an all-lowercase pattern matches
- * case-insensitively, and one uppercase character makes the whole pattern
- * case-sensitive.
- */
 export function isCaseSensitive(pattern: string): boolean {
   return pattern !== pattern.toLowerCase();
 }
 
-/**
- * Match one pattern against one string, or return null when the pattern is not
- * a subsequence of it.
- */
 export function fuzzyMatchV1(
   pattern: string,
   text: string,
@@ -119,13 +62,12 @@ export function fuzzyMatchV1(
   const fold = (char: string): string =>
     caseSensitive ? char : char.toLowerCase();
 
-  // Pass 1: forward, to the earliest index where the pattern can finish.
   let patternIndex = 0;
   let start = -1;
   let end = -1;
   for (const [index, char] of hay.entries()) {
-    // SAFETY: patternIndex < needle.length, because the loop breaks as soon
-    // as it reaches needle.length.
+    // SAFETY: patternIndex < needle.length because the loop breaks on reaching
+    // it.
     if (fold(char) !== fold(needle[patternIndex] as string)) continue;
     if (start < 0) start = index;
     patternIndex++;
@@ -136,13 +78,10 @@ export function fuzzyMatchV1(
   }
   if (start < 0 || end < 0) return null;
 
-  // Pass 2: backward from that end, to the latest start that still holds the
-  // whole pattern. This is what turns a match spread across `s`kills/s`e`
-  // `c`urity into the tight `sec` inside "security".
   patternIndex--;
   for (let index = end - 1; index >= start; index--) {
-    // SAFETY: pass 1 set 0 <= start < end <= hay.length, so hay[index] is in
-    // range, and patternIndex >= 0 because the loop breaks when it goes below.
+    // SAFETY: pass 1 guarantees 0 <= start < end <= hay.length, and
+    // patternIndex >= 0 because the loop breaks below zero.
     if (fold(hay[index] as string) !== fold(needle[patternIndex] as string)) {
       continue;
     }
@@ -156,13 +95,6 @@ export function fuzzyMatchV1(
   return calculateScore(needle, hay, start, end, caseSensitive);
 }
 
-/**
- * Score the matched window, per `calculateScore` in the spec.
- *
- * A gap inside the window costs `SCORE_GAP_START` for the first skipped
- * character and `SCORE_GAP_EXTENSION` for each one after — an affine gap
- * penalty, the same shape Smith-Waterman alignment uses.
- */
 function calculateScore(
   pattern: readonly string[],
   text: readonly string[],
@@ -177,21 +109,20 @@ function calculateScore(
   let firstBonus = 0;
   const positions: number[] = [];
 
-  // The spec seeds this with `initialCharClass`, which is whitespace outside
-  // path mode: index 0 of a string counts as a word boundary.
+  // Index 0 counts as a word boundary, matching the spec's whitespace initial
+  // class outside path mode.
   let previousClass = CHAR_WHITE;
   if (start > 0) {
-    // SAFETY: pass 1 found the match inside text, so start <= text.length
-    // and text[start - 1] is in range.
+    // SAFETY: pass 1 found the match inside text, so text[start - 1] is in
+    // range.
     previousClass = charClassOf(text[start - 1] as string);
   }
 
   for (let index = start; index < end; index++) {
-    // SAFETY: pass 1 set end to one past a match inside text, so
-    // end <= text.length and text[index] is in range.
+    // SAFETY: end is one past a match inside text, so text[index] is in range.
     const char = text[index] as string;
     const charClass = charClassOf(char);
-    // SAFETY: end is one past the match of the last pattern character, so
+    // SAFETY: end is one past the last pattern character's match, so
     // patternIndex < pattern.length on every iteration.
     const matches = caseSensitive
       ? char === pattern[patternIndex]
@@ -204,9 +135,8 @@ function calculateScore(
       if (consecutive === 0) {
         firstBonus = bonus;
       } else {
-        // Breaking a consecutive chunk: a strong boundary can raise the
-        // chunk's base bonus, and every character in a chunk gets at least
-        // BONUS_CONSECUTIVE so that "foobar" beats "foo-bar" on "foob".
+        // Every character in a chunk gets at least BONUS_CONSECUTIVE so that
+        // "foobar" beats "foo-bar" on "foob".
         if (bonus >= BONUS_BOUNDARY && bonus > firstBonus) firstBonus = bonus;
         bonus = Math.max(bonus, firstBonus, BONUS_CONSECUTIVE);
       }
@@ -226,13 +156,8 @@ function calculateScore(
 }
 
 /**
- * Classify one character, in the order the spec's own `charClassOfNonAscii`
- * uses.
- *
- * The classes earn the boundary bonuses, so an ASCII-only test does not merely
- * ignore other scripts, it misreads them. Every Cyrillic or CJK character
- * counted as a non-word character, so each one looked like a word boundary and
- * inflated the score of any text that used them.
+ * Classes earn boundary bonuses, so an ASCII-only test would treat every
+ * Cyrillic or CJK character as a non-word boundary and inflate scores.
  */
 function charClassOf(char: string): number {
   if (char >= "a" && char <= "z") return CHAR_LOWER;

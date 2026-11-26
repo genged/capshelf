@@ -259,7 +259,6 @@ describe("destructive change reasons", () => {
     const reasons = Object.keys(DESTRUCTIVE_CHANGE_REASON_LABELS);
     expect(reasons.length).toBeGreaterThan(0);
 
-    // The docs table is the user-facing contract for the JSON `reason` field.
     const docs = await file(
       join(import.meta.dir, "..", "docs", "cli.md"),
     ).text();
@@ -267,8 +266,6 @@ describe("destructive change reasons", () => {
       expect(docs).toContain(`\`${reason}\``);
     }
 
-    // A reason nobody emits makes an unimplemented branch of the safety
-    // boundary read as implemented; that is how `install_target` survived.
     const planners = await Promise.all(
       ["destructive-preflight.ts", "commands/marketplace.ts"].map((relPath) =>
         file(join(import.meta.dir, "..", "src", relPath)).text(),
@@ -281,17 +278,8 @@ describe("destructive change reasons", () => {
 });
 
 describe("the default confirmation context's prompt on EOF", () => {
-  // Under Bun 1.3.14, a probe script showed that `readline.question()` never
-  // settles when stdin reaches EOF (a closed pipe, or `< /dev/null`): the
-  // interface's `close` event fires right away, but the question promise
-  // neither resolves nor rejects. It hangs until the process is killed. D9
-  // of the remote discovery spec requires EOF to act as "no", so the default
-  // context races the question against `close` (`src/destructive-change.ts`).
-  // This can't use a fake context — it tests the real default, which only
-  // runs with no context installed — so it spawns a real Bun process with no
-  // TTY and no installed context, and bounds the wait with `Bun.spawn`'s own
-  // `timeout`: a hang kills the process with SIGTERM, which the assertions
-  // below tell apart from the expected clean exit.
+  // Under Bun 1.3.14, readline.question() hangs on stdin EOF, so this uses a
+  // real process with a timeout to detect a regression.
   test("rejects instead of hanging, within the spawn timeout", async () => {
     const dir = await tempDir("capshelf-eof-probe-");
     try {

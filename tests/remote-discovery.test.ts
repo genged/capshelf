@@ -116,9 +116,6 @@ test("a marketplace document names a directory no other rule found", async () =>
   });
 });
 
-// D2 "exactly as today": a legacy `skills` entry follows the rules the
-// deleted `marketplaceDirectories` used (`src/remote-discovery.ts` at
-// `d8b8168`), not D12's unified path rule.
 test("a legacy skills entry with a literal /SKILL.md suffix strips only that suffix", async () => {
   const repo = await tempRepo("capshelf-discovery-market-skillmd-");
   await skillAt(repo, "packages/review", "Reviews migrations");
@@ -180,7 +177,6 @@ test("an unsafe directory name is dropped, not installed", async () => {
   expect((await discoverRemoteSkills(repo, "HEAD")).candidates).toEqual([]);
 });
 
-// A10: the document is present and does not parse.
 test("a malformed marketplace document warns and never fails discovery", async () => {
   const repo = await tempRepo("capshelf-discovery-bad-market-");
   await skillAt(repo, "skills/pdf", "Extract text");
@@ -290,8 +286,8 @@ test("a symlinked skills/x/SKILL.md is not a candidate", async () => {
   expect(candidates).toEqual([]);
 });
 
-// D14: candidateAtSubpath must apply the same regular-file rule an explicit
-// --path takes a route discoverRemoteSkills never does.
+// candidateAtSubpath must apply the same regular-file rule as discovery, since
+// an explicit --path is a separate route.
 test("candidateAtSubpath refuses a symlinked SKILL.md as no SKILL.md", async () => {
   const repo = await tempRepo("capshelf-discovery-candidateatsubpath-symlink-");
   await mkdir(join(repo, "skills", "x"), { recursive: true });
@@ -334,9 +330,8 @@ test("candidateAtSubpath fills plugin facts for a plugin skill directory", async
   expect(candidate.plugin?.plugin.name).toBe("a");
 });
 
-// D2/D12: the repository root is always legacy. A root manifest must not
-// turn `--path .` into a plugin lookup, so a repository whose root is also a
-// plugin keeps today's `--path .` behavior.
+// The repository root is always legacy, so a root manifest must not turn
+// `--path .` into a plugin lookup.
 test('pluginAtSubpath(".") is always null, even with a root manifest', async () => {
   const repo = await tempRepo("capshelf-discovery-root-manifest-");
   await skillAt(repo, ".", "Root skill");
@@ -363,8 +358,6 @@ test('candidateAtSubpath(".") never attaches plugin facts from a root manifest',
   expect(candidate.plugin).toBeUndefined();
 });
 
-// The root is never a plugin, so a root manifest gives a layout skill no
-// plugin facts. `--path` and the full listing must agree on this.
 test("a root manifest gives skills/<x> no plugin facts at --path or in the listing", async () => {
   const repo = await tempRepo("capshelf-discovery-root-manifest-skill-");
   await skillAt(repo, "skills/x", "X");
@@ -383,8 +376,6 @@ test("a root manifest gives skills/<x> no plugin facts at --path or in the listi
   ]);
 });
 
-// The manifest-only fallback for a plugin no catalog
-// names at all, exercised through both candidateAtSubpath and pluginAtSubpath.
 test("candidateAtSubpath fills manifest-only plugin facts for an uncataloged plugin's skill", async () => {
   const repo = await tempRepo("capshelf-discovery-manifestonly-candidate-");
   await writePlugins(

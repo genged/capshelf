@@ -1,8 +1,6 @@
 /**
- * The required lane must not depend on credentials or on public network state.
- * `GIT_TERMINAL_PROMPT=0` only stops an interactive prompt; it does not stop
- * network access, so the lane states its own network condition instead of
- * assuming one.
+ * GIT_TERMINAL_PROMPT=0 only stops prompts, not network access, so the lane
+ * states its own network condition.
  */
 export type LaneNetwork = "offline" | "no-credential local-remote";
 
@@ -65,14 +63,8 @@ export async function probeEgress(timeoutMs = 4_000): Promise<EgressProbe> {
 }
 
 /**
- * Name the lane from what the canary measured. A runner that cannot enforce
- * egress denial gets the weaker, accurate name; only `CAPSHELF_E2E_REQUIRE_OFFLINE=1`
- * turns a reachable network into a harness failure.
- *
- * Pass an observation to classify it. Without one this measures its own, which
- * is what a lane does at startup — but a caller comparing two calls would be
- * comparing two different measurements of a network that can change between
- * them.
+ * Pass an observation to classify it; two separate measurements of a changing
+ * network can disagree.
  */
 export async function resolveLaneNetwork(
   observed?: EgressProbe,

@@ -1,7 +1,3 @@
-/**
- * The capshelf icon set, one stroke and one weight, reduced to the names
- * this dashboard uses. Every icon sits beside a word or carries a label.
- */
 import type { JSX } from "preact";
 
 export type IconName =

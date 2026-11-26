@@ -43,7 +43,6 @@ interface World {
   lockPath: string;
 }
 
-/** A project with one item of each strategy on the shelf. */
 async function world(claudeOnly = false): Promise<World> {
   const project = await tempRepo("capshelf-confine-project-");
   const dataRepo = await tempRepo("capshelf-confine-data-");
@@ -93,7 +92,6 @@ async function world(claudeOnly = false): Promise<World> {
   };
 }
 
-/** Every path below `dir` with its bytes or link target. Byte-for-byte proof. */
 async function snapshot(dir: string): Promise<string[]> {
   const rows: string[] = [];
   async function walk(current: string, rel: string): Promise<void> {
@@ -120,14 +118,12 @@ async function head(repo: string): Promise<string> {
   return (await $`git -C ${repo} rev-parse HEAD`.quiet().text()).trim();
 }
 
-/** Replace `path` (which `init` may have made) with a symlink to `outside`. */
 async function linkOutside(path: string, outside: string) {
   await rm(path, { recursive: true, force: true });
   await mkdir(dirname(path), { recursive: true });
   await symlink(outside, path);
 }
 
-/** Move a real folder to `outside` and leave a symlink to it in its place. */
 async function relocateThroughLink(dir: string, outside: string) {
   await cp(dir, outside, { recursive: true, verbatimSymlinks: true });
   await rm(dir, { recursive: true });
@@ -139,14 +135,11 @@ function expectRefusal(
   outside: string,
 ) {
   expect(result.exitCode).toBe(3);
-  // A refusal is reported on stderr, or on stdout by a command that prints a
-  // per-item report.
   const output = `${result.stdout.toString()}${result.stderr.toString()}`;
   expect(output).toContain("outside the project");
   expect(output).toContain(outside);
 }
 
-/** The refused command left the outside folder and the project lock as they were. */
 async function expectUntouched(
   w: World,
   outsideBefore: string[],

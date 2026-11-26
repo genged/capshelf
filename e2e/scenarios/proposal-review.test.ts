@@ -14,10 +14,8 @@ import { E2E_TEST_TIMEOUT_MS, withWorld } from "../support/world";
 const SCENARIO = "proposal-review";
 
 /**
- * The gate this scenario exists for: a project can pin a commit that its own
- * clone resolves and no fresh clone can. Only a transport clone can show that,
- * which is why the fixture pushes a proposal branch to a real bare remote and
- * then models the squash merge on that remote.
+ * A pin can resolve in the project's own clone yet in no fresh clone, which
+ * only a transport clone against a real bare remote can show.
  */
 test(
   "a pin no fresh clone can resolve fails the strict gate and changes nothing",
@@ -46,10 +44,8 @@ test(
       await world.git.ok(shelf, ["push", "-q", "-u", "origin", "main"]);
 
       const project = await world.git.createProject("checkout");
-      // A local bare remote is not a portable upstream, and capshelf refuses
-      // to record one. The project declares itself non-portable so the shelf
-      // can keep a fetchable `origin`; this scenario is about pin
-      // reachability, not about publishing the project.
+      // capshelf refuses to record a local bare remote as upstream, so the
+      // project declares itself non-portable to keep a fetchable `origin`.
       expectExit(
         await world.capshelf(project, [
           "init",
@@ -64,8 +60,6 @@ test(
         0,
       );
 
-      // Bob proposes on a branch, exactly as the shelf's protected main
-      // requires. capshelf commits; the human pushes.
       await world.git.ok(shelf, [
         "switch",
         "-q",
@@ -89,15 +83,12 @@ test(
       const proposed = await world.git.head(shelf);
       await world.git.ok(shelf, ["push", "-q", "-u", "origin", "propose/sqli"]);
 
-      // While the proposal branch lives, a fresh clone can resolve the pin.
       const duringReview = await world.git.cloneViaTransport(
         shelfRemote.url,
         "ci-during-review",
       );
       expect(await world.git.hasCommit(duringReview, proposed)).toBe(true);
 
-      // The squash merge: main gains the same content under a new commit, and
-      // the proposal branch is deleted.
       await world.git.ok(shelf, ["switch", "-q", "main"]);
       await world.git.writeAndCommit(
         shelf,
@@ -120,8 +111,6 @@ test(
       );
       expect(advertised).not.toContain("propose/sqli");
 
-      // CI clones the shelf fresh. The pinned commit is gone from every
-      // advertised ref, so the gate must fail rather than compare content.
       const ciClone = await world.git.cloneViaTransport(
         shelfRemote.url,
         "ci-shelf",
@@ -147,7 +136,6 @@ test(
           .state,
       ).toBe("missing_source_commit");
 
-      // The human form names the failure and the repair, not only the state.
       const humanGate = await world.capshelf(project, [
         "--data",
         ciClone,
@@ -169,8 +157,6 @@ test(
       // cannot prove what CI sees.
       expect(await world.git.hasCommit(shelf, proposed)).toBe(true);
 
-      // Re-pinning onto the merged commit is metadata-only: the content is
-      // identical, so no installed byte changes.
       const beforeUpdate = await captureOwnedState(world, {
         projectFiles: {
           path: project,

@@ -11,8 +11,6 @@ afterEach(() => {
   lines = [];
 });
 
-// The spy stays installed for the whole file; restore once at the end via the
-// process exiting the test file. Individual tests only read `lines`.
 void spy;
 
 describe("reportItemFailure", () => {
@@ -29,8 +27,8 @@ describe("reportItemFailure", () => {
   });
 
   test("keeps every line of a multi-line message and drops the redundant retry", () => {
-    // Promote's stale refusal carries its resolution commands in the lines
-    // after the first; a plain retry would fail the same way.
+    // Promote's stale refusal puts its resolution commands after the first
+    // line; a plain retry would fail the same way.
     reportItemFailure(
       "skills/hello",
       new PreconditionError(
@@ -46,9 +44,9 @@ describe("reportItemFailure", () => {
   });
 
   test("preserves a structured CliError hint the CLI boundary would have printed", () => {
-    // The interactive loops catch errors before cli.ts prints `message` plus
-    // `hint`, so the reporter must carry the hint itself — an assertWritableLock
-    // refusal without its migrate instruction is a dead end.
+    // The interactive loops catch errors before cli.ts prints the hint, so the
+    // reporter must print it or the user is left without the migrate
+    // instruction.
     reportItemFailure(
       "skills/hello",
       new PreconditionError("lock is version 3", {

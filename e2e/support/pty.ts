@@ -4,35 +4,19 @@ import type { CommandResult } from "./command";
 import type { CommandOptions, World } from "./world";
 
 /**
- * Run a command with a controlling terminal, so a consent prompt takes its TTY
- * branch instead of the non-interactive refusal every other cell exercises.
- *
- * The pty is opened by `pty-driver.py`. `script(1)` was the first choice and
- * does not work: its arguments differ between util-linux and BSD, and the BSD
- * build reads terminal settings from its own stdin, which the runner supplies
- * as a pipe — it fails with "tcgetattr/ioctl: Operation not supported on
- * socket" before the command under test starts.
- *
- * The captured output is what a terminal produces, so it carries echo and CR
- * line endings. Assert on substrings, never on exact bytes.
+ * script(1) is not used: BSD's reads terminal settings from its stdin, a pipe
+ * here, and fails with tcgetattr/ioctl errors. Output carries echo and CR line
+ * endings, so assert on substrings.
  */
 const DRIVER = join(import.meta.dir, "pty-driver.py");
 
 export interface PtyOptions extends CommandOptions {
-  /** Sent into the terminal before output is read. */
   answer?: string;
   /**
-   * Hold the answer until the command turns canonical mode off. A raw-mode
-   * answer has no newline, so a write before the switch leaves it in the
-   * terminal's unfinished-line buffer, and macOS discards that buffer at the
-   * switch. Set this for a full-screen prompt; leave it off for a canonical
-   * one, which never leaves canonical mode.
+   * A raw-mode answer has no newline, so macOS discards it from the terminal's
+   * line buffer if written before the switch out of canonical mode.
    */
   answerAfterRawMode?: boolean;
-  /**
-   * Staged raw-mode input. A step can wait for terminal output before it
-   * sends more keys. Use this for an asynchronous pane inside one prompt.
-   */
   interactions?: Array<{ send: string; waitFor?: string }>;
 }
 

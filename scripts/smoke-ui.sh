@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-# The web UI command from source: `init` registers the project, `ui` starts
-# on localhost and prints its URL, the API answers with the token and refuses
-# without it, the shell and its assets are served, and the process stops on
-# SIGTERM. A headless fetch stands in for the browser.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,7 +18,6 @@ set_portable_origin "$DATA" smoke-ui-data
 git -C "$DATA" add -A
 git -C "$DATA" commit -qm baseline
 
-# S1: init registers the project for the UI.
 (cd "$PROJECT" && "${CLI[@]}" init --data "$DATA" > "$TMP/init.txt")
 assert_fixed_contains 'registered for capshelf ui' "$TMP/init.txt"
 [ -f "$XDG_CONFIG_HOME/capshelf/projects.json" ] || {
@@ -30,10 +25,8 @@ assert_fixed_contains 'registered for capshelf ui' "$TMP/init.txt"
   exit 1
 }
 (cd "$PROJECT" && "${CLI[@]}" add skills/hello >/dev/null)
-# A local edit so the status carries one drifted row.
 printf '# hello\n\nfirst line\nedited line\n' > "$PROJECT/.agents/skills/hello/SKILL.md"
 
-# S2: the server starts, prints one JSON line, and keeps running.
 (cd "$PROJECT" && exec "${CLI[@]}" ui --no-open --json > "$TMP/ui.json" 2> "$TMP/ui.err") &
 UI_PID=$!
 cleanup() {
@@ -50,7 +43,6 @@ done
   exit 1
 }
 
-# S3: the shell and the API, through the token the URL carries.
 bun -e '
   const info = JSON.parse(await Bun.file(process.argv[1]).text());
   const project = process.argv[2];
@@ -102,13 +94,11 @@ bun -e '
 ' "$TMP/ui.json" "$PROJECT" > "$TMP/api.txt"
 assert_fixed_contains 'ok ' "$TMP/api.txt"
 
-# S4: SIGTERM stops the server and the command exits 0.
 kill "$UI_PID"
 set +e
 wait "$UI_PID"
 UI_EXIT=$?
 set -e
-# The server has stopped. Remove the scratch files again when the script passes.
 trap smoke_remove_tmp_on_success EXIT
 [ "$UI_EXIT" -eq 0 ] || {
   echo "capshelf ui exited $UI_EXIT after SIGTERM" >&2

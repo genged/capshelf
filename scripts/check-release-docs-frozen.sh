@@ -1,38 +1,13 @@
 #!/usr/bin/env bash
-# Version-specific release documentation is frozen: once a file describing a
-# released version is committed, it must never change.
-#
-# Two families, both derived from the version being cut:
-#   docs/release-notes/release-notes-X.Y.Z.md   the GitHub release body
-#   docs/whats-new-X.Y.md  (or -X.Y.Z.md)       the detailed page
-#
-# Each describes a version that has shipped. Editing one afterwards makes the
-# repository disagree with what users already have. There is no legitimate
-# edit to carve out: an unpushed mistake is corrected by dropping it from the
-# commit that made it, and a pushed one is already live, so there is nothing
-# to restore to. A "restore" is therefore refused too.
-#
-# Modes:
-#   (default)  Fail when a released document no longer matches the tag it
-#              shipped under, and when any tracked document is edited in the
-#              working tree or index.
-#   --audit    Report every document whose history contains a post-creation
-#              edit, marking which edits landed after that version was tagged.
-#
-# Options:
-#   --base <ref>  Also check commits in <ref>..HEAD. Opt-in: a gate that fails
-#                 on history you cannot act on gets switched off.
-#
-# Exits 0 when clean, 1 when a violation is found, 2 on a usage error.
+# Released version docs are frozen: editing one makes the repo disagree with
+# what users already have, so even a restore is refused.
 set -euo pipefail
 
 NOTES_DIR="docs/release-notes"
 DOC_PATHS=("$NOTES_DIR" "docs/whats-new-*.md")
 
-# What's New pages predate this policy and several were revised after their
-# tag. Grandfather those rather than freeze a breach nobody can fix, and hold
-# the line from 0.6 on. Release notes are enforced from the first one, because
-# none of them was ever edited.
+# What's New pages before 0.6 were revised after tagging; grandfather them
+# rather than freeze a breach nobody can fix.
 WHATS_NEW_FROZEN_FROM="0.6.0"
 
 MODE="guard"
@@ -53,13 +28,11 @@ while [ $# -gt 0 ]; do
 done
 
 cd "$(git rev-parse --show-toplevel)"
-# Deliberately no early exit when a directory is absent: removing one wholesale
-# is a violation, not a reason to skip. The tag comparison reads from tags.
+# No early exit when a directory is absent: wholesale removal is a violation.
 
 violations=0
 reported=""
 
-# X.Y -> X.Y.0 so versions compare and map to tags uniformly.
 normalize_version() {
   case "$1" in
     *.*.*) printf '%s' "$1" ;;
@@ -67,7 +40,6 @@ normalize_version() {
   esac
 }
 
-# Lowest version this family is frozen from, or empty for "always".
 frozen_from() {
   case "$1" in
     docs/whats-new-*) printf '%s' "$WHATS_NEW_FROZEN_FROM" ;;
@@ -83,7 +55,6 @@ is_frozen() {
   [ "$(printf '%s\n%s\n' "$floor" "$version" | sort -V | head -1)" = "$floor" ]
 }
 
-# The documents a tag shipped, as "path version" pairs.
 docs_for_tag() {
   local tag="$1" version major minor patch
   version="${tag#v}"
@@ -96,8 +67,6 @@ docs_for_tag() {
   fi
 }
 
-# The version a tracked document describes, or empty when the name does not
-# encode one.
 version_of_doc() {
   local base
   base="$(basename "$1" .md)"
@@ -153,10 +122,8 @@ if [ "$MODE" = "audit" ]; then
   exit 1
 fi
 
-# --- guard -------------------------------------------------------------------
-# A released document must still be byte-identical to what shipped under its
-# tag. That is the contract a user can observe, and unlike a commit range it
-# holds regardless of branch or how long ago the edit landed.
+# Compare against the shipped tag rather than a commit range: it holds
+# regardless of branch or how long ago the edit landed.
 while IFS= read -r tag; do
   while read -r doc version; do
     is_frozen "$doc" "$version" || continue
@@ -176,8 +143,6 @@ while IFS= read -r tag; do
   done < <(docs_for_tag "$tag")
 done < <(git tag --list 'v*')
 
-# Catch the edit before it is committed. `reported` only keeps one file from
-# being listed twice; no path is exempt.
 check_range() {
   local label="$1" status path version
   shift

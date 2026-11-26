@@ -173,9 +173,9 @@ export async function runStartupSelfUpdate(
   const cache = await readStartupCache(context);
   if (cache.kind !== "stale") return null;
 
-  // A failed check is cached for the same interval as a successful one.
-  // Each Homebrew call can wait for its whole timeout, so an uncached failure
-  // made every interactive command wait again.
+  // Cache failed checks for the same interval as successes: each Homebrew call
+  // can wait its full timeout, so uncached failures stall every interactive
+  // command.
   let fresh: FreshCheckResult;
   try {
     fresh = await checkSelfUpdateFresh(context, {
@@ -494,7 +494,6 @@ type StartupCacheRead =
   | { kind: "stale" }
   | { kind: "unusable" };
 
-/** The cache record of a startup check that failed. */
 interface FailedCheckRecord {
   checkedAt: string;
   failed: true;
@@ -505,7 +504,6 @@ const FailedCheckCacheSchema = z.object({
   failed: z.literal(true),
 });
 
-/** A cache file holds the status of a check, or the record of a failed one. */
 const CacheRecordSchema = z.union([CacheSchema, FailedCheckCacheSchema]);
 
 function failedCheckRecord(context: SelfUpdateContext): FailedCheckRecord {

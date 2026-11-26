@@ -9,7 +9,6 @@ import { copyText } from "./copy";
 import { Icon } from "./icons";
 import { HighlightedRef } from "./ShelfView";
 
-/** Rows each group shows, so one long group cannot hide the others. */
 const GROUP_LIMIT = 6;
 
 interface Shown {
@@ -17,11 +16,6 @@ interface Shown {
   positions: number[];
 }
 
-/**
- * Jump to any finding, project, item, shelf item, or user-level skill. The
- * picker's own ranking orders the matches. Enter opens the active row.
- * Ctrl+Enter copies a finding's recommended command without leaving.
- */
 export function JumpDialog({
   rows,
   shelvesLoading,
@@ -34,8 +28,8 @@ export function JumpDialog({
   onClose: () => void;
 }): preact.JSX.Element {
   const [query, setQuery] = useState("");
-  // The active row is held by its key, not its index: shelf rows arrive
-  // after the dialog opens, and an index would then point at another row.
+  // The active row is held by key, not index, because shelf rows arrive after
+  // the dialog opens and would shift an index.
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -56,8 +50,6 @@ export function JumpDialog({
   const current =
     flat.find((entry) => entry.row.key === activeKey) ?? flat[0] ?? null;
 
-  // The dialog is modal: focus moves in on open and returns to the opener on
-  // close, as the diff dialog does.
   useEffect(() => {
     const opener =
       document.activeElement instanceof HTMLElement
@@ -78,9 +70,8 @@ export function JumpDialog({
       event.preventDefault();
       onClose();
     } else if (event.key === "Tab") {
-      // The input is the dialog's only Tab stop: the rows follow
-      // aria-activedescendant and the scrim is not focusable. Tab stays here
-      // so focus cannot reach the page behind the modal.
+      // The input is the only Tab stop (rows use aria-activedescendant), so
+      // focus cannot reach the page behind the modal.
       event.preventDefault();
     } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
@@ -155,8 +146,6 @@ export function JumpDialog({
                       key={entry.row.key}
                       id={`jump-${index}`}
                       role="option"
-                      // Focus stays in the input; the listbox follows
-                      // aria-activedescendant. -1 keeps rows out of Tab.
                       tabIndex={-1}
                       aria-selected={entry === current}
                       class={`jump-row${tone}`}

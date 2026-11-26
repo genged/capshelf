@@ -114,8 +114,8 @@ export function registerRevert(program: Command): void {
           : undefined;
       if (dataRepo) await assertIsGitRepo(dataRepo);
 
-      // PIN-12: before the source is read, so an unmigrated project is told to
-      // migrate rather than shown a pin mismatch it cannot repair here.
+      // Runs before reading the source so an unmigrated project is told to
+      // migrate instead of seeing an unrepairable pin mismatch.
       assertWritableLock(lock, `${PRODUCT_NAME} revert`);
       const entry = lock.items[key]!;
       const scope = opts.local ? "local" : "project";
@@ -330,7 +330,6 @@ export function registerRevert(program: Command): void {
         revalidated.destructivePlan,
       );
 
-      // D2 guard 5: before the restore write.
       if (installsAtSkillTarget(parsed.kind)) {
         await assertSkillTargetFree(
           project,
@@ -345,9 +344,8 @@ export function registerRevert(program: Command): void {
         );
       }
 
-      // The keep-local marker records intent, not a fact about current
-      // content, so revert restores bytes and leaves it alone. Only
-      // `keep-local --unset` clears it. See the field doc in lock.ts.
+      // The keep-local marker records intent, not content state, so revert
+      // leaves it; only `keep-local --unset` clears it.
       const nextLock = assertWritableLock(
         structuredClone(lock),
         `${PRODUCT_NAME} revert`,
@@ -443,9 +441,8 @@ export function registerRevert(program: Command): void {
 }
 
 /**
- * Reverting a kept-local item is a behavior change users must see: the marker
- * survives, so the item stays skipped by `apply` and `update` until it is
- * explicitly cleared, and nothing else in the output would say so.
+ * The marker survives revert, so the item stays skipped by `apply` and `update`
+ * until cleared, and nothing else in the output says so.
  */
 function printKeptLocalNotice(
   entry: LockEntry,

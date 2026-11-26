@@ -86,9 +86,8 @@ describe("in-process CLI entry point", () => {
     const errorSpy = spyOn(console, "error").mockImplementation((...values) => {
       stderr.push(values.map(String).join(" "));
     });
-    // The --json error envelope is written straight to the stream rather than
-    // through console.error, so that Bun cannot colorize it. Capture both
-    // channels, the same way runInProcess does.
+    // The --json envelope is written straight to the stream so Bun cannot
+    // colorize it; capture both channels as runInProcess does.
     const stderrSpy = spyOn(process.stderr, "write").mockImplementation(
       (chunk) => {
         stderr.push(

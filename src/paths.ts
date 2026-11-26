@@ -12,10 +12,6 @@ import {
 } from "./identity";
 import { PreconditionError } from "./errors";
 
-// paths.ts is a leaf: pure path builders plus install-mode detection, no
-// imports from manifest / local-config / upstream-check. Data-repo resolution,
-// which needs those, lives in data-repo.ts.
-
 export const InstallModeSchema = z.enum(["codex-compatible", "claude-only"]);
 export type InstallMode = z.infer<typeof InstallModeSchema>;
 export const DEFAULT_INSTALL_MODE: InstallMode = "codex-compatible";
@@ -26,9 +22,6 @@ export function expandTilde(p: string): string {
   return p;
 }
 
-/**
- * Compress an absolute path under $HOME to ~/… for display.
- */
 export function homeRelative(p: string): string {
   const home = homedir();
   if (p === home) return "~";
@@ -36,8 +29,8 @@ export function homeRelative(p: string): string {
   return p;
 }
 
-// The command text helpers have no Node import, so the web UI bundle builds
-// its commands with the same functions. They live in command-text.ts.
+// Command text helpers live in command-text.ts with no Node imports so the web
+// UI bundle can share them.
 export { capshelfCommandPrefix, shellArg } from "./command-text";
 
 export function normalizePath(
@@ -48,11 +41,6 @@ export function normalizePath(
   return isAbsolute(expanded) ? expanded : resolve(baseDir, expanded);
 }
 
-/**
- * The nearest ancestor of `cwd` that is a capshelf project, or null. Walks up
- * like git/npm/cargo. Read-only commands (ls/search/show) use this so they can
- * run with only `--data`/`$CAPSHELF_HOME` when the cwd isn't inside a project.
- */
 export function findProjectRoot(cwd: string = process.cwd()): string | null {
   let dir = resolve(cwd);
   for (;;) {
@@ -64,7 +52,7 @@ export function findProjectRoot(cwd: string = process.cwd()): string | null {
     }
     if (manifestReadPath(dir) !== null) return dir;
     const parent = dirname(dir);
-    if (parent === dir) return null; // reached the filesystem root
+    if (parent === dir) return null;
     dir = parent;
   }
 }
@@ -73,8 +61,7 @@ export function projectRoot(cwd: string = process.cwd()): string {
   const found = findProjectRoot(cwd);
   if (found) return found;
   const start = resolve(cwd);
-  // A precondition (wrong directory), not an internal failure — exit 3 so a
-  // script/agent can tell "not in a project" apart from an unexpected crash.
+  // Exit 3 (precondition) lets scripts tell "not in a project" from a crash.
   throw new PreconditionError(
     `not a capshelf project: ${start}\n` +
       `  run this from a capshelf project (a directory, or any subdirectory of one, containing ${METADATA_DIR}/${MANIFEST_FILE}),\n` +
@@ -121,10 +108,8 @@ const ManifestInstallModeSchema = z.object({
   installMode: InstallModeSchema.optional(),
 });
 
-// installedPath and friends default their `mode` to detectInstallMode(project),
-// and they run in per-item loops in status/apply/update — so without a cache
-// each item re-read and re-parsed the manifest. Memoize per resolved project
-// path for the process; saveManifest invalidates the entry it may have changed.
+// Memoized per project because per-item loops would otherwise re-parse the
+// manifest; saveManifest invalidates the entry.
 const installModeCache = new Map<string, InstallMode>();
 
 export function clearInstallModeCache(project?: string): void {

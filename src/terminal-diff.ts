@@ -36,7 +36,6 @@ const TOKEN_STYLE: Partial<Record<ShjToken, string>> = {
 
 const MAX_RENDERED_LINES = 10_000;
 
-/** Render a safe ANSI diff. Syntax colours come from the current file path. */
 export function highlightTerminalDiff(diff: string): string[] {
   if (diff.length === 0) return [`${DIM}no content changes${RESET}`];
   const rawLines = diff.split("\n");
@@ -84,7 +83,10 @@ export function highlightTerminalDiff(diff: string): string[] {
   return out;
 }
 
-/** Cut one ANSI line to terminal cells without cutting an escape sequence. */
+/**
+ * Truncates by terminal cell width and keeps ANSI escape sequences intact,
+ * since cutting one mid-sequence corrupts terminal output.
+ */
 export function truncateAnsiLine(text: string, width: number): string {
   if (width <= 0) return "";
   if (Bun.stringWidth(text) <= width) return text;

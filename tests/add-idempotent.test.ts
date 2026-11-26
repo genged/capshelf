@@ -165,8 +165,6 @@ describe("standalone add convergence", () => {
       expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
       expect((await run(["add", "codex-config/base"])).exitCode).toBe(0);
       const output = join(project, ".codex", "config.toml");
-      // Drop the managed key: the tracked contribution now reads "drifted",
-      // which is the one state that gives `status --diff` a diff to print.
       await writeFile(output, 'retain = "local"\n');
 
       const refused = await run(["add", "codex-config/extra", "--json"]);
@@ -175,7 +173,6 @@ describe("standalone add convergence", () => {
       expect(stderr).toContain("replace a managed config contribution");
       expect(stderr).toContain("capshelf status --diff");
 
-      // The named command shows the loss the prompt asks about.
       const status = await run(["status", "--diff"]);
       expect(status.exitCode).toBe(0);
       expect(status.stdout.toString()).toContain('-model = "gpt-5"');
@@ -239,14 +236,10 @@ describe("standalone add convergence", () => {
       expect(stderr).toContain('"vercel-labs" is not an item kind');
       expect(stderr).toContain("owner/repo shorthand is ambiguous");
       expect(stderr).toContain("capshelf add skills/agent-skills");
-      // The URL form now exists, so the hint names it. The positive assertion
-      // lives in `tests/cli-remote-add.test.ts`, where the command it names is
-      // actually run.
       expect(stderr).toContain(
         "capshelf add https://github.com/vercel-labs/agent-skills",
       );
 
-      // A refusal leaves owned state byte identical.
       expect(await file(lockPath).text()).toBe(lockBefore);
     },
     CLI_INTEGRATION_TEST_TIMEOUT_MS,

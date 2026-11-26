@@ -498,7 +498,6 @@ describe("cli integration", () => {
     const codexOutputText = '[mcp_servers.posthog]\ncommand = "posthog-mcp"\n';
     await writeFile(join(project, ".codex", "config.toml"), codexOutputText);
 
-    // Present in both outputs: one command, one commit, both source files.
     const shareBoth = Bun.spawnSync({
       cmd: [process.execPath, cli, "share", "mcp/posthog"],
       cwd: project,
@@ -530,7 +529,6 @@ describe("cli integration", () => {
       await readFile(join(project, ".codex", "config.toml"), "utf-8"),
     ).toBe(codexOutputText);
 
-    // Present in one output: only that target's source file is created.
     const shareClaudeOnly = Bun.spawnSync({
       cmd: [process.execPath, cli, "share", "mcp/github"],
       cwd: project,
@@ -546,7 +544,6 @@ describe("cli integration", () => {
       await file(join(dataRepo, "mcp", "github", "codex.toml")).exists(),
     ).toBe(false);
 
-    // Present in no output: fails per target and lists what is available.
     const missing = Bun.spawnSync({
       cmd: [process.execPath, cli, "share", "mcp/missing"],
       cwd: project,
@@ -564,7 +561,6 @@ describe("cli integration", () => {
       ".codex/config.toml has no unmanaged value at mcp_servers.missing",
     );
 
-    // Already-managed servers stay protected in auto-target mode.
     const managed = Bun.spawnSync({
       cmd: [
         process.execPath,
@@ -952,8 +948,6 @@ describe("cli integration", () => {
     expect(apply.stderr.toString()).toContain("fix it manually");
   });
 
-  // Federation reservations: colon refs and the manifest "shelves" key both
-  // fail through the existing generic-error mapping with exit 1.
   test("reserved colon refs and shelves keys exit 1 through the CLI", async () => {
     const project = await tempRepo("capshelf-reserved-project-");
     const dataRepo = await tempRepo("capshelf-reserved-data-");
@@ -991,9 +985,9 @@ describe("cli integration", () => {
   });
 
   /**
-   * A canonical source deleted in the data-repo worktree but still present at
-   * the pinned commit. `assertFragmentSourcesClean` cannot see it, so `add`
-   * accepts the item and pins a commit that still contains the file.
+   * A source deleted in the worktree but present at the pinned commit is
+   * invisible to `assertFragmentSourcesClean`, so `add` accepts it and pins a
+   * commit that still contains the file.
    */
   async function dirtyDeletedCodexSource(prefix: string): Promise<{
     project: string;
@@ -1038,7 +1032,6 @@ describe("cli integration", () => {
       "[mcp_servers.github]",
     );
 
-    // The install is complete: apply has nothing left to write.
     const apply = await run(["apply", "--json"]);
     expect(apply.exitCode).toBe(0);
     const applied = JSON.parse(apply.stdout.toString());
@@ -1062,7 +1055,6 @@ describe("cli integration", () => {
     expect(add.stderr.toString()).toContain(".codex/config.toml");
     expect(await readFile(codexOutput, "utf-8")).toBe(withComments);
 
-    // Bundle preflight shares planStandaloneFragmentAdd, so it inherits it.
     const bundle = await run(["add", "bundles/everything"]);
     expect(bundle.exitCode).toBe(3);
     expect(bundle.stderr.toString()).toContain("remove config comments");
@@ -1073,5 +1065,17 @@ describe("cli integration", () => {
     const written = await readFile(codexOutput, "utf-8");
     expect(written).toContain("[mcp_servers.github]");
     expect(written).toContain("[mcp_servers.other]");
+  });
+
+  test("add names the project file when .codex/config.toml is not valid TOML", async () => {
+    const { project } = await dirtyDeletedCodexSource("capshelf-add-bad-toml");
+    const codexOutput = join(project, ".codex", "config.toml");
+    await mkdir(join(project, ".codex"), { recursive: true });
+    await writeFile(codexOutput, "approval =\n");
+
+    const add = await runInProcess(project)(["add", "mcp/github"]);
+    expect(add.exitCode).toBe(1);
+    expect(add.stderr.toString()).toContain(".codex/config.toml");
+    expect(await readFile(codexOutput, "utf-8")).toBe("approval =\n");
   });
 });

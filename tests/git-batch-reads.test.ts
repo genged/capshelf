@@ -8,14 +8,6 @@ import { GitReadMemo } from "../src/git-read-memo";
 import { prefetchItemBlobs } from "../src/pin";
 import { commitAll, tempRepo } from "./cli-fixtures";
 
-/**
- * A memo answers the tree and attribute reads of items that share a commit
- * from one batched read. These tests compare each answer with a direct Git
- * call on a tree built to confuse a path filter: names that are prefixes of
- * each other, names with spaces and non-ASCII bytes, an executable, a
- * symlink, a gitlink, and nested `.gitattributes` files.
- */
-
 const FILES = [
   "a/x.md",
   "a/sub/y.md",
@@ -48,7 +40,6 @@ async function confusingRepo(): Promise<{ repo: string; commit: string }> {
   await chmod(join(repo, "a", "sub", "y.md"), 0o755);
   await symlink("x.md", join(repo, "ab", "link"));
   await commitAll(repo, "tree");
-  // A gitlink entry: a submodule commit in the index, with no submodule.
   const head = (await $`git -C ${repo} rev-parse HEAD`.text()).trim();
   await $`git -C ${repo} update-index --add --cacheinfo 160000,${head},a/module`.quiet();
   await $`git -C ${repo} commit -qm gitlink`.quiet();
@@ -58,7 +49,6 @@ async function confusingRepo(): Promise<{ repo: string; commit: string }> {
   };
 }
 
-/** Deterministic choices, so a failure names a reproducible case. */
 function random(seed: number): () => number {
   let state = seed;
   return () => {
@@ -118,7 +108,6 @@ test("a batched tree read matches Git for every literal pathspec list", async ()
   const { repo, commit } = await confusingRepo();
   const next = random(7);
   for (let round = 0; round < 40; round++) {
-    // A new memo per round, so each round registers a different batch.
     const memo = new GitReadMemo();
     const registered = pick(next, 4);
     git.registerBatchReads(
@@ -166,7 +155,6 @@ test("a batched attribute query matches Git for any path list", async () => {
       registered.map(git.literalPathspec),
     );
     for (let query = 0; query < 3; query++) {
-      // Duplicates and paths that the commit does not hold are allowed.
       const paths = pick(next, 5);
       const attributes = next() < 0.5 ? ["filter"] : ["filter", "diff"];
       const direct = await git.checkAttrAtCommit(
@@ -207,7 +195,6 @@ test("items that share a commit share one tree and one attribute read", async ()
         [git.literalPathspec(item)],
         { memo },
       );
-      // Callers ask for the attributes of the files they just listed.
       await git.checkAttrAtCommit(
         repo,
         commit,
@@ -222,11 +209,9 @@ test("items that share a commit share one tree and one attribute read", async ()
     const operations = reads.mock.calls
       .filter((call) => call[4])
       .map((call) => call[0]);
-    // One batched listing, one objects-dir lookup, one attribute query.
     expect(operations.toSorted()).toEqual(
       ["check-attr", "ls-tree", "rev-parse"].toSorted(),
     );
-    // The listing names the registered items, not the whole commit.
     const [listing] = treeReads(reads);
     expect(listing).toContain(":(literal)skills/one");
     expect(listing).not.toContain(":(literal)top.md");
@@ -313,9 +298,8 @@ async function gitOut(
 }
 
 /**
- * A child of `commit` whose `<item>` tree also holds `../../../x`, built with
- * `git mktree`, which accepts entries named `..`. `ls-tree` then lists
- * `<item>/../../../x`, and `check-attr` refuses that path.
+ * `git mktree` accepts entries named `..`, so `ls-tree` lists
+ * `<item>/../../../x`, which `check-attr` refuses.
  */
 async function withClimbingEntry(
   repo: string,
@@ -329,7 +313,6 @@ async function withClimbingEntry(
   }
   let childName = "..";
   const parts = item.split("/");
-  // Rebuild each tree from the item up to the root with the new child.
   for (let depth = parts.length; depth >= 0; depth--) {
     const dir = parts.slice(0, depth).join("/");
     const listing = await gitOut(repo, [
@@ -386,7 +369,6 @@ test("a file that climbs out of one item does not fail another item", async () =
       memo,
     ),
   ).toEqual(await git.checkAttrAtCommit(repo, commit, paths, ["filter"]));
-  // The climbing path itself still gets Git's own error.
   expect(
     await errorText(
       git.checkAttrAtCommit(
@@ -439,18 +421,15 @@ test("a prefetch above the byte budget reads no blob", async () => {
     name,
     commit,
   }));
-  // The two files hold 8 bytes together.
   const small = new GitReadMemo();
   await prefetchItemBlobs(repo, items, small, 7);
   expect(small.blobs.size).toBe(0);
   const fits = new GitReadMemo();
   await prefetchItemBlobs(repo, items, fits, 8);
   expect(fits.blobs.size).toBe(2);
-  // One item alone reads its own bytes, so a prefetch adds nothing.
   const alone = new GitReadMemo();
   await prefetchItemBlobs(repo, [items[0]!, items[0]!], alone);
   expect(alone.blobs.size).toBe(0);
-  // A second prefetch of cached blobs starts no Git process.
   const reads = spyOn(gitMeasure, "recordGitRead");
   try {
     await prefetchItemBlobs(repo, items, fits, 8);
@@ -497,7 +476,6 @@ test("git show of a committed file prints the blob bytes cat-file reads", async 
     "*.md diff=upper filter=upper\n",
   );
   await commitAll(repo, "item");
-  // A textconv driver and a smudge filter that would both change the bytes.
   await gitOut(repo, ["config", "diff.upper.textconv", "tr a-z A-Z <"]);
   await gitOut(repo, ["config", "filter.upper.smudge", "tr a-z A-Z"]);
   const commit = await gitOut(repo, ["rev-parse", "HEAD"]);

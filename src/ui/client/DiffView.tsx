@@ -32,7 +32,6 @@ interface Loaded {
 
 type LoadedViews = Record<DiffViewName, Loaded | undefined>;
 
-/** Rows shown per file before the reader asks for more. */
 const ROW_STEP = 400;
 
 const NARROW = "(max-width: 800px)";
@@ -40,7 +39,6 @@ const NARROW = "(max-width: 800px)";
 const FOCUSABLE =
   'button:not([disabled]):not([tabindex="-1"]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
-/** Below the drawer breakpoint two code columns cannot hold a line. */
 function useNarrow(): boolean {
   const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW).matches);
   useEffect(() => {
@@ -80,10 +78,8 @@ export function DiffView({
   });
   const [dialogOpen, setDialogOpen] = useState(false);
   const openerRef = useRef<HTMLButtonElement>(null);
-  // A phone shows one comparison at a time; three columns do not fit.
   const effectiveMode: Mode = narrow && mode === "three" ? "installed" : mode;
 
-  // The summary needs every comparison the CLI offers, so both load at once.
   const needed: DiffViewName[] = item.diffViews;
 
   useEffect(() => {
@@ -177,7 +173,6 @@ type Summary =
       preview: DiffPreview | null;
     };
 
-/** Lines the item pane shows before the reader opens the full diff. */
 const PREVIEW_LINES = 8;
 
 function summarize(view: DiffViewName, loaded: Loaded | undefined): Summary {
@@ -212,13 +207,8 @@ function viewLabel(view: DiffViewName): string {
   return view === "installed" ? "Installed copy" : "Shelf";
 }
 
-/** Files listed in the panel before the dialog shows every line. */
 const FILE_LIMIT = 8;
 
-/**
- * What changed, one line per file, in place of the diff itself. The full
- * comparison waits behind the button, so a panel stays short.
- */
 function DiffSummary({
   views,
   loaded,
@@ -248,8 +238,6 @@ function DiffSummary({
   const removed =
     single?.files.reduce((sum, file) => sum + file.removed, 0) ?? 0;
   const notes = ready.flatMap((entry) => entry.notes);
-  // Three-way has no single preview; the installed edit is what the reader
-  // decides about first, so it leads.
   const previewView: DiffViewName =
     defaultMode === "three" ? "installed" : defaultMode;
   const previewSource = ready.find((entry) => entry.view === previewView);
@@ -341,9 +329,6 @@ function DiffSummary({
       {ready.length > 0 && paths.length === 0 ? (
         <p class="diff-status muted">No content differences.</p>
       ) : null}
-      {/* One text file in one comparison is the preview itself; the list
-          adds nothing until a second file, a second comparison, or a file
-          with no preview, such as a binary one. */}
       {paths.length > 1 ||
       (paths.length > 0 && (ready.length > 1 || preview === null)) ? (
         <ul class="diff-summary-files">
@@ -464,9 +449,8 @@ function ModeButton<Value extends string>({
 }
 
 /**
- * The same comparison at the width of the window, with a layout choice.
- * The dialog renders at the document body, so no panel animation or
- * refresh fade can trap it, and it holds keyboard focus until it closes.
+ * Rendered at the document body so no panel animation or refresh fade can trap
+ * it.
  */
 function DiffDialog({
   item,
@@ -697,10 +681,8 @@ function MoreButton({
 }
 
 /**
- * The tables use a fixed layout, which takes column widths from the first
- * row. That row holds the spanning headers, so without a column group the
- * browser splits each header evenly and the number column grows to a
- * quarter of the table. The group pins every number column narrow.
+ * Fixed table layout takes widths from the first row, which holds spanning
+ * headers; the colgroup keeps number columns narrow.
  */
 function Columns({ pairs }: { pairs: number }): preact.JSX.Element {
   return (
@@ -803,11 +785,6 @@ function SideBySideTable({
   );
 }
 
-/**
- * One column: a changed pair becomes a removed line and an added line, the
- * way `status --diff` prints them. One number column: the new line number,
- * or the old one for a removed line.
- */
 function UnifiedTable({
   file,
   rows,

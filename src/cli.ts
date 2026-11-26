@@ -31,11 +31,16 @@ import { runStartupSelfUpdate } from "./self-update";
 export function createProgram(): Command {
   const program = new Command();
 
-  // Commander 12 retains parsed option state. Constructing a fresh command
-  // tree for every main() call keeps the exported entry point reentrant.
-  // Intercept Commander's usage-layer exits so an in-process caller receives
-  // an exit code instead of having its host process terminated.
+  // Commander 12 retains parsed option state, so build a fresh tree per call;
+  // exitOverride keeps in-process callers from having their host terminated.
   program.exitOverride();
+  // Commander 12 accepts excess positionals by default
+  // (commander 12.1.0 lib/command.js:28), so `rm a b` would remove only `a`
+  // and exit 0. Commander copies this setting into each subcommand when
+  // `.command()` (lib/command.js:164) or `copyInheritedSettings()`
+  // (lib/command.js:96) creates it, so it must be set before any command is
+  // registered.
+  program.allowExcessArguments(false);
   program
     .name(PRODUCT_NAME)
     .description(
@@ -67,10 +72,8 @@ export function createProgram(): Command {
   registerMarketplace(program);
   registerUi(program);
 
-  // Data-repo commands are grouped under `capshelf data <sub>` for a
-  // consistent, scannable surface. The original top-level names
-  // (set-data/data-path/sync-data/set-upstream) remain as hidden aliases so
-  // existing scripts and muscle memory keep working.
+  // The old top-level names (set-data, data-path, sync-data, set-upstream) stay
+  // as hidden aliases so existing scripts keep working.
   const data = program
     .command("data")
     .description("bind, inspect, sync, or set the upstream of the data repo");
@@ -97,12 +100,8 @@ function addPreparedCommand(
 }
 
 /**
- * Parse argv and run the matched command, returning the process exit code.
- * This is the only place that decides exit codes for domain failures, and it
- * never calls `process.exit`, so it is callable in-process from tests.
- *
- * Commander usage-layer exits (help, --version, unknown command, missing
- * argument) are translated into return codes too.
+ * Returns the exit code instead of calling `process.exit`, including for
+ * Commander usage exits, so tests can run it in-process.
  */
 export async function main(argv: string[] = process.argv): Promise<number> {
   const program = createProgram();
@@ -112,22 +111,18 @@ export async function main(argv: string[] = process.argv): Promise<number> {
     await program.parseAsync(argv);
     return 0;
   } catch (err) {
-    // Commander already emitted help, version, or a usage diagnostic before
-    // exitOverride() threw. Preserve that output and return its requested code
-    // without printing a second error.
     if (err instanceof CommanderError) return err.exitCode;
 
-    // Options are parsed before the action runs, so by the time an action
-    // throws --json (if present) is on argv. Match the command's own output
-    // channel: agents that pass --json get a JSON error envelope, not prose.
+    // Options are parsed before the action runs, so --json on argv matches the
+    // command's output channel and agents get a JSON error envelope.
     return reportError(err, argv.includes("--json"));
   }
 }
 
 function reportError(cause: unknown, json: boolean): number {
   const exitCode = cause instanceof CliError ? cause.exitCode : 1;
-  // ResultExitError carries no message: the command already printed its own
-  // report (its --json payload is on stdout), so the boundary prints nothing.
+  // ResultExitError carries no message because the command already printed its
+  // own report.
   const message =
     cause instanceof CliError
       ? cause.message
@@ -138,11 +133,8 @@ function reportError(cause: unknown, json: boolean): number {
 
   if (json) {
     if (message) {
-      // Written straight to the stream, not through console.error: Bun
-      // colorizes console.error when stderr is a TTY, and an agent that runs
-      // capshelf through a pty would get the envelope wrapped in ANSI escapes
-      // and fail to parse it. The human branch below keeps console.error —
-      // prose is meant to be colored.
+      // Written to the stream directly because Bun colorizes console.error on a
+      // TTY, which would wrap the JSON envelope in ANSI escapes.
       process.stderr.write(
         `${JSON.stringify({
           error: { message, ...(hint && { hint }), exitCode },

@@ -25,12 +25,6 @@ interface WorkflowResult {
   shelf: string;
 }
 
-/**
- * One actor workflow, run identically in every cell: bind a shelf, install an
- * item, converge twice, and check strict status. Only the environment changes
- * between cells, so a failure names the user condition rather than the
- * workflow.
- */
 async function runCoreWorkflow(
   world: World,
   options: { claudeOnly?: boolean; umask?: string } = {},
@@ -62,7 +56,6 @@ async function runCoreWorkflow(
     );
   }
 
-  // Null second run, in every cell.
   const converged = await captureOwnedState(world, {
     projectFiles: project,
     projectGit: project,
@@ -122,15 +115,11 @@ const CELLS: Cell[] = [
     name: "explicit product homes",
     world: {
       env: {
-        // Declared inputs for this cell only. CAPSHELF_HOME is the
-        // machine-wide default binding; CODEX_HOME moves the Codex user root.
         CAPSHELF_HOME: "/nonexistent/machine-default-shelf",
         CODEX_HOME: "/nonexistent/codex-home",
       },
     },
     run: async (world) => {
-      // `--data` outranks the machine default, so the workflow is unchanged
-      // and the unusable default must not be consulted.
       await runCoreWorkflow(world);
     },
   },
@@ -142,14 +131,13 @@ const CELLS: Cell[] = [
         "init.defaultBranch": "trunk",
         "core.hooksPath": "/nonexistent/hooks",
         "url.https://example.invalid/.insteadOf": "git@example.invalid:",
-        // An inert helper: the required lane carries no credentials, and this
-        // cell only proves a declared helper does not change the workflow.
+        // An inert helper: the required lane carries no credentials.
         "credential.helper": "",
       },
     },
     run: async (world) => {
-      // Prove Git actually read the declared settings. A cell whose input
-      // never arrived would pass for the wrong reason.
+      // Confirm Git read the declared setting; a cell whose input never arrived
+      // would pass for the wrong reason.
       const declared = await world.run(world.stage, [
         "git",
         "config",
@@ -172,8 +160,6 @@ const CELLS: Cell[] = [
     name: "a restrictive umask",
     world: {},
     run: async (world) => {
-      // Prove the mask reaches the child before drawing any conclusion from
-      // the file modes it produced.
       const probe = await world.run(world.stage, ["/bin/sh", "-c", "umask"], {
         umask: "077",
       });
@@ -183,10 +169,8 @@ const CELLS: Cell[] = [
       const stats = await lstat(
         join(project, ".agents", "skills", "hello", "SKILL.md"),
       );
-      // A managed file carries the mode its pin records, not the mode the
-      // mask would have produced: lock identity includes the executable bit,
-      // so an item has to mean the same thing on every machine
-      // (src/materialize.ts:717-728, :827-829).
+      // A managed file carries the mode its pin records, not the umask's,
+      // because lock identity includes the executable bit.
       expect((stats.mode & 0o777).toString(8)).toBe("644");
     },
   },
@@ -205,8 +189,6 @@ const CELLS: Cell[] = [
     name: "pre-existing runtime state",
     world: {},
     run: async (world) => {
-      // A personal user skill and a hand-written project settings file exist
-      // before capshelf arrives, and neither may change the workflow.
       const personal = join(world.home, ".claude", "skills", "personal-note");
       await mkdir(personal, { recursive: true });
       await writeFile(join(personal, "SKILL.md"), "personal\n");

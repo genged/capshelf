@@ -28,10 +28,6 @@ import { Icon } from "./icons";
 
 export type ListFilter = "attention" | "all";
 
-/**
- * The project as two panes: the item list and the detail of the selected
- * item, or the project overview when nothing is selected.
- */
 export function ProjectView({
   project,
   registered,
@@ -45,9 +41,7 @@ export function ProjectView({
   picker,
   dataOverride,
 }: {
-  /** The phone's project picker; hidden on wider screens. */
   picker: ComponentChildren;
-  /** The session's --data override, repeated on every printed command. */
   dataOverride: string | undefined;
   project: string;
   registered: UiRegisteredProject;
@@ -64,8 +58,6 @@ export function ProjectView({
   ) => Promise<UiDiffResponse>;
 }): preact.JSX.Element {
   const data = load.data;
-  // A failed refresh keeps the old data on screen. Every pane that shows
-  // that data says so.
   const refreshError =
     load.state === "error" ? (load.error?.message ?? "unknown error") : null;
   const name = splitDisplayPath(registered.display).name;
@@ -122,9 +114,8 @@ export function ProjectView({
       />
       {item ? (
         <ItemDetail
-          // One item id can exist in two projects; the key must remount the
-          // detail, and its loaded diff, when the project changes. The
-          // snapshot remounts it after a refresh, so the diff is read again.
+          // Item ids can repeat across projects, and the snapshot remounts the
+          // detail after a refresh so the diff is read again.
           key={`${project}\t${item.id}\t${data.snapshot}`}
           item={item}
           projectName={name}
@@ -305,7 +296,6 @@ function ItemList({
   );
 }
 
-/** The right pane when no item is selected: the project itself. */
 function ProjectOverview({
   data,
   name,
@@ -319,7 +309,6 @@ function ProjectOverview({
   externals: ExternalEntry[];
   dataOverride: string | undefined;
   onBack: () => void;
-  /** See `DetailHead`. */
   refreshError: string | null;
 }): preact.JSX.Element {
   const counts = projectCounts(data.items);
@@ -354,7 +343,7 @@ function ProjectOverview({
           onBack={onBack}
           refreshError={refreshError}
         />
-        {/* An all-clear from an older read would be a false all-clear. */}
+        {/* After a failed refresh, an all-clear would come from an older read. */}
         {counts.items === 0 || refreshError ? null : counts.attention === 0 ? (
           <p class="banner" role="status">
             <Icon name="check" />

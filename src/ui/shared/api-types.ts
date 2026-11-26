@@ -1,10 +1,4 @@
-/**
- * The JSON the web UI server sends and the client reads. Both sides import
- * this file, so a field renamed on one side fails to type-check on the other.
- *
- * Every row, diff, and state here is the CLI's own value. The server adds
- * labels and commands; it computes no new fact.
- */
+/** Shared by server and client so a renamed field fails to type-check. */
 import type {
   ExternalClaudePlugin,
   ExternalSkill,
@@ -30,11 +24,8 @@ export interface UiAction {
 }
 
 export interface UiRegisteredProject {
-  /** Absolute path, as the registry holds it. */
   path: string;
-  /** Home-relative path for display. */
   display: string;
-  /** Whether a manifest exists at the path today. */
   exists: boolean;
   registeredAt: string;
 }
@@ -47,11 +38,9 @@ export interface UiShelfRef {
 export interface UiOverview {
   host: string;
   cliVersion: string;
-  /** The project `capshelf ui` ran inside, when it ran inside one. */
   currentProject: string | null;
   registryPath: string;
   registryDisplay: string;
-  /** The home directory, so the client can shorten paths the way the CLI does. */
   home: string;
   dataOverride: string | null;
   projects: UiRegisteredProject[];
@@ -74,31 +63,24 @@ export interface UiShelfFacts {
   headShort: string;
   branch: string | null;
   origin: string | null;
-  /** `git status --porcelain` printed nothing. */
   clean: boolean;
   revisions: UiRevision[];
 }
 
 export interface UiItem {
-  /** `<scope>/<source>/<kind>/<name>`, unique in a project. */
   id: string;
   ref: string;
   kind: ItemKind;
   name: string;
   scope: "project" | "local";
   source: RowSource;
-  /** The row `capshelf status --json` prints, unchanged. */
   row: StatusRow;
-  /** `capshelf status --strict` would fail on this row. */
   attention: boolean;
   tone: StateTone;
-  /** Short state label for the panel header. */
   stateLabel: string;
-  /** The sentence the CLI prints for the state. */
   stateDetail: string;
   actions: UiAction[];
   diffViews: DiffViewName[];
-  /** Project-relative install or output path, when one path names it. */
   installedPath: string | null;
 }
 
@@ -111,7 +93,6 @@ export interface UiNotice {
 export interface UiProjectStatus {
   project: string;
   display: string;
-  /** `cd <project>`, quoted for a shell. */
   cdCommand: string;
   dataRepo: string | null;
   dataRepoDisplay: string | null;
@@ -128,8 +109,8 @@ export interface UiProjectStatus {
   shelf: UiShelfFacts | null;
   notices: UiNotice[];
   /**
-   * The id of this read on the server. A diff request names it, so the
-   * comparison comes from these rows and not from a later read.
+   * Diff requests name this id so the comparison comes from these rows, not a
+   * later read.
    */
   snapshot: string;
   generatedAt: string;
@@ -138,7 +119,6 @@ export interface UiProjectStatus {
 export interface UiDiffResponse {
   item: string;
   view: DiffViewName;
-  /** Null when the CLI has no comparison to show for this view. */
   diff: StatusDiff | null;
 }
 
@@ -151,7 +131,6 @@ export interface UiItemUsage {
   sourceCommitShort: string | null;
   cliVersion: string | null;
   lockedSha: string;
-  /** The pin names the item's current shelf commit. Null when unknown. */
   current: boolean | null;
   keptLocal: boolean;
 }
@@ -182,16 +161,13 @@ export interface UiShelf {
   facts: UiShelfFacts;
   items: UiShelfItem[];
   bundles: UiBundle[];
-  /** Metadata and bundle parse warnings, deduplicated. */
   warnings: string[];
-  /** Registered projects bound to this shelf. */
   projects: UiRegisteredProject[];
   generatedAt: string;
 }
 
 export interface UiShelfFile {
   name: string;
-  /** Null when the file is binary or larger than the read limit. */
   text: string | null;
   binary: boolean;
   size: number;
@@ -207,12 +183,9 @@ export interface UiShelfItemMetadata {
 }
 
 export interface UiShelfItemDetail extends UiShelfItem {
-  /** Absolute path in the data repo, or null for a bundled system item. */
   path: string | null;
   metadata: UiShelfItemMetadata;
-  /** Item-relative file names, sorted. */
   files: string[];
-  /** The requested file, or the item's primary file. */
   file: UiShelfFile | null;
 }
 

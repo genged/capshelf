@@ -19,7 +19,6 @@ interface SkillEntry {
   type: "skill";
   key: string;
   skill: ExternalUserSkill;
-  /** One entry per project and lock entry that shares the skill's name. */
   clashes: Array<{ project: string; name: string; itemId: string }>;
 }
 
@@ -32,12 +31,6 @@ interface PluginEntry {
 
 type MachineEntry = SkillEntry | PluginEntry;
 
-/**
- * What lives in the home folder: user-level skills and user or managed
- * plugins. Every project on the machine loads them. The view is built from
- * the project statuses the dashboard has already loaded; the inventory is
- * the same in each, only the name clashes differ per project.
- */
 export function MachineView({
   overview,
   loads,
@@ -46,7 +39,6 @@ export function MachineView({
 }: {
   overview: UiOverview | null;
   loads: Map<string, ProjectLoad>;
-  /** The route's entry key, so a link or a Jump row opens one entry. */
   entry: string | null;
   onSelect: (entry: string | null) => void;
 }): preact.JSX.Element {
@@ -60,7 +52,7 @@ export function MachineView({
   const display = (path: string): string => homeDisplay(path, overview.home);
   const ready: UiProjectStatus[] = [];
   let pending = 0;
-  // A failed refresh keeps old data; this view reads current statuses only.
+  // A failed refresh keeps old data, so this view reads current statuses only.
   for (const load of loads.values()) {
     const status = currentStatus(load);
     if (status) ready.push(status);
@@ -123,7 +115,6 @@ export function MachineView({
     },
   ].filter((group) => group.rows.length > 0);
   const all = groups.flatMap((group) => group.rows);
-  // A finding first: a personal Claude skill that hides a managed one.
   const current =
     all.find((entry) => entry.key === selected) ??
     all.find(

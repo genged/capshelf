@@ -45,15 +45,12 @@ describe("cli integration", () => {
     const ls = await run(["ls"]);
     expect(ls.exitCode).toBe(0);
     const out = ls.stdout.toString();
-    // 60-char truncation plus ellipsis; tags render as #tag suffixes.
     expect(out).toContain(
       "Deep multi-pass security audit of changed files, with extend…  #Security #review",
     );
     expect(out).toContain("Baseline permission allowlist.  #security");
-    // A metadata-less row stays exactly kind/name + sha.
     expect(out).toMatch(/^ {2}skills\/hello {2,}[0-9a-f]{12}$/m);
 
-    // --tag is AND and case-insensitive, and combines with --kind.
     const tagged = await run(["ls", "--tag", "SECURITY"]);
     expect(tagged.exitCode).toBe(0);
     expect(tagged.stdout.toString()).toContain("skills/security-review");
@@ -85,7 +82,6 @@ describe("cli integration", () => {
     );
     expect(hello.description).toBeUndefined();
     expect(hello.tags).toBeUndefined();
-    // The bundled system skill carries its frontmatter description.
     expect(parsed.system[0].description).toContain("capshelf CLI");
   });
 
@@ -132,7 +128,6 @@ describe("cli integration", () => {
       ),
     ).toEqual(["security-review"]);
 
-    // With no data repo bound, ls --here still works; fields are omitted.
     await rm(join(project, ".capshelf", "local.json"));
     const unbound = await run(["ls", "--here", "--json"]);
     expect(unbound.exitCode).toBe(0);
@@ -198,7 +193,6 @@ describe("cli integration", () => {
       needs: { network: [], env: [], bin: [] },
     });
 
-    // metadata is always present, even for items without any metadata.
     const bare = JSON.parse(
       (await run(["show", "skills/hello", "--json"])).stdout.toString(),
     );
@@ -209,7 +203,6 @@ describe("cli integration", () => {
       needs: { network: [], env: [], bin: [] },
     });
 
-    // System items report frontmatter metadata the same way.
     const system = JSON.parse(
       (await run(["show", "capshelf", "--json"])).stdout.toString(),
     );
@@ -248,7 +241,6 @@ describe("cli integration", () => {
 
     expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
 
-    // Name hit (8) outranks the description hit (2).
     const search = await run(["search", "security"]);
     expect(search.exitCode).toBe(0);
     const out = search.stdout.toString();
@@ -260,11 +252,9 @@ describe("cli integration", () => {
     expect(out).toContain("matched: name");
     expect(out).toContain("Audit changed files.  #security #review");
 
-    // Content matching annotates the first matching file.
     const content = await run(["search", "injection"]);
     expect(content.stdout.toString()).toContain("matched: content(SKILL.md)");
 
-    // Multi-word queries are AND; quoted and unquoted forms both work.
     const multi = await run(["search", "sql", "injection", "--json"]);
     expect(multi.exitCode).toBe(0);
     const parsed = JSON.parse(multi.stdout.toString());
@@ -282,7 +272,6 @@ describe("cli integration", () => {
       { term: "injection", field: "content", file: "SKILL.md" },
     ]);
 
-    // --kind narrows the searched population.
     const kinded = await run([
       "search",
       "security",
@@ -296,7 +285,6 @@ describe("cli integration", () => {
       ),
     ).toEqual(["permissions-base"]);
 
-    // Bundled system items are searched too.
     const system = await run(["search", "capshelf", "--json"]);
     const systemRows = JSON.parse(system.stdout.toString()).results;
     expect(
@@ -306,7 +294,6 @@ describe("cli integration", () => {
       ),
     ).toBe(true);
 
-    // Zero matches: friendly output, empty results, exit 0.
     const none = await run(["search", "definitely-not-on-the-shelf"]);
     expect(none.exitCode).toBe(0);
     expect(none.stdout.toString()).toContain("(no matches)");
@@ -354,9 +341,6 @@ describe("cli integration", () => {
 
     expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
 
-    // Missing requires warn with exact fix commands, install succeeds, and
-    // --json appends missingRequires. A conflict ref pointing at an item
-    // that exists nowhere (skills/deleted-upstream) is ignored.
     const add = await run(["add", "skills/security-review", "--json"]);
     expect(add.exitCode).toBe(0);
     const stderr = add.stderr.toString();
@@ -374,7 +358,6 @@ describe("cli integration", () => {
       "mcp/github",
     ]);
 
-    // Installing a declared requirement shrinks the warning on re-add.
     expect((await run(["add", "settings/permissions-base"])).exitCode).toBe(0);
     const readd = await run(["add", "skills/security-review", "--json"]);
     expect(readd.exitCode).toBe(0);
@@ -383,7 +366,6 @@ describe("cli integration", () => {
       "mcp/github",
     ]);
 
-    // Forward conflict: the new item declares it.
     const conflict = await run(["add", "skills/quick-review"]);
     expect(conflict.exitCode).toBe(3);
     const conflictErr = conflict.stderr.toString();
@@ -400,7 +382,6 @@ describe("cli integration", () => {
       join(dataRepo, "skills", "security-review", ".capshelf.yml"),
     );
 
-    // An unrelated item still installs.
     expect((await run(["add", "skills/loner"])).exitCode).toBe(0);
   });
 
@@ -414,7 +395,6 @@ describe("cli integration", () => {
         `${skill}\n`,
       );
     }
-    // Only quick-review declares the conflict; the check is symmetric.
     await writeFile(
       join(dataRepo, "skills", "quick-review", ".capshelf.yml"),
       "conflicts-with: [skills/security-review]\n",
@@ -438,7 +418,6 @@ describe("cli integration", () => {
     );
     expect(err).toContain("declared by: skills/quick-review/.capshelf.yml");
 
-    // A malformed sidecar warns but never blocks the install.
     const malformed = await run(["add", "skills/broken-meta"]);
     expect(malformed.exitCode).toBe(0);
     expect(malformed.stderr.toString()).toContain(
@@ -452,7 +431,6 @@ describe("cli integration", () => {
     const skill = join(dataRepo, "skills", "mixed");
     await mkdir(skill, { recursive: true });
     await writeFile(join(skill, "SKILL.md"), "contains textneedle marker\n");
-    // A NUL byte marks the file as binary; its needle must not match.
     await writeFile(
       join(skill, "blob.bin"),
       Buffer.concat([
@@ -460,7 +438,6 @@ describe("cli integration", () => {
         Buffer.from([0x00, 0x01, 0x02]),
       ]),
     );
-    // Over the 256 KiB content cap; its needle must not match either.
     await writeFile(
       join(skill, "big.txt"),
       `${"x".repeat(256 * 1024)} hugeneedle\n`,
@@ -471,7 +448,6 @@ describe("cli integration", () => {
 
     expect((await run(["init", "--data", dataRepo])).exitCode).toBe(0);
 
-    // The fixture is searchable through its text file…
     const text = await run(["search", "textneedle", "--json"]);
     expect(text.exitCode).toBe(0);
     expect(
@@ -480,7 +456,6 @@ describe("cli integration", () => {
       ),
     ).toEqual(["mixed"]);
 
-    // …but binary and oversize files are skipped, still exiting 0.
     for (const needle of ["nulneedle", "hugeneedle"]) {
       const skipped = await run(["search", needle, "--json"]);
       expect(skipped.exitCode).toBe(0);
@@ -505,8 +480,8 @@ describe("cli integration", () => {
     const lockPath = join(project, ".capshelf", "capshelf.lock.json");
     const lockBefore = await readFile(lockPath, "utf-8");
 
-    // A metadata-only commit upstream: sha unchanged AND sourceCommit
-    // computed sidecar-blind, so the lock must stay byte-identical.
+    // sourceCommit is computed sidecar-blind, so a metadata-only upstream
+    // commit must leave the lock byte-identical.
     await writeFile(
       join(dataRepo, "skills", "hello", ".capshelf.yml"),
       "description: says hello\ntags: [greeting]\n",
@@ -578,7 +553,8 @@ describe("cli integration", () => {
       join(dataRepo, "plugins", "rust-review", ".claude-plugin", "plugin.json"),
       JSON.stringify({ name: "rust-review" }),
     );
-    // An unrelated plugin, so the marker is never printed for it.
+    // An unrelated plugin serves as a control proving the marker is not printed
+    // for plugins it does not apply to.
     await mkdir(join(dataRepo, "plugins", "lonely", "skills", "s"), {
       recursive: true,
     });
@@ -604,8 +580,6 @@ describe("cli integration", () => {
     expect(out).toContain(
       "    ^ skills/rust-review and plugins/rust-review both install to .agents/skills/rust-review. A project uses one of them.",
     );
-    // The marker follows the plugins/rust-review row, and no such line
-    // follows plugins/lonely.
     const lonelyIndex = out.indexOf("plugins/lonely");
     const lonelyNextLine = out.slice(lonelyIndex).split("\n")[1] ?? "";
     expect(lonelyNextLine).not.toContain("^");
@@ -628,7 +602,6 @@ describe("cli integration", () => {
     );
     expect(skillRow.sharesTargetWith).toBeUndefined();
 
-    // `--kind plugins` alone still finds the pair.
     const kinded = await run(["ls", "--kind", "plugins", "--json"]);
     const kindedRow = JSON.parse(kinded.stdout.toString()).data.find(
       (row: { name: string }) => row.name === "rust-review",

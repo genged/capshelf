@@ -5,11 +5,6 @@ import * as git from "../src/git";
 import * as gitMeasure from "../src/git-measure";
 import { commitAll, tempRepo } from "./cli-fixtures";
 
-/**
- * `ls` lists the working-tree files of every copy item with one `ls-files`.
- * Each item must get what its own `sourceVisibleFilesUnderPath` gets.
- */
-
 const ITEMS = [
   "skills/a",
   "skills/ab",
@@ -38,7 +33,6 @@ async function workingTree(): Promise<string> {
   await writeFile(join(repo, ".gitignore"), "*.log\n");
   await writeFile(join(repo, "skills/a/.gitignore"), "cache/\n");
   await commitAll(repo, "items");
-  // Working-tree state after the commit.
   await rm(join(repo, "skills/a/gone.md"));
   await writeFile(join(repo, "skills/a/new.md"), "untracked\n");
   await writeFile(join(repo, "skills/a/debug.log"), "ignored\n");
@@ -63,7 +57,6 @@ test("one listing gives each item what its own listing gives", async () => {
       files: await outcome(git.sourceVisibleFilesUnderPath(repo, item)),
     });
   }
-  // The symlink fails its own item only.
   expect(await outcome(listFiles("skills/linked"))).toContain("symlink");
   expect(await outcome(listFiles("skills/a"))).toEqual([
     ".gitignore",

@@ -89,7 +89,6 @@ export interface FragmentOutputSpec {
 
 export interface FragmentOutputPlan {
   target: FragmentTarget;
-  /** The project root that `path` must stay inside. */
   project: string;
   path: string;
   currentText: string | null;
@@ -97,27 +96,14 @@ export interface FragmentOutputPlan {
   currentSha: string | null;
   plannedSha: string | null;
   changed: boolean;
-  /** The existing JSONC or TOML file had comments a rewrite cannot preserve. */
   commentLoss: boolean;
-  /** How that loss is treated — see `commentLossPolicy`. */
   commentPolicy: CommentLossPolicy;
 }
 
 /**
- * Losing comments is destruction in one target and repair in the others.
- *
- * `#` comments are standard TOML and Codex reads `.codex/config.toml` with
- * them, so dropping them is real loss the user must authorize (`gate`).
- *
- * `.claude/settings.json` and `.mcp.json` are strict JSON to the tool that
- * consumes them. Verified against Claude Code 2.1.220: a `//` comment in
- * `settings.json` makes the whole file silently not load — an `env` entry in
- * it never reaches the session — and the same comment in `.mcp.json` reports
- * `[Failed to parse] ... MCP config is not a valid JSON`. capshelf can read
- * either file only because of its own JSONC tolerance (`parseJsonc`). Asking
- * the user to authorize losing those comments would be asking them to
- * authorize keeping a broken config: the rewrite is what makes the file
- * loadable again, so it is announced, not gated (`repair`).
+ * Claude Code (verified 2.1.220) fails to load settings.json and .mcp.json
+ * containing `//` comments, so rewriting is a repair and is announced; TOML `#`
+ * comments are valid for Codex, so dropping them is gated.
  */
 export type CommentLossPolicy = "gate" | "repair";
 
@@ -173,7 +159,7 @@ export function fragmentOutputPath(
 }
 
 /**
- * Every fragment output path is confined before a caller reads or writes it:
+ * Every fragment output path is confined before a caller reads or writes it, so
  * a symlinked `.claude`, `.codex`, or `.mcp.json` that leaves the project is
  * refused.
  */
@@ -282,19 +268,11 @@ export function fragmentSourceCandidates(
 }
 
 /**
- * One candidate runtime target of an item, marked present or absent.
- *
- * The whole candidate record is carried, not a flattened tuple:
- * `FragmentSource.target` is an *output* target, not a runtime one, and
- * callers pass `kind`, `name`, `format`, and `relPath` into output planning,
- * validation, JSON rendering, and content reads.
- *
- * `present` is `boolean | null`. `null` means coverage was not readable at
- * all — a caller that could not reach a commit builds the rows itself.
+ * The whole candidate is carried because callers need `kind`, `name`, `format`,
+ * and `relPath`; `present` is null when coverage was unreadable.
  */
 export interface TargetPresence {
   source: FragmentSource;
-  /** "claude" | "codex" for multi-target kinds; null for single-target kinds. */
   runtimeTarget: FragmentSourceTarget | null;
   present: boolean | null;
 }
@@ -419,10 +397,8 @@ export async function loadFragmentSourcesAtCommit(input: {
 }
 
 /**
- * The present half of a presence list. `fragmentSources` and
- * `fragmentSourcesAtCommit` are expressed through this so the records they
- * return are the same objects the coverage report describes, and the two
- * cannot drift.
+ * Both source lists derive from this so their records are the same objects the
+ * coverage report describes and cannot drift.
  */
 export function presentSources(presence: TargetPresence[]): FragmentSource[] {
   return presence
@@ -615,13 +591,8 @@ export async function planFragmentOutput(
 }
 
 /**
- * The value part of fragment reconciliation, with no I/O.
- *
- * It removes the old managed contribution from the current output, refuses
- * conflicts, and puts the next managed contribution on top. Removal cannot
- * tell a local value from a managed value that is equal to it, so it removes
- * both. `tests/fragment-merge-properties.test.ts` checks the rules that this
- * function must keep.
+ * Removal cannot tell a local value from an equal managed value, so it removes
+ * both.
  */
 export function reconcileFragmentValues(input: {
   outputPath: string;
@@ -1013,18 +984,15 @@ function assertNoUnmanagedCollisions(
 }
 
 /**
- * Refuse when two fragments targeting the same output set the same key to
- * conflicting values. Without this, mergeConfigValues resolves scalar
- * conflicts as last-write-wins (config-values.ts), so the output would depend
- * silently on manifest order. Arrays (concat+dedupe), deep-mergeable objects,
- * and identical values are not conflicts and merge as before.
+ * Refuse conflicting values, including incompatible types, because accepting
+ * them would make the output depend silently on manifest order. Two arrays,
+ * two mergeable objects, and identical values can merge.
  */
 function assertNoFragmentConflicts(
   outputPath: string,
   fragments: FragmentValue[],
 ): void {
   let mergedSoFar: ConfigObject = {};
-  // Leaf path -> the fragment that set it, so a conflict names both.
   const provenance = new Map<string, string>();
   for (const fragment of fragments) {
     const collision = findUnmanagedCollision(mergedSoFar, fragment.value);
@@ -1062,13 +1030,8 @@ function recordLeafProvenance(
 }
 
 /**
- * The map key for a leaf path.
- *
- * One writer and one reader must agree on this, and nothing else in the file
- * enforces that, so it is a function rather than a separator repeated twice. A
- * joined string needs a character no key contains, and both JSON and YAML let
- * a key hold any character at all. `JSON.stringify` escapes instead of
- * guessing, so distinct paths cannot collide.
+ * JSON.stringify escapes where a joined string needs a separator no key
+ * contains, since JSON and YAML keys can hold any character.
  */
 function provenanceKey(path: readonly string[]): string {
   return JSON.stringify(path);

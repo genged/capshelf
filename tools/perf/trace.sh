@@ -1,14 +1,4 @@
 #!/usr/bin/env bash
-# List the Git commands that one capshelf command runs, grouped and counted.
-#
-# Usage: tools/perf/trace.sh <binary> <capshelf args...>
-# Shape: SKILLS, SUBAGENTS, SETTINGS, SPLIT, EXTRA (see tools/perf/lib.sh).
-# Work:  PERF_WORK (default: a new temporary directory, removed at the end).
-#
-# A `git` script first on PATH logs each argument list, then runs the real
-# Git. Commit ids and item numbers are masked, so one line counts the same
-# call for every item. A line with a count near the item count is a call that
-# runs once per item.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=tools/perf/lib.sh

@@ -1,15 +1,7 @@
 /**
- * Failure reporting for the interactive per-item loops.
- *
- * A per-item failure used to print only the first line of its message. For
- * simple refusals that was the whole story, but promote's stale refusal is a
- * multi-line teaching text whose later lines carry the resolution commands —
- * truncating it left the user with a diagnosis and no repair, and the generic
- * `retry:` line then named a command that fails the same way. So the full
- * message is printed, a structured hint is printed with it (these loops catch
- * errors before the CLI boundary that normally prints hints), and the generic
- * retry line is added only when the message brought no recovery command of
- * its own.
+ * Prints the full message plus hint because these loops catch errors before the
+ * CLI boundary and later lines carry the resolution commands; the generic retry
+ * is added only when none is given.
  */
 import { CliError, ResultExitError } from "../errors";
 

@@ -1,7 +1,6 @@
 /**
- * The JSON value model for the browser bundle. `src/config-values.ts` owns
- * the same model for the CLI, but it imports zod, which the client must not
- * carry, so the two predicates the client needs live here.
+ * Kept apart from `src/config-values.ts` because that module imports zod, which
+ * the browser bundle must not carry.
  */
 
 export type JsonValue =

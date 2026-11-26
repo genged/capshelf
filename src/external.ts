@@ -11,7 +11,7 @@ import {
 import type { ConfigValue } from "./config-values";
 import type { Lock } from "./lock";
 import { parseLockKey } from "./installed";
-import { parseJsonc } from "./json-fragments";
+import { parseJsonConfigObject } from "./json-fragments";
 
 export type UserSkillSurface = "claude" | "codex";
 
@@ -44,15 +44,12 @@ export interface ExternalUserSkill {
   shadows: UserSkillShadow[];
 }
 
-// skills-lock.json is written by skills.sh; validate only the shape we read
-// and let Zod strip any other fields it carries (version, sourceType, …).
+// skills-lock.json is written by skills.sh; validate only the fields we read
+// and let Zod strip the rest.
 const SkillsShLockSchema = z.object({
   skills: z.record(z.object({ source: z.string().optional() })).optional(),
 });
 
-// Claude Code settings.json. enabledPlugins is narrowed structurally by
-// parseEnabledPlugins below (it accepts both the array and object forms), so
-// the schema only needs to assert the top level is an object.
 const ClaudeSettingsSchema = z.object({
   enabledPlugins: ConfigValueSchema.optional(),
 });
@@ -189,10 +186,11 @@ async function readClaudePluginsFromSettings(settings: {
 }): Promise<ExternalClaudePlugin[]> {
   if (!existsSync(settings.path)) return [];
 
-  // settings.json is JSONC — parse tolerantly so a commented file (which Claude
-  // Code accepts) doesn't crash status/plugin scanning.
   const parsed = ClaudeSettingsSchema.parse(
-    parseJsonc(await readFile(settings.path, "utf-8")),
+    parseJsonConfigObject(
+      await readFile(settings.path, "utf-8"),
+      settings.path,
+    ),
   );
   return parseEnabledPlugins(parsed.enabledPlugins).map(({ id, enabled }) => {
     const { name, marketplace } = splitPluginId(id);

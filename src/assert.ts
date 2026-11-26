@@ -1,33 +1,22 @@
-/**
- * Compile-time exhaustiveness guard. Call from a `default:` branch (or any
- * spot that should be unreachable): if the union ever gains a member that
- * isn't handled, `value` stops being `never` and the call fails to type-check,
- * pinpointing the missing case. Throws if somehow reached at runtime.
- */
 export function assertNever(value: never): never {
   throw new Error(`unexpected value: ${JSON.stringify(value)}`);
 }
 
 /**
- * C0, DEL, and C1. C1 (U+0080–U+009F) carries single-byte CSI and OSC, so
- * text holding one can drive a terminal the moment a picker or a listing
- * renders it — the same reason C0 is rejected. The single definition of the
- * range: `isSafeItemName`, `sanitizeDisplayText` (pick-core), and
- * `isPickableKey` (config-paths) must agree on it or a name one boundary
- * accepts reaches a renderer another boundary trusted to be clean.
+ * C1 (U+0080–U+009F) includes single-byte CSI and OSC, so it can drive a
+ * terminal like C0. This is the single definition of the range.
+ * `isSafeItemName`, `sanitizeDisplayText` and `isPickableKey` must agree on it,
+ * or a name one boundary accepts reaches a renderer that another boundary
+ * trusted to be clean.
  */
 export function isTerminalControlCode(codePoint: number): boolean {
   return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f);
 }
 
 /**
- * The single definition of a safe item name. Item names become filesystem path
- * segments (installedPath) and git pathspecs (materialize), and they arrive
- * from untrusted, committed inputs — the manifest, the lockfile, the data-repo
- * catalog — in a cloned project. A name that escapes its directory (`..`,
- * absolute, backslash), is empty, or looks like a CLI option (`-…`) must be
- * rejected at every parse boundary, not just some. Keep this the only place the
- * rule lives so the boundaries can't drift apart.
+ * Item names become path segments and git pathspecs from untrusted committed
+ * inputs, so every parse boundary must reject escaping, empty, option-like or
+ * control-char names via this one rule.
  */
 export function isSafeItemName(name: string): boolean {
   if (name.length === 0) return false;
@@ -54,14 +43,9 @@ export function assertSafeItemName(name: string, context?: string): void {
 }
 
 /**
- * The single definition of a safe item root: a repository-relative,
- * POSIX-separated directory an item's bytes are read from. `.` is the
- * repository root and is the one segment that may be a bare dot.
- *
- * The root becomes a git pathspec and a `posix.relative` base, and for a
- * remote skill it arrives from a URL a user pasted. A root that escapes the
- * repository, is absolute, or looks like a CLI option must be rejected before
- * it reaches either.
+ * A root becomes a git pathspec and `posix.relative` base and can come from a
+ * pasted URL, so escaping, absolute or option-like roots must be rejected
+ * first.
  */
 export function isSafeItemRoot(root: string): boolean {
   if (root === ".") return true;
@@ -88,17 +72,14 @@ export function assertSafeItemRoot(root: string, context?: string): void {
 }
 
 /**
- * A branch or tag name capshelf is willing to put in a git argv. Deliberately
- * narrower than `git check-ref-format`: capshelf only ever records a ref a
- * user typed or a URL carried, so the useful question is whether it is a plain
- * name rather than whether Git would tolerate it.
+ * A branch or tag name safe to put in a git argv. Deliberately narrower than
+ * `git check-ref-format`: capshelf only records refs a user typed or a URL
+ * carried, so it only needs to know the ref is a plain name.
  */
 export function isSafeGitRef(ref: string): boolean {
   if (ref.length === 0) return false;
   if (ref.startsWith("-") || ref.startsWith("/")) return false;
   if (ref.includes("..") || ref.endsWith(".lock")) return false;
-  // Revision magic: `@` alone is HEAD, `@{` opens reflog syntax, and a
-  // trailing `.` is not a valid ref name.
   if (ref === "@" || ref.includes("@{") || ref.endsWith(".")) return false;
   if (/[\s~^:?*[\]\\]/u.test(ref)) return false;
   if (

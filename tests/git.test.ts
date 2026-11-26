@@ -19,6 +19,7 @@ import {
   assertPathClean,
   assertRepoClean,
   assertRepoCleanOutsidePath,
+  assertRepoCleanOutsidePaths,
   commitExistingPaths,
   commitInRepo,
   commitParents,
@@ -238,6 +239,44 @@ describe("git cleanliness helpers", () => {
   });
 });
 
+describe("status.showUntrackedFiles=no", () => {
+  async function repoWithUntracked(): Promise<string> {
+    const repo = await tempRepo();
+    await mkdir(join(repo, "skills"), { recursive: true });
+    await writeFile(join(repo, "skills", "kept.md"), "kept\n");
+    await commitAll(repo, "init");
+    await $`git -C ${repo} config status.showUntrackedFiles no`.quiet();
+    await writeFile(join(repo, "stray.md"), "stray\n");
+    return repo;
+  }
+
+  test("isRepoClean sees an untracked file", async () => {
+    const repo = await repoWithUntracked();
+    expect(await isRepoClean(repo)).toBe(false);
+  });
+
+  test("isPathClean sees an untracked file", async () => {
+    const repo = await repoWithUntracked();
+    expect(await isPathClean(repo, "stray.md")).toBe(false);
+  });
+
+  test("statusPorcelainRecords returns the untracked file", async () => {
+    const repo = await repoWithUntracked();
+    expect(await statusPorcelainRecords(repo)).toEqual([
+      { code: "??", path: "stray.md" },
+    ]);
+  });
+
+  test("assertRepoCleanOutsidePaths refuses an untracked file outside the paths", async () => {
+    const repo = await repoWithUntracked();
+    const error = await rejection(
+      assertRepoCleanOutsidePaths(repo, ["skills"]),
+      PreconditionError,
+    );
+    expect(error.message).toContain("uncommitted changes outside skills");
+  });
+});
+
 describe("indexEntryFlags", () => {
   test("reports each flag separately, since they differ when the file is gone", async () => {
     const repo = await tempRepo();
@@ -253,9 +292,8 @@ describe("indexEntryFlags", () => {
     await $`git -C ${repo} update-index --assume-unchanged both.json`.quiet();
     await $`git -C ${repo} update-index --skip-worktree both.json`.quiet();
 
-    // The flags are what make this worth checking: a change under either one
-    // leaves `git status` empty, so a porcelain-only cleanliness test reports
-    // nothing. Verified against git 2.55.0, which tags them `h`, `S`, and `s`.
+    // A change under either flag leaves `git status` empty, so a porcelain-only
+    // cleanliness check misses it.
     await writeFile(join(repo, "assumed.json"), '{"edited":true}\n');
     await rm(join(repo, "skipped.json"));
     expect((await statusPorcelain(repo)).trim()).toBe("");
@@ -270,8 +308,6 @@ describe("indexEntryFlags", () => {
     ).toEqual([
       { path: "assumed.json", assumeUnchanged: true, skipWorktree: false },
       { path: "both.json", assumeUnchanged: true, skipWorktree: true },
-      // Every tracked path is reported, flagged or not: a caller also needs to
-      // know which of the paths it asked about are missing from the answer.
       { path: "normal.json", assumeUnchanged: false, skipWorktree: false },
       { path: "skipped.json", assumeUnchanged: false, skipWorktree: true },
     ]);
@@ -282,8 +318,6 @@ describe("indexEntryFlags", () => {
   });
 
   test("omits a path that is absent from the index", async () => {
-    // The omission is the signal. A present file with no entry here is one
-    // `git add` may refuse, which is what a promotability guard tests for.
     const repo = await tempRepo();
     await writeFile(join(repo, "tracked.json"), "{}\n");
     await commitAll(repo, "init");
@@ -352,7 +386,6 @@ describe("git historical content helpers", () => {
     );
     await commitAll(repo, "sidecar only");
 
-    // The naive lastTouchingCommit moves; the content commit does not.
     expect(await lastTouchingCommit(repo, "skills/hello")).not.toBe(
       contentCommit,
     );
@@ -431,7 +464,6 @@ describe("git historical content helpers", () => {
       /uncommitted metadata changes: skills\/hello\/\.capshelf\.yml/,
     );
 
-    // With content dirty too, the generic message wins.
     await writeFile(join(repo, "skills", "hello", "SKILL.md"), "dirty\n");
     await expect(assertPathClean(repo, "skills/hello")).rejects.toThrow(
       /uncommitted changes under skills\/hello/,
@@ -468,8 +500,8 @@ describe("git historical content helpers", () => {
     await writeFile(join(repo, "d", "café.txt"), "one\n");
     await writeFile(join(repo, "d", "a -> b.txt"), "two\n");
     await commitAll(repo, "baseline");
-    // Bun's `$` mis-serializes some non-Latin1 argv strings, which is why
-    // capshelf runs git through Bun.spawn — see the note on gitTry.
+    // Bun's `$` mis-serializes some non-Latin1 argv strings, so git runs
+    // through Bun.spawn.
     await sourceWriteBuffer(repo, ["mv", "d/café.txt", "d/rénamed.txt"]);
     await writeFile(join(repo, "d", "a -> b.txt"), "edited\n");
     await writeFile(join(repo, "d", 'qu"ote.txt'), "three\n");
@@ -480,7 +512,6 @@ describe("git historical content helpers", () => {
     expect(
       records.map(({ code, ...rest }) => ({ code: code.trim(), ...rest })),
     ).toEqual([
-      // A path containing a literal " -> " must not be mis-split.
       { code: "M", path: "d/a -> b.txt" },
       // -z puts the new path first and the original in a bare follow-on
       // record with no status prefix.
@@ -501,9 +532,8 @@ describe("git historical content helpers", () => {
 });
 
 /**
- * GIT-7 for a commit of files the user authored in place: the index and HEAD
- * are restored, the working tree is not. Restoring the working tree would
- * discard the edit the command exists to publish.
+ * Restores the index and HEAD but not the working tree, since that would
+ * discard the user's edit the command exists to publish.
  */
 describe("ignoredUntrackedPaths", () => {
   test("lists exactly the files that git add -- <dir> skips", async () => {
@@ -721,7 +751,6 @@ describe("commitExistingPaths", () => {
     ).rejects.toThrow(/hook says no/);
 
     expect(await headSha(repo)).toBe(before);
-    // The user's edit is untouched; the staging capshelf did is not.
     expect(await file(source).text()).toBe('{"v":2}\n');
     expect(await readFile(join(repo, ".git", "index"))).toEqual(indexBefore);
     expect(
@@ -773,10 +802,9 @@ describe("commitExistingPaths", () => {
       }),
     ).rejects.toThrow();
 
-    // Their commit is HEAD and intact; ours does not exist; the user's edit
-    // is untouched. `git commit` compare-and-swaps HEAD against the value it
-    // read, which is what refuses here — the parent check in
-    // `commitExistingPaths` covers the remaining window, before that read.
+    // `git commit` compare-and-swaps HEAD against the value it read, which is
+    // what refuses here; the parent check in `commitExistingPaths` covers the
+    // window before that read.
     expect(
       (await $`git -C ${repo} log -1 --format=%s`.quiet().text()).trim(),
     ).toBe("concurrent user commit");
@@ -857,11 +885,8 @@ describe("git sync helpers", () => {
   test("trackingRef prefers @{upstream}, falls back to origin/<branch>, else null", async () => {
     const { origin, seed } = await seededOrigin();
     const repo = await cloneOf(origin);
-    // Configured upstream wins (clone sets it up).
     expect(await trackingRef(repo, "main")).toBe("origin/main");
 
-    // A branch without upstream config falls back to origin/<branch> when the
-    // remote-tracking ref exists — transiently, without writing config.
     await $`git -C ${seed} switch -q -c topic`.quiet();
     await writeFile(join(seed, "topic.md"), "t\n");
     await commitAll(seed, "topic");
@@ -872,7 +897,6 @@ describe("git sync helpers", () => {
     const config = await $`git -C ${repo} config --list`.quiet().text();
     expect(config).not.toContain("branch.topic.remote");
 
-    // No upstream config and no origin branch of that name.
     await $`git -C ${repo} switch -q -c propose/foo`.quiet();
     expect(await trackingRef(repo, "propose/foo")).toBe(null);
   });
@@ -911,7 +935,6 @@ describe("git sync helpers", () => {
     await fastForwardTo(repo, "origin/main");
     expect(await headSha(repo)).toBe(await headSha(seed));
 
-    // Diverge and assert ff-only refuses without moving HEAD.
     await writeFile(join(repo, "local.md"), "local\n");
     await commitAll(repo, "local");
     await writeFile(join(seed, "README.md"), "v3\n");
@@ -984,7 +1007,6 @@ describe("remote URL normalization", () => {
     expect(
       normalizeRemoteUrl("https://github.com:8443/mg/agent-shared"),
     ).not.toBe(normalizeRemoteUrl("https://github.com/mg/agent-shared"));
-    // Default ports collapse into the plain host.
     expect(normalizeRemoteUrl("https://github.com:443/mg/agent-shared")).toBe(
       "https://github.com/mg/agent-shared",
     );
@@ -1031,7 +1053,6 @@ describe("remote URL normalization", () => {
     expect(normalizeRemoteUrl("file:///tmp/repo", allow)).toBe(
       "file:///tmp/repo",
     );
-    // A file path names a real directory; trailing .git is preserved.
     expect(normalizeRemoteUrl("file:///tmp/repo.git", allow)).toBe(
       "file:///tmp/repo.git",
     );
@@ -1041,7 +1062,7 @@ describe("remote URL normalization", () => {
     expect(normalizeRemoteUrl("file://localhost/tmp/repo", allow)).toBe(
       "file:///tmp/repo",
     );
-    // Default behavior rejects file:// — machine-local paths are not
+    // file:// is rejected by default because machine-local paths are not
     // portable upstreams.
     expect(normalizeRemoteUrl("file:///tmp/repo")).toBeNull();
   });

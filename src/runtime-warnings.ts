@@ -32,7 +32,6 @@ export interface RuntimeWarning {
 
 interface RuntimeWarningOptions {
   personalSkillPath?: string;
-  /** Content root to inspect instead of the installed extension directory. */
   itemPath?: string;
 }
 
@@ -78,10 +77,8 @@ export function runtimeWarningsForItem(
 }
 
 /**
- * Pi ranks a project's `.pi/skills/` above its `.agents/skills/` and keeps
- * the first skill it finds, so a same-name entry there hides the managed
- * copy. Pi accepts a directory with `SKILL.md` or a bare Markdown file. The
- * check is by name only, as the personal Claude check is.
+ * A same-name `.pi/skills/` entry, as a `SKILL.md` directory or a bare Markdown
+ * file, can hide the managed copy. The check is by name only.
  */
 function piProjectSkill(
   project: string,
@@ -232,9 +229,8 @@ function joinHomeCodex(): string {
 }
 
 /**
- * The two levels of `~/.codex/config.toml` this check reads. Both objects
- * pass unknown keys through, so a date or a table elsewhere in the file
- * never makes the probe fail.
+ * Both objects pass unknown keys through so a date or table elsewhere in the
+ * file never fails the probe.
  */
 const CodexTrustSchema = z
   .object({ projects: z.object({}).passthrough().optional() })

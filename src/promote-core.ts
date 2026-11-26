@@ -24,25 +24,16 @@ export interface PromoteResult {
   kind: ItemKind;
   name: string;
   /**
-   * "already-upstream": the content being promoted is byte-identical to what
-   * upstream already has (e.g. a teammate promoted the same fix first); the
-   * lock was re-pinned without a commit. Consumers must tolerate new action
-   * values (append-only enum).
+   * "already-upstream": content is byte-identical to upstream, so the lock was
+   * re-pinned without a commit. Consumers must tolerate new action values.
    */
   action: "promoted" | "created" | "already-current" | "already-upstream";
   sha: string;
   sourceCommit: string;
-  /**
-   * The pin for the commit this result names, built by `src/pin.ts` from the
-   * committed tree after PIN-11 proved it equals what the project held. Absent
-   * only on paths that publish nothing new (`already-current`).
-   */
   pin?: PinnedSource;
   committed: boolean;
-  /** Set only by `--adopt`: which owner the skill was taken from. */
   adoptedFrom?: PreviousOwnerKind;
   previousOwnerReleased?: boolean;
-  /** present only when --stale-ok actually bypassed a stale check */
   staleOverride?: true;
   runtimeWarnings?: RuntimeWarning[];
   privateDotenvWarnings?: string[];
@@ -52,30 +43,23 @@ export interface AdoptOptions {
   installMode: Manifest["installMode"];
   message?: string;
   sourceScope?: Scope;
-  /** Permit an existing data-repo item when its content is identical. */
   allowExistingUpstream?: boolean;
-  /** Permit taking ownership from a previous owner (a remote or skills.sh row). */
   allowPreviousOwner?: boolean;
   /**
-   * Where the item came from, written into the adopted item's sidecar inside
-   * the same commit. The sidecar is excluded from the pin, so this changes no
-   * identity.
+   * Written to the sidecar in the same commit; the sidecar is excluded from the
+   * pin, so it changes no identity.
    */
   provenance?: SidecarProvenance;
   /**
-   * Called with the adoption candidate, the exact files the adopt commits,
-   * before any data-repo write. A check that throws stops the adopt. The
-   * commit proof then refuses any commit whose tree differs from these files,
-   * so a check over them binds the commit.
+   * Runs before any data-repo write, and the commit proof refuses a tree that
+   * differs from the candidate, so a check over it binds the commit.
    */
   checkCandidate?: (candidate: AdoptionCandidate) => Promise<void>;
 }
 
-/** The files an adopt commits, read once from the installed folder. */
 export interface AdoptionCandidate {
   files: NamedFile[];
   snapshot: ItemSnapshot;
-  /** The installed folder the snapshot was read from. */
   path: string;
 }
 
@@ -116,9 +100,8 @@ export function expectedAdoptionPath(
 }
 
 /**
- * Whether two data entries select the same content. Compares the identity each
- * one records — `sourcePinDigest` under lock version 4, `sha` before it — via
- * `entryIdentity`, so it never asks a v3 entry for a value it does not carry.
+ * Compares `entryIdentity` (digest in v4, `sha` before) so a v3 entry is never
+ * asked for a value it lacks.
  */
 export function dataEntriesMatch(a: DataLockEntry, b: DataLockEntry): boolean {
   return (
@@ -139,10 +122,9 @@ export function dataEntryOrThrow(
 }
 
 /**
- * The same narrowing for a writer, which by definition runs against a lock
- * `assertWritableLock` has already accepted. Keeping it explicit means a promote
- * path can read `entry.sourcePinDigest` as a `string` rather than defending
- * against a legacy shape it can never see.
+ * A writer runs after `assertWritableLock`, so it can read
+ * `entry.sourcePinDigest` as a `string` without defending against legacy
+ * shapes.
  */
 export function dataEntryV4OrThrow(
   entry: WritableLock["items"][string] | undefined,

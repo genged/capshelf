@@ -81,8 +81,6 @@ test(
         "system/skills/capshelf",
       ]);
 
-      // A macro leaves no versioning unit behind: the bundle name appears in
-      // neither file a later reader would consult.
       const manifest = await readFile(
         join(project, ".capshelf", "capshelf.json"),
         "utf-8",
@@ -95,7 +93,6 @@ test(
       expect(lock).not.toContain("go-backend");
       expect(manifest).not.toContain("bundle");
 
-      // Re-running the same bundle is convergent, not an update.
       const beforeRerun = await captureOwnedState(world, {
         projectFiles: project,
         projectGit: project,
@@ -113,8 +110,6 @@ test(
         "re-running an unchanged bundle",
       );
 
-      // The platform team advances an existing member and adds a new one.
-      // Only the new member may install; the older pins must not move.
       await world.git.writeAndCommit(
         shelf,
         {
@@ -179,7 +174,6 @@ test(
       const project = await world.git.createProject("service-4");
       expectExit(await world.capshelf(project, ["init", "--data", shelf]), 0);
 
-      // An untracked directory already occupies one member's install path.
       const occupied = join(project, ".agents", "skills", "security-review");
       await mkdir(occupied, { recursive: true });
       await writeFile(join(occupied, "SKILL.md"), "local copy\n");

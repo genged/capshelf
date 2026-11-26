@@ -4,26 +4,22 @@ import { PreconditionError } from "./errors";
 import { isErrno } from "./errno";
 
 /**
- * The one confinement rule for every managed write.
- *
- * "inside": a symlink is allowed when every real path it resolves to stays
- * inside `realpath(root)`. Project paths use this. The codex-compatible alias
- * `.claude/skills/<name> -> ../../.agents/skills/<name>` is the main case.
- * "deny": no component may be a symlink. Data repo paths use this.
+ * "inside" allows a symlink when every real path it resolves to stays inside
+ * `realpath(root)`, such as the alias `.claude/skills/<name> ->
+ * ../../.agents/skills/<name>`. "deny" allows no symlink component, and data
+ * repo paths use it.
  */
 export type ConfinementPolicy = "inside" | "deny";
 
 /**
- * Where a mutation helper may act. A helper that writes, deletes, or moves
- * takes a `MutationScope`, so a caller cannot skip the check by accident.
- * `{ root }` confines the path. `{ exempt }` names the reason the path may
- * lie outside any root, for example a cache in the user's config folder.
+ * Mutation helpers take a `MutationScope`, so a caller cannot skip the check by
+ * accident. `{ root }` confines the path. `{ exempt }` records why a path may
+ * lie outside any root.
  */
 export type MutationScope =
   | { root: string; policy?: ConfinementPolicy }
   | { exempt: string };
 
-/** The scope of a write into the data repo: no symlink in the path. */
 export function dataRepoScope(dataRepo: string): MutationScope {
   return { root: dataRepo, policy: "deny" };
 }
@@ -31,16 +27,10 @@ export function dataRepoScope(dataRepo: string): MutationScope {
 type WalkPolicy = ConfinementPolicy | "follow";
 
 interface Walked {
-  /** The real path of the target. A missing tail is appended as written. */
   real: string;
-  /** The first component that is a symlink, as a path below the start. */
   link: string | null;
 }
 
-/**
- * Split a `/` path below the root. "." and the empty string are never valid
- * as a relative path. The root itself is named by an absolute target.
- */
 function safeRelativeParts(relPath: string): string[] {
   const parts = relPath.split("/").filter((part) => part.length > 0);
   if (
@@ -55,14 +45,6 @@ function safeRelativeParts(relPath: string): string[] {
   return parts;
 }
 
-/**
- * The only symlink walk in the code base. It starts at `start` (a real path)
- * and takes one component of `parts` at a time with `lstat`. A symlink is
- * resolved with `realpath`, and the walk goes on from there. A missing
- * component ends the walk, because nothing below it exists yet.
- *
- * `shown` is the path that an error message names.
- */
 function walk(
   start: string,
   parts: readonly string[],
@@ -118,8 +100,8 @@ function walk(
 }
 
 /**
- * A root that does not exist has no symlink below it. A root that is a
- * dangling symlink does exist as a link, and capshelf refuses it.
+ * A missing root has no symlink below it, but a dangling-symlink root exists as
+ * a link and is refused.
  */
 function realRoot(root: string): string {
   try {
@@ -151,12 +133,6 @@ function isInside(rootReal: string, path: string): boolean {
   );
 }
 
-/**
- * Check that `target` stays inside `root` under `policy`, and return its real
- * path. `target` is an absolute path inside `root`, or a `/` path relative to
- * `root`. Throws `PreconditionError` (exit 3) for an unsafe relative path, an
- * escape, a dangling symlink, or (under "deny") any symlink.
- */
 export function assertConfinedSync(
   root: string,
   target: string,
@@ -184,11 +160,6 @@ export function assertConfinedSync(
   return walk(rootReal, parts, policy, rootReal, relPath).real;
 }
 
-/**
- * The real path of an absolute `path` that may not exist. Every existing
- * ancestor is resolved through symlinks, and the missing tail is kept whole.
- * It checks no confinement. A dangling link ends the walk like a missing one.
- */
 export function resolveThroughExistingSync(path: string): string {
   const absolute = resolve(path);
   const { root } = parse(absolute);
@@ -196,7 +167,6 @@ export function resolveThroughExistingSync(path: string): string {
   return walk(root, parts, "follow", root, absolute).real;
 }
 
-/** The async entry point. It shares `assertConfinedSync`'s walk. */
 export async function assertConfined(
   root: string,
   target: string,
@@ -205,7 +175,6 @@ export async function assertConfined(
   return assertConfinedSync(root, target, policy);
 }
 
-/** Apply `scope` to `path`. An exempt scope checks nothing. */
 export function assertInScopeSync(scope: MutationScope, path: string): void {
   if ("exempt" in scope) return;
   assertConfinedSync(scope.root, path, scope.policy);
@@ -219,9 +188,9 @@ export async function assertInScope(
 }
 
 /**
- * Refuse a `candidate` whose real path is `root` or below it. This is not a
- * confinement check: a path outside the root is the allowed case. It follows
- * every symlink, with the same walk.
+ * Refuse a `candidate` whose real path is `root` or below it. This is the
+ * inverse of a confinement check: a path outside the root is the allowed case.
+ * Every symlink is followed.
  */
 export async function assertRealPathOutsideRoot(
   root: string,

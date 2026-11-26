@@ -34,7 +34,6 @@ describe("matchItem", () => {
 
   test("matching is case-insensitive in both directions", () => {
     expect(matchItem(["SECURITY"], item)).not.toBeNull();
-    // "Security" tag matches a lowercase term too.
     expect(matchItem(["security"], item)?.matches[0]?.field).toBe("name");
   });
 
@@ -43,9 +42,7 @@ describe("matchItem", () => {
   });
 
   test("each term scores its best field: name 8, tag 4, description 2, content 1", () => {
-    // "review" hits the name (best), even though it is also a tag.
     expect(matchItem(["review"], item)?.score).toBe(8);
-    // tag-only hit.
     const tagOnly = matchItem(["review"], { ...item, name: "skills/x" });
     expect(tagOnly?.score).toBe(4);
     expect(tagOnly?.matches[0]).toEqual({
@@ -53,9 +50,7 @@ describe("matchItem", () => {
       field: "tags",
       detail: "review",
     });
-    // description hit.
     expect(matchItem(["audit"], item)?.score).toBe(2);
-    // content hit carries the first matching file path.
     const content = matchItem(["sql"], item);
     expect(content?.score).toBe(1);
     expect(content?.matches[0]).toEqual({
@@ -64,7 +59,6 @@ describe("matchItem", () => {
       file: "SKILL.md",
       detail: "SKILL.md",
     });
-    // multi-term scores sum per-term best weights.
     expect(matchItem(["audit", "sql"], item)?.score).toBe(3);
   });
 });

@@ -1,20 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Refuse a release whose commit never passed the Test workflow on its own.
-#
-# Work lands on `main` directly, so a commit can be tagged before anyone knows
-# whether it was green. The release jobs re-run the source suites at the tag,
-# which catches a broken tree; only this asks whether the commit itself ever
-# passed.
-#
-# Only `push` and `workflow_dispatch` runs count. A `pull_request` run carries
-# the head SHA but checks out `refs/pull/<n>/merge` — the commit merged into its
-# base — so its success says nothing about the commit standing alone, which is
-# what a tag points at.
-#
-# Usage: require-green-test-run.sh <repository> <sha> [workflow-file]
-# Exit codes: 0 passed, 1 failed, 2 deferred (no run or unfinished run).
+# Only `push` and `workflow_dispatch` runs count: a `pull_request` run checks
+# out the merge ref, so its success says nothing about the commit a tag points
+# at.
 
 repository="${1:?repository is required, for example owner/name}"
 sha="${2:?commit sha is required}"

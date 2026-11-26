@@ -6,37 +6,20 @@ import type { ConfigObject, ConfigValue } from "./config-values";
 import { lstatOrNull } from "./fs-utils";
 
 /**
- * Whether Claude Code has trusted a project's workspace (spec M8). Claude
- * Code loads a skills-dir plugin only in a trusted workspace, so a plugin
- * row needs this fact.
+ * Claude Code loads a skills-dir plugin only in a trusted workspace, so a
+ * plugin row needs this fact.
  */
 export type ClaudeTrust = "trusted" | "untrusted" | "unknown";
 
 export interface ClaudeTrustOptions {
-  /** The directory that holds `.claude.json`. The default is the home directory. */
   home?: string;
-  /** The environment to read `CLAUDE_CODE_SANDBOXED` from. */
   env?: Readonly<Record<string, string | undefined>>;
 }
 
 /**
- * Reports the trust state for `project` the way Claude Code looks it up.
- * Read-only and synchronous: `~/.claude.json` is Claude Code's file, never
- * written here.
- *
- * Claude Code treats a sandboxed session (`CLAUDE_CODE_SANDBOXED`) as
- * trusted, so that reports `"trusted"` before any file is read. Otherwise a
- * missing, unreadable, or non-object file reports `"unknown"`: there is no
- * claim either way.
- *
- * The project is then trusted when one of these keys of `projects` has
- * `hasTrustDialogAccepted === true`, in this order: the resolved path, the
- * real path (a project reached through a symlink), the Git root (Claude Code
- * keys a project by its Git root), and each directory from the real path up
- * to the Git root. With no Git root, the walk goes up to the filesystem
- * root. Claude Code stops the walk at the Git root, so a trusted directory
- * above the repository does not trust a project inside it. No such key is
- * `"untrusted"`.
+ * Mirrors Claude Code's lookup: sandboxed sessions count as trusted, and the
+ * key walk stops at the Git root so a trusted directory above the repo does not
+ * trust a project inside it.
  */
 export function claudeTrustFor(
   project: string,
@@ -60,7 +43,6 @@ export function claudeTrustFor(
     : "untrusted";
 }
 
-/** Set, and not a word that says "off". */
 function isSandboxed(value: string | undefined): boolean {
   if (value === undefined || value === "") return false;
   return value !== "0" && value.toLowerCase() !== "false";
@@ -72,7 +54,6 @@ function isAccepted(projects: ConfigObject, key: string): boolean {
   return isConfigObject(entry) && entry.hasTrustDialogAccepted === true;
 }
 
-/** The `projects` keys Claude Code checks for `project`, in its order. */
 function trustKeys(project: string): string[] {
   const resolved = resolve(project);
   const real = realPathOrNull(project) ?? resolved;
@@ -90,11 +71,8 @@ function trustKeys(project: string): string[] {
 }
 
 /**
- * The nearest directory at or above `start` that holds `.git` as a directory
- * or a file (a worktree or a submodule), or null. Claude Code finds the Git
- * root the same way, without running Git, and so does this: a status run
- * stays synchronous here. A symlinked `.git` ends the search with no root,
- * as it does in Claude Code.
+ * Finds the Git root by walking for `.git` (dir or file) without running Git,
+ * as Claude Code does, to stay synchronous; a symlinked `.git` ends the search.
  */
 function gitRootOf(start: string): string | null {
   let dir = start;
@@ -109,7 +87,6 @@ function gitRootOf(start: string): string | null {
   }
 }
 
-/** `lstatOrNull`, with any other error (no permission, say) read as absent. */
 function lstatOrNullSafe(
   path: string,
 ): NonNullable<ReturnType<typeof lstatOrNull>> | null {

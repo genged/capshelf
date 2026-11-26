@@ -1,12 +1,3 @@
-/**
- * `capshelf add <url> --list`, text and JSON, for a repository that publishes
- * Claude/Codex plugins.
- *
- * Fixtures use `pluginUpstream` (`tests/remote-fixtures.ts`), which writes
- * plugin directories with `writePlugins` (`tests/plugin-fixtures.ts`) and
- * commits them to a local bare repository, the same pattern
- * `tests/cli-remote-add.test.ts` uses for its non-plugin cases.
- */
 import { expect, test } from "bun:test";
 import { $ } from "bun";
 import { existsSync } from "node:fs";
@@ -47,15 +38,8 @@ const initProject = initRemoteProject;
 const HEAVY_BODY = `Reads \${CLAUDE_PLUGIN_ROOT}/scripts/x.sh and dispatches heavy:assistant. See [a](../../AGENTS.md) for the shared rules.\n`;
 
 /**
- * `plain` (one skill, no facts), `heavy` (one skill named `worker` that
- * matches `plugin root`, `agents`, and `outside links`), and `empty` (no
- * skill directory, only `commands/`) — the fixture for the grouping,
- * uses-column, and no-skills-line behaviors.
- *
- * The agent is named `assistant`, not `worker`: a reference to the skill's
- * own namespaced name does not count (`src/plugin-facts.ts`'s self-reference
- * exclusion), so naming it the same as the skill would silently drop the
- * `plugin-agents` match this fixture means to exercise.
+ * The agent is named `assistant`, not `worker`: a reference to the skill's own
+ * name is excluded, which would silently drop the `plugin-agents` match.
  */
 function threePlugins(): PluginSpec[] {
   return [
@@ -90,8 +74,6 @@ function threePluginsCatalog() {
   ]);
 }
 
-/** Two plugins that each hold a skill directory named `x`, so their default
- * install name collides (D6). */
 function duplicateNamePlugins(): PluginSpec[] {
   return [
     { dir: "plugins/a", skills: [{ name: "x", description: "A's x" }] },
@@ -106,11 +88,6 @@ function duplicateNameCatalog() {
   ]);
 }
 
-/**
- * A plugin whose manifest names its own directory as a skill
- * (`"skills": "./"`), so `plugins/x` is both the plugin's `source` and one
- * of its own `skillDirs` — the shape D5 must not mistake for a plugin root.
- */
 function selfSkillPlugin(): PluginSpec[] {
   return [
     {
@@ -130,11 +107,8 @@ function selfSkillCatalog() {
 }
 
 /**
- * Every regular file under `root`, as `relativePath:base64Content`, sorted —
- * a before/after comparison proves a refused command left the project
- * untouched without trusting `git status`, which a refusal might not even
- * dirty. `.git` is excluded: its own internal bookkeeping (packed-refs,
- * reflogs) can change between two reads of a repository nothing else wrote to.
+ * `.git` is excluded because its bookkeeping (packed-refs, reflogs) can change
+ * between reads even when nothing else wrote.
  */
 async function projectSnapshot(root: string): Promise<string[]> {
   const out: string[] = [];
@@ -270,14 +244,6 @@ test(
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
 
-// D2: a capshelf-shaped shelf (a legacy `source: "./"` entry with a `skills`
-// array, plus a generated Codex catalog entry under `codex/generated/`) must
-// list exactly as it did before this feature. The expected text below is the
-// literal output of `bun run src/cli.ts add <url> --list` at `d8b8168` (the
-// commit before plugin discovery existed), run against this same fixture
-// shape in a scratch worktree, with the URL and commit substituted for this
-// run's own values — both differ on every run because the fixture
-// repository is created fresh.
 test(
   "a capshelf-shaped shelf with a generated Codex catalog lists byte-identical to before this feature",
   async () => {
@@ -411,10 +377,9 @@ test(
         },
       ],
       {
-        // A bare name with no document-level `metadata.pluginRoot` is
-        // `unsafe-path` (`src/plugin-discovery.ts`'s `resolveClaudeSource`),
-        // not `external-source` — it names a directory in this repository,
-        // just not safely, so it is a warning, not an `elsewhere` entry.
+        // A bare name without document-level `metadata.pluginRoot` is
+        // `unsafe-path` (a warning), not `external-source`, because it names a
+        // directory in this repository, just unsafely.
         claude: claudeCatalog([
           { name: "local", source: "./plugins/local" },
           { name: "bare-name-plugin", source: "bare-name-plugin" },
@@ -505,9 +470,6 @@ test("renderCandidateList's summaryLength stops right after the summary block's 
     discovery,
     scope: "repository",
   });
-  // `b` has no skill directory, so it only appears in the "no skills" line,
-  // not as a group — the summary block ends right after that line and the
-  // one blank line, before `a`'s group starts.
   expect(lines.slice(0, summaryLength)).toEqual([
     "  repo      https://example.invalid/repo",
     "  ref       main",
@@ -525,11 +487,8 @@ interface D9Harness {
 }
 
 /**
- * D9's confirmation context: three TTYs and a terminal short enough (5 rows)
- * that the three-plugin fixture's listing — 2 skills, well over 5 lines once
- * the plugin groups and the footer print — always crosses the threshold.
- * `answers` is consumed in call order; a test that expects more than one
- * prompt call must queue enough of them.
+ * Terminal height is 5 rows so the three-plugin listing always crosses the
+ * confirmation threshold; `answers` is consumed in call order.
  */
 function d9Context(
   answers: readonly string[],
@@ -595,11 +554,6 @@ test(
     expect(stdout).toContain(
       `install one:   capshelf add ${url} --path plugins/plain/skills/plain`,
     );
-    // The question's line count is `renderCandidateList(...).lines.length`
-    // (`src/remote-list-render.ts`), and answering "" here prints every one
-    // of those lines via one `console.log` call each — the summary half, then
-    // the rest — so the total lines this run printed must equal the number
-    // the question quoted.
     const match = /\((\d+) lines\)/.exec(prompts[0]!);
     expect(match).not.toBeNull();
     const totalPrintedLines = stdout.split("\n").length - 1;
@@ -633,16 +587,10 @@ test(
     );
     expect(stdout).not.toContain("  plugins/heavy");
     expect(stdout).not.toContain("install one:");
-    // The summary block (through the `found` line) always prints, and it
-    // prints before the "no" text, not instead of it.
-    // `plugins/empty` ships no skill, so the count names only the two
-    // plugins that do.
     const foundIndex = stdout.indexOf("  found     2 skills in 2 plugins");
     const noTextIndex = stdout.indexOf("  one plugin:");
     expect(foundIndex).toBeGreaterThanOrEqual(0);
     expect(noTextIndex).toBeGreaterThan(foundIndex);
-    // No skill row — only a plugin group header carries this text — reached
-    // stdout: the descriptions below only appear on a skill's own row.
     expect(stdout).not.toContain("Plain skill");
     expect(stdout).not.toContain("Heavy skill");
   },
@@ -794,8 +742,6 @@ test(
 test(
   "D9: a commands-only plugin never asks, even with enough layout skills to exceed the terminal",
   async () => {
-    // `discovery.plugins` holds a plugin with no skill directories too; D9
-    // must count plugins that have a skill, not every catalog entry.
     const { url, work } = await upstreamWith([
       ["skills/a", "A"],
       ["skills/b", "B"],
@@ -832,8 +778,6 @@ test(
     expect(result.exitCode).toBe(0);
     expect(prompts).toHaveLength(0);
     const stdout = result.stdout.toString();
-    // No plugin holds a skill, so the found line names no plugin count and
-    // no catalog.
     expect(stdout.split("\n")).toContain("  found     6 skills");
     expect(stdout).toContain("no skills  plugins/cmds");
     expect(stdout).toContain("skills/a");
@@ -903,8 +847,6 @@ test(
     expect(prompts).toHaveLength(1);
     const stdout = result.stdout.toString();
     expect(stdout).not.toContain("one plugin:");
-    // The JSON command stays in the plugin's scope. The whole-repository
-    // command would show more than the user asked for.
     expect(stdout).toContain(
       `  everything:   capshelf add ${url} --list --path plugins/heavy --json`,
     );
@@ -1044,8 +986,6 @@ test(
 test(
   "D5: a self-skill plugin root prints the plugin's warnings before it installs",
   async () => {
-    // The catalog names the plugin "y" and its manifest names it "x", so
-    // reading the plugin warns about the disagreement.
     const { url } = await pluginUpstream(selfSkillPlugin(), {
       claude: claudeCatalog([{ name: "y", source: "./plugins/x" }]),
     });
@@ -1098,8 +1038,6 @@ test(
       false,
     );
     expect(existsSync(join(project, ".agents", "skills", "x"))).toBe(false);
-    // `ensureLocalExcludes` writes this file; the refusal runs before any
-    // install reaches it, so it must be untouched too.
     expect(await readFile(excludePath, "utf-8")).toBe(excludeBefore);
   },
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
@@ -1210,8 +1148,6 @@ interface ConsentHarness {
   prompts: string[];
 }
 
-/** A TTY confirmation context for the per-skill consent prompt
- * (`confirmInstall`), answering "n" so the run exits 0 without installing. */
 function consentContext(): ConsentHarness {
   const prompts: string[] = [];
   return {
@@ -1249,11 +1185,6 @@ test(
     expect(prompt).toContain(
       "! this skill uses parts of the heavy plugin that are not installed:",
     );
-    // The agent fact names the agent the skill's text refers to ("assistant"),
-    // not the skill's own name ("worker") — the self-reference exclusion in
-    // `src/plugin-facts.ts` means the skill's own name never appears here.
-    // The column width is the widest label *present* (here, "outside links",
-    // 13 chars) plus 2 — so "agents" and "plugin root" pad to 15, not 13.
     expect(prompt).toContain("agents         assistant");
     expect(prompt).toContain("outside links  ../../AGENTS.md");
     expect(prompt).toContain("files outside the skill directory");
@@ -1284,12 +1215,6 @@ test(
   CLI_INTEGRATION_TEST_TIMEOUT_MS,
 );
 
-/**
- * `describeLicense`'s comment (`src/commands/add-remote.ts`) claims this
- * wording is unchanged for a skill (non-plugin) install, and pinned by a
- * test. This is that test: a repo-root license the label heuristic does not
- * recognize, for a plain skill with no plugin manifest at all.
- */
 test(
   "consent for a plain skill names a repo-root unrecognized license as outside the item",
   async () => {
@@ -1448,10 +1373,8 @@ test(
   "update shows the plugin facts read at the new commit when a remote skill's pin would move",
   async () => {
     const { upstream, project, env, run } = await installedHeavySkill();
-    // Not `pushChange`: it rewrites the body to a generic placeholder, which
-    // would also erase the facts this test means to see survive the move —
-    // the description changes (so the pin moves) and the body, with its
-    // plugin-root read, agent reference, and outside link, stays as it was.
+    // Not `pushChange`: it rewrites the body, which would erase the facts this
+    // test needs to survive the move.
     await writeFile(
       join(upstream.work, "plugins/heavy/skills/worker", "SKILL.md"),
       skillText("worker", "Heavy skill, revised", HEAVY_BODY),
@@ -1483,8 +1406,6 @@ test(
   "update never prompts, and reports already-current, when only a file outside the skill directory changed",
   async () => {
     const { upstream, env, run } = await installedHeavySkill();
-    // Only the plugin's agent file changes; the skill directory itself, and
-    // so its pin digest, stays the same — the rule this prompt must keep.
     await writeFile(
       join(upstream.work, "plugins", "heavy", "agents", "assistant.md"),
       "a different agent\n",

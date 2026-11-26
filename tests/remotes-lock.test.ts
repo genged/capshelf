@@ -23,10 +23,6 @@ const ENTRY = {
   appliedAt: "2026-09-13T00:00:00.000Z",
 };
 
-/**
- * A valid remote lock entry, as a `ConfigObject` — the shape
- * `parseRemotesLock` reads — for a test that only cares about the key.
- */
 function row(): ConfigObject {
   return { ...ENTRY };
 }

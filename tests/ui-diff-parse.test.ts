@@ -198,7 +198,6 @@ describe("threeWayRows", () => {
       ],
       ["line", 4, "same:Done.", "same:Done."],
     ]);
-    // The installed side knows line numbers it changed; the shelf side keeps its own.
     expect(rows[3]!.installed?.no).toBe(3);
     expect(rows[3]!.shelf?.no).toBe(4);
   });
@@ -227,8 +226,6 @@ describe("threeWayRows", () => {
       "line",
       "line",
     ]);
-    // With no installed diff, the installed column repeats the locked text
-    // and carries no line number.
     expect(rows[1]).toMatchObject({
       installed: { kind: "same", no: null, text: "second" },
       locked: { no: 2, text: "second" },

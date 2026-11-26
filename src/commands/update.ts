@@ -213,9 +213,7 @@ interface UpdateResult {
   dryRun?: true;
   localReason?: string;
   error?: string;
-  /** A `CliError` hint, printed under the error. */
   hint?: string;
-  /** A `CliError` exit code. Not printed. */
   exitCode?: number;
   runtimeWarnings?: RuntimeWarning[];
   scope?: "project" | "local";
@@ -223,7 +221,6 @@ interface UpdateResult {
   mergeResultSha?: string;
   mergeBase?: string;
   mergedUpstreamCommit?: string;
-  /** A plugin dry run: the runs entries the real run would ask about. */
   newRuns?: PluginRuns;
 }
 
@@ -264,12 +261,12 @@ export function registerUpdate(program: Command): void {
         }
         const { project, manifest, projectLock, localLock } =
           await loadProjectContext({ cmd });
-        // As `apply` and `status` do: one key in both locks is two owners of
-        // one install, and a sweep would write it twice from two pins.
+        // A key in both locks is two owners of one install; a sweep would write
+        // it twice from two pins.
         assertNoScopeCollisions(projectLock, localLock, "updating");
-        // A remote row is in neither capshelf lock by A3, so it is resolved
-        // here rather than by `resolveTrackedTarget`: widening that resolver
-        // would change the return type for `apply` and `status` at once.
+        // Remote rows are in neither shelf lock, so resolve them here; widening
+        // `resolveTrackedTarget` would change its return type for `apply` and
+        // `status`.
         const remotes = await loadRemotesLock(project);
         const remoteTargets = resolveRemoteTargets(remotes, refs);
         for (const itemRef of refs) {
@@ -282,26 +279,23 @@ export function registerUpdate(program: Command): void {
             { local: opts.local },
           );
         }
-        // By resolved key, not by bare name. `remoteKeysForRef` matches only
-        // the two remote kinds, `skills` and `plugins`, so `update skills/pdf
-        // mcp/pdf` (or `plugins/pdf mcp/pdf`) would otherwise see `pdf` among
-        // the remote names and drop the mcp item from the shelf pass —
-        // neither updated nor reported, and the command still exits 0.
+        // Filter by resolved key, not bare name: `remoteKeysForRef` matches
+        // only skills/plugins, so `update skills/pdf mcp/pdf` would drop the
+        // mcp item silently with exit 0.
         const shelfRefs = refs.filter(
           (itemRef) =>
             remoteKeysForRef(remotes, parseItemRef(itemRef)).length === 0,
         );
-        // `--merge` preserves the local edit for a shelf item, so `--yes` has
-        // nothing to authorize and the pair is refused. For a remote row
-        // `--yes` answers A9's new-content prompt, which `--merge` still asks.
+        // `--merge` keeps the local edit so `--yes` has nothing to authorize;
+        // for remote rows `--yes` still answers the new-content prompt that
+        // `--merge` asks.
         if (opts.merge && opts.yes && remoteTargets.length === 0) {
           throw new PreconditionError(
             "--merge and --yes cannot be used together",
           );
         }
-        // PIN-12: no ordinary lock write migrates. `update` reads either
-        // version but writes only version 4, so it refuses here with the
-        // migration command rather than rewriting entries as a side effect.
+        // Ordinary writes never migrate the lock: refuse with the migration
+        // command instead of rewriting entries as a side effect.
         const writableProjectLock = assertWritableLock(
           projectLock,
           "capshelf update",
@@ -381,10 +375,9 @@ export function registerUpdate(program: Command): void {
         if (opts.merge) {
           if (!dataRepo) throw new PreconditionError("data repo is required");
           const target = targets[0]!;
-          // D3 reads the new upstream tree before `updateMergeTarget` writes
-          // anything, and its pin is the one the merge takes. D7 point 2 asks
-          // inside `updateMergeTarget`, over the merged files: a merge can run
-          // something that neither the local copy nor the upstream runs alone.
+          // The merge's plugin-consent question runs over the merged files
+          // inside `updateMergeTarget`, since a merge can run something neither
+          // side runs alone.
           const mergeItem = parseLockKey(target.key);
           const mergeEntry = (
             target.scope === "local" ? writableLocalLock : writableProjectLock
@@ -415,7 +408,6 @@ export function registerUpdate(program: Command): void {
               json: opts.json === true,
               yes: opts.yes === true,
               dryRun: opts.dryRun === true,
-              // `update` refuses `--merge --yes` for a shelf item.
               advice: `review it first. --merge does not take --yes: run it in a terminal to answer the prompt, or take the new tree without your local edits with ${PRODUCT_NAME} update ${mergeItem.kind}/${mergeItem.name}${target.scope === "local" ? " --local" : ""} --yes`,
             },
           });
@@ -460,10 +452,8 @@ export function registerUpdate(program: Command): void {
           writableLocalLock,
         );
         if (opts.dryRun) {
-          // Remote rows preview here too. Without this a dry run on a remote
-          // skill prints "(no items tracked)" and exits 0 while the real run
-          // would move the pin and rewrite files, so the preview would
-          // disagree with the command it previews.
+          // Preview remote rows too, or a dry run prints "(no items tracked)"
+          // and exits 0 while the real run would move pins.
           const dryRemote = await runRemoteUpdates({
             project,
             manifest,
@@ -491,10 +481,9 @@ export function registerUpdate(program: Command): void {
           }
           return;
         }
-        // Scoped to fragment targets: they share output files and can leave
-        // the runtime diverged from the lock, so a partial write is worse
-        // than no write. Independent copy and subagent items fall through to
-        // per-item handling, converging everything they can.
+        // Only fragment targets abort: they share output files and can leave
+        // the runtime diverged from the lock, whereas independent items
+        // converge individually.
         const fragmentPreflightFailed = preflight.results.some(
           (result) =>
             result.action === "error" && isFragmentKindName(result.kind),
@@ -517,8 +506,6 @@ export function registerUpdate(program: Command): void {
           }
           throw new ResultExitError(itemErrorsExitCode(preflight.results));
         }
-        // D7 point 2 before the loss prompt. Both answers are needed before
-        // any write, and `--yes` answers both.
         if (
           !(await confirmPluginConsent(
             preflight.results.flatMap(pinMovePoints),
@@ -549,15 +536,12 @@ export function registerUpdate(program: Command): void {
           revalidated.destructivePlan,
         );
 
-        // Each target is planned in isolation and returns an explicit effect;
-        // the loop is the only place the shared accumulators are mutated, so
-        // their consistency no longer depends on reading a 380-line body.
         for (const target of targets) {
           const { scope, key } = target;
           const lock =
             scope === "local" ? writableLocalLock : writableProjectLock;
           const entry = lock.items[key]!;
-          // The pins the user approved, not a fresh read of the data repo.
+          // Use the pins the user approved, not a fresh read of the data repo.
           const outcome = await updateOneTarget(
             { ...ctx, approvedPins: preflight.pins },
             target,
@@ -583,11 +567,6 @@ export function registerUpdate(program: Command): void {
         }
 
         if (touchedFragmentTargets.size > 0 && dataRepo) {
-          // Reconcile each target independently and report failures under that
-          // target's own key/kind (matching apply) instead of a single
-          // hardcoded data/fragments/(merged)/settings row that names a shape
-          // no other command emits. Only commit the fragment lock bumps if
-          // every reconcile succeeded, preserving the original all-or-nothing.
           let reconcileFailed = false;
           const plans: FragmentOutputPlan[] = [];
           for (const target of touchedFragmentTargets) {
@@ -647,17 +626,14 @@ export function registerUpdate(program: Command): void {
           }
         }
 
-        // Before the remote pass, not after it. The loop above already wrote
-        // the new bytes for every shelf target; `runRemoteUpdates` still
-        // refuses a cold cache and a consent-less pin move by throwing, and a
-        // save deferred past it would leave those items holding content their
-        // lock does not name — drift the user never introduced, which `apply`
-        // then reverts.
+        // Save before the remote pass: it can throw, and a deferred save would
+        // leave written shelf files not matching their lock, which `apply` then
+        // reverts as drift.
         if (projectChanged) await saveLock(project, writableProjectLock);
         if (localChanged) await saveLocalLock(project, writableLocalLock);
 
-        // Remote rows run after the shelf pass and never share its lock, so a
-        // failure in either population leaves the other converged.
+        // Remote rows run after the shelf pass has saved its locks, so a remote
+        // failure cannot undo the shelf pass.
         const remoteOutcome = await runRemoteUpdates({
           project,
           manifest,
@@ -667,7 +643,6 @@ export function registerUpdate(program: Command): void {
           projectLock,
           localLock,
           merge: false,
-          // The dry-run path returned above, so this pass always writes.
           dryRun: false,
           json: opts.json === true,
           yes: opts.yes === true,
@@ -698,9 +673,8 @@ interface RemoteTarget {
   name: string;
   key: string;
   /**
-   * Load-bearing, not bookkeeping. A9 forbids a bare sweep from moving a
-   * remote pin, and the enumeration below deliberately still lists every row
-   * so the sweep can report it. This flag is what stops them at the gate.
+   * Load-bearing: a bare sweep must not move a remote pin, so rows are still
+   * listed for reporting and this flag stops them at the gate.
    */
   named: boolean;
 }
@@ -727,7 +701,6 @@ interface RemoteUpdateOutcome {
   results: UpdateResult[];
 }
 
-/** What a remote `--merge` row adds to its result when it merged something. */
 interface RemoteMergeFacts {
   action: UpdateAction;
   mergeBase: string;
@@ -736,12 +709,9 @@ interface RemoteMergeFacts {
 }
 
 /**
- * The remote half of `update`.
- *
- * Consent lives here rather than in `updateRemoteItem`: that function sees no
- * `--yes`, no `--json`, and no terminal state, so it cannot decide anything.
- * Keeping the prompt in the command is also what lets a bare sweep return
- * `skipped` without ever entering the write path.
+ * Consent lives here, not in `updateRemoteItem`, which sees no `--yes`,
+ * `--json` or terminal state and so lets a bare sweep skip without entering the
+ * write path.
  */
 async function runRemoteUpdates(input: {
   project: string;
@@ -749,7 +719,6 @@ async function runRemoteUpdates(input: {
   targets: RemoteTarget[];
   externalSkillByName: Map<string, ExternalSkill>;
   remotes: RemotesLock;
-  /** D2 guard 5: the shelf owners `assertSkillTargetFree` scans. */
   projectLock: Lock;
   localLock: Lock;
   merge: boolean;
@@ -760,10 +729,9 @@ async function runRemoteUpdates(input: {
   const results: UpdateResult[] = [];
   for (const target of input.targets) {
     const entry = input.remotes.items[target.key]!;
-    // The external-ownership boundary the shelf pass applies in
-    // `updateOneTarget`. A remote row writes `.agents/skills/<name>`, the same
-    // path skills.sh writes, and skills.sh can claim the name after the pull.
-    // A named request is the command's failure; a sweep records the skip.
+    // A remote row writes `.agents/skills/<name>`, the same path skills.sh
+    // writes, and skills.sh can claim the name after the pull; a named request
+    // fails, a sweep records the skip.
     const external = input.externalSkillByName.get(target.name);
     if (external) {
       const message = skillsShConflictMessage(external);
@@ -783,8 +751,6 @@ async function runRemoteUpdates(input: {
       });
       continue;
     }
-    // D2 guard 5, as the shelf pass applies it: another owner of the folder
-    // refuses a named request with exit 3, and a sweep records an error.
     try {
       await assertSkillTargetFree(
         input.project,
@@ -811,8 +777,8 @@ async function runRemoteUpdates(input: {
       continue;
     }
     if (!target.named) {
-      // A9. A routine sweep across a project must not become interactive, and
-      // it must not move a pin the user has not reviewed either.
+      // A routine sweep must not become interactive or move a pin the user has
+      // not reviewed.
       results.push(remoteResult(target, "skipped", entry, entry.sourceCommit));
       continue;
     }
@@ -822,8 +788,8 @@ async function runRemoteUpdates(input: {
       name: target.name,
       entry,
     });
-    // D7 point 2 for `--merge` reads the merged files, not the upstream tree
-    // alone, and the merge writes only the files the prompt showed.
+    // Plugin-run consent for `--merge` reads the merged files, and the merge
+    // writes only the files the prompt showed.
     const mergePlan =
       input.merge && !upstreamPreview.current
         ? await remoteMergeNewRuns({
@@ -856,10 +822,9 @@ async function runRemoteUpdates(input: {
       yes: input.yes,
     });
     if (!consent.approved) return { results };
-    // The prompt holds the run open for as long as the user takes to read it.
-    // An editor saving the installed item in that window would make the write
-    // destroy content the accepted loss summary never listed, so the plan is
-    // rebuilt and compared the way the shelf pass does before it writes.
+    // The prompt can stay open arbitrarily long, and an editor save in that
+    // window would make the write destroy content the loss summary never
+    // listed, so re-plan and compare first.
     if (consent.plan !== null) {
       assertDestructivePlanUnchanged(
         consent.plan,
@@ -895,10 +860,8 @@ async function runRemoteUpdates(input: {
         preview,
         dryRun: input.dryRun,
       }));
-    // A merge that changed the installed copy reports as a merge, so the user
-    // sees the three shas and the review command rather than a bare "updated".
-    // A `--merge` run whose local copy was already the upstream content merged
-    // nothing, and saying otherwise would name an edit that does not exist.
+    // Report as merged only if the merge changed the installed copy; a
+    // `--merge` whose local copy already matched upstream merged nothing.
     const mergeFacts: RemoteMergeFacts | null =
       mergeOutcome?.merged === true
         ? {
@@ -909,8 +872,6 @@ async function runRemoteUpdates(input: {
             mergeResultSha: mergeOutcome.mergeResultDigest,
           }
         : null;
-    // A dry run asks nothing, so its row carries what the real run would
-    // ask about: the runs entries the move adds.
     const wouldAsk =
       input.dryRun &&
       preview.newRuns !== null &&
@@ -934,30 +895,22 @@ async function runRemoteUpdates(input: {
     });
     if (!input.dryRun && moved.action === "updated") {
       input.remotes.items[target.key] = moved.entry;
-      // Before the next row can refuse the command. `reconcileRemoteItem`
-      // already rewrote this row's files, so a save deferred to the end of the
-      // run would leave them holding content the pin does not name — reported
-      // as drift the user never introduced.
+      // Save before the next row can refuse the command: `reconcileRemoteItem`
+      // already rewrote files, and a deferred save would show them as drift.
       await saveRemotesLock(input.project, input.remotes);
     }
   }
   return { results };
 }
 
-/** What the user accepted, and the plan they were shown accepting it. */
 interface RemoteConsent {
   approved: boolean;
-  /** Null when nothing was shown: a dry run, or `--yes`. */
   plan: DestructiveChangePlan | null;
 }
 
 /**
- * A9's gate, and the drift gate, in one prompt.
- *
- * The new content is the thing consent covers, and the loss of a local edit is
- * part of the same write. Asking twice would make `--yes` mean two different
- * answers; the block below states both facts and the planner supplies the
- * loss list, so the accounting is the real one.
+ * One prompt for both consent and the drift gate: asking twice would make
+ * `--yes` mean two different answers.
  */
 async function confirmRemotePinMove(input: {
   project: string;
@@ -978,15 +931,12 @@ async function confirmRemotePinMove(input: {
       ? newPluginRunsField("runs", newRuns)
       : [];
   if (input.yes) {
-    // `--yes` skips the prompt, so what the move adds goes to stderr, the
-    // same as a `--yes` plugin install.
     for (const line of runsLines) console.error(line);
     return { approved: true, plan: null };
   }
   const destruction = await planRemotePinMove(input);
-  // A plugin row reports its own facts: the version and the new runs
-  // entries. `remotePinMoveFactsLines` reads one skill's plugin facts and
-  // needs a SKILL.md at the subpath, which a plugin root does not hold.
+  // A plugin row reports its own facts because `remotePinMoveFactsLines` needs
+  // a SKILL.md at the subpath, which a plugin root lacks.
   const factsLines =
     plugin === null
       ? await remotePinMoveFactsLines(input.entry, input.preview.to)
@@ -1009,7 +959,6 @@ async function confirmRemotePinMove(input: {
   const context = confirmationContext();
   if (input.json || !context.stdinIsTTY || !context.stderrIsTTY) {
     const review = `review it, then authorize with --yes: ${PRODUCT_NAME} update ${input.kind}/${input.name} --yes`;
-    // The boundary indents the first hint line itself, and no later line.
     const hint = [
       ...(plugin === null ? [] : pluginVersionLines(plugin)),
       ...runsLines,
@@ -1032,7 +981,6 @@ async function confirmRemotePinMove(input: {
   return { approved: false, plan: null };
 }
 
-/** The manifest version line of a plugin pin move, when either pin has one. */
 function pluginVersionLines(plugin: RemotePluginChange): string[] {
   if (plugin.versionFrom === null && plugin.versionTo === null) return [];
   const from = sanitizeDisplayText(plugin.versionFrom ?? "(none)");
@@ -1041,14 +989,9 @@ function pluginVersionLines(plugin: RemotePluginChange): string[] {
 }
 
 /**
- * The plugin-facts block for the pin-move prompt, read at the commit the pin
- * would move to — never at the pinned commit, which is what the user already
- * saw when the row was installed.
- *
- * The facts only inform the reader; they never decide whether the pin moves.
- * A read failure (the subpath gone at that commit, an unsafe name, anything
- * `candidateAtSubpath` throws) must not fail the update, so it is caught here
- * and reported as one line instead.
+ * Read at the commit the pin would move to, not the pinned one; facts only
+ * inform, so any read failure is caught and reported as one line rather than
+ * failing the update.
  */
 async function remotePinMoveFactsLines(
   entry: RemoteLockEntry,
@@ -1069,7 +1012,6 @@ async function remotePinMoveFactsLines(
     : [];
 }
 
-/** What the pin move would destroy, through the planner every write uses. */
 async function planRemotePinMove(input: {
   project: string;
   manifest: Manifest;
@@ -1096,8 +1038,9 @@ async function planRemotePinMove(input: {
     sourceCommit: pin.sourceCommit,
     sourcePinDigest: pin.sourcePinDigest,
   };
-  // The snapshot, not just the change list: `assertDestructivePlanUnchanged`
-  // compares it, and it is what notices a file edited while the prompt was up.
+  // Keep the snapshot, not just the change list:
+  // `assertDestructivePlanUnchanged` compares it to detect files edited while
+  // the prompt was up.
   const planned = await planCopyDirectoryDestruction({
     project: input.project,
     currentSource: current,
@@ -1136,7 +1079,6 @@ function remoteResult(
   };
 }
 
-/** A remote skill has nowhere to promote to, so its next step is the adopt. */
 function printRemoteAdoptGuidance(results: UpdateResult[]): void {
   for (const result of results) {
     if (result.source !== "remote") continue;
@@ -1147,7 +1089,6 @@ function printRemoteAdoptGuidance(results: UpdateResult[]): void {
   }
 }
 
-/** Once per run: a bare sweep names the command that would move these pins. */
 function printRemoteSkipHint(results: UpdateResult[]): void {
   const skipped = results.filter(
     (result) => result.source === "remote" && result.action === "skipped",
@@ -1179,12 +1120,11 @@ async function updateMergeTarget(input: {
   remotes: RemotesLock;
   dryRun: boolean;
   /**
-   * The upstream pin read before the merge. The merge pins it instead of a
-   * fresh one, and `revalidateUpdateMergeInputs` refuses when the data repo
-   * moved past it while the consent prompt was open.
+   * The merge pins this upstream pin instead of a fresh one, and
+   * `revalidateUpdateMergeInputs` refuses if the data repo moved past it during
+   * the prompt.
    */
   upstreamPin?: PinnedSource;
-  /** D7 point 2 options for the question over the merged files. */
   consent: PluginConsentOptions;
 }): Promise<UpdateResult | null> {
   const { project, dataRepo, target, dryRun } = input;
@@ -1326,9 +1266,6 @@ async function updateMergeTarget(input: {
   } else if (localChanged && !upstreamChanged) {
     resultFiles = localFiles;
   }
-  // D3 over the files the write puts in the folder, before any write.
-  // The installed entries the merge writer keeps beside the merged files,
-  // from the writer's own rule. D3 and D7 point 2 both read them.
   const kept = await keptByInstalledReconciliation(
     snapshot.localPath,
     localFiles,
@@ -1391,11 +1328,9 @@ async function updateMergeTarget(input: {
     });
   }
 
-  // D7 point 2 over the merged files, the exact tree the write below puts in
-  // the folder. An entry is new when the old pin did not run it. An unknown
-  // entry always asks. `revalidateUpdateMergeInputs` then refuses if the
-  // inputs moved while the prompt was open, so the approved files are the
-  // written files.
+  // Consent reads the exact merged tree being written, and
+  // `revalidateUpdateMergeInputs` refuses if inputs moved during the prompt, so
+  // approved files are the written files.
   const newRuns =
     (lockChanged || filesChanged) && installsAtSkillTarget(kind)
       ? await mergedPluginNewRuns({
@@ -1418,7 +1353,6 @@ async function updateMergeTarget(input: {
   }
 
   if (!dryRun && (lockChanged || filesChanged)) {
-    // D2 guard 5: before the copy-directory write below.
     if (installsAtSkillTarget(kind)) {
       await assertSkillTargetFree(
         project,
@@ -1489,9 +1423,8 @@ async function updateMergeTarget(input: {
 }
 
 /**
- * The runs entries an `update --merge` result adds over the old pin, or null
- * when the merged files are not a plugin to Claude Code. PIN-8: an unreadable
- * old pin counts as a tree that runs nothing, so every entry is new.
+ * Use an empty pinned tree when the old pin is unreadable so missing history
+ * cannot hide new runs; kept local files still count on both sides.
  */
 async function mergedPluginNewRuns(input: {
   dataRepo: string;
@@ -1499,7 +1432,6 @@ async function mergedPluginNewRuns(input: {
   name: string;
   entry: DataLockEntryV4;
   files: readonly NamedFile[];
-  /** The installed entries the merge writer keeps beside `files`. */
   kept: readonly KeptInstalledEntry[];
 }): Promise<PluginRuns | null> {
   const { dataRepo, kind, name, entry } = input;
@@ -1507,8 +1439,6 @@ async function mergedPluginNewRuns(input: {
     gitTreeSource({ repo: dataRepo, kind, name, commit: entry.sourceCommit }),
     kind,
   ).catch(() => []);
-  // Every installed entry the writer keeps sits beside the merged files, so
-  // the runs reader reads those too, on both sides.
   const extras = input.kept;
   const merged = await itemPluginRunsFromFiles(kind, input.files, extras);
   if (merged === null) return null;
@@ -1638,21 +1568,17 @@ export interface UpdateContext {
   dryRun: boolean;
   explicit: boolean;
   externalSkillByName: Map<string, ExternalSkill>;
-  /** D2 guard 5: the populations `assertSkillTargetFree` scans. */
   projectLock: Lock;
   localLock: Lock;
   remotes: RemotesLock;
   /**
-   * The pins and needs the preflight read, keyed by `pinKey`. The write pass
-   * records exactly these, so a data-repo commit after the consent prompt or
-   * after the re-plan check cannot reach the folder unasked, and the lock
-   * entry pairs files and needs from one read.
+   * The write pass records exactly these pins and needs, so a data-repo commit
+   * after the prompt cannot reach the folder unasked.
    */
   approvedPins?: ReadonlyMap<string, ApprovedSource>;
   /**
-   * Data-repo `HEAD`, read once at the start of each preflight pass. Every pin
-   * and needs snapshot in the pass reads from this commit. The next pass reads
-   * `HEAD` again, so the revalidation pass still sees a moved `HEAD`.
+   * Read once per preflight pass so every snapshot shares one commit; the next
+   * pass re-reads `HEAD` so revalidation still sees a moved `HEAD`.
    */
   dataHead?: string;
 }
@@ -1660,15 +1586,12 @@ export interface UpdateContext {
 interface UpdatePreflight {
   results: UpdateResult[];
   destructivePlan: DestructiveChangePlan;
-  /** The pin and needs each data target was planned at, keyed by `pinKey`. */
   pins: Map<string, ApprovedSource>;
 }
 
 /**
- * One read of a data target: its pin and the needs snapshot taken with it.
- * The needs come from data-repo HEAD, not from `pin.sourceCommit`: the pin
- * commit is the last commit that touched the content and excludes sidecar
- * commits, so a needs-only change would never be seen there.
+ * Needs come from data-repo HEAD, not `pin.sourceCommit`, which excludes
+ * sidecar commits so a needs-only change would never be seen.
  */
 interface ApprovedSource {
   pin: PinnedSource;
@@ -1685,8 +1608,6 @@ async function planUpdatePreflight(
   projectLock: WritableLock,
   localLock: WritableLock,
 ): Promise<UpdatePreflight> {
-  // A failed read leaves `dataHead` unset, so each item reads `HEAD` itself
-  // and reports the failure as before.
   const dataHead =
     ctx.dataRepo === undefined
       ? undefined
@@ -1696,11 +1617,9 @@ async function planUpdatePreflight(
     dryRun: true,
     ...(dataHead !== undefined && { dataHead }),
   };
-  // Each item reads its blobs at its pin and at its new source commit. An item
-  // path holds the same blobs at `HEAD` as at its last touching commit, so one
-  // read at both commits covers every item.
+  // An item path holds the same blobs at `HEAD` as at its last touching commit,
+  // so one read at both commits covers every item.
   if (ctx.dataRepo !== undefined && dataHead !== undefined) {
-    // One history walk selects the new source commit of every item.
     await prefetchSourceCommits(
       ctx.dataRepo,
       dataHead,
@@ -1765,10 +1684,8 @@ async function planUpdatePreflight(
       parsed.name,
       target.scope,
     );
-    // A planner failure is this item's failure, not the run's. Before PIN-8 an
-    // unresolvable pin threw straight through `planUpdatePreflight` to the CLI
-    // boundary, so one wedged item stopped every healthy item in the project
-    // from being written.
+    // A planner failure is this item's failure, so one unresolvable pin cannot
+    // stop healthy items from being written.
     try {
       if (isCopyDirectoryItemKind(parsed.kind)) {
         const planned = await planCopyDirectoryDestruction({
@@ -1974,21 +1891,15 @@ interface FragmentContribution {
 
 export interface TargetOutcome {
   result: UpdateResult;
-  /** Lock entry to write into the target's scope when this is not a dry run. */
   newEntry?: LockEntryV4;
-  /** Whether the pinned content changed (marks the scope's lock dirty). */
   changed?: boolean;
-  /** Fragment items defer their lock write and reconcile after the loop. */
   fragment?: FragmentContribution;
-  /** The pin and needs a data target was planned or written at. */
   approved?: ApprovedSource;
 }
 
 /**
- * Plan or write one target. The preflight and the write pass both call it.
- * Exported for tests, which check that the write pass installs the pin in
- * `ctx.approvedPins`, and the needs read with it, not a fresh read of the
- * data repo.
+ * Exported for tests, which check the write pass installs the pin and needs in
+ * `ctx.approvedPins`, not a fresh read.
  */
 export async function updateOneTarget(
   ctx: UpdateContext,
@@ -2015,8 +1926,6 @@ export async function updateOneTarget(
     const message = skillsShConflictMessage(
       ctx.externalSkillByName.get(parsed.name)!,
     );
-    // An explicit request to update a skills.sh-owned skill is refused; an
-    // implicit sweep records the skip and continues.
     if (ctx.explicit) {
       throw new PreconditionError(
         `not updating ${parsed.kind}/${parsed.name} — ${message}`,
@@ -2033,11 +1942,8 @@ export async function updateOneTarget(
       },
     };
   }
-  // D2 guard 5: before the copy-directory write, dry run included —
-  // `updateDataTarget` is the one function both passes call. Outside the
-  // per-item `try` below, mirroring the skills.sh check above: an explicit
-  // `update <ref>` refuses (exit 3 through `PreconditionError`); a bare
-  // sweep records the item as failed and converges the rest.
+  // Outside the per-item `try` so an explicit `update <ref>` refuses with exit
+  // 3 while a bare sweep records the failure and converges the rest.
   if (installsAtSkillTarget(parsed.kind)) {
     try {
       await assertSkillTargetFree(
@@ -2056,13 +1962,10 @@ export async function updateOneTarget(
       return failed(err);
     }
   }
-  // D3 and D7 point 2, outside the per-item `try` for the reason the check
-  // above gives: an explicit `update plugins/<n>` whose new tree renames the
-  // plugin refuses with exit 3, before any write. A skill whose new tree
-  // holds a plugin manifest asks the same way (R1).
-  // One pin for the consent read and for the write: the approved pin in the
-  // write pass, else the current committed tree. Null here means the pin
-  // cannot be built; `updateDataTarget` then reports that failure itself.
+  // Outside the per-item `try` like the check above, so an explicit `update
+  // plugins/<n>` whose new tree renames the plugin refuses with exit 3 before
+  // any write. Consent and write share one pin: the approved one, else the
+  // current tree.
   const approved = ctx.approvedPins?.get(pinKey(scope, key)) ?? null;
   const pin =
     entry.source === "data" &&
@@ -2110,8 +2013,6 @@ export async function updateOneTarget(
             approved?.needs ?? null,
           )
         : await updateSystemTarget(ctx, scope, key, parsed, entry);
-    // A dry pass carries what the real run asks about. The preflight is a
-    // dry pass, so the command reads the consent points from these rows.
     if (ctx.dryRun && newRuns !== null && runsHaveEntries(newRuns)) {
       outcome.result.newRuns = newRuns;
     }
@@ -2122,15 +2023,8 @@ export async function updateOneTarget(
 }
 
 /**
- * The runs entries a shelf plugin's pin move adds (D7 point 2). Null when
- * the pin would not move, when the new pin cannot be built
- * (`updateDataTarget` reports that failure itself), or for a skill whose new
- * tree holds no plugin manifest. Throws the D3 refusal when a plugin's new
- * tree names another plugin. A skill is never renamed, so a skill that holds
- * a manifest only reports its new runs.
- *
- * Only an added entry asks. A script that changes behind an unchanged hook
- * line is not a new entry (D7 limit, M2).
+ * Only an added runs entry asks; a script that changes behind an unchanged hook
+ * line is not detected.
  */
 async function shelfPluginNewRuns(
   dataRepo: string,
@@ -2156,17 +2050,12 @@ async function shelfPluginNewRuns(
   );
 }
 
-/** Where a shelf item is installed, for the local files its update keeps. */
 interface InstalledItem {
   project: string;
   scope: "project" | "local";
 }
 
-/**
- * `shelfPluginNewRuns` with the new pin it read. The `--merge` path passes
- * that pin to `updateMergeTarget`, so the tree the user approved is the tree
- * the merge pins.
- */
+/** Returns the new pin too, so the merge pins the tree the user approved. */
 async function shelfPluginPinMove(
   dataRepo: string,
   kind: SkillTargetKind,
@@ -2174,7 +2063,6 @@ async function shelfPluginPinMove(
   entry: DataLockEntryV4,
   memo: GitReadMemo,
   installed?: InstalledItem,
-  /** The pin to read; the current committed tree when absent. */
   given?: PinnedSource,
 ): Promise<{ pin: PinnedSource; newRuns: PluginRuns } | null> {
   const next =
@@ -2189,8 +2077,8 @@ async function shelfPluginPinMove(
   ) {
     return null;
   }
-  // PIN-8: an unreadable old pin compares against a tree with no files, so
-  // the new tree's entries count as new and the update asks.
+  // An unreadable old pin compares against an empty tree, so every new entry
+  // counts as new and the update asks for consent.
   const previous = await itemTreeEntriesAtCommit(
     gitTreeSource({
       repo: dataRepo,
@@ -2201,9 +2089,8 @@ async function shelfPluginPinMove(
     kind,
     memo,
   ).catch(() => []);
-  // The update keeps ignored local files beside the new pinned files, so
-  // the runs reader reads both (row 4). A kept local manifest can arm a hook
-  // the new tree adds.
+  // Update keeps ignored local files beside the new pinned files, and a kept
+  // local manifest can arm a hook the new tree adds.
   const extras =
     installed === undefined
       ? []
@@ -2239,7 +2126,6 @@ async function shelfPluginPinMove(
   return newRuns === null ? null : { pin: next, newRuns };
 }
 
-/** A shelf row's new runs as a D7 point 2 consent point. */
 function pinMovePoints(result: UpdateResult): PluginConsentPoint[] {
   return result.source === "data" && result.newRuns !== undefined
     ? [
@@ -2258,9 +2144,7 @@ async function updateDataTarget(
   key: string,
   parsed: ReturnType<typeof parseLockKey>,
   entry: DataLockEntryV4,
-  /** The pin `updateOneTarget` read for consent, or null to resolve here. */
   givenPin: PinnedSource | null,
-  /** The approved needs snapshot that goes with `givenPin`, or null. */
   givenNeeds: ApprovedSource["needs"] | null,
 ): Promise<TargetOutcome> {
   if (scope === "local") {
@@ -2305,10 +2189,8 @@ async function updateDataTarget(
     throw new Error(`no update strategy for ${parsed.kind}/${parsed.name}`);
   }
 
-  // One pin from the committed tree, exactly as `add` builds it. Under lock
-  // version 4 there is no second identity to keep in step: the working tree is
-  // not consulted, so a checkout filter or an index bit cannot move the value
-  // this records.
+  // Pin comes from the committed tree only, so checkout filters or index bits
+  // cannot change the recorded value.
   const pin =
     givenPin ??
     (await pinCurrentSource(ctx.dataRepo, parsed.kind, parsed.name, {
@@ -2318,8 +2200,6 @@ async function updateDataTarget(
   const sha = pin.sourcePinDigest;
   const sourceCommit = pin.sourceCommit;
   if (isCopyDirectoryItemKind(parsed.kind)) {
-    // D2 guard 5 already ran in `updateOneTarget`, the caller both the dry
-    // and the real pass share, before this function was reached at all.
     await assertNoDestinationCollisions(
       `${parsed.kind}/${parsed.name}`,
       installedPath(ctx.project, parsed.kind, parsed.name),
@@ -2363,13 +2243,9 @@ async function updateDataTarget(
         `--local is not supported for ${parsed.kind} fragments`,
       );
     }
-    // PIN-8 stops here for fragments. A fragment's installed state is merged
-    // into a shared output alongside other fragments and the project's own
-    // values, so with the previous pin unreadable capshelf cannot tell this
-    // item's former contribution from a project-local value: removing it may
-    // discard the user's configuration and keeping it may leave dead managed
-    // state. The consent prompt cannot describe that choice, so the item is
-    // refused with the one path that is unambiguous.
+    // With the previous pin unreadable, a fragment's old contribution to shared
+    // output can't be told from project-local values, so the item is refused
+    // rather than risk discarding config or leaving dead state.
     const targets = await touchedFragmentTargetsForItem(
       ctx.dataRepo,
       parsed.kind,
@@ -2522,10 +2398,8 @@ async function updateDataTarget(
 }
 
 /**
- * The installed subagent sha as the *previous* pin describes it. PIN-8: an
- * unresolvable previous commit makes the installed state unclassifiable, which
- * is a missing "current" value in the report, not a reason to refuse the
- * update whose target is the new commit.
+ * An unresolvable previous commit leaves installed state unclassifiable; report
+ * a missing current value rather than refusing the update.
  */
 async function installedSubagentShaAtPin(
   project: string,
@@ -2633,8 +2507,8 @@ function printUpdateResults(results: UpdateResult[]): void {
       console.log(`• ${id} would reconcile`);
       printUpdateDetails(r);
     } else if (r.action === "skipped") {
-      // `•`, not `✓`. A bare sweep leaves every remote pin alone on purpose, and
-      // a check mark beside a row nothing happened to reads as "done".
+      // Use `•` not `✓`: a bare sweep leaves remote pins alone, and a check
+      // mark would read as done.
       console.log(`• ${id} skipped`);
       printUpdateDetails(r);
     } else if (r.action === "merged" || r.action === "would-merge") {
@@ -2648,9 +2522,6 @@ function printUpdateResults(results: UpdateResult[]): void {
       console.log(`  base: ${r.mergeBase}`);
       console.log(`  upstream pin: ${r.mergedUpstreamCommit}`);
       console.log(`  installed result: ${r.mergeResultSha}`);
-      // A remote skill has no `--local` form and nowhere to promote to, so both
-      // lines are built for its one shape. `printRemoteAdoptGuidance` names the
-      // adopt for it after the loop.
       const scopeFlag =
         r.source !== "remote" && r.scope === "local" ? " --local" : "";
       console.log(
@@ -2673,9 +2544,8 @@ function printUpdateResults(results: UpdateResult[]): void {
 }
 
 /**
- * Once per run, not per item. The marker is cleared by exactly one command, so
- * a run that skipped items has to name it — and a project with several marked
- * items should not repeat the same line for each.
+ * Print once per run: one command clears the marker, and repeating it per
+ * marked item is noise.
  */
 function printKeptLocalHint(results: UpdateResult[]): void {
   const first = results.find((result) => result.action === "kept-local");

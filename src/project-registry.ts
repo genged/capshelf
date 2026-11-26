@@ -1,14 +1,6 @@
 /**
- * The machine-wide list of Capshelf projects the web UI shows.
- *
- * `capshelf init` adds the project it initializes, and `capshelf ui` adds the
- * project it runs inside. Nothing removes an entry: the file is small, user
- * owned, and edited by hand when a project moves. The UI reports a registered
- * path that no longer holds a manifest instead of hiding it.
- *
- * The file lives under the XDG config home, next to nothing else Capshelf
- * writes there today, following the clone cache convention in
- * `data-bootstrap.ts` (`$XDG_DATA_HOME/capshelf/data`).
+ * Nothing removes an entry: the file is small, user-owned, and hand-edited when
+ * a project moves; the UI reports a missing path rather than hiding it.
  */
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
@@ -35,10 +27,6 @@ const ProjectRegistrySchema = z.object({
 export type RegisteredProject = z.infer<typeof RegisteredProjectSchema>;
 export type ProjectRegistry = z.infer<typeof ProjectRegistrySchema>;
 
-/**
- * `$XDG_CONFIG_HOME/capshelf/projects.json`, falling back to
- * `~/.config/capshelf/projects.json` when the variable is unset or blank.
- */
 export function projectRegistryPath(
   env: Record<string, string | undefined> = process.env,
 ): string {
@@ -47,7 +35,6 @@ export function projectRegistryPath(
   return join(base, PRODUCT_NAME, PROJECT_REGISTRY_FILE);
 }
 
-/** The one field read before the version decides whether the file is ours. */
 const VersionProbe = z.object({ version: z.number().optional() });
 
 export function emptyProjectRegistry(): ProjectRegistry {
@@ -80,11 +67,6 @@ export async function saveProjectRegistry(
   });
 }
 
-/**
- * Add `project` to the registry in memory. Returns true when it was new.
- * Paths compare resolved, so `.` and a trailing slash never register a
- * second copy of the same project. Order is insertion order.
- */
 export function addRegisteredProject(
   registry: ProjectRegistry,
   project: string,
@@ -98,7 +80,6 @@ export function addRegisteredProject(
   return true;
 }
 
-/** Load, add, and save. Returns whether the project was new. */
 export async function registerProject(
   project: string,
   path: string = projectRegistryPath(),

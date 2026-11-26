@@ -89,8 +89,6 @@ describe("status diff helpers", () => {
     const utf16 = Buffer.from("plain text", "utf16le");
     expect(await unifiedDiffBytes("from", "to", utf16, null)).toBe(stanza);
 
-    // Equal binary bytes leave only the mode to differ, and a mode-only
-    // diff carries no content, so it still renders.
     const modeOnly = await unifiedDiffBytes("from", "to", font, font, {
       fromExecutable: false,
       toExecutable: true,
@@ -198,8 +196,6 @@ describe("status diff helpers", () => {
 
     expect(diff?.item).toBe("data/skills/hello");
     expect(diff?.path).toBe(installed);
-    // locked is the baseline (---), current the new side (+++): a local edit
-    // reads as an addition and locked-only content as a removal, like git diff.
     expect(diff?.text).toContain("--- SKILL.md (locked data/skills/hello)");
     expect(diff?.text).toContain("+++ SKILL.md (current)");
     expect(diff?.text).toContain("+local edit");
@@ -272,7 +268,6 @@ describe("status diff helpers", () => {
     );
     expect(diff?.text).not.toContain("\u0000");
     expect(diff?.text).not.toContain("�");
-    // The text file beside it still renders content hunks.
     expect(diff?.text).toContain("-locked v1");
     expect(diff?.text).toContain("+local edit");
   });
@@ -396,18 +391,15 @@ describe("status diff helpers", () => {
 
     await mkdir(dataItem, { recursive: true });
     await writeFile(join(dataItem, "SKILL.md"), "locked v1\n");
-    // The committed upstream sidecar must not appear in the expected file
-    // map either — it is never materialized into projects.
     await writeFile(join(dataItem, ".capshelf.yml"), "tags: [a]\n");
     await commitAll(dataRepo, "hello v1");
     const sourceCommit = await lastTouchingCommit(dataRepo, "skills/hello");
-    // `currentCopyDirectoryItemSha` is the *legacy* installed hash, still used
-    // for lock version 3 entries, so the expectation is the legacy hash too.
+    // Lock version 3 entries still use the legacy installed hash, so the
+    // expectation uses it too.
     const lockedSha = await shaOfGitVisibleItem(dataRepo, "skills/hello");
 
     await mkdir(installed, { recursive: true });
     await writeFile(join(installed, "SKILL.md"), "locked v1\n");
-    // A project-side sidecar is not an extra file.
     await writeFile(join(installed, ".capshelf.yml"), "tags: [other]\n");
 
     const manifest = {
@@ -676,7 +668,9 @@ describe("status diff helpers", () => {
       expect(malformed.exitCode).toBe(1);
       const malformedError = JSON.parse(malformed.stderr.toString());
       expect(malformedError.error.exitCode).toBe(1);
-      expect(directMessage).toContain(malformedError.error.message);
+      expect(malformedError.error.message).toContain(
+        `${settingsPath}: JSON Parse error`,
+      );
       expect(directMessage).toContain("JSON Parse error");
 
       await writeFile(settingsPath, edited);
@@ -817,9 +811,9 @@ describe("status diff helpers", () => {
     const textconv = join(dataRepo, "textconv.sh");
     await writeFile(textconv, `#!/bin/sh\ntouch ${sentinel}\necho redacted\n`);
     await chmod(textconv, 0o755);
-    // A clean filter is the one an argument to `git diff` cannot switch off:
-    // the worktree file is converted before it is compared, so this both runs
-    // a configured program and rewrites what the diff says.
+    // A clean filter cannot be disabled by a `git diff` argument; it converts
+    // the worktree file before comparing, so it both runs a program and
+    // rewrites the diff.
     const clean = join(dataRepo, "clean.sh");
     await writeFile(
       clean,
@@ -876,8 +870,6 @@ describe("status diff helpers", () => {
       },
     };
 
-    // A dirty canonical source (tracked edit plus an untracked sibling) and a
-    // drifted install, so both diff paths run.
     await writeFile(
       join(fragment, "claude.json"),
       `${JSON.stringify({ mcpServers: { server: { command: "dirty-mcp" } } })}\n`,
@@ -906,7 +898,6 @@ describe("status diff helpers", () => {
           sourceCommit: fragmentCommit,
         },
       });
-      // The bytes, not the filter's version of them.
       expect(sourceDirty?.text).toContain("-");
       expect(sourceDirty?.text).toContain("dirty-mcp");
       expect(sourceDirty?.text).toContain('+command = "untracked-mcp"');
@@ -936,9 +927,6 @@ describe("status diff helpers", () => {
     expect(existsSync(sentinel)).toBe(false);
   });
 
-  // Every state that makes `status` call a fragment source dirty should get a
-  // non-empty explanation. `git diff HEAD` gave most of these for free; reading
-  // bytes has to earn each one back. Each case names what it exercises.
   const SOURCE_STATES: Array<{
     name: string;
     apply: (source: string, dataRepo: string) => Promise<void>;

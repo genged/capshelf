@@ -56,7 +56,6 @@ test(
     expect(sidecar).toContain("upstream:");
     expect(sidecar).toContain("upstreamCommit:");
     expect(sidecar).toContain("upstreamPath: skills/pdf");
-    // The sidecar is committed with the item, not left dirty in the shelf.
     const dirty = await $`git -C ${world.dataRepo} status --porcelain`
       .quiet()
       .text();
@@ -189,8 +188,6 @@ test(
 test(
   "a retry after an interruption between step 11 and step 12 converges",
   async () => {
-    // Constructed state, not a raced one: the adopt runs to completion, then
-    // the remote row is written back by hand.
     const { world, run, remotesPath } = await installedFromRemote();
     const before = await readFile(remotesPath, "utf-8");
     expect(
@@ -216,7 +213,7 @@ test(
   "a skill adopt beside a same-name skills.sh row releases the remote row and keeps skills-lock.json",
   async () => {
     // A skills.sh row is a legitimate previous owner of a skill, so the
-    // skill-target guard leaves this adopt as it was before that guard.
+    // skill-target guard must not refuse this adopt.
     const { world, run, remotesPath } = await installedFromRemote();
     const skillsLock = join(world.project, "skills-lock.json");
     await writeFile(
@@ -322,9 +319,6 @@ test(
 test(
   "share without --adopt reports the earlier refusal before the missing data repo",
   async () => {
-    // The data-repo resolution moved below the lock-key refusals, for both
-    // paths, so `share` has one refusal precedence rather than two. This is
-    // the one visible change on the path without `--adopt`.
     const world = await initRemoteProject();
     const run = runInProcess(world.project);
     expect((await run(["add", "skills/placeholder", "--json"])).exitCode).toBe(

@@ -100,10 +100,9 @@ describe("rm destructive-change consent", () => {
           await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
         }
 
-        // Removing a copy item is a project-only deletion. Degrading to "every
-        // installed path is local state" keeps the user consenting to the full
-        // list instead of stranding the item in exactly the situations — a
-        // deleted clone, a rewritten upstream — where rm is what they need.
+        // Copy-item removal is project-only, so it degrades to treating every
+        // installed path as local state rather than stranding the item when the
+        // source is gone.
         const refused = await run(["rm", "skills/hello", "--json"]);
         expect(refused.exitCode).toBe(3);
         expect(refused.stderr.toString()).toContain(
@@ -144,8 +143,8 @@ describe("rm destructive-change consent", () => {
         "---\nname: reviewer\ndescription: Review changes\n---\n\nReview.\n",
       );
       await commitAll(dataRepo, "fragment and subagent");
-      // --no-upstream so the refusal below is the data-repo check itself,
-      // not the upstream-mismatch check that would otherwise fire first.
+      // --no-upstream so the refusal is the data-repo check, not the earlier
+      // upstream-mismatch check.
       expect(
         (await run(["init", "--data", dataRepo, "--no-upstream"])).exitCode,
       ).toBe(0);
@@ -157,10 +156,8 @@ describe("rm destructive-change consent", () => {
       local.dataRepo = join(project, "no-such-data-repo");
       await writeFile(localPath, `${JSON.stringify(local, null, 2)}\n`);
 
-      // A copy directory is deleted from the project alone, so its removal
-      // degrades when the source is gone. These two rebuild their outputs from
-      // the data repo, so they must still refuse rather than guess: the lazy
-      // resolution is scoped to the branch that does not need it.
+      // Settings and subagent removal rebuild outputs from the data repo, so
+      // they must refuse rather than guess when the source is gone.
       const lockPath = join(project, ".capshelf", "capshelf.lock.json");
       const lockBefore = await file(lockPath).text();
       const settingsOutput = join(project, ".claude", "settings.json");
@@ -168,12 +165,9 @@ describe("rm destructive-change consent", () => {
 
       for (const ref of ["settings/theme", "subagents/reviewer"]) {
         const refused = await run(["rm", ref, "--yes"]);
-        // A recorded binding that names no clone is the same state as no
-        // binding, so the refusal is the documented exit 6 and its message
-        // says how to bind one. The split is recorded binding against `--data`,
-        // not absent path against present one: a `--data` path that holds no
-        // repository still gets "not a git repository" at exit 3, because the
-        // user named it in this command and the caller can point at it.
+        // A recorded binding naming no clone is the same as no binding (exit
+        // 6), but a `--data` path the user named in this command fails as exit
+        // 3.
         expect({ ref, code: refused.exitCode }).toEqual({ ref, code: 6 });
         expect(refused.stderr.toString()).toContain(
           "no data repo configured for this project",
@@ -208,8 +202,8 @@ describe("rm destructive-change consent", () => {
         join(installed, "node_modules", ".bin", "x"),
       );
 
-      // Refusing to *enumerate* a symlink is strictly worse than listing it:
-      // planCopyDirectoryRemoval exists to say what deletion will destroy.
+      // Listing a symlink beats refusing to enumerate it, since the plan exists
+      // to show what deletion destroys.
       const refused = await run(["rm", "skills/linked", "--json"]);
       expect(refused.exitCode).toBe(3);
       expect(refused.stderr.toString()).toContain(
@@ -245,7 +239,6 @@ describe("rm destructive-change consent", () => {
     expect(refused.stderr.toString()).toContain(
       "replace a managed config contribution",
     );
-    // Comment loss in a strict-JSON target is repair, not consentable loss.
     expect(refused.stderr.toString()).not.toContain("remove config comments");
     expect(await file(output).text()).toContain("// local context");
     expect(await file(lockPath).text()).toBe(lockBefore);

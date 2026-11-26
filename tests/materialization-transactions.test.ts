@@ -180,9 +180,8 @@ describe("materialization transactions", () => {
       );
       expect(run(["add", "mcp/tool"]).exitCode).toBe(0);
 
-      // Both managed contributions are removed by hand, so each output has
-      // real work to do. Without that the failing target is skipped as
-      // already-current and the test proves nothing.
+      // Both outputs are edited by hand so each has real work; otherwise the
+      // failing target is skipped as already-current.
       const mcpOutput = join(project, ".mcp.json");
       const codexOutput = join(project, ".codex", "config.toml");
       const localMcp = `${JSON.stringify(
@@ -206,9 +205,8 @@ describe("materialization transactions", () => {
       const codexDir = join(project, ".codex");
       await chmod(codexDir, 0o500);
       try {
-        // A mode-500 directory refuses the temporary file the atomic swap
-        // writes. An effective user that ignores the mode — root — cannot
-        // produce the failure this test is about.
+        // A mode-500 directory refuses the atomic-swap temp file, but root
+        // ignores the mode and cannot reproduce the failure.
         const probe = join(codexDir, "probe.tmp");
         const writable = await writeFile(probe, "x").then(
           () => true,
@@ -221,8 +219,8 @@ describe("materialization transactions", () => {
           );
         }
 
-        // claude-mcp is planned and written first, so its output is the swap
-        // that must be undone when codex-config fails (docs/cli.md:449-457).
+        // claude-mcp is written first, so its swap is what must be undone when
+        // codex-config fails.
         const result = run(["apply", "--yes", "--json"]);
         expect(result.exitCode).toBe(1);
         const payload = jsonOutput(result);
@@ -232,7 +230,6 @@ describe("materialization transactions", () => {
           "data/codex-config/(merged)",
         ]);
         expect(errored[0]?.error ?? "").toContain("config.toml");
-        // No target reports an outcome, because none of them kept one.
         expect(items.filter((row) => row.key === "data/mcp/(merged)")).toEqual(
           [],
         );
@@ -243,7 +240,6 @@ describe("materialization transactions", () => {
         await chmod(codexDir, 0o755);
       }
 
-      // With the target writable the same command converges both outputs.
       expect(run(["apply", "--yes"]).exitCode).toBe(0);
       const mcp = await file(mcpOutput).json();
       expect(Object.keys(mcp.mcpServers).sort()).toEqual(["local", "tool"]);

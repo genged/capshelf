@@ -146,10 +146,8 @@ describe("fragment output planning", () => {
       };
     }
 
-    // Naming both fragments and the conflicting path, instead of silently
-    // last-write-win by manifest order. The earlier fragment comes from the
-    // provenance map, so assert the name: a lookup that misses still refuses,
-    // but degrades the message to "an earlier fragment".
+    // Assert the earlier fragment's name: a provenance lookup that misses still
+    // refuses but degrades the message to "an earlier fragment".
     await expect(
       applyFragmentOutput({
         project,
@@ -166,12 +164,9 @@ describe("fragment output planning", () => {
   });
 
   test("names the right fragment when another leaf path shares its words", async () => {
-    // Provenance is keyed by the leaf path. A key may hold any character that
-    // JSON allows, including whatever separator a joined key would pick, so
-    // two distinct paths must not share a key. Here ["status line","command"]
-    // and ["status","line command"] differ, but join them on a space and both
-    // read "status line command": the conflict below would then name "nested",
-    // which set the other path and is not party to this conflict.
+    // Provenance keys must be unambiguous for any JSON key: joining ["status
+    // line","command"] and ["status","line command"] on a space would collide
+    // and blame the wrong fragment.
     const dataRepo = await tempRepo();
     const project = await tempDir("capshelf-fragments-project-");
     for (const [name, value] of [
@@ -561,7 +556,6 @@ describe("fragmentContributionState", () => {
     outputPath: string;
   }
 
-  // A claude-mcp fragment exercising nested objects (env) and arrays (args).
   const managedFragment = {
     mcpServers: {
       github: {
@@ -676,8 +670,6 @@ describe("fragmentContributionState", () => {
   test("stays ok when managed array entries sit among extra user entries", async () => {
     const fixture = await appliedMcpFixture();
     const current = JSON.parse(await file(fixture.outputPath).text());
-    // Reordered and interleaved with user-added flags: managed entries are
-    // matched as a subset, not positionally.
     current.mcpServers.github.args = [
       "--verbose",
       "repo",
@@ -709,7 +701,6 @@ describe("shaOfFragmentItemAtCommit", () => {
     );
     expect(headSha).toBe(worktreeSha);
 
-    // Dirty worktree edit: the worktree sha moves, the HEAD sha does not.
     await writeFile(
       join(dataRepo, "settings", "theme", "settings.json"),
       JSON.stringify({ theme: "light" }),
@@ -736,8 +727,8 @@ describe("shaOfFragmentItemAtCommit", () => {
     await commitAll(dataRepo, "github mcp");
     const committedSha = await shaOfFragmentItem(dataRepo, "mcp", "github");
 
-    // Dirty-delete one canonical file: the worktree-existsSync trap would
-    // drop it from the hash; the HEAD-committed hash must keep it.
+    // A worktree `existsSync` check would drop a dirty-deleted file from the
+    // hash; the HEAD-committed hash must keep it.
     await rm(join(dataRepo, "mcp", "github", "codex.toml"));
     expect(
       await shaOfFragmentItemAtCommit(dataRepo, "mcp", "github", "HEAD"),

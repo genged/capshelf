@@ -1,8 +1,3 @@
-/**
- * The one filter row. Presets first, then the custom range, then a caption
- * that says what the selection resolved to. Everything below the row shows
- * the same slice.
- */
 import type { JSX } from "preact";
 import {
   type Range,
