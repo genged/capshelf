@@ -256,7 +256,7 @@ registered.
 | `self-update` | check for and install a Homebrew update for the capshelf binary; supports `--check` and `--yes` | implemented |
 | `ui` | serve a read-only status dashboard for every registered project on localhost; `--port`, `--no-open`, and `--json` | implemented |
 | `marketplace ...` | author, validate, sync, rename/retire, and package independent Claude/Cowork and Codex plugin catalogs in the data repo | implemented |
-| `validate <name>` | lint an item (frontmatter, structure, broken refs) | roadmap |
+| `validate [<item>]` | lint skills, read-only: frontmatter, `name`, description size, body length, relative links, and two style heuristics. With no item, it checks every skill in the bound data repo. `--here` checks the installed copies. `--strict` makes a warning exit 4. Supports `--json` (see validate) | implemented |
 | `diff <name> [<ref>]` | show what would change on apply/update/promote | roadmap |
 | `doctor` | audit integrity (requires/conflicts, lockfile drift, uniqueness, system/data namespace collisions) | roadmap |
 | `journal` | recent activity (who/when/what) | roadmap |
@@ -1363,6 +1363,104 @@ bundle installs pin each member's declaration.
 Refs pointing at items deleted upstream are reported as missing requires and
 skipped for conflicts — `add` never fails because a referenced item is gone.
 Only `add` enforces relations; `update`, `apply`, and `rm` do not re-check.
+
+### validate
+
+`capshelf validate [<item>] [--here] [--strict] [--json]` lints skills. It
+reads files and writes nothing. It checks only the `skills` kind. A ref to
+another kind exits 3.
+
+The command selects skills as follows:
+
+| command | skills it checks |
+|---|---|
+| `validate` | every skill in the working tree of the bound data repo |
+| `validate skills/<name>` | that skill in the data repo, or the bundled system skill of that name |
+| `validate --here` | every skill in `capshelf.lock.json` and `local.lock.json`, read from its installed path |
+| `validate skills/<name> --here` | the installed copy of that skill |
+
+In the data repo, the item files are the files that Git can see. A file that
+`.gitignore` hides does not count, because `add` does not deliver it. An
+unknown item exits 2.
+
+Each check gives `pass`, `warn`, `fail`, or `skip`. A check skips when an
+earlier check makes it impossible, for example when SKILL.md is missing.
+
+| check | fail | warn |
+|---|---|---|
+| `skill-md` | SKILL.md is missing | |
+| `frontmatter` | no opening `---`, no closing `---`, invalid YAML, not a mapping, or larger than 16 KiB | |
+| `name` | `name` is not a string, or differs from the directory name | `name` is missing |
+| `description` | missing, empty, not a string, or longer than 1024 characters | longer than about 100 tokens |
+| `body-lines` | | the body after the frontmatter has more than 500 lines |
+| `links` | a relative Markdown link is absolute, leaves the item, or names no file in the item | |
+| `file-refs` | | a `scripts/`, `references/`, or `assets/` path in code names no file in the item |
+| `steps` | | the body has no numbered list of two or more items, and fewer than two numbered headings |
+| `error-recovery` | | no heading names errors, troubleshooting, recovery, failures, or problems. Or that section has no table, or each fix in the table only says to try again |
+
+The token count is an estimate: the number of characters divided by 4,
+rounded up. The agent loads the name and description of every skill in each
+session, so a short description costs less. The body and the files under the
+skill load only when the agent uses it. Move long detail into reference files.
+
+The `links` check skips URLs with a scheme, links to an anchor in the same
+file, and links inside code. It removes a `#fragment` or `?query` and decodes
+`%20`-style escapes before it looks up the file. A link to a directory
+resolves when the item has a file under that directory.
+
+The `steps` and `error-recovery` checks are heuristics for a style guide. A
+skill states its procedure as numbered steps. Each step has one objective, a
+concrete command, and a check of the result. The skill also has a table of
+failures and their fixes. The two checks look only for the shape. They do not
+read the steps. They never fail.
+
+The text output prints one line for each skill, one line for each check, and
+a summary line:
+
+```text
+skills/deploy (data repo)  warn
+  ✓ skill-md        SKILL.md is present
+  ✓ frontmatter     frontmatter parses
+  ✓ name            "name" is "deploy"
+  ✓ description     description is about 18 tokens
+  ✓ body-lines      body has 42 lines
+  ✓ links           3 relative links checked, all resolve
+  ✓ file-refs       1 referenced file checked, all in the item
+  ✓ steps           5 numbered steps
+  ⚠ error-recovery  no error-recovery section; add a heading such as Troubleshooting with a table of failures and fixes
+1 skill: 0 pass, 1 warn, 0 fail
+```
+
+`--json` prints the same facts:
+
+```json
+{
+  "strict": false,
+  "summary": { "items": 1, "pass": 0, "warn": 1, "fail": 0 },
+  "items": [
+    {
+      "ref": "skills/deploy",
+      "source": "data",
+      "location": "data-repo",
+      "path": "/home/me/agent-config/skills/deploy",
+      "result": "warn",
+      "checks": [
+        { "id": "skill-md", "status": "pass", "message": "SKILL.md is present" }
+      ]
+    }
+  ]
+}
+```
+
+`location` is `data-repo`, `system`, `project`, or `local`. `path` is `null`
+for a bundled system skill. A skill that capshelf cannot read has `result`
+`fail`, an empty `checks` list, and an `error` field. Each check can have a
+`details` list, for example the broken links.
+
+The exit code is 0 when no check fails. Warnings exit 0. A failed check exits
+4. With `--strict`, a warning also exits 4. The bundled `capshelf` skill has a
+body longer than 500 lines, so `validate --here --strict` exits 4 in a
+project that tracks it.
 
 ## Safety and consent
 
@@ -2673,7 +2771,7 @@ metadata and never adopts the user skill.
 | 1 | generic error (missing or extra args, bad config, I/O) |
 | 2 | item or bundle not found in data repo |
 | 3 | conflict or refused precondition (project is already initialized, a destructive `add`/`apply`/`update`/`rm`/`revert`/marketplace sync lacks consent, a plugin consent point lacks consent, a project lock is an older version than this capshelf writes, a second item would install into one skill folder, promote would clobber, a system or externally managed item was selected, an untracked target would be overwritten, the data repo ignores a file that a `share` or `promote` commit must contain, a bundle failed preflight, an interactive `add`, `share`, or `promote` had a selection fail or had no usable terminal, `add` was given `<something>/<name>` where the something is not an item kind, or data sync cannot run safely) |
-| 4 | drift detected (for `status --strict`), upstream verification failed, or `data sync` needs human action (diverged history, or upstream commits blocked by a dirty worktree) |
+| 4 | drift detected (for `status --strict`), upstream verification failed, `validate` found a failed check (or a warning with `--strict`), or `data sync` needs human action (diverged history, or upstream commits blocked by a dirty worktree) |
 | 5 | reserved for future unmet-requires checks (`add` with unmet `requires` warns and exits 0) |
 | 6 | no data repo configured for this project (pass `--data`, set `.capshelf/local.json`, or `$CAPSHELF_HOME`) |
 | 7 | required dependency missing (`git` not found on `PATH`, or older than 2.40.0) |

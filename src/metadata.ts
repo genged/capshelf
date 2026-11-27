@@ -118,19 +118,39 @@ export function extractFrontmatter(skillMd: string): FrontmatterBlock {
   return { text: null, malformed: true };
 }
 
+export type FrontmatterDocument =
+  | { ok: true; value: ConfigObject }
+  | { ok: false; warnings: string[] };
+
+/**
+ * An empty `warnings` list on failure means the YAML parsed but is not a
+ * mapping. Catalog reads ignore that case silently; `validate` reports it.
+ */
+export function parseFrontmatterDocument(
+  text: string,
+  itemLabel: string,
+): FrontmatterDocument {
+  if (Buffer.byteLength(text, "utf-8") > MAX_FRONTMATTER_BYTES) {
+    return {
+      ok: false,
+      warnings: [
+        `${itemLabel}: SKILL.md frontmatter is larger than 16 KiB — metadata ignored`,
+      ],
+    };
+  }
+  const doc = parseYamlDocument(text, itemLabel, "SKILL.md frontmatter");
+  if (!doc.ok) return doc;
+  if (!isConfigObject(doc.value)) return { ok: false, warnings: [] };
+  return { ok: true, value: doc.value };
+}
+
 export function parseFrontmatter(
   text: string,
   itemLabel: string,
   expectedName?: string,
 ): ItemMetadata {
-  if (Buffer.byteLength(text, "utf-8") > MAX_FRONTMATTER_BYTES) {
-    return emptyMetadata([
-      `${itemLabel}: SKILL.md frontmatter is larger than 16 KiB — metadata ignored`,
-    ]);
-  }
-  const doc = parseYamlDocument(text, itemLabel, "SKILL.md frontmatter");
+  const doc = parseFrontmatterDocument(text, itemLabel);
   if (!doc.ok) return emptyMetadata(doc.warnings);
-  if (!isConfigObject(doc.value)) return emptyMetadata();
   const raw = doc.value;
   const meta = emptyMetadata();
   readDescription(raw, meta, itemLabel, "SKILL.md frontmatter");
