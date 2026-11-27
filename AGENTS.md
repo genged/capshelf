@@ -51,8 +51,10 @@ More info: `docs/architecture.md`, `docs/cli.md`, `docs/testing.md`
 
 ## Development Commands
 
-- `bun run typecheck` runs `tsc --noEmit` for the CLI and for the web UI
-  client (Bun does not type-check on its own).
+- `bun run typecheck` runs `bun check` for the CLI, the web UI client, and
+  the two projects under `tools/`. `bun run` and `bun test` do not
+  type-check. `bun run typecheck:tsc` runs the same checks with `tsc`, to
+  compare the two checkers.
 - `bun run build:ui` bundles the web UI client into `src/ui/generated/`.
   `bun install`, `bun run build`, and `bun run test` run it first. A source
   run needs the generated files, because `src/ui/assets.ts` imports them.
