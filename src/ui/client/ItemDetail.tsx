@@ -434,7 +434,7 @@ function Facts({
               {row.filteredPaths.map((filtered) => (
                 <li key={filtered.path}>
                   <span class="mono">{filtered.path}</span>
-                  <span class="muted"> · {filtered.filter}</span>
+                  <span class="muted"> · {filtered.driver}</span>
                 </li>
               ))}
             </ul>
