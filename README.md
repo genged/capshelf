@@ -616,9 +616,9 @@ content hash plus CLI version.
 
 The verbs: `init`, `add`, `rm`, `status`, `apply`, `update`, `share`,
 `move`, `promote`, `keep-local`, `revert`, `get-path`, `ls`, `show`,
-`search`, `lock migrate`, `self-update`, `ui`, the `data` subcommands, and
-the `marketplace` family. The full table with flags, JSON shapes, and exit
-codes is in [`docs/cli.md`](docs/cli.md).
+`search`, `validate`, `lock migrate`, `self-update`, `ui`, the `data`
+subcommands, and the `marketplace` family. The full table with flags, JSON
+shapes, and exit codes is in [`docs/cli.md`](docs/cli.md).
 
 ### Project status
 
@@ -629,7 +629,8 @@ codes is in [`docs/cli.md`](docs/cli.md).
 | Bundles: curated item sets, installed all or nothing | shipped | [bundles](docs/cli.md#bundles) |
 | Item metadata driving `ls --tag`, `search`, and `requires`/`conflicts-with` | shipped | [item metadata](docs/cli.md#item-metadata) |
 | Claude/Cowork and Codex plugin catalogs in the data repo | shipped | [plugin marketplaces](docs/cli.md#plugin-marketplaces) |
-| `validate`, `diff`, `doctor`, `journal` | roadmap | n/a |
+| `validate`: a read-only skill linter | shipped | [validate](docs/cli.md#validate) |
+| `diff`, `doctor`, `journal` | roadmap | n/a |
 
 ## Development
 

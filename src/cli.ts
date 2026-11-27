@@ -24,6 +24,7 @@ import { buildSyncData } from "./commands/sync-data";
 import { registerSelfUpdate } from "./commands/self-update";
 import { registerMarketplace } from "./commands/marketplace";
 import { registerUi } from "./commands/ui";
+import { registerValidate } from "./commands/validate";
 import { CliError } from "./errors";
 import { HOME_ENV, PRODUCT_NAME } from "./identity";
 import { runStartupSelfUpdate } from "./self-update";
@@ -71,6 +72,7 @@ export function createProgram(): Command {
   registerSelfUpdate(program);
   registerMarketplace(program);
   registerUi(program);
+  registerValidate(program);
 
   // The old top-level names (set-data, data-path, sync-data, set-upstream) stay
   // as hidden aliases so existing scripts keep working.
