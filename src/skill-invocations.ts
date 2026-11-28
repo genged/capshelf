@@ -139,43 +139,52 @@ const COMMAND_NAME = /<command-name>\/([^<\s]+)<\/command-name>/;
 const MARKERS = ['"name":"Skill"', "<command-name>"];
 const HEADER_LINE_LIMIT = 50;
 
-function parseJsonLine(line: string): unknown {
+const TranscriptRecordSchema = z.union([
+  AssistantRecordSchema,
+  UserRecordSchema,
+]);
+type TranscriptRecord = z.infer<typeof TranscriptRecordSchema>;
+type HeaderRecord = z.infer<typeof HeaderRecordSchema>;
+
+/** A line that is not JSON or does not match the schema gives null. */
+function parseLine<T>(
+  line: string,
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
+): T | null {
   try {
-    return JSON.parse(line);
+    const parsed = schema.safeParse(JSON.parse(line));
+    return parsed.success ? parsed.data : null;
   } catch {
-    return undefined;
+    return null;
   }
 }
 
-function eventsFromRecord(value: unknown): InvocationEvent[] {
-  const assistant = AssistantRecordSchema.safeParse(value);
-  if (assistant.success) {
+function eventsFromRecord(record: TranscriptRecord): InvocationEvent[] {
+  if (record.type === "assistant") {
     const out: InvocationEvent[] = [];
-    for (const item of assistant.data.message.content) {
+    for (const item of record.message.content) {
       const use = ToolUseSchema.safeParse(item);
       if (!use.success) continue;
       out.push({
-        t: assistant.data.timestamp,
+        t: record.timestamp,
         s: use.data.input.skill,
         b: "agent",
-        c: assistant.data.cwd,
+        c: record.cwd,
         i: use.data.id,
       });
     }
     return out;
   }
-  const user = UserRecordSchema.safeParse(value);
   if (
-    !user.success ||
-    user.data.isMeta === true ||
-    !user.data.message.content.startsWith(COMMAND_MESSAGE_PREFIX)
+    record.isMeta === true ||
+    !record.message.content.startsWith(COMMAND_MESSAGE_PREFIX)
   ) {
     return [];
   }
-  const name = COMMAND_NAME.exec(user.data.message.content)?.[1];
+  const name = COMMAND_NAME.exec(record.message.content)?.[1];
   return name === undefined
     ? []
-    : [{ t: user.data.timestamp, s: name, b: "user", c: user.data.cwd }];
+    : [{ t: record.timestamp, s: name, b: "user", c: record.cwd }];
 }
 
 /**
@@ -211,12 +220,13 @@ function readHeader(text: string, entry: FileEntry): void {
     line++
   ) {
     const end = text.indexOf("\n", start);
-    const header = HeaderRecordSchema.safeParse(
-      parseJsonLine(text.slice(start, end === -1 ? undefined : end)),
+    const header: HeaderRecord | null = parseLine(
+      text.slice(start, end === -1 ? undefined : end),
+      HeaderRecordSchema,
     );
-    if (header.success) {
-      entry.since ??= header.data.timestamp ?? null;
-      entry.cwd ??= header.data.cwd ?? null;
+    if (header !== null) {
+      entry.since ??= header.timestamp ?? null;
+      entry.cwd ??= header.cwd ?? null;
     }
     if (end === -1) break;
     start = end + 1;
@@ -280,7 +290,9 @@ async function scanFile(
   if (entry.since === null || entry.cwd === null) readHeader(text, entry);
   const seen = new Set(entry.events.flatMap((event) => event.i ?? []));
   for (const line of markerLines(text)) {
-    for (const event of eventsFromRecord(parseJsonLine(line))) {
+    const record = parseLine(line, TranscriptRecordSchema);
+    if (record === null) continue;
+    for (const event of eventsFromRecord(record)) {
       if (event.i !== undefined) {
         if (seen.has(event.i)) continue;
         seen.add(event.i);
