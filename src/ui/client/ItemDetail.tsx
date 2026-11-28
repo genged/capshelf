@@ -343,6 +343,12 @@ function Facts({
           </span>
         ) : null}
       </dd>
+      {item.invocationDetail !== null ? (
+        <>
+          <dt>Invoked</dt>
+          <dd>{item.invocationDetail}</dd>
+        </>
+      ) : null}
       {row.local ? (
         <>
           <dt>Kept local</dt>

@@ -995,6 +995,12 @@ warning, not a filesystem conflict. The command surface — which verbs
 refuse, which `status` groups appear, and the user-level skill inventory —
 is in [`docs/cli.md`](cli.md) under Coexisting with other tools.
 
+Claude Code session transcripts are also external state. `status` reads them
+to count skill invocations (`src/skill-invocations.ts`) and never edits them.
+It saves what it found in its own cache under `$XDG_CACHE_HOME/capshelf`.
+The web UI uses the same reader in memory mode, so it writes nothing. See
+[`docs/security.md`](security.md) under Skill invocation counts.
+
 ## Plugin marketplaces
 
 Marketplace definitions are data-repo catalog state, not Capshelf items.

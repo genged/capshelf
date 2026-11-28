@@ -308,12 +308,34 @@ function formatRow(r: StatusRow, dataRepo: string | null): string[] {
   return [
     `  ${g} ${id} ${shortIdentity(r.lockedSha)}${label}  ${describe(r, dataRepo)}${extrasLabel}${runsSuffix(r)}`,
     ...remoteRowDetail(r),
+    ...invocationDetail(r),
     ...visibleExtrasGuidance(r),
     ...targetCoverageGuidance(r),
     ...missingSourceCommitGuidance(r),
     ...needsStateGuidance(r),
     ...formatRuntimeWarnings(r.runtimeWarnings, "    "),
   ];
+}
+
+/**
+ * Dates, not "N days ago", keep the output the same for the same transcripts.
+ * The window starts at the oldest transcript that Claude Code still keeps.
+ */
+export function invocationSummary(
+  invocations: NonNullable<StatusRow["invocations"]>,
+): string {
+  const since = invocations.since.slice(0, 10);
+  if (invocations.count === 0 || invocations.last === null) {
+    return `not invoked since ${since}`;
+  }
+  const times = invocations.count === 1 ? "time" : "times";
+  return `invoked ${invocations.count} ${times} since ${since}, last ${invocations.last.slice(0, 10)} (agent ${invocations.byAgent}, user ${invocations.byUser})`;
+}
+
+function invocationDetail(r: StatusRow): string[] {
+  return r.invocations === undefined
+    ? []
+    : [`      ${invocationSummary(r.invocations)}`];
 }
 
 const VISIBLE_EXTRAS_SHOWN = 3;

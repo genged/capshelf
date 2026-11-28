@@ -109,6 +109,8 @@ import {
   unknownTargetCoverage,
 } from "./target-coverage";
 import type { TargetCoverageReport } from "./target-coverage";
+import { invocationsForSkill } from "./skill-invocations";
+import type { SkillInvocationReader } from "./skill-invocations";
 
 export interface StatusScope {
   project?: boolean;
@@ -124,6 +126,8 @@ export interface StatusReportInput {
   remotes: RemotesLock;
   ref?: ItemRef;
   scope?: StatusScope;
+  /** Adds `invocations` to skill rows. Omitted, the rows carry no usage. */
+  skillInvocations?: SkillInvocationReader;
 }
 
 export interface StatusReport {
@@ -587,6 +591,17 @@ export async function buildStatusReport(
         ...(ref !== undefined && { ref }),
       })),
     );
+  }
+
+  const invocations = rows.some((row) => row.kind === "skills")
+    ? await input.skillInvocations?.read(project)
+    : null;
+  if (invocations) {
+    for (const row of rows) {
+      if (row.kind === "skills") {
+        row.invocations = invocationsForSkill(invocations, row.name);
+      }
+    }
   }
 
   return {
