@@ -15,6 +15,7 @@ import type { InstallDifference } from "./install-diff";
 import type { FilteredPath } from "./pin";
 import type { PluginRunCounts } from "./plugin-runs";
 import type { ClaudeTrust } from "./claude-trust";
+import type { SkillInvocations } from "./skill-invocations";
 import type {
   TargetCoverageFields,
   TargetCoverageJson,
@@ -110,6 +111,11 @@ export interface StatusRow {
   targetCoverage?: TargetCoverageJson[];
   coverageState?: "unknown";
   coverageReason?: string;
+  /**
+   * Present on a skill row only when Claude Code transcripts exist for the
+   * project, so a machine without them prints the same report as before.
+   */
+  invocations?: SkillInvocations;
 }
 
 export interface StatusTargetDetail {

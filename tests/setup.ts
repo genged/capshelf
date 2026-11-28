@@ -32,3 +32,12 @@ afterAll(() => {
 process.env.XDG_CONFIG_HOME = mkdtempSync(
   join(tmpdir(), "capshelf-test-config-"),
 );
+
+// Status reads Claude Code transcripts and saves a cache, so tests must see
+// neither the contributor's transcripts nor their cache folder.
+process.env.CLAUDE_CONFIG_DIR = mkdtempSync(
+  join(tmpdir(), "capshelf-test-claude-"),
+);
+process.env.XDG_CACHE_HOME = mkdtempSync(
+  join(tmpdir(), "capshelf-test-cache-"),
+);

@@ -44,6 +44,7 @@ import {
 } from "../paths";
 import { currentSourceCommit } from "../pin";
 import { loadProjectRegistry } from "../project-registry";
+import { createSkillInvocationReader } from "../skill-invocations";
 import {
   MAX_SEARCHABLE_CONTENT_BYTES,
   isSearchableContent,
@@ -53,7 +54,7 @@ import { actionsForRow } from "../status-actions";
 import { assertNoScopeCollisions } from "../status-core";
 import type { StatusRow } from "../status-core";
 import { buildStatusDiff } from "../status-diff";
-import { describe } from "../status-format";
+import { describe, invocationSummary } from "../status-format";
 import {
   buildStatusReport,
   resolveStatusDataRepo,
@@ -145,6 +146,8 @@ export function createUiApi(ctx: UiContext): UiApi {
   // their snapshot instead of trusting `loaded`.
   const snapshots = new Map<string, Map<string, LoadedProject>>();
   let nextSnapshot = 0;
+  // The UI writes no file, so it keeps the parsed transcripts in memory.
+  const skillInvocations = createSkillInvocationReader({ persist: "memory" });
 
   async function registeredProjects(): Promise<UiRegisteredProject[]> {
     const registry = await loadProjectRegistry(ctx.registryPath);
@@ -226,6 +229,7 @@ export function createUiApi(ctx: UiContext): UiApi {
       localLock,
       remotes,
       dataRepo,
+      skillInvocations,
     });
     const state: LoadedProject = {
       project,
@@ -610,6 +614,9 @@ function toUiItem(
       ? warningLabel(hidden.type)
       : stateLabel(row.state, row.source),
     stateDetail: hidden ? hidden.message : describe(row, dataRepo),
+    invocationDetail: row.invocations
+      ? invocationSummary(row.invocations)
+      : null,
     actions: actionsForRow(row, {
       dataOverride: commandDataOverride(dataOverride, dataRepo),
       dataRepo,

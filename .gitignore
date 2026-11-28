@@ -10,3 +10,4 @@ logs/
 .worktrees/
 tmp/
 src/ui/generated/
+local/

@@ -13,6 +13,7 @@ import { listUserSkills, withUserSkillShadows } from "../external";
 import type { ExternalUserSkill } from "../external";
 import type { StatusDiff, StatusDiffView } from "../status-diff";
 import { assertNoScopeCollisions } from "../status-core";
+import { createSkillInvocationReader } from "../skill-invocations";
 import { formatStatusHuman, formatUserSkillsHuman } from "../status-format";
 import {
   buildStatusReport,
@@ -110,6 +111,7 @@ export function registerStatus(program: Command): void {
           dataRepo,
           ref,
           scope: { project: opts.project, local: opts.local },
+          skillInvocations: createSkillInvocationReader({ persist: "disk" }),
         });
         const {
           rows,

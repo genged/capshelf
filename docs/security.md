@@ -36,7 +36,9 @@ to the data repo only on explicit `share`, `promote`, and `marketplace`
 catalog mutations. Each of these commits locally and never pushes. `init` and
 `ui` also write one file outside the project: the project registry at
 `$XDG_CONFIG_HOME/capshelf/projects.json`. It holds project paths and dates,
-and no command removes an entry.
+and no command removes an entry. `status` reads the Claude Code transcripts on
+this machine and writes one cache outside the project. See
+[Skill invocation counts](#skill-invocation-counts).
 
 `capshelf ui` starts a local HTTP server and runs until Ctrl-C. The server
 binds 127.0.0.1 only, so no other machine can connect to it. It serves GET
@@ -44,8 +46,10 @@ only and refuses a request whose `Host` header is not its own address. Every
 `/api/` request must carry the random token printed in the URL. The server
 sends no CORS headers and marks every response `no-store`. It reads the
 project registry, each project's manifest, locks, and managed files, and the
-data repo. It runs Git read queries in the data repo, including `git status`.
-It writes no file. The dashboard shows item text from the data repo. The page
+data repo. It also reads the Claude Code transcripts for each project, to show
+skill invocation counts, and keeps what it found in memory. It runs Git read
+queries in the data repo, including `git status`. It writes no file, and that
+includes the skill invocation cache. The dashboard shows item text from the data repo. The page
 renders that text as text, not as HTML. The `Content-Security-Policy` header
 allows script from the server only. See [the web UI](cli.md#the-web-ui) for
 the routes it answers.
@@ -63,6 +67,49 @@ command picks a mechanism that skips them. Read-only commands run nothing:
 `status`, `ls`, `show`, `search`, and `get-path` execute no hook, no
 `diff.external` helper, no textconv driver, no clean filter, and no
 `core.fsmonitor` program.
+
+## Skill invocation counts
+
+`status` and `capshelf ui` show how often Claude Code invoked each managed
+skill. The facts come from the session transcripts that Claude Code already
+writes on this machine. capshelf installs no hook and runs no logger. This is
+always on, and nothing leaves the machine. No command sends these facts over
+the network.
+
+What capshelf reads:
+
+- The transcript files under `$CLAUDE_CONFIG_DIR/projects`, or
+  `~/.claude/projects`. It reads only the folders whose name matches the
+  project path. It reads the session files and their subagent files.
+- These files hold the full conversation, which includes prompts, code, and
+  tool output. capshelf searches them for two markers: a call of the `Skill`
+  tool, and a typed slash command. It parses only the lines that hold a marker.
+  It keeps nothing else from a file, except the time and working folder of
+  the file's first records.
+
+What capshelf saves, in `$XDG_CACHE_HOME/capshelf/skill-invocations/`, or
+`~/.cache/capshelf/skill-invocations/`:
+
+- For each transcript file: its name, size, inode, modification time, and
+  the byte offset already read.
+- The time and working folder of the file's first record.
+- For each invocation: the time, the skill or command name, and the working
+  folder. It also records whether the agent or the user started it. An agent
+  call also keeps its tool call ID.
+
+The cache holds no prompt text, no command arguments, no tool input other than
+the skill name, no tool output, and no file contents. A typed slash command is
+saved by name even when it is not a skill, for example `/clear`. Status then
+shows only the names of managed skills. When capshelf creates the cache
+folder, it uses mode `0700`.
+
+Retention follows Claude Code. When Claude Code deletes a transcript, the next
+`status` run drops that file's facts from the cache. Claude Code deletes
+transcripts after 30 days by default (`cleanupPeriodDays`). You can delete the
+cache folder at any time. The next `status` run rebuilds it from the
+transcripts.
+
+`capshelf ui` reads the cache and the transcripts, and writes neither.
 
 ## The control plane is your git host
 
@@ -249,6 +296,7 @@ Known limits:
   makes in the data repo follows the same exception.
 - Capshelf does not apply the rule to places outside any project. These are
   the project registry in `$XDG_CONFIG_HOME/capshelf`, the update-check cache,
+  the skill invocation cache,
   scratch folders in the system temp folder, and the `--out` path of a
   package command. A package command has its own check: the output path must
   be outside the data repo.
