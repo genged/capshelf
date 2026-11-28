@@ -227,6 +227,53 @@ describe("renderDestructiveChanges", () => {
     ]);
   });
 
+  const folded = (count: number, prefix: string): DestructiveChange[] =>
+    Array.from({ length: count }, (_, index) =>
+      extra(`${prefix}f${String(index + 1).padStart(2, "0")}.py`),
+    );
+  const moreLine = (count: number) =>
+    `  data/skills/draw — and ${count} more entries in .agents/skills/draw/venv/lib`;
+
+  test("a group over ten entries names the hidden entries and their base", () => {
+    const lines = renderDestructiveChanges(
+      "Update",
+      folded(15, "venv/lib/"),
+    ).split("\n");
+    const entryLines = lines.filter((line) =>
+      line.endsWith("— delete a local-only path"),
+    );
+    expect(entryLines).toHaveLength(10);
+    const more = lines.indexOf(moreLine(5));
+    expect(more).toBeGreaterThan(0);
+    expect(lines[more - 1]).toBe(entryLines[9]);
+    expect(lines[more + 1]).toBe(`      15 paths: ${detail}`);
+  });
+
+  test("a group of eleven entries hides exactly one", () => {
+    const text = renderDestructiveChanges("Update", folded(11, "venv/lib/"));
+    expect(text).toContain(`${moreLine(1)}\n      11 paths:`);
+  });
+
+  test("a group of ten entries hides none", () => {
+    const text = renderDestructiveChanges("Update", folded(10, "venv/lib/"));
+    expect(text).not.toContain("more entries");
+  });
+
+  test("a root-level fold without an item says the base is the root", () => {
+    const changes: DestructiveChange[] = Array.from(
+      { length: 12 },
+      (_, index) => ({
+        scope: "project",
+        path: `f${String(index + 1).padStart(2, "0")}.py`,
+        reason: "extra_local_path",
+        detail,
+      }),
+    );
+    const lines = renderDestructiveChanges("Update", changes).split("\n");
+    expect(lines).toContain("  and 2 more entries in .");
+    expect(lines).toContain(`      12 paths: ${detail}`);
+  });
+
   test("a small group prints every path, and other reasons stay apart", () => {
     const text = renderDestructiveChanges("Update", [
       extra("a.md"),
