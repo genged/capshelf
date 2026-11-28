@@ -2,10 +2,16 @@ import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { parseJsonc } from "../src/json-fragments";
 import { isConfigObject } from "../src/config-values";
-import { writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join, relative, resolve } from "node:path";
 import { shellArg } from "../src/command-text";
 import { registerProject } from "../src/project-registry";
+import {
+  claudeProjectDirName,
+  claudeProjectsDir,
+  skillInvocationCacheDir,
+} from "../src/skill-invocations";
 import { createUiApi } from "../src/ui/api";
 import { startUiServer } from "../src/ui/server";
 import type { UiServer } from "../src/ui/server";
@@ -188,6 +194,7 @@ describe("capshelf ui server", () => {
         tone: "ok",
         stateLabel: "Up to date",
         stateDetail: "up-to-date",
+        invocationDetail: null,
         actions: [],
         diffViews: [],
         installedPath: ".agents/skills/hello",
@@ -494,6 +501,32 @@ describe("capshelf ui server", () => {
       );
     } finally {
       await server.stop();
+    }
+  });
+
+  test("a skill shows the status invocation line and the UI writes no cache", async () => {
+    const dir = join(claudeProjectsDir(), claudeProjectDirName(world.project));
+    await mkdir(dir, { recursive: true });
+    const record = {
+      type: "user",
+      timestamp: "2026-11-05T12:00:00.000Z",
+      cwd: world.project,
+      message: {
+        content:
+          "<command-message>hello</command-message>\n<command-name>/hello</command-name>",
+      },
+    };
+    await writeFile(join(dir, "s.jsonl"), `${JSON.stringify(record)}\n`);
+    try {
+      const api = createUiApi({ registryPath: world.registryPath });
+      const status = await api.projectStatus(world.project);
+      const hello = status.items.find((item) => item.ref === "skills/hello");
+      expect(hello?.invocationDetail).toBe(
+        "invoked 1 time since 2026-11-05, last 2026-11-05 (agent 0, user 1)",
+      );
+      expect(existsSync(skillInvocationCacheDir())).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
     }
   });
 

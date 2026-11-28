@@ -76,6 +76,7 @@ function item(
     tone: stateTone(state),
     stateLabel: stateLabel(state, "data"),
     stateDetail: "",
+    invocationDetail: null,
     actions: [],
     diffViews: [],
     installedPath: null,

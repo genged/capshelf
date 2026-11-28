@@ -79,6 +79,8 @@ export interface UiItem {
   tone: StateTone;
   stateLabel: string;
   stateDetail: string;
+  /** The `status` invocation line for a skill, or null with no transcripts. */
+  invocationDetail: string | null;
   actions: UiAction[];
   diffViews: DiffViewName[];
   installedPath: string | null;

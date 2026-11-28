@@ -241,7 +241,7 @@ registered.
 | `ls` | list items in master plus user-level runtime skills by default, in this project (`--here`), or user-level runtime skills only (`--user`); master/project listings show descriptions and `#tags` from item metadata; `--tag` filters master/project listings; appends a `bundles/` section for data-repo bundles | implemented |
 | `show <item>` | print metadata + content for one item, including relations and current/locked declared needs, plus runtime target coverage for MCP and subagents; `--target` narrows to one runtime | implemented |
 | `search <query...>` | search available items (data repo + system) and bundles by name, tags, description, and content; supports `--kind` and `--json`; zero matches exit 0 | implemented |
-| `status [<item>]` | drift / update report plus orthogonal `needsState` freshness and locked needs; subagent JSON includes deterministic per-target state; a sub-line names any runtime target an MCP or subagent item does not cover; a plugin row counts the hooks and MCP servers the plugin runs; `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` shows locked-to-installed and locked-to-upstream comparisons; `--diff-view installed\|upstream\|all` selects a comparison; `--check-upstream` fetches every tracked remote repository and reports which remote items moved | implemented |
+| `status [<item>]` | drift / update report plus orthogonal `needsState` freshness and locked needs; subagent JSON includes deterministic per-target state; a sub-line names any runtime target an MCP or subagent item does not cover; a plugin row counts the hooks and MCP servers the plugin runs; a skill row counts the times Claude Code invoked it, from the local transcripts (see Skill invocations in status); `--project` and `--local` filter scopes; `--user` shows only user-level runtime skills; `--diff` shows locked-to-installed and locked-to-upstream comparisons; `--diff-view installed\|upstream\|all` selects a comparison; `--check-upstream` fetches every tracked remote repository and reports which remote items moved | implemented |
 | `add [item]` | install a new item from the bound data repo, materializing exactly what the pin contains; with no item, opens the interactive picker (see The picker); MCP and subagent installs report per-runtime target coverage; an already-installed standalone item is a byte- and lock-stable no-op; `--local` installs a clone-local copy item; `--yes` authorizes collateral fragment-output loss for a new fragment, standalone or expanded from a bundle; a ref whose first segment is not an item kind is refused with exit 3 and the supported kinds, because `owner/repo` shorthand is shaped exactly like `kind/name`; a repository URL instead of a ref installs a skill or a whole plugin from outside the shelf, with `--as`, `--ref`, `--path`, and `--list`. A plugin that runs a hook or an MCP server, or has an `unknown` entry, asks for consent, and `--yes` gives it | implemented |
 | `rm <item>` | remove a locked data item and report every output it reconciled; clean reproducible content is prompt-free, while local edits, modes, extra paths, subagent drift, and fragment comment loss require consent or `--yes` | implemented |
 | `get-path <item>` | print the editable path. It finds the item in project or local scope. It refuses an item that both locks hold. Subagents and MCP support `--target`, while `--output` returns the corresponding runtime output. `--json` adds `scope` (`project` or `local`) | implemented |
@@ -381,6 +381,49 @@ rerun the documented `add` command in the intended scope. With no existing
 lock, `add` adopts the canonical installed target only when its bytes and
 executable modes exactly match the commit it would pin; a mismatch remains an
 unmanaged-target conflict and writes no metadata.
+
+#### Skill invocations in status
+
+`status` tells you how often Claude Code invoked each managed skill in this
+project. It gets the facts from the transcripts that Claude Code already keeps
+on this machine. capshelf adds no hook and starts no logger. It reads the
+transcripts only.
+
+```text
+project/
+  ✓   data/skills/review                      b34846678391  up-to-date
+      invoked 12 times since 2026-10-29, last 2026-11-25 (agent 9, user 3)
+  ✓   data/skills/idle                        5c0a1e9f2d47  up-to-date
+      not invoked since 2026-10-29
+```
+
+- `agent` counts the calls where the agent chose the skill. `user` counts the
+  calls where you typed the slash command, such as `/review`.
+- The date after `since` is the oldest transcript that Claude Code still keeps
+  for the project. Claude Code deletes transcripts after 30 days by default.
+  Set `cleanupPeriodDays` in the Claude Code settings to keep a longer history.
+- A session counts when it ran in the project folder or in a folder below it.
+  This includes a worktree inside the project.
+- A skill row gets the line only when Claude Code has transcripts for the
+  project. On a machine without them, such as a CI runner, `status` prints the
+  same report as before.
+- Usage is information, not drift. `status --strict` does not fail on it.
+- Codex, Pi, and plugin skills are not counted. Codex has no skill event that
+  capshelf can read without a guess.
+
+capshelf finds the transcripts under `$CLAUDE_CONFIG_DIR/projects`, or
+`~/.claude/projects` when that variable is not set. Claude Code names each
+folder after the session's working folder. To make the next run fast, `status`
+saves what it found in `$XDG_CACHE_HOME/capshelf/skill-invocations/`, or
+`~/.cache/capshelf/skill-invocations/`. The next run reads only the transcript
+lines that were added since. You can delete that folder at any time. See
+[Security](security.md) for what the cache holds.
+
+In `status --json`, a skill row has one more field when the line shows:
+
+- `invocations`: `{ "count": <n>, "byAgent": <n>, "byUser": <n>,
+  "last": "<time>" | null, "since": "<time>" }`. The times are the ISO 8601
+  timestamps from the transcripts.
 
 ### Config fragments
 
@@ -1967,6 +2010,9 @@ registered path with no manifest stays in the rail and is marked missing.
 - What changed shows the first changed lines of the diff. Open full diff
   shows every line in a dialog at the width of the window, side by side or
   unified. Three-way has no unified form.
+- The facts of a skill include Invoked, the same invocation line that
+  `status` prints. The dashboard keeps the parsed transcripts in memory and
+  does not write the cache.
 - The pin, the installed copy, the shelf version, and the other facts are
   behind a disclosure for an item that needs attention. They show at once
   for an item that is up to date.
